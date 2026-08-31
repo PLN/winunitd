@@ -94,6 +94,37 @@ WorkingDirectory=C:\Tools
 			},
 		},
 		{
+			name: "RequiresInteractiveSession yes",
+			file: "gui.service",
+			src: `
+[Unit]
+Description=GUI helper
+RequiresInteractiveSession=yes
+[Service]
+Type=simple
+ExecStart=C:\Tools\gui.exe
+WorkingDirectory=C:\Tools
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if !u.RequiresInteractiveSession {
+					t.Fatal("RequiresInteractiveSession")
+				}
+			},
+		},
+		{
+			name: "SessionMode is not implemented",
+			file: "gui.service",
+			src: `
+[Unit]
+SessionMode=linger
+[Service]
+ExecStart=C:\Tools\gui.exe
+WorkingDirectory=C:\Tools
+`,
+			wantErr: []string{`unknown directive "SessionMode"`},
+		},
+		{
 			name: "execstartarg",
 			file: "foo.service",
 			src: `

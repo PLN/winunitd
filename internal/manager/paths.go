@@ -13,6 +13,7 @@ const (
 	enabledDirName = "enabled"
 	journalDirName = "journal"
 	runtimeDirName = "runtime"
+	lingerDirName  = "linger"
 )
 
 // Config is the on-disk layout for a manager instance.
@@ -27,6 +28,11 @@ type Config struct {
 	Daemon *runtime.DaemonJob
 	// Clock drives the timer scheduler. Zero uses timers.DefaultClock().
 	Clock timers.Clock
+	// HasInteractiveSession reports whether a suitable interactive
+	// session exists for this manager. Nil means yes (system manager
+	// and tests that do not care). User managers set this so
+	// RequiresInteractiveSession=yes units skip when headless.
+	HasInteractiveSession func() bool
 }
 
 // DefaultBaseDir is C:\ProgramData\winunitd when ProgramData is set.
@@ -70,4 +76,8 @@ func (c Config) RuntimeDir() string {
 
 func (c Config) TimerStateDir() string {
 	return filepath.Join(c.RuntimeDir(), "timers")
+}
+
+func (c Config) LingerDir() string {
+	return filepath.Join(c.BaseDir, lingerDirName)
 }

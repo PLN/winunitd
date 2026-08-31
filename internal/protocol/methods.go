@@ -2,17 +2,19 @@ package protocol
 
 // Control methods match the winctl verbs (DESIGN.md §13, §74).
 const (
-	MethodStart        = "start"
-	MethodStop         = "stop"
-	MethodRestart      = "restart"
-	MethodStatus       = "status"
-	MethodEnable       = "enable"
-	MethodDisable      = "disable"
-	MethodListUnits    = "list-units"
-	MethodListTimers   = "list-timers"
-	MethodLogs         = "logs"
-	MethodDaemonReload = "daemon-reload"
-	MethodVerify       = "verify"
+	MethodStart         = "start"
+	MethodStop          = "stop"
+	MethodRestart       = "restart"
+	MethodStatus        = "status"
+	MethodEnable        = "enable"
+	MethodDisable       = "disable"
+	MethodListUnits     = "list-units"
+	MethodListTimers    = "list-timers"
+	MethodLogs          = "logs"
+	MethodDaemonReload  = "daemon-reload"
+	MethodVerify        = "verify"
+	MethodEnableLinger  = "enable-linger"
+	MethodDisableLinger = "disable-linger"
 )
 
 // Methods is the full set of control verbs.
@@ -28,6 +30,8 @@ var Methods = []string{
 	MethodLogs,
 	MethodDaemonReload,
 	MethodVerify,
+	MethodEnableLinger,
+	MethodDisableLinger,
 }
 
 var knownMethods = func() map[string]bool {
@@ -41,6 +45,12 @@ var knownMethods = func() map[string]bool {
 // KnownMethod reports whether name is a control verb.
 func KnownMethod(name string) bool {
 	return knownMethods[name]
+}
+
+// LingerMethod reports whether name is an admin linger verb. These run
+// on the system pipe only (not winctl --user).
+func LingerMethod(name string) bool {
+	return name == MethodEnableLinger || name == MethodDisableLinger
 }
 
 // UnitParams is the body for verbs that take a unit name.
@@ -95,6 +105,8 @@ type MachineStatus struct {
 	UnitsActive  int    `json:"unitsActive"`
 	UnitsFailed  int    `json:"unitsFailed"`
 	TimersLoaded int    `json:"timersLoaded"`
+	UserManagers int    `json:"userManagers,omitempty"`
+	Lingering    int    `json:"lingering,omitempty"`
 }
 
 // UnitStatus is one loaded unit (DESIGN.md §45). MainPID is set when the
@@ -180,4 +192,17 @@ type Issue struct {
 	Line     int    `json:"line,omitempty"`
 	Severity string `json:"severity"`
 	Message  string `json:"message"`
+}
+
+// LingerParams is the body for enable-linger and disable-linger.
+// User is a username (DOMAIN\account) or an NT SID.
+type LingerParams struct {
+	User string `json:"user"`
+}
+
+// LingerResult is the payload for enable-linger and disable-linger.
+type LingerResult struct {
+	SID       string `json:"sid"`
+	User      string `json:"user,omitempty"`
+	Lingering bool   `json:"lingering"`
 }

@@ -16,6 +16,7 @@ func TestMethodsCoverCLIVerbs(t *testing.T) {
 	want := []string{
 		"start", "stop", "restart", "status", "enable", "disable",
 		"list-units", "list-timers", "logs", "daemon-reload", "verify",
+		"enable-linger", "disable-linger",
 	}
 	if len(Methods) != len(want) {
 		t.Fatalf("Methods = %v, want %v", Methods, want)
@@ -191,6 +192,12 @@ func TestAllMethodsRoundTrip(t *testing.T) {
 				return nil, err
 			}
 			return VerifyResult{Name: p.Unit, OK: true}, nil
+		case MethodEnableLinger, MethodDisableLinger:
+			var p LingerParams
+			if err := DecodeParams(params, &p); err != nil {
+				return nil, err
+			}
+			return LingerResult{SID: "S-1-5-21-1-2-3-1001", User: p.User, Lingering: method == MethodEnableLinger}, nil
 		default:
 			return nil, ErrMethodNotFound(method)
 		}
@@ -234,6 +241,12 @@ func TestAllMethodsRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := client.Verify(ctx, "foo.service"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.EnableLinger(ctx, "ferdinand"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.DisableLinger(ctx, "ferdinand"); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range Methods {
@@ -281,6 +294,18 @@ func TestPeerAllowed(t *testing.T) {
 	}
 	if !((Peer{Owner: true}).Allowed()) {
 		t.Fatal("user-pipe owner must be allowed")
+	}
+	if !(Peer{Administrator: true}).CanLinger() {
+		t.Fatal("administrator must be able to linger")
+	}
+	if !(Peer{LocalSystem: true}).CanLinger() {
+		t.Fatal("LocalSystem must be able to linger")
+	}
+	if (Peer{Owner: true}).CanLinger() {
+		t.Fatal("owner-only must fail closed for linger")
+	}
+	if (Peer{}).CanLinger() {
+		t.Fatal("empty peer must fail closed for linger")
 	}
 }
 
@@ -482,4 +507,63 @@ func TestUnexpectedEOF(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	_ = c1.Close()
+}
+
+func TestNonAdminEnableLingerFailsClosed(t *testing.T) {
+	t.Parallel()
+	called := false
+	h := HandlerFunc(func(ctx context.Context, method string, params json.RawMessage) (any, error) {
+		called = true
+		return LingerResult{Lingering: true}, nil
+	})
+	client, stop := serveTest(t, h, AllowOwner)
+	defer stop()
+	_, err := client.EnableLinger(context.Background(), "ferdinand")
+	pe, ok := err.(*Error)
+	if !ok || pe.Code != CodePermissionDenied {
+		t.Fatalf("err = %v", err)
+	}
+	if called {
+		t.Fatal("handler must not run for non-admin linger")
+	}
+
+	client2, stop2 := serveTest(t, h, DenyAll)
+	defer stop2()
+	_, err = client2.EnableLinger(context.Background(), "ferdinand")
+	pe, ok = err.(*Error)
+	if !ok || pe.Code != CodePermissionDenied {
+		t.Fatalf("deny-all err = %v", err)
+	}
+}
+
+func TestAdminEnableLingerAllowed(t *testing.T) {
+	t.Parallel()
+	h := HandlerFunc(func(ctx context.Context, method string, params json.RawMessage) (any, error) {
+		if method != MethodEnableLinger {
+			t.Fatalf("method = %s", method)
+		}
+		var p LingerParams
+		if err := DecodeParams(params, &p); err != nil {
+			return nil, err
+		}
+		if p.User != "ferdinand" {
+			t.Fatalf("user = %q", p.User)
+		}
+		return LingerResult{SID: "S-1-5-21-1-2-3-1001", User: p.User, Lingering: true}, nil
+	})
+	client, stop := serveTest(t, h, AllowAdmin)
+	defer stop()
+	got, err := client.EnableLinger(context.Background(), "ferdinand")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Lingering || got.SID == "" {
+		t.Fatalf("result = %+v", got)
+	}
+
+	clientSys, stopSys := serveTest(t, h, AllowLocalSystem)
+	defer stopSys()
+	if _, err := clientSys.EnableLinger(context.Background(), "ferdinand"); err != nil {
+		t.Fatalf("LocalSystem linger: %v", err)
+	}
 }
