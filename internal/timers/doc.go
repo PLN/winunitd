@@ -1,2 +1,2 @@
-// Package timers contains calendar and monotonic scheduling.
+// Package timers contains calendar expression parsing and monotonic scheduling.
 package timers

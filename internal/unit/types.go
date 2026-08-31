@@ -1,0 +1,154 @@
+package unit
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/PLN/winunitd/internal/timers"
+)
+
+// Kind is the unit type implied by the file suffix.
+type Kind string
+
+const (
+	KindService Kind = "service"
+	KindTimer   Kind = "timer"
+	KindTarget  Kind = "target"
+)
+
+// ServiceType is a [Service] Type= value.
+type ServiceType string
+
+const (
+	TypeSimple  ServiceType = "simple"
+	TypeOneshot ServiceType = "oneshot"
+)
+
+// RestartPolicy is a [Service] Restart= value.
+type RestartPolicy string
+
+const (
+	RestartNo        RestartPolicy = "no"
+	RestartAlways    RestartPolicy = "always"
+	RestartOnFailure RestartPolicy = "on-failure"
+)
+
+// EnvVar is a single Environment= assignment. Values are stored literally;
+// ${} and %VAR% are not expanded.
+type EnvVar struct {
+	Name  string
+	Value string
+}
+
+// Unit is a parsed unit file.
+type Unit struct {
+	Name string
+	Path string
+	Kind Kind
+
+	Description string
+	Requires    []string
+	Wants       []string
+	After       []string
+	Before      []string
+
+	Service *ServiceSpec
+	Timer   *TimerSpec
+
+	WantedBy []string
+}
+
+// ServiceSpec is the [Service] section.
+type ServiceSpec struct {
+	Type             ServiceType
+	ExecStart        []string // argv: executable then arguments
+	WorkingDirectory string
+	Environment      []EnvVar
+	Restart          RestartPolicy
+	RestartSec       time.Duration
+	TimeoutStartSec  time.Duration
+	TimeoutStopSec   time.Duration
+
+	RestartSecSet      bool
+	TimeoutStartSecSet bool
+	TimeoutStopSecSet  bool
+}
+
+// TimerSpec is the [Timer] section.
+type TimerSpec struct {
+	OnBootSec       time.Duration
+	OnStartupSec    time.Duration
+	OnUnitActiveSec time.Duration
+	OnCalendar      []timers.Calendar
+	Persistent      bool
+	Unit            string // activated unit; defaults to same basename .service
+
+	OnBootSecSet       bool
+	OnStartupSecSet    bool
+	OnUnitActiveSecSet bool
+}
+
+// Severity is an issue level collected during parse/verify.
+type Severity string
+
+const (
+	SeverityError   Severity = "error"
+	SeverityWarning Severity = "warning"
+)
+
+// Issue is a parse or verify diagnostic.
+type Issue struct {
+	Path     string
+	Line     int
+	Severity Severity
+	Message  string
+}
+
+func (i Issue) String() string {
+	loc := i.Path
+	if loc == "" {
+		loc = "unit"
+	}
+	if i.Line > 0 {
+		return fmt.Sprintf("%s:%d: %s: %s", loc, i.Line, i.Severity, i.Message)
+	}
+	return fmt.Sprintf("%s: %s: %s", loc, i.Severity, i.Message)
+}
+
+// Report is the result of parsing and verifying a unit file.
+type Report struct {
+	Unit   *Unit
+	Issues []Issue
+}
+
+// HasError reports whether any error-severity issue is present.
+func (r Report) HasError() bool {
+	for _, iss := range r.Issues {
+		if iss.Severity == SeverityError {
+			return true
+		}
+	}
+	return false
+}
+
+// Errors returns error-severity issues.
+func (r Report) Errors() []Issue {
+	var out []Issue
+	for _, iss := range r.Issues {
+		if iss.Severity == SeverityError {
+			out = append(out, iss)
+		}
+	}
+	return out
+}
+
+// Warnings returns warning-severity issues.
+func (r Report) Warnings() []Issue {
+	var out []Issue
+	for _, iss := range r.Issues {
+		if iss.Severity == SeverityWarning {
+			out = append(out, iss)
+		}
+	}
+	return out
+}
