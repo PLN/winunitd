@@ -16,9 +16,9 @@ Windows is the first-class target (`GOOS=windows`).
 
 ## Status
 
-**Now:** unit file loader, `winctl verify` on a file path (no daemon required), a dependency graph with start transactions, and a versioned JSON-RPC control API on `\\.\pipe\winunitd\control` (LocalSystem and Administrators). `winctl` verbs talk over the pipe. Start/stop are protocol stubs (no Job Objects).
+**Now:** unit file loader, `winctl verify` on a file path (no daemon required), a dependency graph with start transactions, a versioned JSON-RPC control API on `\\.\pipe\winunitd\control` (LocalSystem and Administrators), and an SCM host with a daemon-level Job Object for strict ownership. `winctl` verbs talk over the pipe. Start/stop are still protocol stubs (no per-unit jobs or CreateProcess).
 
-**Later:** SCM host, Job Objects / real process supervision, timers at runtime, and journal — as described in DESIGN.md.
+**Later:** per-unit Job Objects / CreateProcess supervision, timers at runtime, and journal — as described in DESIGN.md.
 
 ## Build
 
@@ -28,6 +28,17 @@ go build -o winunitd.exe ./cmd/winunitd
 go build -o winctl.exe ./cmd/winctl
 go build -o winunit-notify.exe ./cmd/winunit-notify
 ```
+
+## Windows Service
+
+```text
+winunitd install [--base-dir DIR]
+winunitd uninstall
+```
+
+Install registers `winunitd` (DisplayName `WinUnit Manager`) as LocalSystem, Automatic (Delayed Start), with SCM recovery set to restart on failure, and accepts preshutdown notification. The daemon creates a Job Object with `KILL_ON_JOB_CLOSE`: if `winunitd.exe` is killed, assigned child processes die with it. Console mode (`winunitd --base-dir DIR`) still works without SCM.
+
+Ordered stop on `sc stop` is not implemented yet. Per-unit jobs and real process launch are not implemented yet.
 
 ## Verify unit files
 
