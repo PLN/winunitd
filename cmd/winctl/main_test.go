@@ -73,6 +73,21 @@ OnCalendar=daily
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	scm := filepath.Join(dir, "mssql.service")
+	if err := os.WriteFile(scm, []byte(`
+[Service]
+Type=scm
+ServiceName=MSSQLSERVER
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scmBad := filepath.Join(dir, "bad-scm.service")
+	if err := os.WriteFile(scmBad, []byte(`
+[Service]
+Type=scm
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	t.Run("ok", func(t *testing.T) {
 		var out, errb bytes.Buffer
@@ -143,6 +158,28 @@ OnCalendar=daily
 			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
 		}
 		if !strings.Contains(errb.String(), "absent.service") {
+			t.Fatalf("stderr=%s", errb.String())
+		}
+	})
+
+	t.Run("type scm", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"verify", scm}, &out, &errb)
+		if code != 0 {
+			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(out.String(), "mssql.service: verified") {
+			t.Fatalf("stdout=%s", out.String())
+		}
+	})
+
+	t.Run("type scm missing ServiceName", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"verify", scmBad}, &out, &errb)
+		if code != 1 {
+			t.Fatalf("exit %d, want 1; stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(errb.String(), "ServiceName is required for Type=scm") {
 			t.Fatalf("stderr=%s", errb.String())
 		}
 	})

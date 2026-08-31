@@ -57,7 +57,7 @@ through winunitd.
 
 Unknown directives are errors. ExecStart must be an absolute Windows path
 (SearchPath=no). An omitted WorkingDirectory is a warning; System32 is not
-used as a default.
+used as a default. Type=scm requires ServiceName= and does not use ExecStart=.
 `
 
 type cli struct {
