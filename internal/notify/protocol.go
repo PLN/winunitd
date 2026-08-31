@@ -26,7 +26,8 @@ type Message struct {
 	HasPID   bool
 }
 
-// PipeName is \\.\pipe\winunitd\notify\<unit-id> (unit name until P6).
+// PipeName is \\.\pipe\winunitd\notify\<unit-id> (unit name; P6 keeps
+// this and injects WINUNIT_INVOCATION_ID instead).
 func PipeName(unitID string) string {
 	return pipePrefix + sanitizeUnitID(unitID)
 }

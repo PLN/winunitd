@@ -109,20 +109,22 @@ type MachineStatus struct {
 	Lingering    int    `json:"lingering,omitempty"`
 }
 
-// UnitStatus is one loaded unit (DESIGN.md §45). MainPID is set when the
-// unit has a live process. Resource metrics are not reported.
+// UnitStatus is one loaded unit (DESIGN.md §24, §45). MainPID is set when
+// the unit has a live process. InvocationID is the last unit-start UUID.
+// Resource metrics are not reported.
 type UnitStatus struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Kind        string `json:"kind"`
-	Path        string `json:"path,omitempty"`
-	LoadState   string `json:"loadState"`
-	ActiveState string `json:"activeState"`
-	Enabled     bool   `json:"enabled"`
-	MainPID     int    `json:"mainPid,omitempty"`
-	Error       string `json:"error,omitempty"`
-	Next        string `json:"next,omitempty"`
-	Last        string `json:"last,omitempty"`
+	Name         string `json:"name"`
+	Description  string `json:"description,omitempty"`
+	Kind         string `json:"kind"`
+	Path         string `json:"path,omitempty"`
+	LoadState    string `json:"loadState"`
+	ActiveState  string `json:"activeState"`
+	Enabled      bool   `json:"enabled"`
+	MainPID      int    `json:"mainPid,omitempty"`
+	InvocationID string `json:"invocationId,omitempty"`
+	Error        string `json:"error,omitempty"`
+	Next         string `json:"next,omitempty"`
+	Last         string `json:"last,omitempty"`
 }
 
 // UnitResult is the payload for start, stop, and restart.

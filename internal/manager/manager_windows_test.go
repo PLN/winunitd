@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/journal"
 	"github.com/PLN/winunitd/internal/notify"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
@@ -49,6 +50,10 @@ func TestMain(m *testing.M) {
 			fmt.Fprintln(os.Stderr, msg)
 			_ = os.Stderr.Sync()
 		}
+		select {}
+	case "print-invocation":
+		fmt.Println(os.Getenv("WINUNIT_INVOCATION_ID"))
+		_ = os.Stdout.Sync()
 		select {}
 	case "exit":
 		recordHelperCount()
@@ -659,6 +664,9 @@ Environment="WINUNITD_JOB_PRINT_ERR=warn from journal"
 	if st.Unit == nil || st.Unit.ActiveState != "active" || st.Unit.MainPID != proc.PID() {
 		t.Fatalf("status = %+v", st.Unit)
 	}
+	if !journal.ValidInvocationID(st.Unit.InvocationID) {
+		t.Fatalf("status InvocationID = %q", st.Unit.InvocationID)
+	}
 
 	var logs *protocol.LogsResult
 	deadline := time.Now().Add(5 * time.Second)
@@ -672,11 +680,139 @@ Environment="WINUNITD_JOB_PRINT_ERR=warn from journal"
 			if _, err := os.Stat(path); err != nil {
 				t.Fatalf("per-unit journal file: %v", err)
 			}
+			for _, e := range logs.Entries {
+				if e.InvocationID != st.Unit.InvocationID {
+					t.Fatalf("journal invocation %q != status %q", e.InvocationID, st.Unit.InvocationID)
+				}
+			}
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("journal = %+v", logs)
+}
+
+func TestWindowsInvocationIDsDifferAcrossStarts(t *testing.T) {
+	dir := t.TempDir()
+	m := startWindowsHelperUnit(t, dir, "inv.service", `
+Type=simple
+`, "print-invocation", 0, "")
+	if _, err := m.Start(context.Background(), "inv"); err != nil {
+		t.Fatal(err)
+	}
+	_ = waitWindowsLiveProc(t, m, "inv.service")
+	st1, err := m.Status("inv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st1.Unit == nil || !journal.ValidInvocationID(st1.Unit.InvocationID) {
+		t.Fatalf("first status = %+v", st1.Unit)
+	}
+	id1 := st1.Unit.InvocationID
+	waitWindowsJournalMessage(t, m, "inv", id1)
+	logs1, err := m.Logs(protocol.LogsParams{Unit: "inv"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n1 := len(logs1.Entries)
+	if n1 == 0 {
+		t.Fatal("first run produced no journal lines")
+	}
+	for _, e := range logs1.Entries {
+		if e.InvocationID != id1 {
+			t.Fatalf("first-run line %+v", e)
+		}
+	}
+
+	if _, err := m.Stop("inv"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Start(context.Background(), "inv"); err != nil {
+		t.Fatal(err)
+	}
+	_ = waitWindowsLiveProc(t, m, "inv.service")
+	st2, err := m.Status("inv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st2.Unit == nil || !journal.ValidInvocationID(st2.Unit.InvocationID) {
+		t.Fatalf("second status = %+v", st2.Unit)
+	}
+	id2 := st2.Unit.InvocationID
+	if id2 == id1 {
+		t.Fatalf("second start reused InvocationID %s", id1)
+	}
+	waitWindowsJournalMessage(t, m, "inv", id2)
+	logs2, err := m.Logs(protocol.LogsParams{Unit: "inv"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs2.Entries) <= n1 {
+		t.Fatalf("second run added no journal lines: %+v", logs2.Entries)
+	}
+	for _, e := range logs2.Entries[n1:] {
+		if e.InvocationID == id1 {
+			t.Fatalf("second-run line shared first id: %+v", e)
+		}
+		if e.InvocationID != id2 {
+			t.Fatalf("second-run line %+v, want %s", e, id2)
+		}
+	}
+	for _, e := range logs2.Entries[:n1] {
+		if e.InvocationID != id1 {
+			t.Fatalf("first-run line rewritten: %+v", e)
+		}
+	}
+}
+
+func TestWindowsRestartAlwaysGetsNewInvocationID(t *testing.T) {
+	m, count := startWindowsRestartUnit(t, "always", 0, "count-then-sleep")
+	st1, err := m.Status("foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st1.Unit == nil || !journal.ValidInvocationID(st1.Unit.InvocationID) {
+		t.Fatalf("first status = %+v", st1.Unit)
+	}
+	id1 := st1.Unit.InvocationID
+	waitWindowsCount(t, count, 2, 5*time.Second)
+	_ = waitWindowsLiveProc(t, m, "foo.service")
+	deadline := time.Now().Add(5 * time.Second)
+	var id2 string
+	for time.Now().Before(deadline) {
+		st2, err := m.Status("foo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st2.Unit != nil && st2.Unit.InvocationID != "" && st2.Unit.InvocationID != id1 {
+			id2 = st2.Unit.InvocationID
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !journal.ValidInvocationID(id2) || id2 == id1 {
+		t.Fatalf("Restart= relaunch InvocationID = %q (first %s)", id2, id1)
+	}
+}
+
+func waitWindowsJournalMessage(t *testing.T, m *Manager, unit, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var last *protocol.LogsResult
+	for time.Now().Before(deadline) {
+		logs, err := m.Logs(protocol.LogsParams{Unit: unit})
+		if err != nil {
+			t.Fatal(err)
+		}
+		last = logs
+		for _, e := range logs.Entries {
+			if e.Message == msg {
+				return
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("journal missing %q: %+v", msg, last)
 }
 
 func hasLogMessage(logs *protocol.LogsResult, msg string) bool {
