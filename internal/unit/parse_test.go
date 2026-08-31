@@ -397,7 +397,126 @@ WorkingDirectory=C:\Tools
 			wantErr: []string{`invalid NotifyAccess "all"`},
 		},
 		{
-			name: "WatchdogMode tcp is rejected",
+			name: "WatchdogMode tcp loopback",
+			file: "web.service",
+			src: `
+[Service]
+Type=simple
+ExecStart=C:\App\web.exe
+WorkingDirectory=C:\App
+WatchdogSec=30s
+WatchdogMode=tcp
+WatchdogEndpoint=127.0.0.1:8080
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Service.WatchdogMode != WatchdogModeTCP {
+					t.Fatalf("mode = %s", u.Service.WatchdogMode)
+				}
+				if u.Service.WatchdogAddr != "127.0.0.1:8080" {
+					t.Fatalf("addr = %q", u.Service.WatchdogAddr)
+				}
+				if u.Service.NeedsNotifyPipe() {
+					t.Fatal("tcp watchdog must not require a notify pipe")
+				}
+			},
+		},
+		{
+			name: "WatchdogMode tcp ipv6 loopback",
+			file: "web.service",
+			src: `
+[Service]
+ExecStart=C:\App\web.exe
+WorkingDirectory=C:\App
+WatchdogSec=5s
+WatchdogMode=tcp
+WatchdogEndpoint=[::1]:9090
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Service.WatchdogMode != WatchdogModeTCP || u.Service.WatchdogAddr != "[::1]:9090" {
+					t.Fatalf("watchdog = %+v", u.Service)
+				}
+			},
+		},
+		{
+			name: "WatchdogMode http default status",
+			file: "web.service",
+			src: `
+[Service]
+ExecStart=C:\App\web.exe
+WorkingDirectory=C:\App
+WatchdogSec=10s
+WatchdogMode=http
+WatchdogEndpoint=http://127.0.0.1:8080/health
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Service.WatchdogMode != WatchdogModeHTTP {
+					t.Fatalf("mode = %s", u.Service.WatchdogMode)
+				}
+				if u.Service.WatchdogExpectedStatus != 200 {
+					t.Fatalf("status = %d", u.Service.WatchdogExpectedStatus)
+				}
+				if u.Service.WatchdogURL != "http://127.0.0.1:8080/health" {
+					t.Fatalf("url = %q", u.Service.WatchdogURL)
+				}
+				if u.Service.NeedsNotifyPipe() {
+					t.Fatal("http watchdog must not require a notify pipe")
+				}
+			},
+		},
+		{
+			name: "WatchdogMode http expected status",
+			file: "web.service",
+			src: `
+[Service]
+ExecStart=C:\App\web.exe
+WorkingDirectory=C:\App
+WatchdogSec=10s
+WatchdogMode=http
+WatchdogEndpoint=http://127.0.0.1:8080/health
+WatchdogExpectedStatus=204
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Service.WatchdogExpectedStatus != 204 {
+					t.Fatalf("status = %d", u.Service.WatchdogExpectedStatus)
+				}
+			},
+		},
+		{
+			name: "localhost endpoint is rewritten to 127.0.0.1",
+			file: "web.service",
+			src: `
+[Service]
+ExecStart=C:\App\web.exe
+WorkingDirectory=C:\App
+WatchdogSec=1s
+WatchdogMode=tcp
+WatchdogEndpoint=localhost:8080
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Service.WatchdogAddr != "127.0.0.1:8080" {
+					t.Fatalf("addr = %q", u.Service.WatchdogAddr)
+				}
+			},
+		},
+		{
+			name: "WatchdogMode window is rejected",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+WatchdogSec=30s
+WatchdogMode=window
+`,
+			wantErr: []string{`invalid WatchdogMode "window"`},
+		},
+		{
+			name: "WatchdogMode tcp without endpoint",
 			file: "foo.service",
 			src: `
 [Service]
@@ -406,7 +525,85 @@ WorkingDirectory=C:\Tools
 WatchdogSec=30s
 WatchdogMode=tcp
 `,
-			wantErr: []string{`invalid WatchdogMode "tcp"`},
+			wantErr: []string{"WatchdogMode=tcp requires WatchdogEndpoint"},
+		},
+		{
+			name: "WatchdogMode tcp without WatchdogSec",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+WatchdogMode=tcp
+WatchdogEndpoint=127.0.0.1:8080
+`,
+			wantErr: []string{"WatchdogMode=tcp requires WatchdogSec"},
+		},
+		{
+			name: "WatchdogEndpoint with notify mode",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+WatchdogSec=30s
+WatchdogMode=notify
+WatchdogEndpoint=127.0.0.1:8080
+`,
+			wantErr: []string{"WatchdogEndpoint is only valid with WatchdogMode=tcp or http"},
+		},
+		{
+			name: "non-loopback tcp endpoint",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+WatchdogSec=30s
+WatchdogMode=tcp
+WatchdogEndpoint=8.8.8.8:80
+`,
+			wantErr: []string{`WatchdogEndpoint host "8.8.8.8" is not a loopback address`},
+		},
+		{
+			name: "hostname tcp endpoint is rejected without DNS",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+WatchdogSec=30s
+WatchdogMode=tcp
+WatchdogEndpoint=example.com:80
+`,
+			wantErr: []string{`WatchdogEndpoint host "example.com" is not a loopback address`},
+		},
+		{
+			name: "non-loopback http endpoint",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+WatchdogSec=30s
+WatchdogMode=http
+WatchdogEndpoint=http://example.com/health
+`,
+			wantErr: []string{`WatchdogEndpoint host "example.com" is not a loopback address`},
+		},
+		{
+			name: "WatchdogExpectedStatus with tcp",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+WatchdogSec=30s
+WatchdogMode=tcp
+WatchdogEndpoint=127.0.0.1:8080
+WatchdogExpectedStatus=200
+`,
+			wantErr: []string{"WatchdogExpectedStatus is only valid with WatchdogMode=http"},
 		},
 		{
 			name: "unknown directive fails",
@@ -416,9 +613,9 @@ WatchdogMode=tcp
 Type=simple
 ExecStart=C:\Tools\foo.exe
 WorkingDirectory=C:\Tools
-WatchdogEndpoint=127.0.0.1:8080
+KillMode=job
 `,
-			wantErr: []string{`unknown directive "WatchdogEndpoint"`},
+			wantErr: []string{`unknown directive "KillMode"`},
 		},
 		{
 			name: "unknown section fails",

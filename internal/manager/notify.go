@@ -211,11 +211,30 @@ func (m *Manager) startWatchdog(name string, svc *unit.ServiceSpec, gen uint64) 
 	if svc == nil || !svc.WatchdogEnabled() {
 		return
 	}
-	interval := svc.WatchdogSec
-	go m.watchdogLoop(name, interval, gen)
+	m.stopWatchdog(name)
+	ctx, cancel := context.WithCancel(context.Background())
+	m.mu.Lock()
+	m.watchdogs[name] = cancel
+	m.mu.Unlock()
+	switch svc.WatchdogMode {
+	case unit.WatchdogModeTCP, unit.WatchdogModeHTTP:
+		go m.probeWatchdogLoop(ctx, name, svc, gen)
+	default:
+		go m.watchdogLoop(ctx, name, svc.WatchdogSec, gen)
+	}
 }
 
-func (m *Manager) watchdogLoop(name string, interval time.Duration, gen uint64) {
+func (m *Manager) stopWatchdog(name string) {
+	m.mu.Lock()
+	cancel := m.watchdogs[name]
+	delete(m.watchdogs, name)
+	m.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (m *Manager) watchdogLoop(ctx context.Context, name string, interval time.Duration, gen uint64) {
 	m.mu.Lock()
 	rt := m.notifies[name]
 	m.mu.Unlock()
@@ -226,6 +245,8 @@ func (m *Manager) watchdogLoop(name string, interval time.Duration, gen uint64) 
 	defer timer.Stop()
 	for {
 		select {
+		case <-ctx.Done():
+			return
 		case <-rt.done:
 			return
 		case <-rt.pulse:
@@ -239,6 +260,33 @@ func (m *Manager) watchdogLoop(name string, interval time.Duration, gen uint64) 
 		case <-timer.C:
 			m.onWatchdogTimeout(name, gen)
 			return
+		}
+	}
+}
+
+func (m *Manager) probeWatchdogLoop(ctx context.Context, name string, svc *unit.ServiceSpec, gen uint64) {
+	interval := svc.WatchdogSec
+	if interval <= 0 {
+		return
+	}
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			pctx, cancel := context.WithTimeout(ctx, unit.WatchdogProbeTimeout(interval))
+			err := svc.ProbeWatchdog(pctx)
+			cancel()
+			if ctx.Err() != nil {
+				return
+			}
+			if err != nil {
+				m.onWatchdogTimeout(name, gen)
+				return
+			}
+			timer.Reset(interval)
 		}
 	}
 }
