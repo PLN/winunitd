@@ -525,8 +525,8 @@ func TestWindowsJournalWriteAndRead(t *testing.T) {
 		"ExecStart=%s\n"+
 		"WorkingDirectory=%s\n"+
 		"Environment=WINUNITD_JOB_HELPER=print\n"+
-		"Environment=WINUNITD_JOB_PRINT=hello from journal\n"+
-		"Environment=WINUNITD_JOB_PRINT_ERR=warn from journal\n",
+		"Environment=\"WINUNITD_JOB_PRINT=hello from journal\"\n"+
+		"Environment=\"WINUNITD_JOB_PRINT_ERR=warn from journal\"\n",
 		mustJSONArgv(t, os.Args[0]), dir)
 	if err := os.WriteFile(filepath.Join(units, "log.service"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -535,8 +535,12 @@ func TestWindowsJournalWriteAndRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Reload(); err != nil {
+	rel, err := m.Reload()
+	if err != nil {
 		t.Fatal(err)
+	}
+	if len(rel.Errors) > 0 {
+		t.Fatalf("reload errors: %v", rel.Errors)
 	}
 	t.Cleanup(func() { _, _ = m.Stop("log") })
 	if _, err := m.Start(context.Background(), "log"); err != nil {
