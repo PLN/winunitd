@@ -283,6 +283,18 @@ func envBlock(env []string) (*uint16, error) {
 
 func (p *winProc) PID() int { return p.pid }
 
+func (p *winProc) ExitCode() (uint32, bool) {
+	if p == nil {
+		return 0, false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.exited {
+		return 0, false
+	}
+	return p.exitCode, true
+}
+
 func (p *winProc) Job() Job { return p.job }
 
 func (p *winProc) Stdout() io.ReadCloser { return p.stdout }
@@ -372,7 +384,7 @@ func (p *winProc) wait(ctx context.Context) error {
 		if code == 0 {
 			return nil
 		}
-		return fmt.Errorf("exit status %d", code)
+		return &ExitStatus{Code: code}
 	}
 	if h == 0 {
 		p.mu.Unlock()
@@ -418,7 +430,7 @@ func (p *winProc) wait(ctx context.Context) error {
 			done <- nil
 			return
 		}
-		done <- fmt.Errorf("exit status %d", exit)
+		done <- &ExitStatus{Code: exit}
 	}()
 
 	select {
