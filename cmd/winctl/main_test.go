@@ -2,10 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/PLN/winunitd/internal/manager"
+	"github.com/PLN/winunitd/internal/protocol"
 )
 
 func TestRunHelp(t *testing.T) {
@@ -16,6 +23,9 @@ func TestRunHelp(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "verify") {
 		t.Fatalf("help missing verify: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "list-units") {
+		t.Fatalf("help missing list-units: %s", out.String())
 	}
 }
 
@@ -127,13 +137,152 @@ OnCalendar=daily
 	})
 }
 
-func TestUnimplementedStillZero(t *testing.T) {
+func TestStartWithoutDaemon(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := run([]string{"start", "foo"}, &out, &errb)
-	if code != 0 {
-		t.Fatalf("exit %d", code)
+	if code == 0 {
+		t.Fatalf("start without daemon should fail; stderr=%s", errb.String())
 	}
-	if !strings.Contains(errb.String(), "not implemented") {
+	if !strings.Contains(errb.String(), "cannot connect to winunitd") {
 		t.Fatalf("stderr=%s", errb.String())
 	}
+}
+
+func TestUnknownCommand(t *testing.T) {
+	var out, errb bytes.Buffer
+	code := run([]string{"not-a-verb"}, &out, &errb)
+	if code != 2 {
+		t.Fatalf("exit %d", code)
+	}
+}
+
+func TestCLIListUnitsOverPipe(t *testing.T) {
+	m, dial, stop := startTestDaemon(t)
+	defer stop()
+	_ = m
+
+	var out, errb bytes.Buffer
+	code := runCLI([]string{"list-units"}, &out, &errb, dial)
+	if code != 0 {
+		t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "foo.service") {
+		t.Fatalf("stdout=%s", out.String())
+	}
+	if !strings.Contains(out.String(), "inactive") {
+		t.Fatalf("stdout=%s", out.String())
+	}
+}
+
+func TestCLIStartAndStatusOverPipe(t *testing.T) {
+	_, dial, stop := startTestDaemon(t)
+	defer stop()
+
+	var out, errb bytes.Buffer
+	code := runCLI([]string{"start", "foo"}, &out, &errb, dial)
+	if code != 0 {
+		t.Fatalf("start exit %d stderr=%s", code, errb.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = runCLI([]string{"status", "foo"}, &out, &errb, dial)
+	if code != 0 {
+		t.Fatalf("status exit %d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "foo.service") || !strings.Contains(out.String(), "active") {
+		t.Fatalf("stdout=%s", out.String())
+	}
+}
+
+func TestCLIVerifyUnitNameOverPipe(t *testing.T) {
+	_, dial, stop := startTestDaemon(t)
+	defer stop()
+
+	var out, errb bytes.Buffer
+	code := runCLI([]string{"verify", "foo.service"}, &out, &errb, dial)
+	if code != 0 {
+		t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "foo.service: verified") {
+		t.Fatalf("stdout=%s", out.String())
+	}
+}
+
+func TestCLIDoesNotParseCLIAsAPI(t *testing.T) {
+	// The CLI is a client of the versioned RPC. A raw protocol call must
+	// succeed without involving winctl output.
+	_, dial, stop := startTestDaemon(t)
+	defer stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := dial(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	client := protocol.NewClient(conn)
+	got, err := client.ListUnits(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Units) == 0 {
+		t.Fatal("expected units from RPC")
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded protocol.ListUnitsResult
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Units[0].Name != got.Units[0].Name {
+		t.Fatalf("round trip = %+v", decoded)
+	}
+}
+
+func startTestDaemon(t *testing.T) (*manager.Manager, func(context.Context) (net.Conn, error), func()) {
+	t.Helper()
+	dir := t.TempDir()
+	units := filepath.Join(dir, "units")
+	if err := os.MkdirAll(units, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(units, "foo.service"), []byte(`
+[Unit]
+Description=Foo
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := manager.New(manager.Config{BaseDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	errc := make(chan error, 1)
+	go func() { errc <- protocol.Serve(ctx, lis, m, protocol.AllowAdmin) }()
+	dial := func(ctx context.Context) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, lis.Addr().Network(), lis.Addr().String())
+	}
+	stop := func() {
+		cancel()
+		_ = lis.Close()
+		select {
+		case <-errc:
+		case <-time.After(2 * time.Second):
+		}
+	}
+	return m, dial, stop
 }
