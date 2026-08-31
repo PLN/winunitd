@@ -2,11 +2,31 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"time"
 
 	"github.com/PLN/winunitd/internal/unit"
 )
+
+// ExitStatus is a process exit. Wait returns nil for code 0 and *ExitStatus
+// for any other code. Crash/signal-style failures that do not produce an
+// exit code are returned as a different error.
+type ExitStatus struct {
+	Code uint32
+}
+
+func (e *ExitStatus) Error() string {
+	if e == nil {
+		return "exit status 0"
+	}
+	return fmt.Sprintf("exit status %d", e.Code)
+}
+
+// Failed reports a non-zero exit.
+func (e *ExitStatus) Failed() bool {
+	return e != nil && e.Code != 0
+}
 
 // StartSpec is a CreateProcess request for one unit invocation.
 type StartSpec struct {
@@ -40,9 +60,10 @@ type Process interface {
 	Stdout() io.ReadCloser
 	Stderr() io.ReadCloser
 	Wait(ctx context.Context) error
+	// ExitCode is the main-process exit after Wait has observed it.
+	ExitCode() (code uint32, exited bool)
 	// Stop kills the unit job (whole tree) and waits up to timeout for the
-	// main process to exit. TimeoutStopSec wait-then-kill stays crude (M6
-	// owns restart).
+	// main process to exit.
 	Stop(timeout time.Duration) error
 	Close() error
 }

@@ -24,14 +24,18 @@ type loaded struct {
 
 // Manager holds loaded units and serves the control protocol.
 type Manager struct {
-	cfg    Config
-	launch runtime.Launcher
-	mu     sync.Mutex
-	units  map[string]*loaded
-	graph  *core.Graph
-	states map[string]core.State
-	errors map[string]string
-	procs  map[string]runtime.Process
+	cfg      Config
+	launch   runtime.Launcher
+	mu       sync.Mutex
+	units    map[string]*loaded
+	graph    *core.Graph
+	states   map[string]core.State
+	errors   map[string]string
+	procs    map[string]runtime.Process
+	subs     map[string]core.Substate
+	gens     map[string]uint64
+	cancels  map[string]context.CancelFunc
+	stopping map[string]bool
 }
 
 // New creates a manager. Reload must be called to load units.
@@ -44,12 +48,16 @@ func New(cfg Config) (*Manager, error) {
 		launch = runtime.NewLauncher(cfg.Daemon)
 	}
 	return &Manager{
-		cfg:    cfg,
-		launch: launch,
-		units:  make(map[string]*loaded),
-		states: make(map[string]core.State),
-		errors: make(map[string]string),
-		procs:  make(map[string]runtime.Process),
+		cfg:      cfg,
+		launch:   launch,
+		units:    make(map[string]*loaded),
+		states:   make(map[string]core.State),
+		errors:   make(map[string]string),
+		procs:    make(map[string]runtime.Process),
+		subs:     make(map[string]core.Substate),
+		gens:     make(map[string]uint64),
+		cancels:  make(map[string]context.CancelFunc),
+		stopping: make(map[string]bool),
 	}, nil
 }
 
@@ -294,6 +302,9 @@ func (m *Manager) applyRunLocked(run *core.Run) {
 		return
 	}
 	for name, st := range run.States {
+		if m.subOfLocked(name) == core.SubAutoRestart {
+			continue
+		}
 		m.states[name] = st
 	}
 	for name, err := range run.Errors {
@@ -303,7 +314,8 @@ func (m *Manager) applyRunLocked(run *core.Run) {
 	}
 }
 
-// Stop kills the unit Job Object so the whole process tree dies.
+// Stop kills the unit Job Object so the whole process tree dies and
+// cancels a pending Restart= relaunch.
 func (m *Manager) Stop(name string) (*protocol.UnitResult, error) {
 	m.mu.Lock()
 	ld, err := m.lookup(name)
@@ -314,8 +326,13 @@ func (m *Manager) Stop(name string) (*protocol.UnitResult, error) {
 	name = ld.unit.Name
 	proc := m.procs[name]
 	delete(m.procs, name)
+	m.stopping[name] = true
+	m.gens[name]++
+	m.cancelRestartLocked(name)
 	timeout := stopTimeout(ld.unit)
-	m.states[name] = core.Deactivating
+	st, sub := core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventStopRequested)
+	m.states[name] = st
+	m.subs[name] = sub
 	delete(m.errors, name)
 	m.mu.Unlock()
 
@@ -325,11 +342,13 @@ func (m *Manager) Stop(name string) (*protocol.UnitResult, error) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.states[name] = core.Inactive
+	st, sub = core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventStopFinished)
+	m.states[name] = st
+	m.subs[name] = sub
 	return &protocol.UnitResult{Unit: name, ActiveState: core.Inactive.String()}, nil
 }
 
-// Restart is stop then start. Restart= policy is M6.
+// Restart is stop then start.
 func (m *Manager) Restart(ctx context.Context, name string) (*protocol.UnitResult, error) {
 	if _, err := m.Stop(name); err != nil {
 		return nil, err

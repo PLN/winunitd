@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -246,6 +247,23 @@ func TestKillUnitJobTearsDownTree(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("tree still alive parent=%v child=%v", processAlive(p.PID()), processAlive(child))
+}
+
+func TestOneshotFailureReturnsExitStatus(t *testing.T) {
+	_, err := DefaultLauncher().Start(context.Background(), StartSpec{
+		Unit: "fail.service",
+		Type: unit.TypeOneshot,
+		Argv: []string{testAbs(t)},
+		Dir:  t.TempDir(),
+		Env:  helperEnv("WINUNITD_JOB_HELPER=fail"),
+	})
+	if err == nil {
+		t.Fatal("expected non-zero oneshot to fail")
+	}
+	var st *ExitStatus
+	if !errors.As(err, &st) || st.Code != 2 {
+		t.Fatalf("err = %v", err)
+	}
 }
 
 func TestStopKillsUnitJobTree(t *testing.T) {
