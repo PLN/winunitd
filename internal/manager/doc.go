@@ -7,5 +7,7 @@
 // under enabled/<target>/<unit>; boot starts default.target, which Wants=
 // timers.target so enabled timers arm. stdout/stderr are stored under
 // journal/<unit>.log and returned by logs. The timer scheduler lives in
-// internal/timers (not Task Scheduler).
+// internal/timers (not Task Scheduler). Manager shutdown stops units in
+// reverse After=/Before= order (shutdown.target as root) then the daemon
+// closes the daemon Job Object.
 package manager

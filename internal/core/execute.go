@@ -20,6 +20,20 @@ func (f StartFunc) Start(ctx context.Context, name string) error {
 	return f(ctx, name)
 }
 
+// Stopper deactivates a unit. KillMode=job (TerminateJobObject) lives in
+// the manager; graph execution stays free of Windows APIs.
+type Stopper interface {
+	Stop(ctx context.Context, name string) error
+}
+
+// StopFunc adapts a function to Stopper.
+type StopFunc func(ctx context.Context, name string) error
+
+// Stop calls f.
+func (f StopFunc) Stop(ctx context.Context, name string) error {
+	return f(ctx, name)
+}
+
 // DependencyError means a unit failed because a Requires= dependency failed.
 type DependencyError struct {
 	Unit     string
@@ -49,6 +63,7 @@ type Run struct {
 	States  map[string]State
 	Errors  map[string]error
 	Started []string // units whose Starter.Start was invoked
+	Stopped []string // units whose Stopper.Stop was invoked
 }
 
 // StateOf returns the recorded state, or Inactive if name was not in the run.
@@ -78,6 +93,17 @@ func (g *Graph) Start(ctx context.Context, starter Starter, names ...string) (*R
 		return nil, err
 	}
 	return tx.Execute(ctx, starter)
+}
+
+// Stop plans and executes a stop transaction. Independent branches stop
+// concurrently; reverse After= is honored without serializing the graph.
+// A Stopper error does not skip the rest of the transaction (DESIGN.md §42).
+func (g *Graph) Stop(ctx context.Context, stopper Stopper, names ...string) (*Run, error) {
+	tx, err := g.PlanStop(names...)
+	if err != nil {
+		return nil, err
+	}
+	return tx.ExecuteStop(ctx, stopper)
 }
 
 // Execute runs a previously validated transaction. Independent branches
@@ -148,14 +174,81 @@ func (tx *Transaction) Execute(ctx context.Context, starter Starter) (*Run, erro
 		}
 	}
 
-	var rootErr error
-	for _, root := range tx.roots {
-		if err := ex.run.Errors[root]; err != nil {
-			rootErr = err
-			break
+	return ex.run, rootError(tx, ex.run)
+}
+
+// ExecuteStop runs a previously validated stop transaction.
+func (tx *Transaction) ExecuteStop(ctx context.Context, stopper Stopper) (*Run, error) {
+	if stopper == nil {
+		return nil, fmt.Errorf("nil stopper")
+	}
+	if err := tx.validate(); err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	names := tx.jobNames()
+	ex := &stopExecutor{
+		tx:        tx,
+		stopper:   stopper,
+		ctx:       ctx,
+		launched:  make(map[string]bool, len(names)),
+		released:  make(map[string]bool, len(names)),
+		remaining: make(map[string]int, len(names)),
+		unblock:   make(map[string][]string, len(names)),
+		run: &Run{
+			States: make(map[string]State, len(names)),
+			Errors: make(map[string]error, len(names)),
+		},
+	}
+	for _, name := range names {
+		ex.run.States[name] = Active
+		deps := tx.waitsFor[name]
+		ex.remaining[name] = len(deps)
+		for _, dep := range deps {
+			ex.unblock[dep] = append(ex.unblock[dep], name)
 		}
 	}
-	return ex.run, rootErr
+
+	finished := make(chan startResult, len(names))
+	for {
+		for _, name := range names {
+			ex.tryLaunch(name, finished)
+		}
+		if ex.inflight == 0 {
+			break
+		}
+		res := <-finished
+		ex.inflight--
+		ex.onFinish(res)
+	}
+	for ex.inflight > 0 {
+		res := <-finished
+		ex.inflight--
+		ex.onFinish(res)
+	}
+
+	for _, name := range names {
+		if !ex.launched[name] {
+			ex.markDone(name, fmt.Errorf("unit %q was not stopped", name))
+		}
+	}
+
+	return ex.run, rootError(tx, ex.run)
+}
+
+func rootError(tx *Transaction, run *Run) error {
+	if tx == nil || run == nil {
+		return nil
+	}
+	for _, root := range tx.roots {
+		if err := run.Errors[root]; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type startResult struct {
@@ -257,6 +350,62 @@ func (e *executor) markFailed(name string, err error) {
 }
 
 func (e *executor) releaseAfter(name string) {
+	if e.released[name] {
+		return
+	}
+	e.released[name] = true
+	for _, succ := range e.unblock[name] {
+		e.remaining[succ]--
+		if e.remaining[succ] < 0 {
+			e.remaining[succ] = 0
+		}
+	}
+}
+
+type stopExecutor struct {
+	tx        *Transaction
+	stopper   Stopper
+	ctx       context.Context
+	run       *Run
+	launched  map[string]bool
+	released  map[string]bool
+	remaining map[string]int
+	unblock   map[string][]string
+	inflight  int
+}
+
+func (e *stopExecutor) tryLaunch(name string, finished chan<- startResult) {
+	if e.launched[name] {
+		return
+	}
+	if e.remaining[name] > 0 {
+		return
+	}
+	e.launched[name] = true
+	e.run.States[name] = Deactivating
+	e.run.Stopped = append(e.run.Stopped, name)
+	e.inflight++
+	go func(name string) {
+		finished <- startResult{name: name, err: e.stopper.Stop(e.ctx, name)}
+	}(name)
+}
+
+func (e *stopExecutor) onFinish(res startResult) {
+	e.releaseAfter(res.name)
+	e.markDone(res.name, res.err)
+}
+
+func (e *stopExecutor) markDone(name string, err error) {
+	if err != nil {
+		if _, ok := e.run.Errors[name]; !ok {
+			e.run.Errors[name] = err
+		}
+	}
+	e.run.States[name] = Inactive
+	e.releaseAfter(name)
+}
+
+func (e *stopExecutor) releaseAfter(name string) {
 	if e.released[name] {
 		return
 	}
