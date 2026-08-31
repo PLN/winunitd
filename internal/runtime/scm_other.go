@@ -23,3 +23,9 @@ func Uninstall() error {
 func RunHost(run func(ctx context.Context) error) error {
 	return errNotWindows
 }
+
+// RunHostNotify is only available on Windows.
+func RunHostNotify(run func(ctx context.Context) error, onSession func(SessionChange)) error {
+	_ = onSession
+	return errNotWindows
+}

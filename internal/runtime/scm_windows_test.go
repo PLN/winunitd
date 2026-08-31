@@ -51,6 +51,9 @@ func TestAcceptedControlsIncludePreshutdown(t *testing.T) {
 	if acceptedControls&svc.AcceptPreShutdown == 0 {
 		t.Fatal("missing AcceptPreShutdown")
 	}
+	if acceptedControls&svc.AcceptSessionChange == 0 {
+		t.Fatal("missing AcceptSessionChange")
+	}
 	if !isStopCmd(svc.Stop) || !isStopCmd(svc.Shutdown) || !isStopCmd(svc.PreShutdown) {
 		t.Fatal("stop/shutdown/preshutdown must cancel the host")
 	}

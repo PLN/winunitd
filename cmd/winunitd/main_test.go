@@ -19,6 +19,12 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(got, `\\.\pipe\winunitd\control`) {
 		t.Fatalf("help missing pipe: %s", got)
 	}
+	if !strings.Contains(got, "--user-manager") {
+		t.Fatalf("help missing --user-manager: %s", got)
+	}
+	if !strings.Contains(got, `\\.\pipe\winunitd\user\`) {
+		t.Fatalf("help missing user pipe: %s", got)
+	}
 	if !strings.Contains(got, "install") || !strings.Contains(got, "uninstall") {
 		t.Fatalf("help missing install/uninstall: %s", got)
 	}
@@ -65,5 +71,13 @@ func TestRunInstallUninstallOffWindows(t *testing.T) {
 	code = run([]string{"uninstall"}, &out, &errb)
 	if code != 1 {
 		t.Fatalf("uninstall exit %d stderr=%s", code, errb.String())
+	}
+}
+
+func TestRunUserManagerInvalidSID(t *testing.T) {
+	var out, errb bytes.Buffer
+	code := run([]string{"--user-manager", "not-a-sid"}, &out, &errb)
+	if code != 2 {
+		t.Fatalf("exit %d stderr=%s", code, errb.String())
 	}
 }
