@@ -176,7 +176,18 @@ func TestCLIListUnitsOverPipe(t *testing.T) {
 }
 
 func TestCLIStartAndStatusOverPipe(t *testing.T) {
-	_, dial, stop := startTestDaemon(t)
+	// Start is real CreateProcess. Use ping.exe so this is valid on
+	// windows-latest; Linux DefaultLauncher is a stub and ignores the path.
+	_, dial, stop := startTestDaemonUnit(t, `
+[Unit]
+Description=Foo
+[Service]
+Type=simple
+ExecStart=C:\Windows\System32\ping.exe
+ExecStartArg=-t
+ExecStartArg=127.0.0.1
+WorkingDirectory=C:\Windows\System32
+`, nil)
 	defer stop()
 
 	var out, errb bytes.Buffer
@@ -245,21 +256,26 @@ func TestCLIDoesNotParseCLIAsAPI(t *testing.T) {
 
 func startTestDaemon(t *testing.T) (*manager.Manager, func(context.Context) (net.Conn, error), func()) {
 	t.Helper()
-	dir := t.TempDir()
-	units := filepath.Join(dir, "units")
-	if err := os.MkdirAll(units, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(units, "foo.service"), []byte(`
+	return startTestDaemonUnit(t, `
 [Unit]
 Description=Foo
 [Service]
 ExecStart=C:\Tools\foo.exe
 WorkingDirectory=C:\Tools
-`), 0o644); err != nil {
+`, runtime.StubLauncher())
+}
+
+func startTestDaemonUnit(t *testing.T, unitBody string, launch runtime.Launcher) (*manager.Manager, func(context.Context) (net.Conn, error), func()) {
+	t.Helper()
+	dir := t.TempDir()
+	units := filepath.Join(dir, "units")
+	if err := os.MkdirAll(units, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	m, err := manager.New(manager.Config{BaseDir: dir, Launch: runtime.StubLauncher()})
+	if err := os.WriteFile(filepath.Join(units, "foo.service"), []byte(unitBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := manager.New(manager.Config{BaseDir: dir, Launch: launch})
 	if err != nil {
 		t.Fatal(err)
 	}
