@@ -43,7 +43,13 @@ func serveUser(ctx context.Context, sid, baseDir string, stderr io.Writer) error
 		fmt.Fprintf(stderr, "winunitd: assign user manager job: %v\n", err)
 	}
 
-	m, err := manager.New(manager.Config{BaseDir: baseDir, Daemon: job})
+	m, err := manager.New(manager.Config{
+		BaseDir: baseDir,
+		Daemon:  job,
+		HasInteractiveSession: func() bool {
+			return runtime.SIDHasInteractiveSession(sid)
+		},
+	})
 	if err != nil {
 		_ = job.Close()
 		daemonJob = nil

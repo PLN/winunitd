@@ -6,9 +6,11 @@ import (
 	"io"
 )
 
-// ErrNoUserToken is returned when WTSQueryUserToken cannot produce a
-// token. P1 fails closed: no stored-credential or alternate-logon fallback.
-var ErrNoUserToken = errors.New("no user token (WTSQueryUserToken failed; fail closed)")
+// ErrNoUserToken is returned when a user token cannot be obtained.
+// Interactive logon uses WTSQueryUserToken only. Linger uses S4U (and
+// an optional named CredMan/LSA URI for network creds). There is no
+// password-in-file or password-in-env fallback.
+var ErrNoUserToken = errors.New("no user token (fail closed)")
 
 // UserToken is a logon token for one interactive session plus the
 // identity needed for a deterministic environment. Production obtains

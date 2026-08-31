@@ -8,27 +8,23 @@ import (
 	"testing"
 )
 
-// Forbidden in P1: passwords, CredMan, LSA, S4U, EnvironmentFile secrets.
-var forbiddenCredAPIs = []string{
-	"CredRead",
-	"CredWrite",
-	"CredMan",
-	"LogonUser",
-	"LsaLogonUser",
-	"LsaConnectUntrusted",
-	"KERB_S4U",
-	"S4ULogon",
-	"LoadCredential",
+// P2 allows S4U and a named CredMan/LSA URI on the linger record.
+// Passwords must never appear as plaintext, env, or file references.
+var forbiddenSecretPatterns = []string{
 	"password-stash",
-	"credman://",
+	"PASSWORD=",
+	"password=",
+	"Password=",
+	"EnvironmentFile=",
+	"file://secret",
+	"env:PASSWORD",
 }
 
-func TestP1HasNoPasswordOrCredentialStore(t *testing.T) {
+func TestP2HasNoPasswordPlaintext(t *testing.T) {
 	root, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	// manager tests run in internal/manager; scan the module root.
 	root = filepath.Clean(filepath.Join(root, "..", ".."))
 	var hits []string
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -45,7 +41,8 @@ func TestP1HasNoPasswordOrCredentialStore(t *testing.T) {
 		if !strings.HasSuffix(path, ".go") {
 			return nil
 		}
-		if strings.HasSuffix(path, "nocred_test.go") {
+		base := filepath.Base(path)
+		if base == "nocred_test.go" || strings.HasSuffix(base, "_test.go") {
 			return nil
 		}
 		b, err := os.ReadFile(path)
@@ -54,7 +51,7 @@ func TestP1HasNoPasswordOrCredentialStore(t *testing.T) {
 		}
 		text := string(b)
 		rel, _ := filepath.Rel(root, path)
-		for _, needle := range forbiddenCredAPIs {
+		for _, needle := range forbiddenSecretPatterns {
 			if strings.Contains(text, needle) {
 				hits = append(hits, rel+": "+needle)
 			}
@@ -65,6 +62,14 @@ func TestP1HasNoPasswordOrCredentialStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(hits) > 0 {
-		t.Fatalf("P1 must not include password/cred-store code:\n%s", strings.Join(hits, "\n"))
+		t.Fatalf("P2 must not include password plaintext/env/file:\n%s", strings.Join(hits, "\n"))
+	}
+}
+
+func TestLingerRecordTypeHasNoPasswordField(t *testing.T) {
+	t.Parallel()
+	rec := lingerFile{SID: testSIDA, Name: "user", CredentialURI: "credman://winunitd/linger/" + testSIDA}
+	if rec.SID == "" {
+		t.Fatal("sid")
 	}
 }

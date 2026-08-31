@@ -11,6 +11,8 @@
 // Per-user managers listen on \\.\pipe\winunitd\user\<SID>\control
 // (that user, LocalSystem, and Administrators). winctl --user dials
 // that pipe; bare winctl stays on the system pipe.
+// enable-linger / disable-linger are administrator verbs on the system
+// pipe only.
 //
 // Transport is newline-delimited compact JSON over a byte stream, so the
 // same codec and handler can run on a Windows named pipe or on a fake

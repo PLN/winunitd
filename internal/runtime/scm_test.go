@@ -33,7 +33,7 @@ func TestEnsureDataDirs(t *testing.T) {
 	if err := EnsureDataDirs(base); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"units", "enabled", "journal", "runtime"}
+	want := []string{"units", "enabled", "journal", "runtime", "linger"}
 	if len(DataDirNames) != len(want) {
 		t.Fatalf("DataDirNames = %v", DataDirNames)
 	}

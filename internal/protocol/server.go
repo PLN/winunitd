@@ -94,6 +94,9 @@ func dispatch(ctx context.Context, h Handler, peer Peer, req *Request) *Response
 	if !KnownMethod(req.Method) {
 		return newResponse(id, nil, ErrMethodNotFound(req.Method))
 	}
+	if LingerMethod(req.Method) && !peer.CanLinger() {
+		return newResponse(id, nil, ErrPermissionDenied())
+	}
 	result, err := h.Handle(ctx, req.Method, req.Params)
 	return newResponse(id, result, err)
 }
