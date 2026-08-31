@@ -324,6 +324,91 @@ WorkingDirectory=C:\Tools
 			wantErr: []string{"absolute path"},
 		},
 		{
+			name: "notify type is valid",
+			file: "worker.service",
+			src: `
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStart=C:\App\worker.exe
+WorkingDirectory=C:\App
+WatchdogSec=30s
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Service.Type != TypeNotify {
+					t.Fatalf("type = %s", u.Service.Type)
+				}
+				if u.Service.NotifyAccess != NotifyAccessMain {
+					t.Fatalf("notifyaccess = %s", u.Service.NotifyAccess)
+				}
+				if !u.Service.WatchdogSecSet || u.Service.WatchdogSec != 30*time.Second {
+					t.Fatalf("watchdog = %v set=%v", u.Service.WatchdogSec, u.Service.WatchdogSecSet)
+				}
+				if u.Service.WatchdogMode != WatchdogModeNotify {
+					t.Fatalf("watchdogmode default = %s", u.Service.WatchdogMode)
+				}
+			},
+		},
+		{
+			name: "WatchdogMode notify explicit",
+			file: "worker.service",
+			src: `
+[Service]
+Type=simple
+ExecStart=C:\App\worker.exe
+WorkingDirectory=C:\App
+WatchdogSec=5s
+WatchdogMode=notify
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Service.WatchdogMode != WatchdogModeNotify || u.Service.WatchdogSec != 5*time.Second {
+					t.Fatalf("watchdog = %+v", u.Service)
+				}
+			},
+		},
+		{
+			name: "Restart on-watchdog is valid",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+Restart=on-watchdog
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Service.Restart != RestartOnWatchdog {
+					t.Fatalf("restart = %s", u.Service.Restart)
+				}
+			},
+		},
+		{
+			name: "NotifyAccess all is rejected",
+			file: "foo.service",
+			src: `
+[Service]
+Type=notify
+NotifyAccess=all
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`,
+			wantErr: []string{`invalid NotifyAccess "all"`},
+		},
+		{
+			name: "WatchdogMode tcp is rejected",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+WatchdogSec=30s
+WatchdogMode=tcp
+`,
+			wantErr: []string{`invalid WatchdogMode "tcp"`},
+		},
+		{
 			name: "unknown directive fails",
 			file: "foo.service",
 			src: `
@@ -331,9 +416,9 @@ WorkingDirectory=C:\Tools
 Type=simple
 ExecStart=C:\Tools\foo.exe
 WorkingDirectory=C:\Tools
-WatchdogSec=60s
+WatchdogEndpoint=127.0.0.1:8080
 `,
-			wantErr: []string{`unknown directive "WatchdogSec"`},
+			wantErr: []string{`unknown directive "WatchdogEndpoint"`},
 		},
 		{
 			name: "unknown section fails",
@@ -353,11 +438,11 @@ Enabled=true
 			file: "foo.service",
 			src: `
 [Service]
-Type=notify
+Type=forking
 ExecStart=C:\Tools\foo.exe
 WorkingDirectory=C:\Tools
 `,
-			wantErr: []string{`invalid Type "notify"`},
+			wantErr: []string{`invalid Type "forking"`},
 		},
 		{
 			name: "invalid restart fails",
@@ -366,9 +451,9 @@ WorkingDirectory=C:\Tools
 [Service]
 ExecStart=C:\Tools\foo.exe
 WorkingDirectory=C:\Tools
-Restart=on-watchdog
+Restart=on-abnormal
 `,
-			wantErr: []string{`invalid Restart "on-watchdog"`},
+			wantErr: []string{`invalid Restart "on-abnormal"`},
 		},
 		{
 			name: "timer implicit unit",

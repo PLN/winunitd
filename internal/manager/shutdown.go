@@ -119,6 +119,8 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 	m.stopping[name] = true
 	m.gens[name]++
 	m.cancelRestartLocked(name)
+	rt := m.notifies[name]
+	delete(m.notifies, name)
 	timeout := stopTimeout(ld.unit)
 	st, sub := core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventStopRequested)
 	m.states[name] = st
@@ -126,6 +128,10 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 	delete(m.errors, name)
 	kind := ld.unit.Kind
 	m.mu.Unlock()
+
+	if rt != nil {
+		rt.Close()
+	}
 
 	if kind == unit.KindTimer && m.engine != nil {
 		m.engine.Disarm(name)

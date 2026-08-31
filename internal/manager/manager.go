@@ -25,21 +25,23 @@ type loaded struct {
 
 // Manager holds loaded units and serves the control protocol.
 type Manager struct {
-	cfg      Config
-	launch   runtime.Launcher
-	journal  *journal.Store
-	engine   *timers.Engine
-	mu       sync.Mutex
-	units    map[string]*loaded
-	graph    *core.Graph
-	states   map[string]core.State
-	errors   map[string]string
-	procs    map[string]runtime.Process
-	subs     map[string]core.Substate
-	gens     map[string]uint64
-	cancels  map[string]context.CancelFunc
-	stopping map[string]bool
-	session  sync.Mutex // serializes graphical-session.target start/stop
+	cfg        Config
+	launch     runtime.Launcher
+	journal    *journal.Store
+	engine     *timers.Engine
+	mu         sync.Mutex
+	units      map[string]*loaded
+	graph      *core.Graph
+	states     map[string]core.State
+	errors     map[string]string
+	procs      map[string]runtime.Process
+	subs       map[string]core.Substate
+	gens       map[string]uint64
+	cancels    map[string]context.CancelFunc
+	stopping   map[string]bool
+	notifies   map[string]*notifyRuntime
+	terminated map[string]bool // start-timeout or watchdog killed the process
+	session    sync.Mutex      // serializes graphical-session.target start/stop
 }
 
 // New creates a manager. Reload must be called to load units.
@@ -73,28 +75,42 @@ func New(cfg Config) (*Manager, error) {
 		}
 	}
 	m := &Manager{
-		cfg:      cfg,
-		launch:   launch,
-		journal:  js,
-		units:    make(map[string]*loaded),
-		states:   make(map[string]core.State),
-		errors:   make(map[string]string),
-		procs:    make(map[string]runtime.Process),
-		subs:     make(map[string]core.Substate),
-		gens:     make(map[string]uint64),
-		cancels:  make(map[string]context.CancelFunc),
-		stopping: make(map[string]bool),
+		cfg:        cfg,
+		launch:     launch,
+		journal:    js,
+		units:      make(map[string]*loaded),
+		states:     make(map[string]core.State),
+		errors:     make(map[string]string),
+		procs:      make(map[string]runtime.Process),
+		subs:       make(map[string]core.Substate),
+		gens:       make(map[string]uint64),
+		cancels:    make(map[string]context.CancelFunc),
+		stopping:   make(map[string]bool),
+		notifies:   make(map[string]*notifyRuntime),
+		terminated: make(map[string]bool),
 	}
 	m.engine = timers.NewEngine(clk, store, m.onTimerElapsed)
 	return m, nil
 }
 
-// Close stops the timer scheduler.
+// Close stops the timer scheduler and notify listeners.
 func (m *Manager) Close() {
-	if m == nil || m.engine == nil {
+	if m == nil {
 		return
 	}
-	m.engine.Stop()
+	m.mu.Lock()
+	rts := make([]*notifyRuntime, 0, len(m.notifies))
+	for name, rt := range m.notifies {
+		rts = append(rts, rt)
+		delete(m.notifies, name)
+	}
+	m.mu.Unlock()
+	for _, rt := range rts {
+		rt.Close()
+	}
+	if m.engine != nil {
+		m.engine.Stop()
+	}
 }
 
 // Handle implements protocol.Handler.

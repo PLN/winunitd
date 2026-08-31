@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/notify"
 	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/unit"
 )
@@ -57,22 +58,47 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 		return nil
 	}
 	svc := u.Service
+	m.closeNotify(name)
+
+	env := mergeEnv(svc.Environment)
+	var nrt *notifyRuntime
+	if svc.NeedsNotifyPipe() {
+		var err error
+		nrt, err = m.openNotify(name)
+		if err != nil {
+			return err
+		}
+		m.mu.Lock()
+		m.notifies[name] = nrt
+		delete(m.terminated, name)
+		m.mu.Unlock()
+		env = notify.Inject(env, nrt.Addr(), svc.WatchdogSec)
+	}
+
 	spec := runtime.StartSpec{
 		Unit:         name,
 		Type:         svc.Type,
 		Argv:         append([]string(nil), svc.ExecStart...),
 		Dir:          svc.WorkingDirectory,
-		Env:          mergeEnv(svc.Environment),
+		Env:          env,
 		TimeoutStart: svc.TimeoutStartSec,
+	}
+	if svc.Type == unit.TypeNotify {
+		// TimeoutStartSec bounds READY=1, not CreateProcess.
+		spec.TimeoutStart = 0
 	}
 
 	proc, err := m.launch.Start(ctx, spec)
 	if err != nil {
+		m.closeNotify(name)
 		var st *runtime.ExitStatus
 		if errors.As(err, &st) {
 			m.maybeRestart(name, classifyWait(err), svc)
 		}
 		return err
+	}
+	if nrt != nil {
+		nrt.SetMain(proc.PID(), proc.Job())
 	}
 	m.journal.Attach(name, proc.PID(), proc.Stdout(), proc.Stderr())
 
@@ -80,15 +106,21 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 	if m.stopping[name] {
 		m.mu.Unlock()
 		_ = proc.Stop(0)
+		m.closeNotify(name)
 		return nil
 	}
 	if existing := m.procs[name]; existing != nil && existing.Alive() {
 		m.mu.Unlock()
 		_ = proc.Stop(0)
+		m.closeNotify(name)
 		return nil
 	}
 	m.procs[name] = proc
-	if autoRestart {
+	if svc.Type == unit.TypeNotify {
+		st, sub := core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventStartRequested)
+		m.states[name] = st
+		m.subs[name] = sub
+	} else if autoRestart {
 		st, sub := core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventStartSucceeded)
 		if proc.Alive() {
 			m.states[name] = st
@@ -96,10 +128,47 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 			delete(m.errors, name)
 		}
 	}
+	gen := m.gens[name]
 	m.mu.Unlock()
+
+	if svc.Type == unit.TypeNotify {
+		if err := m.waitReady(ctx, name, proc, svc.TimeoutStartSec); err != nil {
+			m.mu.Lock()
+			m.terminated[name] = true
+			if m.procs[name] == proc {
+				delete(m.procs, name)
+			}
+			if !m.stopping[name] {
+				st, sub := core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventStartFailed)
+				m.states[name] = st
+				m.subs[name] = sub
+				m.errors[name] = err.Error()
+			}
+			stopping := m.stopping[name]
+			m.mu.Unlock()
+			_ = proc.Stop(0)
+			m.closeNotify(name)
+			if !stopping {
+				m.maybeRestart(name, core.ExitFailure, svc)
+			}
+			return err
+		}
+		m.mu.Lock()
+		if !m.stopping[name] {
+			st, sub := core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventStartSucceeded)
+			m.states[name] = st
+			m.subs[name] = sub
+			delete(m.errors, name)
+		}
+		m.mu.Unlock()
+	}
 
 	if m.engine != nil {
 		m.engine.UnitActive(name, time.Now())
+	}
+
+	if svc.WatchdogEnabled() {
+		m.startWatchdog(name, svc, gen)
 	}
 
 	if svc.Type == unit.TypeOneshot && proc.Alive() {
@@ -121,16 +190,24 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 	}
 	delete(m.procs, name)
 	stopping := m.stopping[name]
+	terminated := m.terminated[name]
+	delete(m.terminated, name)
 	ld := m.units[name]
 	gen := m.gens[name]
+	rt := m.notifies[name]
+	delete(m.notifies, name)
 	m.mu.Unlock()
+
+	if rt != nil {
+		rt.Close()
+	}
 
 	if job := proc.Job(); job != nil {
 		_ = job.Kill()
 	}
 	_ = proc.Close()
 
-	if stopping {
+	if stopping || terminated {
 		return
 	}
 
