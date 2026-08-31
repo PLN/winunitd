@@ -13,6 +13,7 @@ import (
 	"github.com/PLN/winunitd/internal/journal"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/timers"
 	"github.com/PLN/winunitd/internal/unit"
 )
 
@@ -27,6 +28,7 @@ type Manager struct {
 	cfg      Config
 	launch   runtime.Launcher
 	journal  *journal.Store
+	engine   *timers.Engine
 	mu       sync.Mutex
 	units    map[string]*loaded
 	graph    *core.Graph
@@ -52,7 +54,24 @@ func New(cfg Config) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Manager{
+	store, err := timers.OpenStore(cfg.TimerStateDir())
+	if err != nil {
+		return nil, err
+	}
+	clk := cfg.Clock
+	if clk.Now == nil || clk.SinceBoot == nil || clk.Startup.IsZero() {
+		def := timers.DefaultClock()
+		if clk.Now == nil {
+			clk.Now = def.Now
+		}
+		if clk.SinceBoot == nil {
+			clk.SinceBoot = def.SinceBoot
+		}
+		if clk.Startup.IsZero() {
+			clk.Startup = def.Startup
+		}
+	}
+	m := &Manager{
 		cfg:      cfg,
 		launch:   launch,
 		journal:  js,
@@ -64,7 +83,17 @@ func New(cfg Config) (*Manager, error) {
 		gens:     make(map[string]uint64),
 		cancels:  make(map[string]context.CancelFunc),
 		stopping: make(map[string]bool),
-	}, nil
+	}
+	m.engine = timers.NewEngine(clk, store, m.onTimerElapsed)
+	return m, nil
+}
+
+// Close stops the timer scheduler.
+func (m *Manager) Close() {
+	if m == nil || m.engine == nil {
+		return
+	}
+	m.engine.Stop()
 }
 
 // Handle implements protocol.Handler.
@@ -196,6 +225,8 @@ func (m *Manager) ListTimers() (*protocol.ListTimersResult, error) {
 			ActiveState: st.ActiveState,
 			Enabled:     st.Enabled,
 			Unit:        activated,
+			Next:        st.Next,
+			Last:        st.Last,
 		})
 	}
 	return &protocol.ListTimersResult{Timers: out}, nil
@@ -251,6 +282,11 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 	}
 	if err := m.errors[name]; err != "" {
 		st.Error = err
+	}
+	if ld.unit != nil && ld.unit.Kind == unit.KindTimer && m.engine != nil {
+		snap := m.engine.Status(name)
+		st.Next = formatTimerStamp(snap.Next)
+		st.Last = formatTimerStamp(snap.Last)
 	}
 	return st
 }
@@ -343,7 +379,12 @@ func (m *Manager) Stop(name string) (*protocol.UnitResult, error) {
 	m.states[name] = st
 	m.subs[name] = sub
 	delete(m.errors, name)
+	kind := ld.unit.Kind
 	m.mu.Unlock()
+
+	if kind == unit.KindTimer && m.engine != nil {
+		m.engine.Disarm(name)
+	}
 
 	if proc != nil {
 		_ = proc.Stop(timeout)

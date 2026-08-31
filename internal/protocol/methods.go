@@ -73,6 +73,8 @@ type TimerStatus struct {
 	ActiveState string `json:"activeState"`
 	Enabled     bool   `json:"enabled"`
 	Unit        string `json:"unit,omitempty"` // activated service
+	Next        string `json:"next,omitempty"`
+	Last        string `json:"last,omitempty"`
 }
 
 // StatusParams is the body for status. An empty Unit requests machine status.
@@ -107,6 +109,8 @@ type UnitStatus struct {
 	Enabled     bool   `json:"enabled"`
 	MainPID     int    `json:"mainPid,omitempty"`
 	Error       string `json:"error,omitempty"`
+	Next        string `json:"next,omitempty"`
+	Last        string `json:"last,omitempty"`
 }
 
 // UnitResult is the payload for start, stop, and restart.

@@ -5,7 +5,8 @@ import "github.com/PLN/winunitd/internal/unit"
 const (
 	// DefaultTarget is the boot target (DESIGN.md §11, §12).
 	DefaultTarget = "default.target"
-	// TimersTarget groups enabled timer units. Timer runtime is M9.
+	// TimersTarget groups enabled timer units. Boot of default.target
+	// Wants= this target so enabled timers arm (M9).
 	TimersTarget = "timers.target"
 	// ShutdownTarget exists for ordered stop (M10).
 	ShutdownTarget = "shutdown.target"
@@ -25,12 +26,19 @@ type builtinTarget struct {
 }
 
 func builtinUnit(bt builtinTarget) *unit.Unit {
-	return &unit.Unit{
+	u := &unit.Unit{
 		Name:        bt.name,
 		Kind:        unit.KindTarget,
 		Description: bt.description,
 		Path:        "builtin:" + bt.name,
 	}
+	if bt.name == DefaultTarget {
+		// Boot starts default.target; pull timers.target so enabled timers
+		// arm after boot (DESIGN.md §17). Disk default.target overrides this.
+		u.Wants = []string{TimersTarget}
+		u.After = []string{TimersTarget}
+	}
+	return u
 }
 
 func mergeBuiltins(loaded []*unit.Unit) []*unit.Unit {

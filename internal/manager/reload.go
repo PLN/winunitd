@@ -98,4 +98,5 @@ func (m *Manager) replaceLocked(units []*unit.Unit, g *core.Graph) {
 	}
 	// Running jobs (procs, gens, subs, cancels) stay on the manager for
 	// units that remain. Vanished units are not stopped (DESIGN.md §33).
+	m.syncTimersLocked()
 }
