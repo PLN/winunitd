@@ -212,7 +212,12 @@ WantedBy=default.target
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	um, err := manager.New(manager.Config{BaseDir: userDir, Launch: runtime.StubLauncher()})
+	um, err := manager.New(manager.Config{
+		BaseDir:               userDir,
+		Launch:                runtime.StubLauncher(),
+		UserScope:             true,
+		HasInteractiveSession: func() bool { return false },
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,8 +253,24 @@ WantedBy=default.target
 	if !strings.Contains(out.String(), "hermes.service") {
 		t.Fatalf("user list missing hermes: %s", out.String())
 	}
+	if !strings.Contains(out.String(), "graphical-session.target") {
+		t.Fatalf("user list missing graphical-session.target: %s", out.String())
+	}
 	if strings.Contains(out.String(), "foo.service") {
 		t.Fatalf("user list must not show system units: %s", out.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = runCLIUser([]string{"--user", "status", "graphical-session.target"}, &out, &errb, sysDial, userDial)
+	if code != 0 {
+		t.Fatalf("user status exit %d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "graphical-session.target") {
+		t.Fatalf("user status missing target: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "inactive") {
+		t.Fatalf("linger-without-session status = %s", out.String())
 	}
 
 	out.Reset()

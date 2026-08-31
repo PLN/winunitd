@@ -31,8 +31,14 @@ type Config struct {
 	// HasInteractiveSession reports whether a suitable interactive
 	// session exists for this manager. Nil means yes (system manager
 	// and tests that do not care). User managers set this so
-	// RequiresInteractiveSession=yes units skip when headless.
+	// RequiresInteractiveSession=yes units skip when headless, and so
+	// graphical-session.target can be driven from SIDHasInteractiveSession.
 	HasInteractiveSession func() bool
+	// UserScope is true for a per-user manager (winunitd --user-manager).
+	// It loads graphical-session.target and starts/stops it from session
+	// tracking. The system manager stays false (identity vs session stay
+	// separate; one manager per SID already).
+	UserScope bool
 }
 
 // DefaultBaseDir is C:\ProgramData\winunitd when ProgramData is set.
