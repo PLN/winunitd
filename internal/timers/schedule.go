@@ -55,7 +55,13 @@ func NextDeadline(spec Spec, rt Runtime, clk Clock) (time.Time, bool) {
 		consider(startupDue(spec, clk, now))
 	}
 	if spec.OnUnitActiveSecSet && !rt.LastUnitActive.IsZero() {
-		consider(rt.LastUnitActive.Add(spec.OnUnitActiveSec))
+		due := rt.LastUnitActive.Add(spec.OnUnitActiveSec)
+		// consume() reschedules before UnitActive updates LastUnitActive.
+		// The due just fired is then <= LastActual; clamping it to now would
+		// re-fire the same due until launchUnit bumps last-active.
+		if rt.LastActual.IsZero() || due.After(rt.LastActual) {
+			consider(due)
+		}
 	}
 	for _, cal := range spec.OnCalendar {
 		if spec.Persistent {

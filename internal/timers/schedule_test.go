@@ -88,6 +88,18 @@ func TestNextDeadlineOnUnitActiveSec(t *testing.T) {
 	if !ok || !got.Equal(want) {
 		t.Fatalf("got %v ok=%v, want %v", got, ok, want)
 	}
+
+	spec := Spec{OnUnitActiveSec: time.Second, OnUnitActiveSecSet: true}
+	fired := Runtime{LastUnitActive: last, LastActual: last.Add(time.Second)}
+	if _, ok := NextDeadline(spec, fired, clk); ok {
+		t.Fatal("must not re-schedule the same OnUnitActiveSec due after it has fired")
+	}
+	bumped := fired
+	bumped.LastUnitActive = now
+	got, ok = NextDeadline(spec, bumped, clk)
+	if !ok || !got.Equal(now.Add(time.Second)) {
+		t.Fatalf("after UnitActive: got %v ok=%v", got, ok)
+	}
 }
 
 func TestMarkFiredRelative(t *testing.T) {

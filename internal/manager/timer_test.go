@@ -282,7 +282,7 @@ WorkingDirectory=C:\Tools
 `,
 		"foo.timer": `
 [Timer]
-OnUnitActiveSec=50ms
+OnUnitActiveSec=80ms
 `,
 	})
 	if _, err := m.Start(context.Background(), "foo.timer"); err != nil {
@@ -294,7 +294,19 @@ OnUnitActiveSec=50ms
 	if _, err := m.Start(context.Background(), "foo.service"); err != nil {
 		t.Fatal(err)
 	}
+	const interval = 80 * time.Millisecond
 	waitUntil(t, 2*time.Second, func() bool { return launch.nstarts() >= 2 })
+	if n := launch.nstarts(); n != 2 {
+		t.Fatalf("starts = %d, want 2", n)
+	}
+	at := launch.startTimes()
+	if gap := at[1].Sub(at[0]); gap < interval {
+		t.Fatalf("gap = %s, want >= OnUnitActiveSec (%s)", gap, interval)
+	}
+	time.Sleep(interval / 2)
+	if n := launch.nstarts(); n != 2 {
+		t.Fatalf("starts = %d after half interval, want 2", n)
+	}
 }
 
 func waitLauncherUnit(t *testing.T, launch *fakeLauncher, name string, timeout time.Duration) {
