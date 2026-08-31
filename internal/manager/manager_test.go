@@ -785,7 +785,8 @@ type fakeLauncher struct {
 	stdout string
 	stderr string
 	// pid is reported as the unit main PID. Zero means 1 (existing tests).
-	pid int
+	pid     int
+	firstAt time.Time
 }
 
 func (f *fakeLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
@@ -796,6 +797,9 @@ func (f *fakeLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runti
 	}
 	f.mu.Lock()
 	f.starts = append(f.starts, spec)
+	if f.firstAt.IsZero() {
+		f.firstAt = time.Now()
+	}
 	out, errOut := f.stdout, f.stderr
 	pid := f.pid
 	f.mu.Unlock()

@@ -372,6 +372,10 @@ Useful for:
 - firewall changes
 - script execution
 
+### `Type=scm`
+
+Orchestrates an existing named SCM service (see §51). `winctl start` calls StartService; `winctl stop` calls StopService; status is QueryServiceStatusEx mapped to ActiveState. This does not register, change, or delete SCM configuration.
+
 ### `Type=forking`
 
 Probably omit.
@@ -1724,6 +1728,14 @@ Useful compatibility unit:
 Type=scm
 ServiceName=MSSQLSERVER
 ```
+
+`Type=scm` orchestrates an existing named SCM service. `winctl start` calls StartService, `winctl stop` calls StopService, and status is QueryServiceStatusEx mapped to ActiveState. Already running is a successful start; already stopped is a successful stop. This does not register, change, or delete SCM configuration (`import-service` is a separate helper and is not this unit type).
+
+System manager only: `Type=scm` in a user unit is a load/start error.
+
+`TimeoutStartSec` and `TimeoutStopSec` wait for the corresponding SCM state, then fail.
+
+`Restart=` applies to SCM start failure the same way as a process start failure. After the service reports running, winunitd does not supervise or restart it (SCM recovery stays in charge).
 
 Then dependencies can target legacy services:
 

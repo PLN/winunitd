@@ -129,6 +129,7 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 	m.subs[name] = sub
 	delete(m.errors, name)
 	kind := ld.unit.Kind
+	scmName := scmServiceName(ld.unit)
 	m.mu.Unlock()
 
 	if wdCancel != nil {
@@ -142,12 +143,26 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 		m.engine.Disarm(name)
 	}
 
-	if proc != nil {
+	var stopErr error
+	if scmName != "" {
+		stopErr = m.stopSCM(context.Background(), scmName, timeout)
+	} else if proc != nil {
 		_ = proc.Stop(timeout)
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if stopErr != nil {
+		st, sub = core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventStartFailed)
+		m.states[name] = st
+		m.subs[name] = sub
+		m.errors[name] = stopErr.Error()
+		return &protocol.UnitResult{
+			Unit:        name,
+			ActiveState: core.Failed.String(),
+			Error:       stopErr.Error(),
+		}, protocol.ErrFailed(stopErr.Error())
+	}
 	st, sub = core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventStopFinished)
 	m.states[name] = st
 	m.subs[name] = sub

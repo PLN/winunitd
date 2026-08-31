@@ -43,6 +43,7 @@ type Manager struct {
 	watchdogs   map[string]context.CancelFunc
 	terminated  map[string]bool // start-timeout or watchdog killed the process
 	invocations map[string]string
+	scm         runtime.SCM
 	session     sync.Mutex // serializes graphical-session.target start/stop
 }
 
@@ -54,6 +55,10 @@ func New(cfg Config) (*Manager, error) {
 	launch := cfg.Launch
 	if launch == nil {
 		launch = runtime.NewLauncher(cfg.Daemon)
+	}
+	scm := cfg.SCM
+	if scm == nil {
+		scm = runtime.DefaultSCM()
 	}
 	js, err := journal.Open(cfg.JournalDir())
 	if err != nil {
@@ -79,6 +84,7 @@ func New(cfg Config) (*Manager, error) {
 	m := &Manager{
 		cfg:         cfg,
 		launch:      launch,
+		scm:         scm,
 		journal:     js,
 		units:       make(map[string]*loaded),
 		states:      make(map[string]core.State),
@@ -224,11 +230,20 @@ func (m *Manager) lookup(name string) (*loaded, error) {
 // ListUnits returns loaded units in name order.
 func (m *Manager) ListUnits() (*protocol.ListUnitsResult, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	names := m.names()
 	out := make([]protocol.UnitStatus, 0, len(names))
+	scmNames := make([]string, 0, len(names))
 	for _, name := range names {
 		out = append(out, m.unitStatusLocked(name))
+		var u *unit.Unit
+		if ld := m.units[name]; ld != nil {
+			u = ld.unit
+		}
+		scmNames = append(scmNames, scmServiceName(u))
+	}
+	m.mu.Unlock()
+	for i := range out {
+		m.overlaySCM(&out[i], scmNames[i])
 	}
 	return &protocol.ListUnitsResult{Units: out}, nil
 }
@@ -266,15 +281,20 @@ func (m *Manager) ListTimers() (*protocol.ListTimersResult, error) {
 // Status returns machine status or a single unit.
 func (m *Manager) Status(name string) (*protocol.StatusResult, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if strings.TrimSpace(name) == "" {
-		return &protocol.StatusResult{Machine: m.machineLocked()}, nil
+		ms := m.machineLocked()
+		m.mu.Unlock()
+		return &protocol.StatusResult{Machine: ms}, nil
 	}
 	ld, err := m.lookup(name)
 	if err != nil {
+		m.mu.Unlock()
 		return nil, err
 	}
 	st := m.unitStatusLocked(ld.unit.Name)
+	svcName := scmServiceName(ld.unit)
+	m.mu.Unlock()
+	m.overlaySCM(&st, svcName)
 	return &protocol.StatusResult{Unit: &st}, nil
 }
 

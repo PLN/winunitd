@@ -54,6 +54,10 @@ func (m *Manager) Reload() (*protocol.DaemonReloadResult, error) {
 			result.Errors = append(result.Errors, path+": parse produced no unit")
 			continue
 		}
+		if m.cfg.UserScope && scmServiceName(rep.Unit) != "" {
+			result.Errors = append(result.Errors, path+": Type=scm is only supported in the system manager")
+			continue
+		}
 		loaded = append(loaded, rep.Unit)
 	}
 

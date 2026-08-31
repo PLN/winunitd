@@ -7,7 +7,9 @@
 // stays activating until READY=1. WatchdogSec= uses WINUNIT_NOTIFY_PIPE
 // (WatchdogMode=notify, the default) or probes WatchdogEndpoint= (tcp connect
 // or http GET, localhost only). A missed/failed probe fails the unit the
-// same way as a missed notify heartbeat.
+// same way as a missed notify heartbeat. Type=scm orchestrates an existing
+// SCM service by ServiceName= (StartService / StopService / QueryServiceStatusEx)
+// and does not CreateProcess. Restart= applies to SCM start failure only.
 // Enable writes files under enabled/<target>/<unit>; boot starts default.target, which Wants=
 // timers.target so enabled timers arm. stdout/stderr are stored under
 // journal/<unit>.log (each start tagged with InvocationID=) and returned

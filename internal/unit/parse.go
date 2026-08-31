@@ -19,6 +19,7 @@ var knownDirectives = map[string]map[string]bool{
 	},
 	"Service": {
 		"Type":                   true,
+		"ServiceName":            true,
 		"ExecStart":              true,
 		"ExecStartArg":           true,
 		"WorkingDirectory":       true,
@@ -73,6 +74,9 @@ type serviceBuilder struct {
 	timeoutStartL int
 	timeoutStop   string
 	timeoutStopL  int
+
+	serviceName  string
+	serviceNameL int
 
 	notifyAccess  string
 	notifyAccessL int
@@ -240,6 +244,9 @@ func (p *parser) applyService(e iniEntry) {
 	case "Type":
 		s.typ = e.value
 		s.typLine = e.line
+	case "ServiceName":
+		s.serviceName = e.value
+		s.serviceNameL = e.line
 	case "ExecStart":
 		s.execRaw = e.value
 		s.execLine = e.line
@@ -373,33 +380,48 @@ func (p *parser) finishService() {
 		typ = string(TypeSimple)
 	}
 	switch ServiceType(typ) {
-	case TypeSimple, TypeOneshot, TypeNotify:
+	case TypeSimple, TypeOneshot, TypeNotify, TypeSCM:
 		spec.Type = ServiceType(typ)
 	default:
-		p.errorf(s.typLine, "invalid Type %q (supported: simple, oneshot, notify)", s.typ)
+		p.errorf(s.typLine, "invalid Type %q (supported: simple, oneshot, notify, scm)", s.typ)
 	}
 
-	if !s.execSet || (strings.TrimSpace(s.execRaw) == "" && len(s.execArgs) == 0) {
-		p.errorf(s.execLine, "ExecStart is required")
-	} else {
-		argv, err := buildArgv(s.execRaw, s.execArgs)
-		if err != nil {
-			p.errorf(s.execLine, "%s", err.Error())
+	if spec.Type == TypeSCM {
+		name := strings.TrimSpace(s.serviceName)
+		if name == "" {
+			p.errorf(s.serviceNameL, "ServiceName is required for Type=scm")
 		} else {
-			spec.ExecStart = argv
-			if !WindowsAbs(argv[0]) {
-				p.errorf(s.execLine, "ExecStart must be an absolute path (SearchPath=no)")
+			spec.ServiceName = name
+		}
+	} else if strings.TrimSpace(s.serviceName) != "" {
+		p.warnf(s.serviceNameL, "ServiceName is only used with Type=scm")
+	}
+
+	if spec.Type != TypeSCM {
+		if !s.execSet || (strings.TrimSpace(s.execRaw) == "" && len(s.execArgs) == 0) {
+			p.errorf(s.execLine, "ExecStart is required")
+		} else {
+			argv, err := buildArgv(s.execRaw, s.execArgs)
+			if err != nil {
+				p.errorf(s.execLine, "%s", err.Error())
+			} else {
+				spec.ExecStart = argv
+				if !WindowsAbs(argv[0]) {
+					p.errorf(s.execLine, "ExecStart must be an absolute path (SearchPath=no)")
+				}
 			}
 		}
-	}
 
-	if !s.wdSet || strings.TrimSpace(s.wd) == "" {
-		p.warnf(s.wdLine, "WorkingDirectory is omitted; winunitd will not default to System32")
-	} else {
-		spec.WorkingDirectory = s.wd
-		if !WindowsAbs(s.wd) {
-			p.errorf(s.wdLine, "WorkingDirectory must be an absolute path")
+		if !s.wdSet || strings.TrimSpace(s.wd) == "" {
+			p.warnf(s.wdLine, "WorkingDirectory is omitted; winunitd will not default to System32")
+		} else {
+			spec.WorkingDirectory = s.wd
+			if !WindowsAbs(s.wd) {
+				p.errorf(s.wdLine, "WorkingDirectory must be an absolute path")
+			}
 		}
+	} else if s.execSet && (strings.TrimSpace(s.execRaw) != "" || len(s.execArgs) > 0) {
+		p.warnf(s.execLine, "ExecStart is ignored for Type=scm")
 	}
 
 	spec.Environment = s.env
@@ -442,6 +464,19 @@ func (p *parser) finishService() {
 			spec.TimeoutStopSec = d
 			spec.TimeoutStopSecSet = true
 		}
+	}
+
+	if spec.Type == TypeSCM {
+		if s.notifyAccess != "" {
+			p.warnf(s.notifyAccessL, "NotifyAccess is ignored for Type=scm")
+		}
+		if s.watchdogSec != "" {
+			p.warnf(s.watchdogSecL, "WatchdogSec is ignored for Type=scm")
+		}
+		if s.watchdogMode != "" {
+			p.warnf(s.watchdogModeL, "WatchdogMode is ignored for Type=scm")
+		}
+		return
 	}
 
 	access := strings.ToLower(strings.TrimSpace(s.notifyAccess))
