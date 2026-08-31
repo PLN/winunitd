@@ -32,9 +32,9 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
 
-// ErrPermissionDenied is returned when the peer is not LocalSystem or an Administrator.
+// ErrPermissionDenied is returned when the peer is not allowed on this pipe.
 func ErrPermissionDenied() *Error {
-	return &Error{Code: CodePermissionDenied, Message: "access denied: LocalSystem or Administrators required"}
+	return &Error{Code: CodePermissionDenied, Message: "access denied"}
 }
 
 // ErrMethodNotFound is returned for an unknown method.

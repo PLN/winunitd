@@ -8,12 +8,15 @@ import (
 type Peer struct {
 	LocalSystem   bool
 	Administrator bool
+	// Owner is the user whose SID the user-manager pipe is keyed on.
+	Owner bool
 }
 
 // Allowed reports whether the peer may use the control API.
-// DESIGN.md §30: administrators, local system (user managers later).
+// DESIGN.md §30: administrators, local system, and the owning user on
+// a user-manager pipe. Production trusts the named-pipe ACL.
 func (p Peer) Allowed() bool {
-	return p.LocalSystem || p.Administrator
+	return p.LocalSystem || p.Administrator || p.Owner
 }
 
 // Authorizer identifies the peer on a control connection.
@@ -24,6 +27,12 @@ type Authorizer func(conn net.Conn) (Peer, error)
 // DefaultAuthorizer.
 func AllowAdmin(_ net.Conn) (Peer, error) {
 	return Peer{Administrator: true}, nil
+}
+
+// AllowOwner treats every connection as the pipe owner. Tests use this
+// for user-manager pipes; production Windows uses the named-pipe ACL.
+func AllowOwner(_ net.Conn) (Peer, error) {
+	return Peer{Owner: true}, nil
 }
 
 // DenyAll treats every connection as unauthorized.

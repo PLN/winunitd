@@ -10,4 +10,9 @@
 // internal/timers (not Task Scheduler). Manager shutdown stops units in
 // reverse After=/Before= order (shutdown.target as root) then the daemon
 // closes the daemon Job Object.
+//
+// The system manager also hosts per-user managers (same binary,
+// --user-manager <SID>) started on first interactive logon. User units
+// live in the user manager process and are not listed by system
+// list-units.
 package manager
