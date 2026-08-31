@@ -22,8 +22,8 @@ type userMgrProc struct {
 }
 
 // StartUserManager launches winunitd --user-manager <SID> as the user
-// via CreateProcessAsUser. spec.Token must come from WTSQueryUserToken
-// (or a test double of that handle). Missing token fails closed.
+// via CreateProcessAsUser. spec.Token is a WTS token (interactive) or
+// an S4U linger token. Missing token fails closed.
 func StartUserManager(spec UserManagerSpec) (UserManagerProc, error) {
 	if err := validateUserManagerSpec(spec); err != nil {
 		return nil, err

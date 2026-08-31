@@ -34,7 +34,7 @@ const PreshutdownTimeout = 3 * time.Minute
 
 // DataDirNames are created under the install base directory (DESIGN.md §7, §48).
 // units, enabled, journal, runtime. PATH and Event Log provider are not touched.
-var DataDirNames = []string{"units", "enabled", "journal", "runtime"}
+var DataDirNames = []string{"units", "enabled", "journal", "runtime", "linger"}
 
 // EnsureDataDirs creates baseDir and the MVP data subdirectories if missing.
 func EnsureDataDirs(baseDir string) error {

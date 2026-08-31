@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,6 +31,9 @@ func TestRunHelp(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "--user") {
 		t.Fatalf("help missing --user: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "enable-linger") {
+		t.Fatalf("help missing enable-linger: %s", out.String())
 	}
 	if !strings.Contains(out.String(), `\\.\pipe\winunitd\user\`) {
 		t.Fatalf("help missing user pipe: %s", out.String())
@@ -460,4 +464,142 @@ func startTestDaemonUnit(t *testing.T, unitBody string, launch runtime.Launcher)
 		}
 	}
 	return m, dial, stop
+}
+
+func TestCLIEnableLingerUsesSystemPipe(t *testing.T) {
+	m, _, stop := startTestDaemon(t)
+	defer stop()
+
+	dir := t.TempDir()
+	h := manager.NewUserHost(manager.UserHostConfig{
+		Exe:       "winunitd-test",
+		LingerDir: dir,
+		QueryToken: func(sessionID uint32) (*runtime.UserToken, error) {
+			return nil, runtime.ErrNoUserToken
+		},
+		Start: func(spec runtime.UserManagerSpec) (runtime.UserManagerProc, error) {
+			p := &cliFakeMgr{sid: spec.SID}
+			p.alive.Store(true)
+			return p, nil
+		},
+		Sessions: func() ([]uint32, error) { return nil, nil },
+		Lookup: func(name string) (runtime.UserInfo, error) {
+			return runtime.UserInfo{SID: "S-1-5-21-1-2-3-1001", Username: "ferd", Domain: "TEST", Profile: `C:\Users\ferd`}, nil
+		},
+		LingerToken: func(rec runtime.LingerRecord) (*runtime.UserToken, error) {
+			return &runtime.UserToken{Info: runtime.UserInfo{SID: rec.SID, Username: "ferd", Domain: "TEST", Profile: `C:\Users\ferd`}}, nil
+		},
+	})
+	t.Cleanup(h.Close)
+
+	ctrl := &manager.Control{Units: m, Users: h}
+	ctx, cancel := context.WithCancel(context.Background())
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	errc := make(chan error, 1)
+	go func() { errc <- protocol.Serve(ctx, lis, ctrl, protocol.AllowAdmin) }()
+	lingerDial := func(ctx context.Context) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, lis.Addr().Network(), lis.Addr().String())
+	}
+	defer func() {
+		cancel()
+		_ = lis.Close()
+		select {
+		case <-errc:
+		case <-time.After(2 * time.Second):
+		}
+	}()
+
+	var out, errb bytes.Buffer
+	code := runCLI([]string{"enable-linger", "ferdinand"}, &out, &errb, lingerDial)
+	if code != 0 {
+		t.Fatalf("exit %d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "lingering") {
+		t.Fatalf("stdout=%s", out.String())
+	}
+	if !h.Alive("S-1-5-21-1-2-3-1001") {
+		t.Fatal("manager should start at enable-linger")
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = runCLIUser([]string{"--user", "enable-linger", "ferdinand"}, &out, &errb, lingerDial, lingerDial)
+	if code != 2 {
+		t.Fatalf("--user enable-linger exit %d want 2; stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "system pipe") {
+		t.Fatalf("stderr=%s", errb.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = runCLI([]string{"disable-linger", "ferdinand"}, &out, &errb, lingerDial)
+	if code != 0 {
+		t.Fatalf("disable exit %d stderr=%s", code, errb.String())
+	}
+}
+
+func TestCLIEnableLingerNonAdminDenied(t *testing.T) {
+	m, _, stop := startTestDaemon(t)
+	defer stop()
+	dir := t.TempDir()
+	h := manager.NewUserHost(manager.UserHostConfig{
+		Exe:       "winunitd-test",
+		LingerDir: dir,
+		Start: func(spec runtime.UserManagerSpec) (runtime.UserManagerProc, error) {
+			t.Fatal("must not start")
+			return nil, nil
+		},
+		Lookup: func(name string) (runtime.UserInfo, error) {
+			return runtime.UserInfo{SID: "S-1-5-21-1-2-3-1001", Username: "ferd", Domain: "TEST"}, nil
+		},
+	})
+	t.Cleanup(h.Close)
+	ctrl := &manager.Control{Units: m, Users: h}
+	ctx, cancel := context.WithCancel(context.Background())
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	errc := make(chan error, 1)
+	go func() { errc <- protocol.Serve(ctx, lis, ctrl, protocol.AllowOwner) }()
+	dial := func(ctx context.Context) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, lis.Addr().Network(), lis.Addr().String())
+	}
+	defer func() {
+		cancel()
+		_ = lis.Close()
+		select {
+		case <-errc:
+		case <-time.After(2 * time.Second):
+		}
+	}()
+
+	var out, errb bytes.Buffer
+	code := runCLI([]string{"enable-linger", "ferdinand"}, &out, &errb, dial)
+	if code == 0 {
+		t.Fatal("non-admin enable-linger must fail closed")
+	}
+	if !strings.Contains(errb.String(), "access denied") && !strings.Contains(errb.String(), "permission") {
+		t.Fatalf("stderr=%s", errb.String())
+	}
+}
+
+type cliFakeMgr struct {
+	sid   string
+	alive atomic.Bool
+}
+
+func (p *cliFakeMgr) PID() int    { return 1 }
+func (p *cliFakeMgr) SID() string { return p.sid }
+func (p *cliFakeMgr) Alive() bool { return p.alive.Load() }
+func (p *cliFakeMgr) Kill() error { p.alive.Store(false); return nil }
+func (p *cliFakeMgr) Wait(ctx context.Context) error {
+	_ = ctx
+	return nil
 }

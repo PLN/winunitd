@@ -30,10 +30,16 @@ Commands:
   logs <unit>         Show unit logs
   daemon-reload       Reload unit files
   verify <path|unit>  Verify a unit file path (no daemon) or a loaded unit
+  enable-linger <user>
+                      Persist a user manager across logoff and at boot
+                      (Administrators, system pipe)
+  disable-linger <user>
+                      Stop lingering for a user (Administrators, system pipe)
 
 Commands other than verify-on-a-file-path talk to winunitd over
 \\.\pipe\winunitd\control. --user talks to
 \\.\pipe\winunitd\user\<SID>\control for the current user.
+enable-linger / disable-linger always use the system pipe.
 
 Flags:
   --user          Talk to the per-user manager (current user SID)
@@ -138,6 +144,10 @@ func (c *cli) run(args []string) int {
 		return c.logs(rest)
 	case "daemon-reload":
 		return c.noArg(rest, c.daemonReload)
+	case "enable-linger":
+		return c.lingerCmd(rest, protocol.MethodEnableLinger)
+	case "disable-linger":
+		return c.lingerCmd(rest, protocol.MethodDisableLinger)
 	default:
 		fmt.Fprintf(c.stderr, "winctl: unknown command %q\n\n", cmd)
 		fmt.Fprint(c.stderr, usage)
@@ -385,6 +395,51 @@ func (c *cli) logs(args []string) int {
 	return c.printLogs(got)
 }
 
+func (c *cli) lingerCmd(args []string, method string) int {
+	if c.user {
+		fmt.Fprintf(c.stderr, "winctl: %s talks to the system pipe (do not use --user)\n", method)
+		return 2
+	}
+	if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
+		fmt.Fprintf(c.stderr, "winctl %s: user name required\n", method)
+		return 2
+	}
+	user := args[0]
+	var result *protocol.LingerResult
+	err := c.call(func(ctx context.Context, cl *protocol.Client) error {
+		var err error
+		switch method {
+		case protocol.MethodEnableLinger:
+			result, err = cl.EnableLinger(ctx, user)
+		case protocol.MethodDisableLinger:
+			result, err = cl.DisableLinger(ctx, user)
+		default:
+			err = protocol.ErrMethodNotFound(method)
+		}
+		return err
+	})
+	if err != nil {
+		return c.rpcError(err)
+	}
+	return c.printLinger(result)
+}
+
+func (c *cli) printLinger(r *protocol.LingerResult) int {
+	if r == nil {
+		return 0
+	}
+	who := r.SID
+	if r.User != "" {
+		who = r.User + " (" + r.SID + ")"
+	}
+	if r.Lingering {
+		fmt.Fprintf(c.stdout, "%s: lingering\n", who)
+		return 0
+	}
+	fmt.Fprintf(c.stdout, "%s: linger disabled\n", who)
+	return 0
+}
+
 func (c *cli) daemonReload() int {
 	var got *protocol.DaemonReloadResult
 	err := c.call(func(ctx context.Context, cl *protocol.Client) error {
@@ -443,6 +498,10 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		fmt.Fprintf(c.stdout, "         %d active\n", m.UnitsActive)
 		fmt.Fprintf(c.stdout, "         %d failed\n", m.UnitsFailed)
 		fmt.Fprintf(c.stdout, "  Timers: %d loaded\n", m.TimersLoaded)
+		if m.UserManagers > 0 || m.Lingering > 0 {
+			fmt.Fprintf(c.stdout, "  Users:  %d managers\n", m.UserManagers)
+			fmt.Fprintf(c.stdout, "          %d lingering\n", m.Lingering)
+		}
 		return 0
 	}
 	if st.Unit != nil {

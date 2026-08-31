@@ -19,6 +19,12 @@ func (p Peer) Allowed() bool {
 	return p.LocalSystem || p.Administrator || p.Owner
 }
 
+// CanLinger reports whether the peer may enable-linger / disable-linger.
+// Only Administrators (and LocalSystem) may; Owner-only fails closed.
+func (p Peer) CanLinger() bool {
+	return p.Administrator || p.LocalSystem
+}
+
 // Authorizer identifies the peer on a control connection.
 type Authorizer func(conn net.Conn) (Peer, error)
 
@@ -33,6 +39,11 @@ func AllowAdmin(_ net.Conn) (Peer, error) {
 // for user-manager pipes; production Windows uses the named-pipe ACL.
 func AllowOwner(_ net.Conn) (Peer, error) {
 	return Peer{Owner: true}, nil
+}
+
+// AllowLocalSystem treats every connection as LocalSystem.
+func AllowLocalSystem(_ net.Conn) (Peer, error) {
+	return Peer{LocalSystem: true}, nil
 }
 
 // DenyAll treats every connection as unauthorized.

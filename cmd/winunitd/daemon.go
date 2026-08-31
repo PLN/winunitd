@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/PLN/winunitd/internal/manager"
 	"github.com/PLN/winunitd/internal/protocol"
@@ -39,8 +40,9 @@ func serve(ctx context.Context, baseDir string, stderr io.Writer, sessions chan 
 		exe = os.Args[0]
 	}
 	host := manager.NewUserHost(manager.UserHostConfig{
-		Exe:    exe,
-		Daemon: job,
+		Exe:       exe,
+		Daemon:    job,
+		LingerDir: filepath.Join(baseDir, "linger"),
 		Logf: func(format string, args ...any) {
 			fmt.Fprintf(stderr, "winunitd: "+format+"\n", args...)
 		},
@@ -62,6 +64,9 @@ func serve(ctx context.Context, baseDir string, stderr io.Writer, sessions chan 
 		fmt.Fprintf(stderr, "winunitd: start %s: %v\n", manager.DefaultTarget, err)
 	}
 
+	host.Reconcile()
+	host.StartLingering()
+
 	if sessions == nil {
 		sessions = make(chan runtime.SessionChange, 32)
 	}
@@ -75,7 +80,8 @@ func serve(ctx context.Context, baseDir string, stderr io.Writer, sessions chan 
 	defer lis.Close()
 	fmt.Fprintf(stderr, "winunitd: loaded %d units, listening on %s\n", rel.Loaded, protocol.DefaultPipeName)
 
-	return protocol.Serve(ctx, lis, m, protocol.DefaultAuthorizer())
+	ctrl := &manager.Control{Units: m, Users: host}
+	return protocol.Serve(ctx, lis, ctrl, protocol.DefaultAuthorizer())
 }
 
 func finish(m *manager.Manager, job *runtime.DaemonJob, host *manager.UserHost, stderr io.Writer) {

@@ -12,7 +12,7 @@
 // closes the daemon Job Object.
 //
 // The system manager also hosts per-user managers (same binary,
-// --user-manager <SID>) started on first interactive logon. User units
-// live in the user manager process and are not listed by system
-// list-units.
+// --user-manager <SID>) started on first interactive logon or at boot
+// when lingering. User units live in the user manager process and are
+// not listed by system list-units. Linger records live under linger\<SID>.
 package manager

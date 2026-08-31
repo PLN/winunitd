@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -170,6 +171,9 @@ func (tx *Transaction) Execute(ctx context.Context, starter Starter) (*Run, erro
 
 	for _, name := range names {
 		if ex.run.States[name] == Inactive {
+			if ex.launched[name] {
+				continue // skipped cleanly (e.g. RequiresInteractiveSession)
+			}
 			ex.markFailed(name, fmt.Errorf("unit %q was not started", name))
 		}
 	}
@@ -310,6 +314,10 @@ func (e *executor) requiresFailed(name string) error {
 func (e *executor) onFinish(res startResult) {
 	e.releaseAfter(res.name)
 	if res.err != nil {
+		if errors.Is(res.err, ErrSkipped) {
+			e.run.States[res.name] = Inactive
+			return
+		}
 		e.markFailed(res.name, res.err)
 		return
 	}
