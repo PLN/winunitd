@@ -12,7 +12,8 @@ import (
 
 // Reload reparses unit files, rebuilds the graph, and preserves process
 // instances by keeping states (and running jobs) for units that remain
-// (DESIGN.md §33).
+// (DESIGN.md §33). Enable files under enabled/<target>/<unit> become
+// extra Wants= on those targets.
 func (m *Manager) Reload() (*protocol.DaemonReloadResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -21,11 +22,7 @@ func (m *Manager) Reload() (*protocol.DaemonReloadResult, error) {
 	result := &protocol.DaemonReloadResult{}
 
 	entries, err := os.ReadDir(unitsPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			m.replaceLocked(nil, nil)
-			return result, nil
-		}
+	if err != nil && !os.IsNotExist(err) {
 		return nil, protocol.ErrFailed(err.Error())
 	}
 
@@ -60,7 +57,9 @@ func (m *Manager) Reload() (*protocol.DaemonReloadResult, error) {
 		loaded = append(loaded, rep.Unit)
 	}
 
-	g, err := core.Build(loaded)
+	loaded = mergeBuiltins(loaded)
+	graphUnits := withEnabledWants(loaded, m.readEnabledLinks())
+	g, err := core.Build(graphUnits)
 	if err != nil {
 		return nil, protocol.ErrFailed(err.Error())
 	}
@@ -97,4 +96,6 @@ func (m *Manager) replaceLocked(units []*unit.Unit, g *core.Graph) {
 			m.errors[name] = err
 		}
 	}
+	// Running jobs (procs, gens, subs, cancels) stay on the manager for
+	// units that remain. Vanished units are not stopped (DESIGN.md §33).
 }
