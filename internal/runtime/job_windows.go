@@ -110,3 +110,23 @@ func (j *DaemonJob) killOnCloseEnabled() (bool, error) {
 	}
 	return info.BasicLimitInformation.LimitFlags&windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE != 0, nil
 }
+
+func (j *DaemonJob) inheritDup() (windows.Handle, error) {
+	if j == nil || j.handle == 0 {
+		return 0, fmt.Errorf("daemon job is closed")
+	}
+	var dup windows.Handle
+	err := windows.DuplicateHandle(
+		windows.CurrentProcess(),
+		j.handle,
+		windows.CurrentProcess(),
+		&dup,
+		0,
+		true,
+		windows.DUPLICATE_SAME_ACCESS,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return dup, nil
+}
