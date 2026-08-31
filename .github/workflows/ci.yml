@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        run: go build ./cmd/winunitd ./cmd/winctl ./cmd/winunit-notify
+
+  compile-linux:
+    name: compile (linux, GOOS=windows)
+    runs-on: ubuntu-latest
+    env:
+      GOOS: windows
+      GOARCH: amd64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Compile Windows binaries
+        run: go build ./cmd/winunitd ./cmd/winctl ./cmd/winunit-notify
