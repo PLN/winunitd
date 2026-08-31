@@ -16,9 +16,11 @@ Windows is the first-class target (`GOOS=windows`).
 
 ## Status
 
-**Now:** unit file loader, `winctl verify` on a file path (no daemon required), a dependency graph with start transactions, a versioned JSON-RPC control API on `\\.\pipe\winunitd\control` (LocalSystem and Administrators), an SCM host with a daemon-level Job Object for strict ownership, per-unit Job Objects with real CreateProcess, `Restart=` (`no` / `always` / `on-failure`), enable/targets at boot, a journal store under `<base-dir>\journal\`, an internal timer scheduler (not Task Scheduler), and ordered stop on SCM stop / preshutdown / console SIGINT. `winctl enable` writes files under `<base-dir>\enabled\<target>\<unit>` (not NTFS symlinks). A fresh daemon start (SCM or console) starts `default.target`, which Wants=`timers.target` so enabled timers arm, and pulls in enabled Wants=/Requires= only. `OnBootSec` is since machine boot; `OnStartupSec` is since this winunitd instance. `winctl daemon-reload` reparses units and rebuilds the graph without dropping live jobs. `winctl list-timers` / `status` show next/last elapse when a timer is active. Manager shutdown stops units in reverse After=/Before= order (`shutdown.target` as the stop root) and then closes the daemon Job Object.
+**Now:** unit file loader, `winctl verify` on a file path (no daemon required), a dependency graph with start transactions, a versioned JSON-RPC control API on `\\.\pipe\winunitd\control` (LocalSystem and Administrators), an SCM host with a daemon-level Job Object for strict ownership, per-unit Job Objects with real CreateProcess, `Restart=` (`no` / `always` / `on-failure`), enable/targets at boot, a journal store under `<base-dir>\journal\`, an internal timer scheduler (not Task Scheduler), ordered stop on SCM stop / preshutdown / console SIGINT, and logged-on per-user managers. `winctl enable` writes files under `<base-dir>\enabled\<target>\<unit>` (not NTFS symlinks). A fresh daemon start (SCM or console) starts `default.target`, which Wants=`timers.target` so enabled timers arm, and pulls in enabled Wants=/Requires= only. `OnBootSec` is since machine boot; `OnStartupSec` is since this winunitd instance. `winctl daemon-reload` reparses units and rebuilds the graph without dropping live jobs. `winctl list-timers` / `status` show next/last elapse when a timer is active. Manager shutdown stops units in reverse After=/Before= order (`shutdown.target` as the stop root) and then closes the daemon Job Object.
 
-**Later:** user managers, lingering, notify, ExecStop / CTRL_BREAK / WM_CLOSE — as described in DESIGN.md.
+On first interactive logon the system manager launches `winunitd --user-manager <SID>` (same binary, not an extra SCM service) using `WTSQueryUserToken` only. Fail closed if no token. User units load from `%LOCALAPPDATA%\winunitd\units\` and are controlled with `winctl --user` on `\\.\pipe\winunitd\user\<SID>\control`. One manager per SID; last logoff (no linger) kills it. System `list-units` does not show user units. User processes get a deterministic environment (`USERPROFILE`, `LOCALAPPDATA`, `APPDATA`, `TEMP`, `TMP`, `USERNAME`, `USERDOMAIN`).
+
+**Later:** lingering, notify, ExecStop / CTRL_BREAK / WM_CLOSE — as described in DESIGN.md.
 
 ## Build
 
@@ -40,6 +42,8 @@ Install registers `winunitd` (DisplayName `WinUnit Manager`) as LocalSystem, Aut
 
 On start (SCM or console) the daemon starts `default.target`. Built-in targets are `default.target`, `timers.target`, and `shutdown.target` (`network-online.target` is not shipped). Builtin `default.target` Wants= `timers.target` so enabled timers run after boot. On `sc stop`, preshutdown, or console SIGINT, units stop in reverse After=/Before= order, then the daemon Job Object is closed. `winunitd uninstall` requests that ordered stop, then unregisters the service. stdout/stderr are stored under `<base-dir>\journal\<unit>.log` (production `C:\ProgramData\winunitd\journal\`). Timer last-run state lives under `<base-dir>\runtime\timers\`.
 
+The system manager is the only SCM service. On first interactive logon it starts `winunitd --user-manager <SID>` under a per-user Job Object. User units and journals live under `%LOCALAPPDATA%\winunitd\`.
+
 ## Verify unit files
 
 `winctl verify` parses a systemd-like INI unit file and checks MVP rules. It does not need a running daemon:
@@ -51,4 +55,4 @@ winctl verify C:\path\foo.timer
 
 Unknown directives are errors. `ExecStart=` must be an absolute Windows path (`SearchPath=no`). An omitted `WorkingDirectory=` is a warning; System32 is not used as a default. `Environment=` values are literals (`${}` is not expanded). A `foo.timer` activates `foo.service` when `Unit=` is omitted.
 
-`winctl verify foo.service` (a unit name, not a path) talks to the daemon. Other `winctl` commands (`start`, `stop`, `restart`, `status`, `enable`, `disable`, `list-units`, `list-timers`, `logs`, `daemon-reload`) always use the control pipe.
+`winctl verify foo.service` (a unit name, not a path) talks to the daemon. Other `winctl` commands (`start`, `stop`, `restart`, `status`, `enable`, `disable`, `list-units`, `list-timers`, `logs`, `daemon-reload`) always use the control pipe. `winctl --user …` uses `\\.\pipe\winunitd\user\<SID>\control` for the current user; bare `winctl` stays on the system pipe.

@@ -16,7 +16,7 @@ const usage = `winctl — control interface for winunitd
 
 Usage:
   winctl [--help]
-  winctl <command> [args]
+  winctl [--user] <command> [args]
 
 Commands:
   start <unit>        Start a unit
@@ -32,9 +32,11 @@ Commands:
   verify <path|unit>  Verify a unit file path (no daemon) or a loaded unit
 
 Commands other than verify-on-a-file-path talk to winunitd over
-\\.\pipe\winunitd\control.
+\\.\pipe\winunitd\control. --user talks to
+\\.\pipe\winunitd\user\<SID>\control for the current user.
 
 Flags:
+  --user          Talk to the per-user manager (current user SID)
   -h, --help      Show this help
 `
 
@@ -53,9 +55,11 @@ used as a default.
 `
 
 type cli struct {
-	stdout io.Writer
-	stderr io.Writer
-	dial   func(context.Context) (net.Conn, error)
+	stdout   io.Writer
+	stderr   io.Writer
+	dial     func(context.Context) (net.Conn, error)
+	userDial func(context.Context) (net.Conn, error)
+	user     bool
 }
 
 func main() {
@@ -72,12 +76,30 @@ func defaultDial(ctx context.Context) (net.Conn, error) {
 	return protocol.DialDefault(ctx)
 }
 
+func defaultUserDial(ctx context.Context) (net.Conn, error) {
+	sid, err := protocol.CurrentUserSID()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	return protocol.DialUser(ctx, sid)
+}
+
 func runCLI(args []string, stdout, stderr io.Writer, dial func(context.Context) (net.Conn, error)) int {
-	c := &cli{stdout: stdout, stderr: stderr, dial: dial}
+	return runCLIUser(args, stdout, stderr, dial, defaultUserDial)
+}
+
+func runCLIUser(args []string, stdout, stderr io.Writer, dial, userDial func(context.Context) (net.Conn, error)) int {
+	c := &cli{stdout: stdout, stderr: stderr, dial: dial, userDial: userDial}
 	return c.run(args)
 }
 
 func (c *cli) run(args []string) int {
+	user, rest := splitUserFlag(args)
+	c.user = user
+	args = rest
+
 	if len(args) == 0 || isHelpFlag(args[0]) {
 		fmt.Fprint(c.stdout, usage)
 		return 0
@@ -132,11 +154,38 @@ func isHelpFlag(s string) bool {
 	}
 }
 
+func splitUserFlag(args []string) (user bool, rest []string) {
+	i := 0
+	for i < len(args) {
+		switch args[i] {
+		case "--user":
+			user = true
+			i++
+		default:
+			return user, args[i:]
+		}
+	}
+	return user, nil
+}
+
 func (c *cli) call(fn func(context.Context, *protocol.Client) error) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	conn, err := c.dial(ctx)
+	dial := c.dial
+	if c.user {
+		dial = c.userDial
+		if dial == nil {
+			dial = defaultUserDial
+		}
+	}
+	if dial == nil {
+		dial = defaultDial
+	}
+	conn, err := dial(ctx)
 	if err != nil {
+		if c.user {
+			return fmt.Errorf("cannot connect to winunitd user manager: %w", err)
+		}
 		return fmt.Errorf("cannot connect to winunitd: %w", err)
 	}
 	defer conn.Close()

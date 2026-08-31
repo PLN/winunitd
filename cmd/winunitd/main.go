@@ -9,6 +9,7 @@ import (
 	"os/signal"
 
 	"github.com/PLN/winunitd/internal/manager"
+	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
 )
 
@@ -16,6 +17,7 @@ const usage = `winunitd — Windows unit manager daemon
 
 Usage:
   winunitd [--base-dir DIR]
+  winunitd --user-manager SID [--base-dir DIR]
   winunitd install [--base-dir DIR]
   winunitd uninstall
 
@@ -32,15 +34,27 @@ which Wants=timers.target (enabled timers arm) and pulls in enabled
 Wants=/Requires= only. Timers are scheduled internally (OnBootSec since
 machine boot, OnStartupSec since this process).
 
+On first interactive logon the system manager launches
+winunitd --user-manager <SID> (same binary, not an SCM service) using
+WTSQueryUserToken only. If a token cannot be obtained, that user manager
+is not started (fail closed; no stored credentials or alternate logon). User
+units load from %LOCALAPPDATA%\winunitd\units\ and are controlled on
+\\.\pipe\winunitd\user\<SID>\control. Logoff with no linger kills the
+user manager. System list-units does not show user units.
+
 On SCM stop, preshutdown, or console SIGINT, units stop in reverse
 After=/Before= order (shutdown.target as the stop root), then the daemon
 Job Object is closed so children cannot outlive winunitd.exe.
 
-Listens on \\.\pipe\winunitd\control (LocalSystem and Administrators only).
+System manager listens on \\.\pipe\winunitd\control (LocalSystem and
+Administrators only).
 
 Flags:
-  --base-dir DIR   Data directory (units\, enabled\, journal\, runtime\). Default: %ProgramData%\winunitd
-  -h, --help       Show this help
+  --base-dir DIR         Data directory (units\, enabled\, journal\, runtime\).
+                         Default: %ProgramData%\winunitd (system) or
+                         %LOCALAPPDATA%\winunitd (user manager)
+  --user-manager SID     Run as the per-user manager for SID (not an SCM service)
+  -h, --help             Show this help
 `
 
 func main() {
@@ -70,6 +84,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	fs.Usage = func() { fmt.Fprint(stderr, usage) }
 	baseDir := fs.String("base-dir", manager.DefaultBaseDir(), "data directory")
+	userSID := fs.String("user-manager", "", "run as per-user manager for SID")
 	if err := fs.Parse(flagArgs); err != nil {
 		return 2
 	}
@@ -78,6 +93,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stderr, usage)
 		return 2
 	}
+
+	baseSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "base-dir" {
+			baseSet = true
+		}
+	})
 
 	switch cmd {
 	case "install":
@@ -101,14 +123,38 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
+	if *userSID != "" {
+		if !protocol.ValidSID(*userSID) {
+			fmt.Fprintf(stderr, "winunitd: invalid SID %q\n", *userSID)
+			return 2
+		}
+		dir := *baseDir
+		if !baseSet {
+			dir = ""
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stop()
+		if err := serveUser(ctx, *userSID, dir, stderr); err != nil && ctx.Err() == nil {
+			fmt.Fprintf(stderr, "winunitd: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
 	asService, err := runtime.RunningAsService()
 	if err != nil {
 		fmt.Fprintf(stderr, "winunitd: %v\n", err)
 		return 1
 	}
 	if asService {
-		err := runtime.RunHost(func(ctx context.Context) error {
-			return serve(ctx, *baseDir, stderr)
+		ch := make(chan runtime.SessionChange, 32)
+		err := runtime.RunHostNotify(func(ctx context.Context) error {
+			return serve(ctx, *baseDir, stderr, ch)
+		}, func(sc runtime.SessionChange) {
+			select {
+			case ch <- sc:
+			default:
+			}
 		})
 		if err != nil {
 			fmt.Fprintf(stderr, "winunitd: %v\n", err)
@@ -119,7 +165,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	if err := serve(ctx, *baseDir, stderr); err != nil && ctx.Err() == nil {
+	ch := make(chan runtime.SessionChange, 32)
+	if err := serve(ctx, *baseDir, stderr, ch); err != nil && ctx.Err() == nil {
 		fmt.Fprintf(stderr, "winunitd: %v\n", err)
 		return 1
 	}

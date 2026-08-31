@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/PLN/winunitd/internal/manager"
 	"github.com/PLN/winunitd/internal/protocol"
@@ -16,7 +17,7 @@ import (
 // winunitd.exe (DESIGN.md §42, §66).
 var daemonJob *runtime.DaemonJob
 
-func serve(ctx context.Context, baseDir string, stderr io.Writer) error {
+func serve(ctx context.Context, baseDir string, stderr io.Writer, sessions chan runtime.SessionChange) error {
 	job, err := runtime.OpenDaemonJob()
 	if err != nil {
 		return err
@@ -32,7 +33,19 @@ func serve(ctx context.Context, baseDir string, stderr io.Writer) error {
 		daemonJob = nil
 		return err
 	}
-	defer finish(m, job, stderr)
+
+	exe, err := os.Executable()
+	if err != nil {
+		exe = os.Args[0]
+	}
+	host := manager.NewUserHost(manager.UserHostConfig{
+		Exe:    exe,
+		Daemon: job,
+		Logf: func(format string, args ...any) {
+			fmt.Fprintf(stderr, "winunitd: "+format+"\n", args...)
+		},
+	})
+	defer finish(m, job, host, stderr)
 
 	rel, err := m.Reload()
 	if err != nil {
@@ -49,6 +62,12 @@ func serve(ctx context.Context, baseDir string, stderr io.Writer) error {
 		fmt.Fprintf(stderr, "winunitd: start %s: %v\n", manager.DefaultTarget, err)
 	}
 
+	if sessions == nil {
+		sessions = make(chan runtime.SessionChange, 32)
+	}
+	go runtime.WatchSessions(ctx, sessions)
+	go host.Listen(ctx, sessions)
+
 	lis, err := protocol.ListenControl()
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
@@ -59,7 +78,10 @@ func serve(ctx context.Context, baseDir string, stderr io.Writer) error {
 	return protocol.Serve(ctx, lis, m, protocol.DefaultAuthorizer())
 }
 
-func finish(m *manager.Manager, job *runtime.DaemonJob, stderr io.Writer) {
+func finish(m *manager.Manager, job *runtime.DaemonJob, host *manager.UserHost, stderr io.Writer) {
+	if host != nil {
+		host.Close()
+	}
 	if err := m.Shutdown(context.Background()); err != nil {
 		fmt.Fprintf(stderr, "winunitd: shutdown: %v\n", err)
 	}

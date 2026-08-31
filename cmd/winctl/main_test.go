@@ -28,6 +28,12 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(out.String(), "list-units") {
 		t.Fatalf("help missing list-units: %s", out.String())
 	}
+	if !strings.Contains(out.String(), "--user") {
+		t.Fatalf("help missing --user: %s", out.String())
+	}
+	if !strings.Contains(out.String(), `\\.\pipe\winunitd\user\`) {
+		t.Fatalf("help missing user pipe: %s", out.String())
+	}
 }
 
 func TestRunVerify(t *testing.T) {
@@ -172,6 +178,100 @@ func TestCLIListUnitsOverPipe(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "inactive") {
 		t.Fatalf("stdout=%s", out.String())
+	}
+}
+
+func TestCLIUserFlagDialsUserManager(t *testing.T) {
+	_, sysDial, sysStop := startTestDaemonUnit(t, `
+[Unit]
+Description=SystemFoo
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`, runtime.StubLauncher())
+	defer sysStop()
+
+	userDir := t.TempDir()
+	units := filepath.Join(userDir, "units")
+	if err := os.MkdirAll(units, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(units, "hermes.service"), []byte(`
+[Unit]
+Description=Hermes
+[Service]
+Type=oneshot
+ExecStart=C:\Tools\hermes.exe
+WorkingDirectory=C:\Tools
+[Install]
+WantedBy=default.target
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	um, err := manager.New(manager.Config{BaseDir: userDir, Launch: runtime.StubLauncher()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := um.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	errc := make(chan error, 1)
+	go func() { errc <- protocol.Serve(ctx, lis, um, protocol.AllowOwner) }()
+	userDial := func(ctx context.Context) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, lis.Addr().Network(), lis.Addr().String())
+	}
+	defer func() {
+		um.Close()
+		cancel()
+		_ = lis.Close()
+		select {
+		case <-errc:
+		case <-time.After(2 * time.Second):
+		}
+	}()
+
+	var out, errb bytes.Buffer
+	code := runCLIUser([]string{"--user", "list-units"}, &out, &errb, sysDial, userDial)
+	if code != 0 {
+		t.Fatalf("user list exit %d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "hermes.service") {
+		t.Fatalf("user list missing hermes: %s", out.String())
+	}
+	if strings.Contains(out.String(), "foo.service") {
+		t.Fatalf("user list must not show system units: %s", out.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = runCLIUser([]string{"list-units"}, &out, &errb, sysDial, userDial)
+	if code != 0 {
+		t.Fatalf("system list exit %d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "foo.service") {
+		t.Fatalf("bare winctl should hit the system pipe: %s", out.String())
+	}
+	if strings.Contains(out.String(), "hermes.service") {
+		t.Fatalf("system list-units must not show user units: %s", out.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = runCLIUser([]string{"--user", "enable", "hermes"}, &out, &errb, sysDial, userDial)
+	if code != 0 {
+		t.Fatalf("enable exit %d stderr=%s", code, errb.String())
+	}
+	out.Reset()
+	errb.Reset()
+	code = runCLIUser([]string{"--user", "start", "hermes"}, &out, &errb, sysDial, userDial)
+	if code != 0 {
+		t.Fatalf("start exit %d stderr=%s", code, errb.String())
 	}
 }
 

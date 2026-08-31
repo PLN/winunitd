@@ -279,6 +279,9 @@ func TestPeerAllowed(t *testing.T) {
 	if !((Peer{LocalSystem: true}).Allowed()) {
 		t.Fatal("LocalSystem must be allowed")
 	}
+	if !((Peer{Owner: true}).Allowed()) {
+		t.Fatal("user-pipe owner must be allowed")
+	}
 }
 
 func TestControlPipeSDDL(t *testing.T) {
@@ -294,6 +297,38 @@ func TestControlPipeSDDL(t *testing.T) {
 	}
 	if strings.Contains(ControlPipeSDDL, "WD") || strings.Contains(ControlPipeSDDL, "BU") {
 		t.Fatal("SDDL must not allow Everyone/Users")
+	}
+}
+
+func TestUserPipeNameAndSDDL(t *testing.T) {
+	t.Parallel()
+	sid := "S-1-5-21-3623811015-3361044348-30300820-1013"
+	name := UserPipeName(sid)
+	want := `\\.\pipe\winunitd\user\` + sid + `\control`
+	if name != want {
+		t.Fatalf("UserPipeName = %q, want %q", name, want)
+	}
+	sddl, err := UserPipeSDDL(sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sddl, sid) {
+		t.Fatalf("SDDL missing user SID: %s", sddl)
+	}
+	if !strings.Contains(sddl, "SY") || !strings.Contains(sddl, "BA") {
+		t.Fatalf("SDDL must allow LocalSystem and Administrators: %s", sddl)
+	}
+	if strings.Contains(sddl, "WD") || strings.Contains(sddl, "BU") {
+		t.Fatal("SDDL must not allow Everyone/Users")
+	}
+	if _, err := UserPipeSDDL("not-a-sid"); err == nil {
+		t.Fatal("invalid SID must be rejected")
+	}
+	if _, err := UserPipeSDDL("S-1-5-21-1)(A;;GA;;;WD"); err == nil {
+		t.Fatal("SDDL injection in SID must be rejected")
+	}
+	if !ValidSID(sid) || ValidSID("") || ValidSID("S-") || ValidSID("Everyone") {
+		t.Fatal("ValidSID")
 	}
 }
 
