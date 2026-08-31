@@ -35,6 +35,11 @@ func TestParseEnvironment(t *testing.T) {
 			want: []EnvVar{{Name: "FOO", Value: "bar baz"}, {Name: "ABC", Value: "123"}},
 		},
 		{
+			name:    "unquoted value with space is extra tokens",
+			in:      "FOO=hello from journal",
+			wantErr: true,
+		},
+		{
 			name:    "missing equals",
 			in:      "FOOBAR",
 			wantErr: true,

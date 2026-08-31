@@ -10,7 +10,6 @@ import (
 	"unicode"
 
 	"github.com/PLN/winunitd/internal/core"
-	"github.com/PLN/winunitd/internal/journal"
 	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/unit"
 )
@@ -68,7 +67,7 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 		}
 		return err
 	}
-	journal.Attach(name, proc.Stdout(), proc.Stderr())
+	m.journal.Attach(name, proc.PID(), proc.Stdout(), proc.Stderr())
 
 	m.mu.Lock()
 	if m.stopping[name] {

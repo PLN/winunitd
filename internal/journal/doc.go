@@ -1,6 +1,7 @@
-// Package journal will store structured unit logs (DESIGN.md §22).
+// Package journal stores structured unit logs (DESIGN.md §22).
 //
-// M5 attaches stdout/stderr at CreateProcess. Attach drains those streams
-// so the child cannot block on a full pipe; the journal directory and
-// status/list output are M8.
+// stdout/stderr from CreateProcess are appended as JSON lines under
+// <base-dir>\journal\<unit>.log so they survive daemon-reload. There is
+// no database. Follow/tail is not part of this store; Logs returns a
+// snapshot of what has been written.
 package journal

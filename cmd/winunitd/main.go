@@ -33,7 +33,7 @@ which pulls in enabled Wants=/Requires= only.
 Listens on \\.\pipe\winunitd\control (LocalSystem and Administrators only).
 
 Flags:
-  --base-dir DIR   Data directory (units\, enabled\). Default: %ProgramData%\winunitd
+  --base-dir DIR   Data directory (units\, enabled\, journal\). Default: %ProgramData%\winunitd
   -h, --help       Show this help
 `
 

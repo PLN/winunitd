@@ -4,6 +4,6 @@
 // the control protocol. Start CreateProcess's ExecStart into a per-unit
 // Job Object; stop kills that job. Restart= (no / always / on-failure)
 // relaunches the main process into a new unit job. Enable writes files
-// under enabled/<target>/<unit>; boot starts default.target. The journal
-// store is a later milestone.
+// under enabled/<target>/<unit>; boot starts default.target. stdout/stderr
+// are stored under journal/<unit>.log and returned by logs.
 package manager
