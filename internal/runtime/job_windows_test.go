@@ -24,13 +24,6 @@ func helperEnv(extra ...string) []string {
 	return append(out, extra...)
 }
 
-func TestMain(m *testing.M) {
-	if os.Getenv("WINUNITD_JOB_HELPER") == "sleep" {
-		select {}
-	}
-	os.Exit(m.Run())
-}
-
 const stillActive = 259
 
 func processAlive(pid int) bool {
