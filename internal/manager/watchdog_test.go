@@ -16,12 +16,7 @@ import (
 )
 
 func TestTCPWatchdogConnectKeepsActive(t *testing.T) {
-	t.Parallel()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = ln.Close() })
+	_, addr := listenLoopbackTCP(t)
 	launch := &fakeLauncher{}
 	m := managerWith(t, launch, map[string]string{
 		"tcp.service": fmt.Sprintf(`
@@ -33,26 +28,20 @@ WatchdogMode=tcp
 WatchdogEndpoint=%s
 WatchdogSec=120ms
 Restart=no
-`, ln.Addr().String()),
+`, addr),
 	})
 	if _, err := m.Start(context.Background(), "tcp"); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(400 * time.Millisecond)
-	assertState(t, m, "tcp.service", core.Active)
+	assertWatchdogActive(t, m, "tcp.service")
 	if _, ok := notify.LookupEnv(launch.specs()[0].Env, notify.EnvNotifyPipe); ok {
 		t.Fatal("tcp watchdog must not inject WINUNIT_NOTIFY_PIPE")
 	}
 }
 
 func TestTCPWatchdogRefusedFails(t *testing.T) {
-	t.Parallel()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	_ = ln.Close()
+	addr := closedLoopbackTCP(t)
 	launch := &fakeLauncher{}
 	m := managerWith(t, launch, map[string]string{
 		"refused.service": fmt.Sprintf(`
@@ -69,11 +58,7 @@ Restart=no
 	if _, err := m.Start(context.Background(), "refused"); err != nil {
 		t.Fatal(err)
 	}
-	waitUntil(t, 2*time.Second, func() bool {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		return m.stateOfLocked("refused.service") == core.Failed && m.subOfLocked("refused.service") == core.SubWatchdog
-	})
+	waitWatchdogFailed(t, m, "refused.service")
 }
 
 func TestTCPWatchdogWrongHostNotLoaded(t *testing.T) {
@@ -100,7 +85,6 @@ WatchdogSec=1s
 }
 
 func TestHTTPWatchdog200KeepsActive(t *testing.T) {
-	t.Parallel()
 	ep := serveWatchdogHTTP(t, 200)
 	launch := &fakeLauncher{}
 	m := managerWith(t, launch, map[string]string{
@@ -119,11 +103,10 @@ Restart=no
 		t.Fatal(err)
 	}
 	time.Sleep(400 * time.Millisecond)
-	assertState(t, m, "http.service", core.Active)
+	assertWatchdogActive(t, m, "http.service")
 }
 
 func TestHTTPWatchdogWrongStatusFails(t *testing.T) {
-	t.Parallel()
 	ep := serveWatchdogHTTP(t, 503)
 	launch := &fakeLauncher{}
 	m := managerWith(t, launch, map[string]string{
@@ -142,11 +125,7 @@ Restart=no
 	if _, err := m.Start(context.Background(), "httpbad"); err != nil {
 		t.Fatal(err)
 	}
-	waitUntil(t, 2*time.Second, func() bool {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		return m.stateOfLocked("httpbad.service") == core.Failed && m.subOfLocked("httpbad.service") == core.SubWatchdog
-	})
+	waitWatchdogFailed(t, m, "httpbad.service")
 }
 
 func TestHTTPWatchdogWrongHostNotLoaded(t *testing.T) {
@@ -173,12 +152,7 @@ WatchdogSec=1s
 }
 
 func TestNotifyReadyWithTCPWatchdog(t *testing.T) {
-	t.Parallel()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = ln.Close() })
+	_, addr := listenLoopbackTCP(t)
 	launch := fakeNotifyLaunch()
 	m := managerWith(t, launch, map[string]string{
 		"both.service": fmt.Sprintf(`
@@ -191,7 +165,7 @@ WatchdogMode=tcp
 WatchdogEndpoint=%s
 WatchdogSec=120ms
 Restart=no
-`, ln.Addr().String()),
+`, addr),
 	})
 	errc := make(chan error, 1)
 	go func() {
@@ -211,17 +185,11 @@ Restart=no
 		t.Fatal("tcp watchdog must not inject WINUNIT_WATCHDOG_USEC")
 	}
 	time.Sleep(400 * time.Millisecond)
-	assertState(t, m, "both.service", core.Active)
+	assertWatchdogActive(t, m, "both.service")
 }
 
 func TestTCPWatchdogRestartOnWatchdog(t *testing.T) {
-	t.Parallel()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	_ = ln.Close()
+	addr := closedLoopbackTCP(t)
 	launch := &fakeLauncher{}
 	m := managerWith(t, launch, map[string]string{
 		"wd.service": fmt.Sprintf(`
@@ -243,12 +211,11 @@ RestartSec=20ms
 }
 
 func TestTCPWatchdogIPv6Loopback(t *testing.T) {
-	t.Parallel()
 	ln, err := net.Listen("tcp", "[::1]:0")
 	if err != nil {
 		t.Skip("IPv6 loopback not available")
 	}
-	t.Cleanup(func() { _ = ln.Close() })
+	acceptLoopback(t, ln)
 	launch := &fakeLauncher{}
 	m := managerWith(t, launch, map[string]string{
 		"v6.service": fmt.Sprintf(`
@@ -266,28 +233,7 @@ Restart=no
 		t.Fatal(err)
 	}
 	time.Sleep(400 * time.Millisecond)
-	assertState(t, m, "v6.service", core.Active)
-}
-
-func serveWatchdogHTTP(t *testing.T, status int) string {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		w.WriteHeader(status)
-		_, _ = io.WriteString(w, "p5")
-	})
-	srv := &http.Server{Handler: mux}
-	go func() { _ = srv.Serve(ln) }()
-	t.Cleanup(func() { _ = srv.Close() })
-	return "http://" + ln.Addr().String() + "/health"
+	assertWatchdogActive(t, m, "v6.service")
 }
 
 func TestWatchdogProbeModeHelper(t *testing.T) {
@@ -322,4 +268,98 @@ WatchdogSec=1s
 	if !strings.Contains(b.String(), "loopback") {
 		t.Fatalf("errors = %s", b.String())
 	}
+}
+
+func listenLoopbackTCP(t *testing.T) (net.Listener, string) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	acceptLoopback(t, ln)
+	addr := ln.Addr().String()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := unit.ProbeTCP(ctx, addr); err != nil {
+		t.Fatalf("listen probe: %v", err)
+	}
+	return ln, addr
+}
+
+func acceptLoopback(t *testing.T, ln net.Listener) {
+	t.Helper()
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+}
+
+func closedLoopbackTCP(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := unit.ProbeTCP(ctx, addr); err == nil {
+		t.Skip("port was reused after close; cannot assert refused")
+	}
+	return addr
+}
+
+func serveWatchdogHTTP(t *testing.T, status int) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, "p5")
+	})
+	srv := &http.Server{Handler: mux}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	ep := "http://" + ln.Addr().String() + "/health"
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	waitUntil(t, 2*time.Second, func() bool {
+		return unit.ProbeHTTP(ctx, ep, status) == nil
+	})
+	return ep
+}
+
+func assertWatchdogActive(t *testing.T, m *Manager, name string) {
+	t.Helper()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.stateOfLocked(name)
+	sub := m.subOfLocked(name)
+	err := m.errors[name]
+	if st != core.Active {
+		t.Fatalf("state = %s sub=%s error=%q, want active", st, sub, err)
+	}
+}
+
+func waitWatchdogFailed(t *testing.T, m *Manager, name string) {
+	t.Helper()
+	waitUntil(t, 3*time.Second, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.stateOfLocked(name) == core.Failed && m.subOfLocked(name) == core.SubWatchdog
+	})
 }
