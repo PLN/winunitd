@@ -183,6 +183,32 @@ Type=scm
 			t.Fatalf("stderr=%s", errb.String())
 		}
 	})
+
+	for _, tt := range []struct {
+		name    string
+		src     string
+		wantErr string
+	}{
+		{"MemoryMax=abc", "MemoryMax=abc\n", `invalid MemoryMax "abc"`},
+		{"ProcessLimit=-1", "ProcessLimit=-1\n", `invalid ProcessLimit "-1"`},
+		{"PriorityClass=realtime", "PriorityClass=realtime\n", `invalid PriorityClass "realtime"`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := filepath.Join(dir, strings.ReplaceAll(tt.name, "=", "-")+".service")
+			body := "[Service]\nExecStart=C:\\Tools\\foo.exe\nWorkingDirectory=C:\\Tools\n" + tt.src
+			if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var out, errb bytes.Buffer
+			code := run([]string{"verify", p}, &out, &errb)
+			if code != 1 {
+				t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+			}
+			if !strings.Contains(errb.String(), tt.wantErr) {
+				t.Fatalf("stderr=%s, want %q", errb.String(), tt.wantErr)
+			}
+		})
+	}
 }
 
 func TestStartWithoutDaemon(t *testing.T) {
@@ -471,6 +497,28 @@ func TestCLIVerifyUnitNameOverPipe(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "foo.service: verified") {
 		t.Fatalf("stdout=%s", out.String())
+	}
+}
+
+func TestPrintStatusResourceLimit(t *testing.T) {
+	var out bytes.Buffer
+	c := &cli{stdout: &out}
+	code := c.printStatus(&protocol.StatusResult{Unit: &protocol.UnitStatus{
+		Name:        "cap.service",
+		LoadState:   "loaded",
+		ActiveState: "failed",
+		Reason:      "resource-limit",
+		Error:       "resource-limit",
+	}})
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	got := out.String()
+	if !strings.Contains(got, "Active: failed") {
+		t.Fatalf("missing failed: %s", got)
+	}
+	if !strings.Contains(got, "Reason: resource-limit") {
+		t.Fatalf("missing reason: %s", got)
 	}
 }
 

@@ -60,6 +60,11 @@ func TestMain(m *testing.M) {
 		fmt.Printf("child %d\n", pid)
 		_ = os.Stdout.Sync()
 		select {}
+	case "alloc":
+		runAllocUntilKilled()
+	case "spawn-hold":
+		_, _ = startHelperChild(false)
+		select {}
 	case "scm-proxy":
 		runSCMProxyTestService()
 		os.Exit(0)
@@ -82,4 +87,15 @@ func startHelperChild(breakaway bool) (int, error) {
 		return 0, err
 	}
 	return cmd.Process.Pid, nil
+}
+
+func runAllocUntilKilled() {
+	var held [][]byte
+	for {
+		b := make([]byte, 1<<20)
+		for i := 0; i < len(b); i += 4096 {
+			b[i] = 1
+		}
+		held = append(held, b)
+	}
 }

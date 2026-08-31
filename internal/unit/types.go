@@ -50,6 +50,37 @@ const (
 	WatchdogModeHTTP   WatchdogMode = "http"
 )
 
+// PriorityClass is a [Service] PriorityClass= value (DESIGN.md §43).
+// realtime is rejected at parse time.
+type PriorityClass string
+
+const (
+	PriorityIdle        PriorityClass = "idle"
+	PriorityBelowNormal PriorityClass = "below-normal"
+	PriorityNormal      PriorityClass = "normal"
+	PriorityAboveNormal PriorityClass = "above-normal"
+	PriorityHigh        PriorityClass = "high"
+)
+
+// WindowsPriorityClass is the Win32 process priority class constant
+// for this value (IDLE_PRIORITY_CLASS and siblings). Zero means unset.
+func (p PriorityClass) WindowsPriorityClass() uint32 {
+	switch p {
+	case PriorityIdle:
+		return 0x00000040
+	case PriorityBelowNormal:
+		return 0x00004000
+	case PriorityNormal:
+		return 0x00000020
+	case PriorityAboveNormal:
+		return 0x00008000
+	case PriorityHigh:
+		return 0x00000080
+	default:
+		return 0
+	}
+}
+
 // EnvVar is a single Environment= assignment. Values are stored literally;
 // ${} and %VAR% are not expanded.
 type EnvVar struct {
@@ -99,12 +130,29 @@ type ServiceSpec struct {
 	WatchdogAddr           string // host:port for tcp/http (loopback)
 	WatchdogURL            string // http(s) URL for WatchdogMode=http
 
+	// Job Object limits (DESIGN.md §43 R1). Zero / empty means omitted.
+	MemoryMax     uint64
+	ProcessLimit  uint32
+	PriorityClass PriorityClass
+
 	RestartSecSet             bool
 	TimeoutStartSecSet        bool
 	TimeoutStopSecSet         bool
 	WatchdogSecSet            bool
 	WatchdogEndpointSet       bool
 	WatchdogExpectedStatusSet bool
+	MemoryMaxSet              bool
+	ProcessLimitSet           bool
+	PriorityClassSet          bool
+}
+
+// HasJobResourceLimits reports MemoryMax= or ProcessLimit= (PriorityClass=
+// does not produce a resource-limit failure).
+func (s *ServiceSpec) HasJobResourceLimits() bool {
+	if s == nil {
+		return false
+	}
+	return s.MemoryMaxSet || s.ProcessLimitSet
 }
 
 // NeedsNotifyPipe reports whether the unit process should receive

@@ -54,7 +54,7 @@ func (l stubLauncher) Start(ctx context.Context, spec StartSpec) (Process, error
 	if spec.Type == unit.TypeOneshot && spec.TimeoutStart > 0 {
 		_ = spec.TimeoutStart
 	}
-	job, err := OpenUnitJob()
+	job, err := OpenUnitJobWith(spec.Limits)
 	if err != nil {
 		return nil, err
 	}

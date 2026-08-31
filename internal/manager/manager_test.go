@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/unit"
@@ -705,6 +706,77 @@ TimeoutStartSec=30s
 	}
 	if got[0].Dir != `C:\Tools` || got[0].TimeoutStart != 30*time.Second {
 		t.Fatalf("spec = %+v", got[0])
+	}
+	if got[0].Limits != (runtime.JobLimits{}) {
+		t.Fatalf("omitted limits = %+v", got[0].Limits)
+	}
+}
+
+func TestStartPassesJobLimitsToLauncher(t *testing.T) {
+	t.Parallel()
+	launch := &fakeLauncher{}
+	dir := t.TempDir()
+	units := filepath.Join(dir, "units")
+	if err := os.MkdirAll(units, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeUnit(t, units, "cap.service", `
+[Service]
+Type=simple
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+MemoryMax=2G
+ProcessLimit=4
+PriorityClass=below-normal
+`)
+	m, err := New(Config{BaseDir: dir, Launch: launch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopAll(m) })
+	if _, err := m.Start(context.Background(), "cap"); err != nil {
+		t.Fatal(err)
+	}
+	got := launch.specs()
+	if len(got) != 1 {
+		t.Fatalf("starts = %+v", got)
+	}
+	want := runtime.JobLimits{
+		MemoryMax:     2 * 1024 * 1024 * 1024,
+		ProcessLimit:  4,
+		PriorityClass: runtime.PriorityBelowNormal,
+	}
+	if got[0].Limits != want {
+		t.Fatalf("limits = %+v, want %+v", got[0].Limits, want)
+	}
+}
+
+func TestStatusResourceLimitReason(t *testing.T) {
+	t.Parallel()
+	m := testManager(t, map[string]string{
+		"cap.service": `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+MemoryMax=2G
+`,
+	})
+	m.mu.Lock()
+	m.states["cap.service"] = core.Failed
+	m.errors["cap.service"] = core.ReasonResourceLimit
+	m.mu.Unlock()
+	st, err := m.Status("cap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Unit == nil || st.Unit.ActiveState != "failed" {
+		t.Fatalf("status = %+v", st.Unit)
+	}
+	if st.Unit.Reason != core.ReasonResourceLimit || st.Unit.Error != core.ReasonResourceLimit {
+		t.Fatalf("reason=%q error=%q", st.Unit.Reason, st.Unit.Error)
 	}
 }
 

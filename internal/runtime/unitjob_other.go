@@ -11,11 +11,17 @@ import (
 type UnitJob struct {
 	mu     sync.Mutex
 	closed bool
+	limits JobLimits
 }
 
 // OpenUnitJob returns a stub job.
 func OpenUnitJob() (*UnitJob, error) {
-	return &UnitJob{}, nil
+	return OpenUnitJobWith(JobLimits{})
+}
+
+// OpenUnitJobWith records limits so QueryLimits can be asserted on Linux.
+func OpenUnitJobWith(lim JobLimits) (*UnitJob, error) {
+	return &UnitJob{limits: lim}, nil
 }
 
 // Contains is always false on non-Windows builds.
@@ -60,15 +66,34 @@ func (j *UnitJob) Close() error {
 	return nil
 }
 
-// LimitFlags reports no limits on the stub.
+// LimitFlags reports no Win32 flags on the stub.
 func (j *UnitJob) LimitFlags() (uint32, error) {
+	got, err := j.QueryLimits()
+	if err != nil {
+		return 0, err
+	}
+	return got.LimitFlags, nil
+}
+
+// QueryLimits returns recorded stub limits (not a real Job Object).
+func (j *UnitJob) QueryLimits() (JobObjectLimits, error) {
 	if j == nil {
-		return 0, fmt.Errorf("unit job is closed")
+		return JobObjectLimits{}, fmt.Errorf("unit job is closed")
 	}
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.closed {
-		return 0, fmt.Errorf("unit job is closed")
+		return JobObjectLimits{}, fmt.Errorf("unit job is closed")
 	}
-	return 0, nil
+	return JobObjectLimits{
+		JobMemory:     j.limits.MemoryMax,
+		ProcessLimit:  j.limits.ProcessLimit,
+		PriorityClass: j.limits.PriorityClass,
+	}, nil
 }
+
+// ResourceLimitC is always nil on the stub.
+func (j *UnitJob) ResourceLimitC() <-chan struct{} { return nil }
+
+// ResourceLimitHit is always false on the stub.
+func (j *UnitJob) ResourceLimitHit() bool { return false }

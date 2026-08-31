@@ -123,6 +123,7 @@ type UnitStatus struct {
 	MainPID      int    `json:"mainPid,omitempty"`
 	InvocationID string `json:"invocationId,omitempty"`
 	Error        string `json:"error,omitempty"`
+	Reason       string `json:"reason,omitempty"` // DESIGN.md §44 (resource-limit)
 	Next         string `json:"next,omitempty"`
 	Last         string `json:"last,omitempty"`
 }

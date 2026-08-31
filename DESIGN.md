@@ -158,7 +158,7 @@ Benefits:
 
 - Track the entire process hierarchy
 - Terminate all descendants on stop
-- Apply resource limits later
+- Apply job-wide MemoryMax=, ProcessLimit=, and PriorityClass= (R1)
 - Detect process lifecycle events
 - Prevent orphaned helper processes
 
@@ -1523,20 +1523,37 @@ Use SCM preshutdown support to obtain more than the minimal normal service shutd
 
 ## 43. Resource Control
 
-Job Objects make later resource controls realistic.
-
-Potential directives:
+Job Objects make job-wide resource limits realistic. R1 applies these
+`[Service]` directives to the unit's existing Job Object (the whole
+process tree, not the main PID only):
 
 ```ini
 MemoryMax=2G
-CPUWeight=50
-CPUQuota=25%
 ProcessLimit=32
 PriorityClass=below-normal
+```
+
+- `MemoryMax=` is a job-wide commit cap (`JOB_OBJECT_LIMIT_JOB_MEMORY`).
+  Suffixes are `K` / `M` / `G` (1024-based), for example `2G`.
+- `ProcessLimit=` is the maximum number of active processes in that job.
+- `PriorityClass=` is `idle`, `below-normal`, `normal`, `above-normal`,
+  or `high`. `realtime` is rejected.
+- Omitting all three leaves today's job (no extra Job Object limits).
+- Hitting `MemoryMax=` or `ProcessLimit=` fails the unit with reason
+  `resource-limit` (`winctl status`, §44). `Restart=` still applies,
+  including `on-failure`.
+
+These are Windows Job Object semantics, not cgroup `memory.max` / `cpu.max`.
+
+CPU and I/O controls are named only when a later slice can enforce them:
+
+```ini
+CPUWeight=50
+CPUQuota=25%
 IoPriority=low
 ```
 
-Windows does not map exactly to cgroups, so naming should reflect actual enforceable semantics.
+They are not parsed in R1.
 
 ---
 
@@ -2408,7 +2425,7 @@ Add:
 - path units
 - registry/event triggers
 - templates
-- resource limits
+- remaining resource limits (CPUWeight=, CPUQuota=, IoPriority=)
 - credentials
 - session-scoped GUI units
 - remote control
