@@ -3,21 +3,34 @@ package manager
 import (
 	"context"
 	"os"
-	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/notify"
-	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/unit"
 )
 
+// fakeNotifyLaunch reports this test process as the unit main PID.
+//
+// CI #42 (windows job on fc55a5a): portable tests Dial'd the real notify
+// listener (named pipe on Windows, TCP on Linux) and SendRetry returned
+// nil, but Start still hit TimeoutStartSec waiting for READY=1.
+// internal/notify named-pipe Accept/Dial passed; TestWindowsNotify* (READY
+// from the helper, which is the real main PID) were not in the fail list.
+// NotifyAccess=main compared GetNamedPipeClientProcessId (this process) to
+// fakeLauncher's default PID 1 and dropped the payload. Linux TCP reports
+// ClientPID 0 and skips that check.
+func fakeNotifyLaunch() *fakeLauncher {
+	return &fakeLauncher{pid: os.Getpid()}
+}
+
 func TestNotifyStaysActivatingUntilReady(t *testing.T) {
 	t.Parallel()
-	launch := &fakeLauncher{}
-	m := notifyManagerWith(t, launch, map[string]string{
+	launch := fakeNotifyLaunch()
+	m := managerWith(t, launch, map[string]string{
 		"worker.service": `
 [Service]
 Type=notify
@@ -53,8 +66,8 @@ TimeoutStartSec=5s
 
 func TestNotifyTimeoutStartWithoutReadyFails(t *testing.T) {
 	t.Parallel()
-	launch := &fakeLauncher{}
-	m := notifyManagerWith(t, launch, map[string]string{
+	launch := fakeNotifyLaunch()
+	m := managerWith(t, launch, map[string]string{
 		"late.service": `
 [Service]
 Type=notify
@@ -75,8 +88,8 @@ TimeoutStartSec=200ms
 
 func TestWatchdogPulseRefreshesTimer(t *testing.T) {
 	t.Parallel()
-	launch := &fakeLauncher{}
-	m := notifyManagerWith(t, launch, map[string]string{
+	launch := fakeNotifyLaunch()
+	m := managerWith(t, launch, map[string]string{
 		"hb.service": `
 [Service]
 Type=notify
@@ -122,8 +135,8 @@ WatchdogSec=250ms
 
 func TestMissedWatchdogSecFailsUnit(t *testing.T) {
 	t.Parallel()
-	launch := &fakeLauncher{}
-	m := notifyManagerWith(t, launch, map[string]string{
+	launch := fakeNotifyLaunch()
+	m := managerWith(t, launch, map[string]string{
 		"miss.service": `
 [Service]
 Type=notify
@@ -157,8 +170,8 @@ Restart=no
 
 func TestRestartOnWatchdogRelaunches(t *testing.T) {
 	t.Parallel()
-	launch := &fakeLauncher{}
-	m := notifyManagerWith(t, launch, map[string]string{
+	launch := fakeNotifyLaunch()
+	m := managerWith(t, launch, map[string]string{
 		"wd.service": `
 [Service]
 Type=notify
@@ -179,8 +192,8 @@ RestartSec=20ms
 
 func TestNotifyInjectsEnv(t *testing.T) {
 	t.Parallel()
-	launch := &fakeLauncher{}
-	m := notifyManagerWith(t, launch, map[string]string{
+	launch := fakeNotifyLaunch()
+	m := managerWith(t, launch, map[string]string{
 		"env.service": `
 [Service]
 Type=notify
@@ -198,6 +211,14 @@ WatchdogSec=30s
 	pipe := waitNotifyPipe(t, launch, "env.service", 2*time.Second)
 	if pipe == "" {
 		t.Fatal("WINUNIT_NOTIFY_PIPE missing")
+	}
+	if goruntime.GOOS == "windows" {
+		prefix := `\\.\pipe\winunitd\notify\`
+		if !strings.HasPrefix(pipe, prefix) {
+			t.Fatalf("Windows notify pipe = %q, want prefix %s", pipe, prefix)
+		}
+	} else if strings.HasPrefix(pipe, `\\.\pipe\`) {
+		t.Fatalf("Linux fake listener must not be a Windows pipe name: %q", pipe)
 	}
 	usec, ok := notify.LookupEnv(launch.specs()[0].Env, notify.EnvWatchdogUsec)
 	if !ok || usec != "30000000" {
@@ -241,8 +262,8 @@ WorkingDirectory=C:\Tools
 
 func TestWinunitNotifyCLIAgainstLiveManager(t *testing.T) {
 	t.Parallel()
-	launch := &fakeLauncher{}
-	m := notifyManagerWith(t, launch, map[string]string{
+	launch := fakeNotifyLaunch()
+	m := managerWith(t, launch, map[string]string{
 		"cli.service": `
 [Service]
 Type=notify
@@ -278,37 +299,6 @@ WatchdogSec=2s
 		t.Fatal(err)
 	}
 	assertState(t, m, "cli.service", core.Active)
-}
-
-// notifyManagerWith uses a fake TCP notify listener so portable tests can
-// send READY/WATCHDOG from the test process. On Windows, NotifyAccess=main
-// would otherwise reject that PID (named-pipe ClientPID). Windows
-// CreateProcess coverage lives in manager_windows_test.go.
-func notifyManagerWith(t *testing.T, launch runtime.Launcher, files map[string]string) *Manager {
-	t.Helper()
-	dir := t.TempDir()
-	units := filepath.Join(dir, "units")
-	if err := os.MkdirAll(units, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for name, body := range files {
-		writeUnit(t, units, name, body)
-	}
-	m, err := New(Config{
-		BaseDir: dir,
-		Launch:  launch,
-		NotifyListen: func(string) (notify.Listener, error) {
-			return notify.ListenTCP()
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.Reload(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { stopAll(m) })
-	return m
 }
 
 func waitNotifyPipe(t *testing.T, launch *fakeLauncher, unit string, timeout time.Duration) string {

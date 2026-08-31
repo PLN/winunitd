@@ -769,6 +769,8 @@ type fakeLauncher struct {
 	stops  []string
 	stdout string
 	stderr string
+	// pid is reported as the unit main PID. Zero means 1 (existing tests).
+	pid int
 }
 
 func (f *fakeLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
@@ -780,7 +782,11 @@ func (f *fakeLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runti
 	f.mu.Lock()
 	f.starts = append(f.starts, spec)
 	out, errOut := f.stdout, f.stderr
+	pid := f.pid
 	f.mu.Unlock()
+	if pid == 0 {
+		pid = 1
+	}
 	job, err := runtime.OpenUnitJob()
 	if err != nil {
 		return nil, err
@@ -788,7 +794,7 @@ func (f *fakeLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runti
 	return &fakeProc{
 		name:   spec.Unit,
 		rec:    f,
-		pid:    1,
+		pid:    pid,
 		job:    job,
 		done:   make(chan struct{}),
 		stdout: io.NopCloser(strings.NewReader(out)),
