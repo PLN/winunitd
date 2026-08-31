@@ -25,8 +25,9 @@ Preshutdown is accepted so ordered stop can be added later (M10).
 
 Console mode (no SCM) is used for tests and local runs. --base-dir still
 applies. A daemon-level Job Object enforces strict ownership: if this
-process dies, assigned children die with it (DESIGN.md §66). Per-unit jobs
-and CreateProcess are M5.
+process dies, assigned children die with it (DESIGN.md §66). Each started
+unit gets its own nested Job Object; winctl start CreateProcess's ExecStart
+into that job.
 
 Listens on \\.\pipe\winunitd\control (LocalSystem and Administrators only).
 

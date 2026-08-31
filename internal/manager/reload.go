@@ -11,7 +11,7 @@ import (
 )
 
 // Reload reparses unit files, rebuilds the graph, and preserves process
-// instances (there are none yet) by keeping states for units that remain
+// instances by keeping states (and running jobs) for units that remain
 // (DESIGN.md §33).
 func (m *Manager) Reload() (*protocol.DaemonReloadResult, error) {
 	m.mu.Lock()

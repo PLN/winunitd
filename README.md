@@ -16,9 +16,9 @@ Windows is the first-class target (`GOOS=windows`).
 
 ## Status
 
-**Now:** unit file loader, `winctl verify` on a file path (no daemon required), a dependency graph with start transactions, a versioned JSON-RPC control API on `\\.\pipe\winunitd\control` (LocalSystem and Administrators), and an SCM host with a daemon-level Job Object for strict ownership. `winctl` verbs talk over the pipe. Start/stop are still protocol stubs (no per-unit jobs or CreateProcess).
+**Now:** unit file loader, `winctl verify` on a file path (no daemon required), a dependency graph with start transactions, a versioned JSON-RPC control API on `\\.\pipe\winunitd\control` (LocalSystem and Administrators), an SCM host with a daemon-level Job Object for strict ownership, and per-unit Job Objects with real CreateProcess. `winctl start` / protocol start launches `ExecStart` into the unit job (`Type=simple` and `Type=oneshot`). Stop kills that job so the process tree dies.
 
-**Later:** per-unit Job Objects / CreateProcess supervision, timers at runtime, and journal — as described in DESIGN.md.
+**Later:** restart policy, enable/targets at boot, journal store, timers at runtime, and ordered `sc stop` — as described in DESIGN.md.
 
 ## Build
 
@@ -36,9 +36,9 @@ winunitd install [--base-dir DIR]
 winunitd uninstall
 ```
 
-Install registers `winunitd` (DisplayName `WinUnit Manager`) as LocalSystem, Automatic (Delayed Start), with SCM recovery set to restart on failure, and accepts preshutdown notification. The daemon creates a Job Object with `KILL_ON_JOB_CLOSE`: if `winunitd.exe` is killed, assigned child processes die with it. Console mode (`winunitd --base-dir DIR`) still works without SCM.
+Install registers `winunitd` (DisplayName `WinUnit Manager`) as LocalSystem, Automatic (Delayed Start), with SCM recovery set to restart on failure, and accepts preshutdown notification. The daemon creates a Job Object with `KILL_ON_JOB_CLOSE`: if `winunitd.exe` is killed, assigned child processes die with it. Each started unit gets its own nested Job Object (no breakaway). Console mode (`winunitd --base-dir DIR`) still works without SCM.
 
-Ordered stop on `sc stop` is not implemented yet. Per-unit jobs and real process launch are not implemented yet.
+Ordered stop on `sc stop` is not implemented yet. Restart policy and the journal store are not implemented yet.
 
 ## Verify unit files
 

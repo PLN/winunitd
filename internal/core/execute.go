@@ -6,8 +6,8 @@ import (
 )
 
 // Starter activates a unit. Implementations must not require Windows APIs
-// so graph execution can be tested on any GOOS. M2 does not start processes;
-// production will later supply a runtime starter.
+// so graph execution can be tested on any GOOS. The manager supplies a
+// runtime starter that calls CreateProcess into a per-unit Job Object.
 type Starter interface {
 	Start(ctx context.Context, name string) error
 }
