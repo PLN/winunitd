@@ -47,6 +47,7 @@ func serveUser(ctx context.Context, sid, baseDir string, stderr io.Writer) error
 		BaseDir:   baseDir,
 		Daemon:    job,
 		UserScope: true,
+		NotifySID: sid,
 		HasInteractiveSession: func() bool {
 			return runtime.SIDHasInteractiveSession(sid)
 		},

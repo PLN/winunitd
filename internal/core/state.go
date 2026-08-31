@@ -83,6 +83,7 @@ const (
 	EventMainExited
 	EventAutoRestart
 	EventRestartCancelled
+	EventWatchdogFailed
 )
 
 func (e Event) String() string {
@@ -103,6 +104,8 @@ func (e Event) String() string {
 		return "auto-restart"
 	case EventRestartCancelled:
 		return "restart-cancelled"
+	case EventWatchdogFailed:
+		return "watchdog-failed"
 	default:
 		return fmt.Sprintf("event(%d)", int(e))
 	}
@@ -128,6 +131,8 @@ func Step(from State, fromSub Substate, ev Event) (State, Substate) {
 		return Activating, SubAutoRestart
 	case EventRestartCancelled:
 		return Inactive, SubNone
+	case EventWatchdogFailed:
+		return Failed, SubWatchdog
 	default:
 		return from, fromSub
 	}
