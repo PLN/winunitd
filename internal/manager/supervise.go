@@ -46,6 +46,9 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 		return fmt.Errorf("unit %q is not loaded", name)
 	}
 	u := ld.unit
+	if u.RequiresInteractiveSession && !m.hasInteractiveSession() {
+		return core.ErrSkipped
+	}
 	if u.Kind == unit.KindTimer {
 		m.armTimer(u)
 		return nil
@@ -294,4 +297,11 @@ func envKey(name string) string {
 		}
 		return r
 	}, name)
+}
+
+func (m *Manager) hasInteractiveSession() bool {
+	if m.cfg.HasInteractiveSession == nil {
+		return true
+	}
+	return m.cfg.HasInteractiveSession()
 }

@@ -52,6 +52,11 @@ type Unit struct {
 	After       []string
 	Before      []string
 
+	// RequiresInteractiveSession skips the unit when no suitable
+	// interactive session exists (DESIGN.md §15). SessionMode is not
+	// implemented.
+	RequiresInteractiveSession bool
+
 	Service *ServiceSpec
 	Timer   *TimerSpec
 

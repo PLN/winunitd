@@ -336,6 +336,22 @@ func TestWantsAfterWaitsThenContinues(t *testing.T) {
 	}
 }
 
+func TestSkippedUnitStaysInactive(t *testing.T) {
+	t.Parallel()
+	g := mustBuild(t, &unit.Unit{Name: "gui.service"})
+	rec := &recordingStarter{fail: map[string]error{"gui.service": ErrSkipped}}
+	run, err := g.Start(context.Background(), rec, "gui.service")
+	if err != nil {
+		t.Fatalf("skip must not fail the transaction: %v", err)
+	}
+	if run.StateOf("gui.service") != Inactive {
+		t.Fatalf("state = %s, want inactive", run.StateOf("gui.service"))
+	}
+	if run.Err("gui.service") != nil {
+		t.Fatalf("skip must not record an error: %v", run.Err("gui.service"))
+	}
+}
+
 type recordingStarter struct {
 	fail map[string]error
 	mu   sync.Mutex

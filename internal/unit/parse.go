@@ -10,11 +10,12 @@ import (
 
 var knownDirectives = map[string]map[string]bool{
 	"Unit": {
-		"Description": true,
-		"Requires":    true,
-		"Wants":       true,
-		"After":       true,
-		"Before":      true,
+		"Description":                true,
+		"Requires":                   true,
+		"Wants":                      true,
+		"After":                      true,
+		"Before":                     true,
+		"RequiresInteractiveSession": true,
 	},
 	"Service": {
 		"Type":             true,
@@ -94,6 +95,10 @@ type parser struct {
 
 	svc   *serviceBuilder
 	timer *timerBuilder
+
+	ris     string
+	risLine int
+	risSet  bool
 }
 
 func (p *parser) errorf(line int, format string, args ...any) {
@@ -206,6 +211,10 @@ func (p *parser) applyUnit(e iniEntry) {
 		p.unit.After = applyList(p.unit.After, e.value)
 	case "Before":
 		p.unit.Before = applyList(p.unit.Before, e.value)
+	case "RequiresInteractiveSession":
+		p.ris = e.value
+		p.risLine = e.line
+		p.risSet = true
 	}
 }
 
@@ -300,6 +309,19 @@ func (p *parser) finish() {
 	case KindTarget:
 		// targets have no extra required fields
 	}
+	p.finishInteractiveSession()
+}
+
+func (p *parser) finishInteractiveSession() {
+	if !p.risSet {
+		return
+	}
+	b, err := parseBool(p.ris)
+	if err != nil {
+		p.errorf(p.risLine, "invalid RequiresInteractiveSession: %s", err.Error())
+		return
+	}
+	p.unit.RequiresInteractiveSession = b
 }
 
 func (p *parser) finishService() {

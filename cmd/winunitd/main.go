@@ -36,11 +36,19 @@ machine boot, OnStartupSec since this process).
 
 On first interactive logon the system manager launches
 winunitd --user-manager <SID> (same binary, not an SCM service) using
-WTSQueryUserToken only. If a token cannot be obtained, that user manager
-is not started (fail closed; no stored credentials or alternate logon). User
-units load from %LOCALAPPDATA%\winunitd\units\ and are controlled on
-\\.\pipe\winunitd\user\<SID>\control. Logoff with no linger kills the
-user manager. System list-units does not show user units.
+WTSQueryUserToken. Lingering users are started at boot with no session
+via S4U (optional named CredMan/LSA URI on the linger record if S4U
+cannot get network creds; never a password in a unit file, env, or
+path). If a token cannot be obtained, that user manager is not started
+(fail closed). User units load from %LOCALAPPDATA%\winunitd\units\ and
+are controlled on \\.\pipe\winunitd\user\<SID>\control. Last logoff
+kills the user manager unless lingering is enabled
+(C:\ProgramData\winunitd\linger\<SID>). System list-units does not show
+user units. RequiresInteractiveSession=yes skips a unit when no suitable
+interactive session exists.
+
+enable-linger / disable-linger are administrator verbs on the system
+pipe (not winctl --user).
 
 On SCM stop, preshutdown, or console SIGINT, units stop in reverse
 After=/Before= order (shutdown.target as the stop root), then the daemon
@@ -50,7 +58,7 @@ System manager listens on \\.\pipe\winunitd\control (LocalSystem and
 Administrators only).
 
 Flags:
-  --base-dir DIR         Data directory (units\, enabled\, journal\, runtime\).
+  --base-dir DIR         Data directory (units\, enabled\, journal\, runtime\, linger\).
                          Default: %ProgramData%\winunitd (system) or
                          %LOCALAPPDATA%\winunitd (user manager)
   --user-manager SID     Run as the per-user manager for SID (not an SCM service)

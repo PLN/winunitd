@@ -153,3 +153,19 @@ func (c *Client) Verify(ctx context.Context, unit string) (*VerifyResult, error)
 	}
 	return &out, nil
 }
+
+func (c *Client) EnableLinger(ctx context.Context, user string) (*LingerResult, error) {
+	return c.lingerVerb(ctx, MethodEnableLinger, user)
+}
+
+func (c *Client) DisableLinger(ctx context.Context, user string) (*LingerResult, error) {
+	return c.lingerVerb(ctx, MethodDisableLinger, user)
+}
+
+func (c *Client) lingerVerb(ctx context.Context, method, user string) (*LingerResult, error) {
+	var out LingerResult
+	if err := c.Call(ctx, method, LingerParams{User: user}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
