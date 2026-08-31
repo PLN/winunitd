@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
 	"golang.org/x/sys/windows"
 )
@@ -22,6 +23,14 @@ import (
 func TestMain(m *testing.M) {
 	switch os.Getenv("WINUNITD_JOB_HELPER") {
 	case "sleep":
+		select {}
+	case "print":
+		fmt.Println(os.Getenv("WINUNITD_JOB_PRINT"))
+		_ = os.Stdout.Sync()
+		if msg := os.Getenv("WINUNITD_JOB_PRINT_ERR"); msg != "" {
+			fmt.Fprintln(os.Stderr, msg)
+			_ = os.Stderr.Sync()
+		}
 		select {}
 	case "exit":
 		recordHelperCount()
@@ -502,4 +511,77 @@ func waitWindowsLiveProc(t *testing.T, m *Manager, name string) runtime.Process 
 	}
 	t.Fatal("unit did not stay running after restart")
 	return nil
+}
+
+func TestWindowsJournalWriteAndRead(t *testing.T) {
+	dir := t.TempDir()
+	units := filepath.Join(dir, "units")
+	if err := os.MkdirAll(units, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(""+
+		"[Service]\n"+
+		"Type=simple\n"+
+		"ExecStart=%s\n"+
+		"WorkingDirectory=%s\n"+
+		"Environment=WINUNITD_JOB_HELPER=print\n"+
+		"Environment=WINUNITD_JOB_PRINT=hello from journal\n"+
+		"Environment=WINUNITD_JOB_PRINT_ERR=warn from journal\n",
+		mustJSONArgv(t, os.Args[0]), dir)
+	if err := os.WriteFile(filepath.Join(units, "log.service"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := New(Config{BaseDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = m.Stop("log") })
+	if _, err := m.Start(context.Background(), "log"); err != nil {
+		t.Fatal(err)
+	}
+	proc := waitWindowsLiveProc(t, m, "log.service")
+	if proc.PID() <= 0 {
+		t.Fatalf("pid = %d", proc.PID())
+	}
+
+	st, err := m.Status("log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Unit == nil || st.Unit.ActiveState != "active" || st.Unit.MainPID != proc.PID() {
+		t.Fatalf("status = %+v", st.Unit)
+	}
+
+	var logs *protocol.LogsResult
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		logs, err = m.Logs(protocol.LogsParams{Unit: "log"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hasLogMessage(logs, "hello from journal") && hasLogMessage(logs, "warn from journal") {
+			path := filepath.Join(dir, "journal", "log.service.log")
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("per-unit journal file: %v", err)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("journal = %+v", logs)
+}
+
+func hasLogMessage(logs *protocol.LogsResult, msg string) bool {
+	if logs == nil {
+		return false
+	}
+	for _, e := range logs.Entries {
+		if e.Message == msg {
+			return true
+		}
+	}
+	return false
 }

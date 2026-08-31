@@ -409,6 +409,9 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		fmt.Fprintf(c.stdout, "● %s\n", title)
 		fmt.Fprintf(c.stdout, "     Loaded: %s (%s; %s)\n", u.LoadState, u.Path, enabled)
 		fmt.Fprintf(c.stdout, "     Active: %s\n", u.ActiveState)
+		if u.MainPID != 0 {
+			fmt.Fprintf(c.stdout, "   Main PID: %d\n", u.MainPID)
+		}
 		if u.Error != "" {
 			fmt.Fprintf(c.stdout, "      Error: %s\n", u.Error)
 		}
@@ -418,13 +421,17 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 }
 
 func (c *cli) printListUnits(got *protocol.ListUnitsResult) int {
-	fmt.Fprintf(c.stdout, "%-28s %-8s %-12s %-8s %s\n", "UNIT", "LOAD", "ACTIVE", "ENABLED", "DESCRIPTION")
+	fmt.Fprintf(c.stdout, "%-28s %-8s %-12s %-8s %-8s %s\n", "UNIT", "LOAD", "ACTIVE", "ENABLED", "PID", "DESCRIPTION")
 	for _, u := range got.Units {
 		en := "no"
 		if u.Enabled {
 			en = "yes"
 		}
-		fmt.Fprintf(c.stdout, "%-28s %-8s %-12s %-8s %s\n", u.Name, u.LoadState, u.ActiveState, en, u.Description)
+		pid := "-"
+		if u.MainPID != 0 {
+			pid = fmt.Sprintf("%d", u.MainPID)
+		}
+		fmt.Fprintf(c.stdout, "%-28s %-8s %-12s %-8s %-8s %s\n", u.Name, u.LoadState, u.ActiveState, en, pid, u.Description)
 	}
 	return 0
 }
@@ -447,7 +454,32 @@ func (c *cli) printLogs(got *protocol.LogsResult) int {
 		return 0
 	}
 	for _, e := range got.Entries {
-		fmt.Fprintln(c.stdout, e.Message)
+		fmt.Fprintln(c.stdout, formatLogEntry(e))
 	}
 	return 0
+}
+
+func formatLogEntry(e protocol.LogEntry) string {
+	ts := e.Timestamp
+	if t, err := time.Parse(time.RFC3339Nano, e.Timestamp); err == nil {
+		ts = t.Local().Format("Jan 02 15:04:05")
+	} else if t, err := time.Parse(time.RFC3339, e.Timestamp); err == nil {
+		ts = t.Local().Format("Jan 02 15:04:05")
+	}
+	name := e.Unit
+	if name == "" {
+		name = "unit"
+	} else {
+		name = strings.TrimSuffix(name, ".service")
+	}
+	if ts == "" {
+		if e.PID != 0 {
+			return fmt.Sprintf("%s[%d]: %s", name, e.PID, e.Message)
+		}
+		return e.Message
+	}
+	if e.PID != 0 {
+		return fmt.Sprintf("%s %s[%d]: %s", ts, name, e.PID, e.Message)
+	}
+	return fmt.Sprintf("%s %s: %s", ts, name, e.Message)
 }

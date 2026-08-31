@@ -284,6 +284,122 @@ WorkingDirectory=C:\Tools
 	}
 }
 
+func TestLogsReturnsStoredOutput(t *testing.T) {
+	t.Parallel()
+	launch := &fakeLauncher{stdout: "hello from unit\n", stderr: "warn from unit\n"}
+	m := managerWith(t, launch, map[string]string{
+		"foo.service": `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`,
+	})
+	client, stop := serveManager(t, m, protocol.AllowAdmin)
+	defer stop()
+	ctx := context.Background()
+	if _, err := client.Start(ctx, "foo"); err != nil {
+		t.Fatal(err)
+	}
+
+	var logs *protocol.LogsResult
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		var err error
+		logs, err = client.Logs(ctx, protocol.LogsParams{Unit: "foo"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(logs.Entries) >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if logs == nil || logs.Unit != "foo.service" || len(logs.Entries) < 2 {
+		t.Fatalf("logs = %+v", logs)
+	}
+	msgs := map[string]protocol.LogEntry{}
+	for _, e := range logs.Entries {
+		msgs[e.Message] = e
+		if e.PID != 1 {
+			t.Fatalf("pid = %d", e.PID)
+		}
+		if e.Timestamp == "" {
+			t.Fatal("missing timestamp")
+		}
+	}
+	if msgs["hello from unit"].Stream != "stdout" {
+		t.Fatalf("stdout = %+v", msgs["hello from unit"])
+	}
+	if msgs["warn from unit"].Stream != "stderr" {
+		t.Fatalf("stderr = %+v", msgs["warn from unit"])
+	}
+
+	if _, err := client.DaemonReload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	again, err := client.Logs(ctx, protocol.LogsParams{Unit: "foo.service"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again.Entries) < 2 {
+		t.Fatalf("journal must survive daemon-reload: %+v", again)
+	}
+}
+
+func TestStatusAndListShowActiveEnabledPID(t *testing.T) {
+	t.Parallel()
+	m := testManager(t, map[string]string{
+		"foo.service": `
+[Unit]
+Description=Foo
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+[Install]
+WantedBy=default.target
+`,
+	})
+	client, stop := serveManager(t, m, protocol.AllowAdmin)
+	defer stop()
+	ctx := context.Background()
+
+	if _, err := client.Enable(ctx, "foo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Start(ctx, "foo"); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := client.Status(ctx, "foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Unit == nil || st.Unit.ActiveState != "active" || !st.Unit.Enabled {
+		t.Fatalf("status = %+v", st.Unit)
+	}
+	if st.Unit.MainPID != 1 {
+		t.Fatalf("mainPid = %d", st.Unit.MainPID)
+	}
+
+	list, err := client.ListUnits(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, u := range list.Units {
+		if u.Name != "foo.service" {
+			continue
+		}
+		found = true
+		if u.ActiveState != "active" || !u.Enabled || u.MainPID != 1 {
+			t.Fatalf("list unit = %+v", u)
+		}
+	}
+	if !found {
+		t.Fatal("foo.service missing from list")
+	}
+}
+
 func TestListTimers(t *testing.T) {
 	t.Parallel()
 	m := testManager(t, map[string]string{
@@ -596,6 +712,8 @@ Description=App
 type fakeLauncher struct {
 	mu     sync.Mutex
 	starts []runtime.StartSpec
+	stdout string
+	stderr string
 }
 
 func (f *fakeLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
@@ -606,16 +724,18 @@ func (f *fakeLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runti
 	}
 	f.mu.Lock()
 	f.starts = append(f.starts, spec)
+	out, errOut := f.stdout, f.stderr
 	f.mu.Unlock()
 	job, err := runtime.OpenUnitJob()
 	if err != nil {
 		return nil, err
 	}
 	return &fakeProc{
+		pid:    1,
 		job:    job,
 		done:   make(chan struct{}),
-		stdout: io.NopCloser(strings.NewReader("")),
-		stderr: io.NopCloser(strings.NewReader("")),
+		stdout: io.NopCloser(strings.NewReader(out)),
+		stderr: io.NopCloser(strings.NewReader(errOut)),
 	}, nil
 }
 
@@ -639,6 +759,7 @@ func (f *fakeLauncher) units() []string {
 
 type fakeProc struct {
 	mu       sync.Mutex
+	pid      int
 	job      runtime.Job
 	dead     bool
 	closed   bool
@@ -649,7 +770,12 @@ type fakeProc struct {
 	stderr   io.ReadCloser
 }
 
-func (p *fakeProc) PID() int { return 1 }
+func (p *fakeProc) PID() int {
+	if p.pid != 0 {
+		return p.pid
+	}
+	return 1
+}
 
 func (p *fakeProc) ExitCode() (uint32, bool) {
 	p.mu.Lock()
