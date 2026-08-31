@@ -299,9 +299,27 @@ func TestCreateProcessWithLoopbackListenerKeepsHelperAlive(t *testing.T) {
 			_ = c.Close()
 		}
 	}()
-	p := startHelper(t, "sleep", unit.TypeSimple, 0)
+	root := os.Getenv("SystemRoot")
+	if root == "" {
+		root = `C:\Windows`
+	}
+	ping := filepath.Join(root, "System32", "ping.exe")
+	if _, err := os.Stat(ping); err != nil {
+		t.Fatalf("ping.exe: %v", err)
+	}
+	p, err := DefaultLauncher().Start(context.Background(), StartSpec{
+		Unit: "listener.service",
+		Type: unit.TypeSimple,
+		Argv: []string{ping, "-t", "127.0.0.1"},
+		Dir:  t.TempDir(),
+		Env:  helperEnv(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = p.Stop(2 * time.Second) })
 	time.Sleep(400 * time.Millisecond)
 	if !p.Alive() {
-		t.Fatal("sleep helper died while parent held a loopback listener")
+		t.Fatal("ping helper died while parent held a loopback listener")
 	}
 }

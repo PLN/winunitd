@@ -418,7 +418,11 @@ func startWindowsHelperUnit(t *testing.T, dir, name, serviceBody, helper string,
 	if err != nil {
 		t.Fatal(err)
 	}
-	exeJSON, err := json.Marshal([]string{exe, winunitdHelperArgPrefix + helper})
+	argv := []string{exe, winunitdHelperArgPrefix + helper}
+	if helper == "sleep" {
+		argv = windowsStayAliveArgv(t)
+	}
+	exeJSON, err := json.Marshal(argv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -580,15 +584,35 @@ Type=simple
 	}
 }
 
+func windowsStayAliveArgv(t *testing.T) []string {
+	t.Helper()
+	root := os.Getenv("SystemRoot")
+	if root == "" {
+		root = `C:\Windows`
+	}
+	ping := filepath.Join(root, "System32", "ping.exe")
+	if _, err := os.Stat(ping); err != nil {
+		t.Fatalf("ping.exe: %v", err)
+	}
+	// ICMP ping, not a TCP listener. The unit only needs a process that
+	// stays alive while the parent holds the watchdog endpoint.
+	return []string{ping, "-t", "127.0.0.1"}
+}
+
 func mustJSONArgv(t *testing.T, exe string, helper string) string {
 	t.Helper()
-	abs, err := filepath.Abs(exe)
-	if err != nil {
-		t.Fatal(err)
-	}
-	argv := []string{abs}
-	if helper != "" {
-		argv = append(argv, winunitdHelperArgPrefix+helper)
+	var argv []string
+	if helper == "sleep" {
+		argv = windowsStayAliveArgv(t)
+	} else {
+		abs, err := filepath.Abs(exe)
+		if err != nil {
+			t.Fatal(err)
+		}
+		argv = []string{abs}
+		if helper != "" {
+			argv = append(argv, winunitdHelperArgPrefix+helper)
+		}
 	}
 	b, err := json.Marshal(argv)
 	if err != nil {
