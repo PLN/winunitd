@@ -213,6 +213,25 @@ WorkingDirectory=C:\Tools
 			},
 		},
 		{
+			name: "working directory trailing backslash is not continuation",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools\
+Restart=always
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Service.WorkingDirectory != `C:\Tools\` {
+					t.Fatalf("wd = %q, want %q", u.Service.WorkingDirectory, `C:\Tools\`)
+				}
+				if u.Service.Restart != RestartAlways {
+					t.Fatalf("Restart=always was joined into WorkingDirectory; restart = %s", u.Service.Restart)
+				}
+			},
+		},
+		{
 			name: "omitted working directory warns",
 			file: "foo.service",
 			src: `
@@ -499,4 +518,49 @@ func containsSub(ss []string, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestWorkingDirectoryTrailingBackslash(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		src    string
+		wantWD string
+	}{
+		{
+			name: "Tools trailing backslash is the path",
+			src: `[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools\
+Restart=always
+`,
+			wantWD: `C:\Tools\`,
+		},
+		{
+			name: "drive root trailing backslash",
+			src: `[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\
+Restart=always
+`,
+			wantWD: `C:\`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rep := ParseUnit("foo.service", tt.src)
+			if rep.HasError() {
+				t.Fatalf("errors: %v", issueTexts(rep.Errors()))
+			}
+			got := rep.Unit.Service.WorkingDirectory
+			if got != tt.wantWD {
+				t.Fatalf("WorkingDirectory = %q, want %q", got, tt.wantWD)
+			}
+			if rep.Unit.Service.Restart != RestartAlways {
+				t.Fatalf("following line was joined into WorkingDirectory; Restart = %s", rep.Unit.Service.Restart)
+			}
+		})
+	}
 }

@@ -19,7 +19,7 @@ func runVerify(paths []string, stdout, stderr io.Writer) int {
 	for _, p := range paths {
 		rep := unit.VerifyPath(p)
 		for _, iss := range rep.Issues {
-			fmt.Fprintln(stdout, iss.String())
+			fmt.Fprintln(stderr, iss.String())
 		}
 		if rep.HasError() {
 			failed = true
