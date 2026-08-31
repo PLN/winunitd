@@ -60,6 +60,9 @@ func TestMain(m *testing.M) {
 		fmt.Printf("child %d\n", pid)
 		_ = os.Stdout.Sync()
 		select {}
+	case "scm-proxy":
+		runSCMProxyTestService()
+		os.Exit(0)
 	}
 	os.Exit(m.Run())
 }

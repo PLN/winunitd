@@ -59,6 +59,9 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 		return nil
 	}
 	svc := u.Service
+	if svc.Type == unit.TypeSCM {
+		return m.startSCM(ctx, name, u, autoRestart)
+	}
 	m.closeNotify(name)
 	m.stopWatchdog(name)
 

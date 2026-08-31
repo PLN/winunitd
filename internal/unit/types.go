@@ -23,6 +23,7 @@ const (
 	TypeSimple  ServiceType = "simple"
 	TypeOneshot ServiceType = "oneshot"
 	TypeNotify  ServiceType = "notify"
+	TypeSCM     ServiceType = "scm"
 )
 
 // RestartPolicy is a [Service] Restart= value.
@@ -82,6 +83,7 @@ type Unit struct {
 // ServiceSpec is the [Service] section.
 type ServiceSpec struct {
 	Type                   ServiceType
+	ServiceName            string   // Type=scm: existing SCM service (DESIGN.md §51)
 	ExecStart              []string // argv: executable then arguments
 	WorkingDirectory       string
 	Environment            []EnvVar
@@ -108,7 +110,7 @@ type ServiceSpec struct {
 // NeedsNotifyPipe reports whether the unit process should receive
 // WINUNIT_NOTIFY_PIPE (Type=notify or WatchdogMode=notify).
 func (s *ServiceSpec) NeedsNotifyPipe() bool {
-	if s == nil {
+	if s == nil || s.Type == TypeSCM {
 		return false
 	}
 	if s.Type == TypeNotify {
@@ -117,12 +119,17 @@ func (s *ServiceSpec) NeedsNotifyPipe() bool {
 	return s.WatchdogEnabled() && s.WatchdogMode == WatchdogModeNotify
 }
 
-// WatchdogEnabled reports a positive WatchdogSec=.
+// WatchdogEnabled reports a positive WatchdogSec=. Type=scm has no watchdog.
 func (s *ServiceSpec) WatchdogEnabled() bool {
-	if s == nil {
+	if s == nil || s.Type == TypeSCM {
 		return false
 	}
 	return s.WatchdogSecSet && s.WatchdogSec > 0
+}
+
+// IsSCM reports Type=scm (DESIGN.md §51).
+func (s *ServiceSpec) IsSCM() bool {
+	return s != nil && s.Type == TypeSCM
 }
 
 // WatchdogProbeMode reports WatchdogMode=tcp or http.

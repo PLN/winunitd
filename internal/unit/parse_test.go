@@ -642,6 +642,85 @@ WorkingDirectory=C:\Tools
 			wantErr: []string{`invalid Type "forking"`},
 		},
 		{
+			name: "external-service type is not implemented",
+			file: "legacy.service",
+			src: `
+[Service]
+Type=external-service
+ServiceName=MyLegacyService
+`,
+			wantErr: []string{`invalid Type "external-service"`},
+		},
+		{
+			name: "type scm with ServiceName",
+			file: "mssql.service",
+			src: `
+[Unit]
+Description=SQL Server
+[Service]
+Type=scm
+ServiceName=MSSQLSERVER
+TimeoutStartSec=30s
+TimeoutStopSec=20s
+Restart=on-failure
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Service.Type != TypeSCM {
+					t.Fatalf("type = %s", u.Service.Type)
+				}
+				if u.Service.ServiceName != "MSSQLSERVER" {
+					t.Fatalf("ServiceName = %q", u.Service.ServiceName)
+				}
+				if len(u.Service.ExecStart) != 0 {
+					t.Fatalf("ExecStart = %#v", u.Service.ExecStart)
+				}
+				if !u.Service.TimeoutStartSecSet || u.Service.TimeoutStartSec != 30*time.Second {
+					t.Fatalf("TimeoutStartSec = %v set=%v", u.Service.TimeoutStartSec, u.Service.TimeoutStartSecSet)
+				}
+				if u.Service.Restart != RestartOnFailure {
+					t.Fatalf("restart = %s", u.Service.Restart)
+				}
+				if u.Service.NeedsNotifyPipe() || u.Service.WatchdogEnabled() {
+					t.Fatal("Type=scm must not enable notify or watchdog")
+				}
+			},
+		},
+		{
+			name: "type scm missing ServiceName",
+			file: "mssql.service",
+			src: `
+[Service]
+Type=scm
+`,
+			wantErr: []string{"ServiceName is required for Type=scm"},
+		},
+		{
+			name: "type scm empty ServiceName",
+			file: "mssql.service",
+			src: `
+[Service]
+Type=scm
+ServiceName=
+`,
+			wantErr: []string{"ServiceName is required for Type=scm"},
+		},
+		{
+			name: "type scm does not require ExecStart",
+			file: "proxy.service",
+			src: `
+[Service]
+Type=scm
+ServiceName=WuP7Test
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Service.ServiceName != "WuP7Test" {
+					t.Fatalf("ServiceName = %q", u.Service.ServiceName)
+				}
+			},
+		},
+		{
 			name: "invalid restart fails",
 			file: "foo.service",
 			src: `
