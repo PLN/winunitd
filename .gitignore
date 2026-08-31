@@ -1,0 +1,33 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/bin/
+/dist/
+
+# Local Unix-style builds of the three cmds (Windows artifacts are covered by *.exe)
+/winunitd
+/winctl
+/winunit-notify
+
+# Go coverage / profiling
+*.coverprofile
+coverage.html
+*.prof
+
+# Dependency / workspace files (this repo is a single module)
+vendor/
+go.work
+go.work.sum
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
