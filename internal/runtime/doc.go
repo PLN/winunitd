@@ -2,6 +2,6 @@
 // Object used for strict ownership, per-unit Job Objects, and CreateProcess
 // supervision.
 //
-// KillMode variants, restart policy, and ordered stop on SCM shutdown are
-// later milestones (M6 / M10).
+// SCM stop and preshutdown cancel the host; the daemon then stops units in
+// reverse After=/Before= order and closes the daemon Job Object.
 package runtime

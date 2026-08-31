@@ -1,6 +1,10 @@
 package runtime
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestServiceIdentity(t *testing.T) {
 	if ServiceName != "winunitd" {
@@ -20,5 +24,39 @@ func TestServiceIdentity(t *testing.T) {
 	}
 	if PreshutdownTimeout <= 0 {
 		t.Fatal("PreshutdownTimeout unset")
+	}
+}
+
+func TestEnsureDataDirs(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "winunitd")
+	if err := EnsureDataDirs(base); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"units", "enabled", "journal", "runtime"}
+	if len(DataDirNames) != len(want) {
+		t.Fatalf("DataDirNames = %v", DataDirNames)
+	}
+	for i, name := range want {
+		if DataDirNames[i] != name {
+			t.Fatalf("DataDirNames[%d] = %q, want %q", i, DataDirNames[i], name)
+		}
+		path := filepath.Join(base, name)
+		st, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		if !st.IsDir() {
+			t.Fatalf("%s is not a directory", path)
+		}
+	}
+	if err := EnsureDataDirs(base); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsureDataDirsEmptyBase(t *testing.T) {
+	if err := EnsureDataDirs(""); err == nil {
+		t.Fatal("empty base directory must fail")
 	}
 }

@@ -21,7 +21,7 @@ Usage:
 
 Runs as the Windows Service "winunitd" (DisplayName: WinUnit Manager) when
 started by SCM: LocalSystem, Automatic (Delayed Start), restart on failure.
-Preshutdown is accepted so ordered stop can be added later (M10).
+Preshutdown is accepted and used for ordered stop (DESIGN.md §42).
 
 Console mode (no SCM) is used for tests and local runs. --base-dir still
 applies. A daemon-level Job Object enforces strict ownership: if this
@@ -31,6 +31,10 @@ into that job. On start (SCM or console) the daemon starts default.target,
 which Wants=timers.target (enabled timers arm) and pulls in enabled
 Wants=/Requires= only. Timers are scheduled internally (OnBootSec since
 machine boot, OnStartupSec since this process).
+
+On SCM stop, preshutdown, or console SIGINT, units stop in reverse
+After=/Before= order (shutdown.target as the stop root), then the daemon
+Job Object is closed so children cannot outlive winunitd.exe.
 
 Listens on \\.\pipe\winunitd\control (LocalSystem and Administrators only).
 

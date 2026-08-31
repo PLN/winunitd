@@ -6,8 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"syscall"
 	"time"
 	"unsafe"
@@ -52,19 +50,6 @@ func setPreshutdownTimeout(s *mgr.Service, d time.Duration) error {
 	return windows.ChangeServiceConfig2(s.Handle, windows.SERVICE_CONFIG_PRESHUTDOWN_INFO, (*byte)(unsafe.Pointer(&info)))
 }
 
-func ensureDataDirs(baseDir string) error {
-	for _, dir := range []string{
-		baseDir,
-		filepath.Join(baseDir, "units"),
-		filepath.Join(baseDir, "enabled"),
-	} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func configureService(s *mgr.Service) error {
 	if err := s.SetRecoveryActions(recoveryActions(), RecoveryResetPeriodNever); err != nil {
 		return fmt.Errorf("set recovery actions: %w", err)
@@ -87,7 +72,7 @@ func Install(exePath, baseDir string) error {
 	if baseDir == "" {
 		return fmt.Errorf("base directory required")
 	}
-	if err := ensureDataDirs(baseDir); err != nil {
+	if err := EnsureDataDirs(baseDir); err != nil {
 		return err
 	}
 
@@ -134,7 +119,8 @@ func Install(exePath, baseDir string) error {
 	return nil
 }
 
-// Uninstall stops (if running) and removes the winunitd service.
+// Uninstall requests an ordered stop (if running) and removes the winunitd
+// service. PATH and Event Log provider are not touched.
 func Uninstall() error {
 	m, err := mgr.Connect()
 	if err != nil {
@@ -146,11 +132,42 @@ func Uninstall() error {
 		return fmt.Errorf("service %s is not installed", ServiceName)
 	}
 	defer s.Close()
-	_, _ = s.Control(svc.Stop)
+	if err := stopService(s); err != nil {
+		return err
+	}
 	if err := s.Delete(); err != nil {
 		return fmt.Errorf("delete service: %w", err)
 	}
 	return nil
+}
+
+func stopService(s *mgr.Service) error {
+	st, err := s.Query()
+	if err != nil {
+		return fmt.Errorf("query service: %w", err)
+	}
+	if st.State == svc.Stopped {
+		return nil
+	}
+	if _, err := s.Control(svc.Stop); err != nil {
+		st, qerr := s.Query()
+		if qerr == nil && st.State == svc.Stopped {
+			return nil
+		}
+		return fmt.Errorf("stop service: %w", err)
+	}
+	deadline := time.Now().Add(PreshutdownTimeout)
+	for time.Now().Before(deadline) {
+		st, err = s.Query()
+		if err != nil {
+			return fmt.Errorf("query service: %w", err)
+		}
+		if st.State == svc.Stopped {
+			return nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("service %s did not stop within %s", ServiceName, PreshutdownTimeout)
 }
 
 const acceptedControls = svc.AcceptStop | svc.AcceptShutdown | svc.AcceptPreShutdown
@@ -194,7 +211,8 @@ func (h *host) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<-
 				changes <- c.CurrentStatus
 			default:
 				if isStopCmd(c.Cmd) {
-					// M10 performs ordered unit stop here. M4 only unblocks the host.
+					// Cancel the host. serve() then runs ordered unit stop
+					// and closes the daemon Job Object (DESIGN.md §42).
 					changes <- svc.Status{State: svc.StopPending}
 					cancel()
 					<-errc
