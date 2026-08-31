@@ -1,0 +1,270 @@
+package core
+
+import (
+	"context"
+	"fmt"
+)
+
+// Starter activates a unit. Implementations must not require Windows APIs
+// so graph execution can be tested on any GOOS. M2 does not start processes;
+// production will later supply a runtime starter.
+type Starter interface {
+	Start(ctx context.Context, name string) error
+}
+
+// StartFunc adapts a function to Starter.
+type StartFunc func(ctx context.Context, name string) error
+
+// Start calls f.
+func (f StartFunc) Start(ctx context.Context, name string) error {
+	return f(ctx, name)
+}
+
+// DependencyError means a unit failed because a Requires= dependency failed.
+type DependencyError struct {
+	Unit     string
+	Required string
+	Err      error
+}
+
+func (e *DependencyError) Error() string {
+	if e == nil {
+		return "dependency failed"
+	}
+	if e.Err == nil {
+		return fmt.Sprintf("%s failed because required %s failed", e.Unit, e.Required)
+	}
+	return fmt.Sprintf("%s failed because required %s failed: %v", e.Unit, e.Required, e.Err)
+}
+
+func (e *DependencyError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+// Run is the outcome of executing a transaction.
+type Run struct {
+	States  map[string]State
+	Errors  map[string]error
+	Started []string // units whose Starter.Start was invoked
+}
+
+// StateOf returns the recorded state, or Inactive if name was not in the run.
+func (r *Run) StateOf(name string) State {
+	if r == nil || r.States == nil {
+		return Inactive
+	}
+	if s, ok := r.States[NormalizeName(name)]; ok {
+		return s
+	}
+	return Inactive
+}
+
+// Err returns the failure for name, if any.
+func (r *Run) Err(name string) error {
+	if r == nil || r.Errors == nil {
+		return nil
+	}
+	return r.Errors[NormalizeName(name)]
+}
+
+// Start plans and executes a start transaction. The plan is validated
+// before any Starter call.
+func (g *Graph) Start(ctx context.Context, starter Starter, names ...string) (*Run, error) {
+	tx, err := g.PlanStart(names...)
+	if err != nil {
+		return nil, err
+	}
+	return tx.Execute(ctx, starter)
+}
+
+// Execute runs a previously validated transaction. Independent branches
+// start concurrently; After= is honored without serializing the whole graph.
+func (tx *Transaction) Execute(ctx context.Context, starter Starter) (*Run, error) {
+	if starter == nil {
+		return nil, fmt.Errorf("nil starter")
+	}
+	if err := tx.validate(); err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	names := tx.jobNames()
+	ex := &executor{
+		tx:        tx,
+		starter:   starter,
+		ctx:       ctx,
+		launched:  make(map[string]bool, len(names)),
+		released:  make(map[string]bool, len(names)),
+		remaining: make(map[string]int, len(names)),
+		unblock:   make(map[string][]string, len(names)),
+		run: &Run{
+			States: make(map[string]State, len(names)),
+			Errors: make(map[string]error, len(names)),
+		},
+	}
+	for _, name := range names {
+		ex.run.States[name] = Inactive
+		deps := tx.waitsFor[name]
+		ex.remaining[name] = len(deps)
+		for _, dep := range deps {
+			ex.unblock[dep] = append(ex.unblock[dep], name)
+		}
+	}
+
+	finished := make(chan startResult, len(names))
+	for {
+		if err := ctx.Err(); err != nil {
+			for _, name := range names {
+				if ex.run.States[name] == Inactive && !ex.launched[name] {
+					ex.markFailed(name, err)
+				}
+			}
+			break
+		}
+		for _, name := range names {
+			ex.tryLaunch(name, finished)
+		}
+		if ex.inflight == 0 {
+			break
+		}
+		res := <-finished
+		ex.inflight--
+		ex.onFinish(res)
+	}
+	for ex.inflight > 0 {
+		res := <-finished
+		ex.inflight--
+		ex.onFinish(res)
+	}
+
+	for _, name := range names {
+		if ex.run.States[name] == Inactive {
+			ex.markFailed(name, fmt.Errorf("unit %q was not started", name))
+		}
+	}
+
+	var rootErr error
+	for _, root := range tx.roots {
+		if err := ex.run.Errors[root]; err != nil {
+			rootErr = err
+			break
+		}
+	}
+	return ex.run, rootErr
+}
+
+type startResult struct {
+	name string
+	err  error
+}
+
+type executor struct {
+	tx        *Transaction
+	starter   Starter
+	ctx       context.Context
+	run       *Run
+	launched  map[string]bool
+	released  map[string]bool
+	remaining map[string]int
+	unblock   map[string][]string
+	inflight  int
+}
+
+func (e *executor) tryLaunch(name string, finished chan<- startResult) {
+	if e.launched[name] {
+		return
+	}
+	if e.run.States[name] == Failed {
+		return
+	}
+	if e.remaining[name] > 0 {
+		return
+	}
+	if err := e.requiresFailed(name); err != nil {
+		e.markFailed(name, err)
+		return
+	}
+	e.launched[name] = true
+	e.run.States[name] = Activating
+	e.run.Started = append(e.run.Started, name)
+	e.inflight++
+	go func(name string) {
+		finished <- startResult{name: name, err: e.starter.Start(e.ctx, name)}
+	}(name)
+}
+
+func (e *executor) requiresFailed(name string) error {
+	n := e.tx.g.nodes[name]
+	if n == nil {
+		return nil
+	}
+	for _, req := range n.requires {
+		if _, in := e.tx.jobs[req]; !in {
+			continue
+		}
+		if err := e.run.Errors[req]; err != nil {
+			return &DependencyError{Unit: name, Required: req, Err: err}
+		}
+	}
+	return nil
+}
+
+func (e *executor) onFinish(res startResult) {
+	e.releaseAfter(res.name)
+	if res.err != nil {
+		e.markFailed(res.name, res.err)
+		return
+	}
+	if e.run.States[res.name] == Failed {
+		return
+	}
+	if err := e.requiresFailed(res.name); err != nil {
+		e.markFailed(res.name, err)
+		return
+	}
+	e.run.States[res.name] = Active
+}
+
+func (e *executor) markFailed(name string, err error) {
+	if _, ok := e.run.Errors[name]; ok {
+		if e.run.States[name] != Failed {
+			e.run.States[name] = Failed
+		}
+		return
+	}
+	e.run.Errors[name] = err
+	e.run.States[name] = Failed
+	if !e.launched[name] {
+		e.releaseAfter(name)
+	}
+	for _, other := range e.tx.jobNames() {
+		if other == name {
+			continue
+		}
+		on := e.tx.g.nodes[other]
+		if on == nil {
+			continue
+		}
+		if containsName(on.requires, name) {
+			e.markFailed(other, &DependencyError{Unit: other, Required: name, Err: err})
+		}
+	}
+}
+
+func (e *executor) releaseAfter(name string) {
+	if e.released[name] {
+		return
+	}
+	e.released[name] = true
+	for _, succ := range e.unblock[name] {
+		e.remaining[succ]--
+		if e.remaining[succ] < 0 {
+			e.remaining[succ] = 0
+		}
+	}
+}
