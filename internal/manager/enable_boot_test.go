@@ -24,6 +24,9 @@ func TestBuiltinTargetsLoaded(t *testing.T) {
 	if _, ok := m.units["network-online.target"]; ok {
 		t.Fatal("network-online.target must not be shipped")
 	}
+	if _, ok := m.units[GraphicalSessionTarget]; ok {
+		t.Fatal("system manager must not load graphical-session.target")
+	}
 }
 
 func TestDiskTargetOverridesBuiltin(t *testing.T) {

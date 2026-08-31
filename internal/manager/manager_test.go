@@ -64,6 +64,9 @@ Description=App
 	if _, ok := byName["network-online.target"]; ok {
 		t.Fatal("network-online.target must not be shipped")
 	}
+	if _, ok := byName[GraphicalSessionTarget]; ok {
+		t.Fatal("system list-units must not show graphical-session.target")
+	}
 }
 
 func TestNonAdminDenied(t *testing.T) {

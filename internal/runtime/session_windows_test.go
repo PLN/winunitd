@@ -1,3 +1,5 @@
+//go:build windows
+
 package runtime
 
 import (
@@ -47,5 +49,14 @@ func TestInteractiveSessionsSkipsSessionZeroShape(t *testing.T) {
 		if id == 0 {
 			t.Fatal("session 0 must not be treated as interactive")
 		}
+	}
+}
+
+func TestSIDHasInteractiveSessionRejectsNonInteractiveSID(t *testing.T) {
+	if SIDHasInteractiveSession("S-1-5-18") {
+		t.Fatal("Local System must not report an interactive session")
+	}
+	if SIDHasInteractiveSession("") {
+		t.Fatal("empty SID")
 	}
 }

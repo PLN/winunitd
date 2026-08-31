@@ -15,4 +15,7 @@
 // --user-manager <SID>) started on first interactive logon or at boot
 // when lingering. User units live in the user manager process and are
 // not listed by system list-units. Linger records live under linger\<SID>.
+// A user manager watches WTS for its SID and starts/stops builtin
+// graphical-session.target from SIDHasInteractiveSession (Inactive when
+// lingering with no session).
 package manager

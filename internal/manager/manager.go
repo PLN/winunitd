@@ -39,6 +39,7 @@ type Manager struct {
 	gens     map[string]uint64
 	cancels  map[string]context.CancelFunc
 	stopping map[string]bool
+	session  sync.Mutex // serializes graphical-session.target start/stop
 }
 
 // New creates a manager. Reload must be called to load units.
