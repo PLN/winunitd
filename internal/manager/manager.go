@@ -40,6 +40,7 @@ type Manager struct {
 	cancels    map[string]context.CancelFunc
 	stopping   map[string]bool
 	notifies   map[string]*notifyRuntime
+	watchdogs  map[string]context.CancelFunc
 	terminated map[string]bool // start-timeout or watchdog killed the process
 	session    sync.Mutex      // serializes graphical-session.target start/stop
 }
@@ -87,6 +88,7 @@ func New(cfg Config) (*Manager, error) {
 		cancels:    make(map[string]context.CancelFunc),
 		stopping:   make(map[string]bool),
 		notifies:   make(map[string]*notifyRuntime),
+		watchdogs:  make(map[string]context.CancelFunc),
 		terminated: make(map[string]bool),
 	}
 	m.engine = timers.NewEngine(clk, store, m.onTimerElapsed)
@@ -104,7 +106,17 @@ func (m *Manager) Close() {
 		rts = append(rts, rt)
 		delete(m.notifies, name)
 	}
+	cancels := make([]context.CancelFunc, 0, len(m.watchdogs))
+	for name, c := range m.watchdogs {
+		cancels = append(cancels, c)
+		delete(m.watchdogs, name)
+	}
 	m.mu.Unlock()
+	for _, c := range cancels {
+		if c != nil {
+			c()
+		}
+	}
 	for _, rt := range rts {
 		rt.Close()
 	}

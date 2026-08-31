@@ -59,6 +59,7 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 	}
 	svc := u.Service
 	m.closeNotify(name)
+	m.stopWatchdog(name)
 
 	env := mergeEnv(svc.Environment)
 	var nrt *notifyRuntime
@@ -72,7 +73,11 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 		m.notifies[name] = nrt
 		delete(m.terminated, name)
 		m.mu.Unlock()
-		env = notify.Inject(env, nrt.Addr(), svc.WatchdogSec)
+		wd := time.Duration(0)
+		if svc.WatchdogMode == unit.WatchdogModeNotify {
+			wd = svc.WatchdogSec
+		}
+		env = notify.Inject(env, nrt.Addr(), wd)
 	}
 
 	spec := runtime.StartSpec{
@@ -196,8 +201,13 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 	gen := m.gens[name]
 	rt := m.notifies[name]
 	delete(m.notifies, name)
+	wdCancel := m.watchdogs[name]
+	delete(m.watchdogs, name)
 	m.mu.Unlock()
 
+	if wdCancel != nil {
+		wdCancel()
+	}
 	if rt != nil {
 		rt.Close()
 	}
@@ -224,6 +234,9 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.stopping[name] || m.gens[name] != gen {
+		return
+	}
+	if m.subOfLocked(name) == core.SubWatchdog {
 		return
 	}
 	oneshot := svc != nil && svc.Type == unit.TypeOneshot

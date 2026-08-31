@@ -9,6 +9,8 @@ import (
 	"time"
 	"unsafe"
 
+	goruntime "runtime"
+
 	"golang.org/x/sys/windows"
 )
 
@@ -94,10 +96,14 @@ func createUserManager(tok windows.Token, spec UserManagerSpec, job *DaemonJob) 
 			return nil, err
 		}
 	}
-	envp, err := envBlock(userManagerEnv(spec))
+	block, err := envBlock(userManagerEnv(spec))
 	if err != nil {
 		cleanup()
 		return nil, err
+	}
+	var envp *uint16
+	if len(block) > 0 {
+		envp = &block[0]
 	}
 
 	var si windows.StartupInfo
@@ -122,6 +128,7 @@ func createUserManager(tok windows.Token, spec UserManagerSpec, job *DaemonJob) 
 		&si,
 		&pi,
 	)
+	goruntime.KeepAlive(block)
 	cleanup()
 	if err != nil {
 		return nil, fmt.Errorf("CreateProcessAsUser %s: %w", spec.Exe, err)

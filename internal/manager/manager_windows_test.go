@@ -20,11 +20,26 @@ import (
 	"github.com/PLN/winunitd/internal/notify"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/unit"
 	"golang.org/x/sys/windows"
 )
 
+// winunitdHelperArgPrefix is passed as ExecStart argv so a CreateProcess
+// helper does not depend on WINUNITD_JOB_HELPER surviving the environment
+// block. TestMain reads it before m.Run() (which would reject the unknown flag).
+const winunitdHelperArgPrefix = "-winunitd-helper="
+
+func helperMode() string {
+	for _, a := range os.Args[1:] {
+		if strings.HasPrefix(a, winunitdHelperArgPrefix) {
+			return strings.TrimPrefix(a, winunitdHelperArgPrefix)
+		}
+	}
+	return strings.TrimSpace(os.Getenv("WINUNITD_JOB_HELPER"))
+}
+
 func TestMain(m *testing.M) {
-	switch os.Getenv("WINUNITD_JOB_HELPER") {
+	switch helperMode() {
 	case "sleep":
 		select {}
 	case "print":
@@ -52,7 +67,7 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(helperExitCode())
 	case "spawn":
-		cmd := exec.Command(os.Args[0])
+		cmd := exec.Command(os.Args[0], winunitdHelperArgPrefix+"sleep")
 		cmd.Env = append(os.Environ(), "WINUNITD_JOB_HELPER=sleep")
 		cmd.SysProcAttr = &windows.SysProcAttr{
 			HideWindow:    true,
@@ -189,7 +204,7 @@ func TestManagerStartUnitJobAndKillTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exeJSON, err := json.Marshal([]string{exe})
+	exeJSON, err := json.Marshal([]string{exe, winunitdHelperArgPrefix + "spawn"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +418,11 @@ func startWindowsHelperUnit(t *testing.T, dir, name, serviceBody, helper string,
 	if err != nil {
 		t.Fatal(err)
 	}
-	exeJSON, err := json.Marshal([]string{exe})
+	argv := []string{exe, winunitdHelperArgPrefix + helper}
+	if helper == "sleep" {
+		argv = windowsStayAliveArgv(t)
+	}
+	exeJSON, err := json.Marshal(argv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -525,7 +544,7 @@ Type=simple
 		"Environment=WINUNITD_JOB_HELPER=sleep\n"+
 		"[Install]\n"+
 		"WantedBy=default.target\n",
-		mustJSONArgv(t, os.Args[0]), dir)
+		mustJSONArgv(t, os.Args[0], "sleep"), dir)
 	if err := os.WriteFile(filepath.Join(dir, "units", "off.service"), []byte(offBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -538,7 +557,7 @@ Type=simple
 		"Environment=WINUNITD_JOB_HELPER=sleep\n"+
 		"[Install]\n"+
 		"WantedBy=default.target\n",
-		mustJSONArgv(t, os.Args[0]), dir)
+		mustJSONArgv(t, os.Args[0], "sleep"), dir)
 	if err := os.WriteFile(filepath.Join(dir, "units", "on.service"), []byte(onBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -565,13 +584,37 @@ Type=simple
 	}
 }
 
-func mustJSONArgv(t *testing.T, exe string) string {
+func windowsStayAliveArgv(t *testing.T) []string {
 	t.Helper()
-	abs, err := filepath.Abs(exe)
-	if err != nil {
-		t.Fatal(err)
+	root := os.Getenv("SystemRoot")
+	if root == "" {
+		root = `C:\Windows`
 	}
-	b, err := json.Marshal([]string{abs})
+	ping := filepath.Join(root, "System32", "ping.exe")
+	if _, err := os.Stat(ping); err != nil {
+		t.Fatalf("ping.exe: %v", err)
+	}
+	// ICMP ping, not a TCP listener. The unit only needs a process that
+	// stays alive while the parent holds the watchdog endpoint.
+	return []string{ping, "-t", "127.0.0.1"}
+}
+
+func mustJSONArgv(t *testing.T, exe string, helper string) string {
+	t.Helper()
+	var argv []string
+	if helper == "sleep" {
+		argv = windowsStayAliveArgv(t)
+	} else {
+		abs, err := filepath.Abs(exe)
+		if err != nil {
+			t.Fatal(err)
+		}
+		argv = []string{abs}
+		if helper != "" {
+			argv = append(argv, winunitdHelperArgPrefix+helper)
+		}
+	}
+	b, err := json.Marshal(argv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -655,7 +698,7 @@ func TestWindowsTimerOneshotOnStartupSec(t *testing.T) {
 	if err := os.MkdirAll(units, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	exe := mustJSONArgv(t, os.Args[0])
+	exe := mustJSONArgv(t, os.Args[0], "exit")
 	svc := fmt.Sprintf(""+
 		"[Service]\n"+
 		"Type=oneshot\n"+
@@ -734,7 +777,7 @@ func TestWindowsOnBootSecVsOnStartupSec(t *testing.T) {
 	if err := os.MkdirAll(units, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	exe := mustJSONArgv(t, os.Args[0])
+	exe := mustJSONArgv(t, os.Args[0], "exit")
 	writeTimerPair := func(base, trigger, countPath string) {
 		t.Helper()
 		svc := fmt.Sprintf(""+
@@ -791,7 +834,7 @@ func TestWindowsShutdownStopsAfterOrderedServicesAndClosesJob(t *testing.T) {
 	if err := os.MkdirAll(units, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	exe := mustJSONArgv(t, os.Args[0])
+	exe := mustJSONArgv(t, os.Args[0], "sleep")
 	writeSleep := func(name, extra string) {
 		t.Helper()
 		body := fmt.Sprintf(""+
@@ -870,7 +913,7 @@ func TestWindowsPreshutdownPathStopsUnitsAndClosesJob(t *testing.T) {
 	if err := os.MkdirAll(units, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	exe := mustJSONArgv(t, os.Args[0])
+	exe := mustJSONArgv(t, os.Args[0], "sleep")
 	body := fmt.Sprintf(""+
 		"[Service]\n"+
 		"Type=simple\n"+
@@ -1077,5 +1120,110 @@ func findModuleRoot(t *testing.T) string {
 			t.Fatal("go.mod not found")
 		}
 		dir = parent
+	}
+}
+
+func TestWindowsTCPWatchdogConnectKeepsUnitActive(t *testing.T) {
+	_, addr := listenLoopbackTCP(t)
+	dir := t.TempDir()
+	m := startWindowsHelperUnit(t, dir, "p5tcp.service", fmt.Sprintf(`
+Type=simple
+WatchdogMode=tcp
+WatchdogEndpoint=%s
+WatchdogSec=300ms
+Restart=no
+`, addr), "sleep", 0, "")
+	requireLoadedWatchdog(t, m, "p5tcp.service", unit.WatchdogModeTCP, addr)
+	if _, err := m.Start(context.Background(), "p5tcp"); err != nil {
+		t.Fatal(err)
+	}
+	_ = waitWindowsLiveProc(t, m, "p5tcp.service")
+	time.Sleep(800 * time.Millisecond)
+	assertWatchdogActive(t, m, "p5tcp.service")
+}
+
+func TestWindowsTCPWatchdogRefusedFails(t *testing.T) {
+	addr := closedLoopbackTCP(t)
+	dir := t.TempDir()
+	m := startWindowsHelperUnit(t, dir, "p5refused.service", fmt.Sprintf(`
+Type=simple
+WatchdogMode=tcp
+WatchdogEndpoint=%s
+WatchdogSec=200ms
+Restart=no
+`, addr), "sleep", 0, "")
+	requireLoadedWatchdog(t, m, "p5refused.service", unit.WatchdogModeTCP, addr)
+	if _, err := m.Start(context.Background(), "p5refused"); err != nil {
+		t.Fatal(err)
+	}
+	waitWatchdogFailed(t, m, "p5refused.service")
+}
+
+func TestWindowsTCPWatchdogWrongHostNotLoaded(t *testing.T) {
+	dir := t.TempDir()
+	m := startWindowsHelperUnit(t, dir, "p5bad.service", `
+Type=simple
+WatchdogMode=tcp
+WatchdogEndpoint=192.0.2.1:80
+WatchdogSec=1s
+Restart=no
+`, "sleep", 0, "")
+	_, err := m.Start(context.Background(), "p5bad")
+	if err == nil {
+		t.Fatal("non-loopback WatchdogEndpoint must not load")
+	}
+}
+
+func TestWindowsHTTPWatchdog200KeepsUnitActive(t *testing.T) {
+	ep := serveWatchdogHTTP(t, 200)
+	dir := t.TempDir()
+	m := startWindowsHelperUnit(t, dir, "p5http.service", fmt.Sprintf(`
+Type=simple
+WatchdogMode=http
+WatchdogEndpoint=%s
+WatchdogSec=300ms
+Restart=no
+`, ep), "sleep", 0, "")
+	requireLoadedWatchdog(t, m, "p5http.service", unit.WatchdogModeHTTP, "")
+	if _, err := m.Start(context.Background(), "p5http"); err != nil {
+		t.Fatal(err)
+	}
+	_ = waitWindowsLiveProc(t, m, "p5http.service")
+	time.Sleep(800 * time.Millisecond)
+	assertWatchdogActive(t, m, "p5http.service")
+}
+
+func TestWindowsHTTPWatchdogWrongStatusFails(t *testing.T) {
+	ep := serveWatchdogHTTP(t, 503)
+	dir := t.TempDir()
+	m := startWindowsHelperUnit(t, dir, "p5httpbad.service", fmt.Sprintf(`
+Type=simple
+WatchdogMode=http
+WatchdogEndpoint=%s
+WatchdogExpectedStatus=200
+WatchdogSec=200ms
+Restart=no
+`, ep), "sleep", 0, "")
+	requireLoadedWatchdog(t, m, "p5httpbad.service", unit.WatchdogModeHTTP, "")
+	if _, err := m.Start(context.Background(), "p5httpbad"); err != nil {
+		t.Fatal(err)
+	}
+	waitWatchdogFailed(t, m, "p5httpbad.service")
+}
+
+func requireLoadedWatchdog(t *testing.T, m *Manager, name string, mode unit.WatchdogMode, addr string) {
+	t.Helper()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ld := m.units[name]
+	if ld == nil || ld.unit == nil || ld.unit.Service == nil {
+		t.Fatalf("%s not loaded", name)
+	}
+	svc := ld.unit.Service
+	if svc.WatchdogMode != mode {
+		t.Fatalf("WatchdogMode = %s, want %s", svc.WatchdogMode, mode)
+	}
+	if addr != "" && svc.WatchdogAddr != addr {
+		t.Fatalf("WatchdogAddr = %q, want %q", svc.WatchdogAddr, addr)
 	}
 }
