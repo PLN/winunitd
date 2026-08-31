@@ -46,6 +46,10 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 		return fmt.Errorf("unit %q is not loaded", name)
 	}
 	u := ld.unit
+	if u.Kind == unit.KindTimer {
+		m.armTimer(u)
+		return nil
+	}
 	if u.Kind != unit.KindService || u.Service == nil {
 		return nil
 	}
@@ -90,6 +94,10 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 		}
 	}
 	m.mu.Unlock()
+
+	if m.engine != nil {
+		m.engine.UnitActive(name, time.Now())
+	}
 
 	if svc.Type == unit.TypeOneshot && proc.Alive() {
 		// Stub/fake oneshot that has not exited: stay Active like M5.

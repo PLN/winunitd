@@ -28,12 +28,14 @@ applies. A daemon-level Job Object enforces strict ownership: if this
 process dies, assigned children die with it (DESIGN.md §66). Each started
 unit gets its own nested Job Object; winctl start CreateProcess's ExecStart
 into that job. On start (SCM or console) the daemon starts default.target,
-which pulls in enabled Wants=/Requires= only.
+which Wants=timers.target (enabled timers arm) and pulls in enabled
+Wants=/Requires= only. Timers are scheduled internally (OnBootSec since
+machine boot, OnStartupSec since this process).
 
 Listens on \\.\pipe\winunitd\control (LocalSystem and Administrators only).
 
 Flags:
-  --base-dir DIR   Data directory (units\, enabled\, journal\). Default: %ProgramData%\winunitd
+  --base-dir DIR   Data directory (units\, enabled\, journal\, runtime\). Default: %ProgramData%\winunitd
   -h, --help       Show this help
 `
 

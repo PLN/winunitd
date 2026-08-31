@@ -16,9 +16,9 @@ Windows is the first-class target (`GOOS=windows`).
 
 ## Status
 
-**Now:** unit file loader, `winctl verify` on a file path (no daemon required), a dependency graph with start transactions, a versioned JSON-RPC control API on `\\.\pipe\winunitd\control` (LocalSystem and Administrators), an SCM host with a daemon-level Job Object for strict ownership, per-unit Job Objects with real CreateProcess, `Restart=` (`no` / `always` / `on-failure`), enable/targets at boot, and a journal store under `<base-dir>\journal\` so `winctl logs` / `status` / `list-units` show stored output, ActiveState, enablement, and Main PID. `winctl enable` writes files under `<base-dir>\enabled\<target>\<unit>` (not NTFS symlinks). A fresh daemon start (SCM or console) starts `default.target`, which pulls in enabled Wants=/Requires= only. `winctl daemon-reload` reparses units and rebuilds the graph without dropping live jobs.
+**Now:** unit file loader, `winctl verify` on a file path (no daemon required), a dependency graph with start transactions, a versioned JSON-RPC control API on `\\.\pipe\winunitd\control` (LocalSystem and Administrators), an SCM host with a daemon-level Job Object for strict ownership, per-unit Job Objects with real CreateProcess, `Restart=` (`no` / `always` / `on-failure`), enable/targets at boot, a journal store under `<base-dir>\journal\`, and an internal timer scheduler (not Task Scheduler). `winctl enable` writes files under `<base-dir>\enabled\<target>\<unit>` (not NTFS symlinks). A fresh daemon start (SCM or console) starts `default.target`, which Wants=`timers.target` so enabled timers arm, and pulls in enabled Wants=/Requires= only. `OnBootSec` is since machine boot; `OnStartupSec` is since this winunitd instance. `winctl daemon-reload` reparses units and rebuilds the graph without dropping live jobs. `winctl list-timers` / `status` show next/last elapse when a timer is active.
 
-**Later:** timers at runtime, and ordered `sc stop` — as described in DESIGN.md.
+**Later:** ordered `sc stop` — as described in DESIGN.md.
 
 ## Build
 
@@ -38,7 +38,7 @@ winunitd uninstall
 
 Install registers `winunitd` (DisplayName `WinUnit Manager`) as LocalSystem, Automatic (Delayed Start), with SCM recovery set to restart on failure, and accepts preshutdown notification. The daemon creates a Job Object with `KILL_ON_JOB_CLOSE`: if `winunitd.exe` is killed, assigned child processes die with it. Each started unit gets its own nested Job Object (no breakaway). Console mode (`winunitd --base-dir DIR`) still works without SCM.
 
-On start (SCM or console) the daemon starts `default.target`. Built-in targets are `default.target`, `timers.target`, and `shutdown.target` (`network-online.target` is not shipped). Ordered stop on `sc stop` is not implemented yet. The timer runtime is not implemented yet. stdout/stderr are stored under `<base-dir>\journal\<unit>.log` (production `C:\ProgramData\winunitd\journal\`).
+On start (SCM or console) the daemon starts `default.target`. Built-in targets are `default.target`, `timers.target`, and `shutdown.target` (`network-online.target` is not shipped). Builtin `default.target` Wants= `timers.target` so enabled timers run after boot. Ordered stop on `sc stop` is not implemented yet. stdout/stderr are stored under `<base-dir>\journal\<unit>.log` (production `C:\ProgramData\winunitd\journal\`). Timer last-run state lives under `<base-dir>\runtime\timers\`.
 
 ## Verify unit files
 

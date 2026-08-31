@@ -351,6 +351,7 @@ func startTestDaemonUnit(t *testing.T, unitBody string, launch runtime.Launcher)
 	}
 	stop := func() {
 		_, _ = m.Stop("foo")
+		m.Close()
 		cancel()
 		_ = lis.Close()
 		select {

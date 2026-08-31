@@ -215,6 +215,7 @@ WorkingDirectory=C:\Tools
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { stopAll(m) })
 	if _, err := m.Reload(); err != nil {
 		t.Fatal(err)
 	}
@@ -609,6 +610,7 @@ func stopAll(m *Manager) {
 	for _, name := range names {
 		_, _ = m.Stop(name)
 	}
+	m.Close()
 }
 
 func writeUnit(t *testing.T, dir, name, body string) {
