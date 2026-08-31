@@ -44,8 +44,12 @@ type Config struct {
 	// UserScope is true for a per-user manager (winunitd --user-manager).
 	// It loads graphical-session.target and starts/stops it from session
 	// tracking. The system manager stays false (identity vs session stay
-	// separate; one manager per SID already).
+	// separate; one manager per SID already). Type=scm is rejected here.
 	UserScope bool
+	// SCM orchestrates Type=scm proxy units (DESIGN.md §51). Nil uses
+	// runtime.DefaultSCM(). It never creates, changes, or deletes SCM
+	// configuration. Tests inject a fake so Linux does not call a real SCM.
+	SCM runtime.SCM
 }
 
 // DefaultBaseDir is C:\ProgramData\winunitd when ProgramData is set.

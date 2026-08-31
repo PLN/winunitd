@@ -147,6 +147,9 @@ func TestMain(m *testing.M) {
 			}()
 		}
 		select {}
+	case "scm-proxy":
+		runManagerSCMProxyTestService()
+		os.Exit(0)
 	}
 	os.Exit(m.Run())
 }
