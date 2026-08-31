@@ -28,6 +28,9 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(got, "Delayed Start") {
 		t.Fatalf("help missing delayed start: %s", got)
 	}
+	if !strings.Contains(got, "default.target") {
+		t.Fatalf("help missing boot target: %s", got)
+	}
 }
 
 func TestRunUnexpectedArg(t *testing.T) {
