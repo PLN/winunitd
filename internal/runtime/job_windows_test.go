@@ -3,12 +3,10 @@
 package runtime
 
 import (
-	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -27,47 +25,66 @@ func helperEnv(extra ...string) []string {
 }
 
 func TestMain(m *testing.M) {
-	switch os.Getenv("WINUNITD_JOB_HELPER") {
-	case "sleep":
+	if os.Getenv("WINUNITD_JOB_HELPER") == "sleep" {
 		select {}
-	case "holder":
-		os.Exit(runHolder())
 	}
 	os.Exit(m.Run())
 }
 
-func runHolder() int {
-	pid, err := strconv.Atoi(os.Getenv("WINUNITD_JOB_CHILD_PID"))
-	if err != nil || pid <= 0 {
-		return 2
-	}
-	job, err := OpenDaemonJob()
+const stillActive = 259
+
+func processAlive(pid int) bool {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {
-		return 3
+		return false
 	}
-	if err := job.AssignPID(pid); err != nil {
-		return 4
+	defer windows.CloseHandle(h)
+	var code uint32
+	if err := windows.GetExitCodeProcess(h, &code); err != nil {
+		return false
 	}
-	if err := os.WriteFile(os.Getenv("WINUNITD_JOB_READYFILE"), []byte("ok\n"), 0o644); err != nil {
-		return 5
-	}
-	// Stay alive until the parent drops stdin or the process is terminated.
-	// The job handle is not Closed; process death releases it and
-	// KILL_ON_JOB_CLOSE tears down assigned children (DESIGN.md §66).
-	_, _ = io.Copy(io.Discard, os.Stdin)
-	return 0
+	return code == stillActive
 }
 
-func startSleeper(t *testing.T) *exec.Cmd {
-	t.Helper()
-	cmd := exec.Command(os.Args[0])
-	cmd.Env = helperEnv("WINUNITD_JOB_HELPER=sleep")
-	cmd.SysProcAttr = &windows.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW,
+func terminatePID(pid int) error {
+	h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(pid))
+	if err != nil {
+		return err
 	}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
+	defer windows.CloseHandle(h)
+	return windows.TerminateProcess(h, 1)
+}
+
+func startSleepHelper(t *testing.T, inherit []windows.Handle) *exec.Cmd {
+	t.Helper()
+	start := func(breakaway bool) (*exec.Cmd, error) {
+		cmd := exec.Command(os.Args[0])
+		cmd.Env = helperEnv("WINUNITD_JOB_HELPER=sleep")
+		flags := uint32(windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW)
+		if breakaway {
+			flags |= windows.CREATE_BREAKAWAY_FROM_JOB
+		}
+		sys := &windows.SysProcAttr{
+			HideWindow:    true,
+			CreationFlags: flags,
+		}
+		if len(inherit) > 0 {
+			hs := make([]syscall.Handle, len(inherit))
+			for i, h := range inherit {
+				hs[i] = syscall.Handle(h)
+			}
+			sys.AdditionalInheritedHandles = hs
+		}
+		cmd.SysProcAttr = sys
+		return cmd, cmd.Start()
+	}
+
+	cmd, err := start(true)
+	if err != nil {
+		cmd, err = start(false)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Cleanup(func() {
 		if cmd.Process != nil {
@@ -90,15 +107,6 @@ func waitDone(t *testing.T, cmd *exec.Cmd, timeout time.Duration) {
 	}
 }
 
-func terminatePID(pid int) error {
-	h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(pid))
-	if err != nil {
-		return err
-	}
-	defer windows.CloseHandle(h)
-	return windows.TerminateProcess(h, 1)
-}
-
 func TestDaemonJobKillOnCloseFlag(t *testing.T) {
 	job, err := OpenDaemonJob()
 	if err != nil {
@@ -115,7 +123,7 @@ func TestDaemonJobKillOnCloseFlag(t *testing.T) {
 }
 
 func TestCloseJobKillsAssignedProcess(t *testing.T) {
-	sleeper := startSleeper(t)
+	sleeper := startSleepHelper(t, nil)
 	job, err := OpenDaemonJob()
 	if err != nil {
 		t.Fatal(err)
@@ -130,47 +138,44 @@ func TestCloseJobKillsAssignedProcess(t *testing.T) {
 }
 
 func TestKillDaemonTearsDownJob(t *testing.T) {
-	sleeper := startSleeper(t)
-	ready := filepath.Join(t.TempDir(), "ready")
-	holder := exec.Command(os.Args[0])
-	holder.Env = helperEnv(
-		"WINUNITD_JOB_HELPER=holder",
-		"WINUNITD_JOB_CHILD_PID="+strconv.Itoa(sleeper.Process.Pid),
-		"WINUNITD_JOB_READYFILE="+ready,
-	)
-	holder.SysProcAttr = &windows.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW,
-	}
-	stdin, err := holder.StdinPipe()
+	// Create the job in this process. Killing the CreateJobObject process
+	// ACCESS_DENIED on GitHub windows-latest (outer runner job + nested job).
+	// Duplicate an inheritable handle into a sleep helper, drop parent
+	// handles, then TerminateProcess the helper. That is process-death
+	// releasing the last job handle — the same KILL_ON_JOB_CLOSE path as
+	// killing winunitd.exe (DESIGN.md §66).
+	job, err := OpenDaemonJob()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := holder.Start(); err != nil {
+
+	sleeper := startSleepHelper(t, nil)
+	if err := job.AssignPID(sleeper.Process.Pid); err != nil {
 		t.Fatal(err)
 	}
 
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, err := os.Stat(ready); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			_ = terminatePID(holder.Process.Pid)
-			_ = stdin.Close()
-			_ = holder.Wait()
-			t.Fatal("holder did not become ready")
-		}
-		time.Sleep(20 * time.Millisecond)
+	inherited, err := job.inheritDup()
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder := startSleepHelper(t, []windows.Handle{inherited})
+	if err := windows.CloseHandle(inherited); err != nil {
+		t.Fatal(err)
+	}
+	if err := job.Close(); err != nil {
+		t.Fatal(err)
 	}
 
-	// Drop the daemon process so its job handle is released. TerminateProcess
-	// is the kill path; some CI job-object setups deny it on the test binary,
-	// in which case closing stdin makes the process exit the same way a crash
-	// would for KILL_ON_JOB_CLOSE.
+	if !processAlive(sleeper.Process.Pid) {
+		t.Fatal("sleeper died before holder was killed; inherited handle was not keeping the job open")
+	}
+
 	if err := terminatePID(holder.Process.Pid); err != nil {
-		_ = stdin.Close()
+		if processAlive(holder.Process.Pid) {
+			t.Fatalf("kill holder pid %d: %v", holder.Process.Pid, err)
+		}
 	}
 	_ = holder.Wait()
+	holder.Process = nil
 	waitDone(t, sleeper, 5*time.Second)
 }
