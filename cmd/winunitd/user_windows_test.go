@@ -20,6 +20,17 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if path := os.Getenv("WINUNITD_USER_ONESHOT"); path != "" {
+		f, err := os.Create(path)
+		if err != nil {
+			os.Exit(1)
+		}
+		fmt.Fprintf(f, "USER=%s\n", os.Getenv("USERNAME"))
+		fmt.Fprintf(f, "PROFILE=%s\n", os.Getenv("USERPROFILE"))
+		fmt.Fprintf(f, "LOCAL=%s\n", os.Getenv("LOCALAPPDATA"))
+		_ = f.Close()
+		os.Exit(0)
+	}
 	if os.Getenv("WINUNITD_TEST_DAEMON") == "1" {
 		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 	}
@@ -77,8 +88,11 @@ func TestWindowsUserManagerOneshotEnableStartAndLogoff(t *testing.T) {
 		t.Fatal(err)
 	}
 	outFile := filepath.Join(userDir, "out.txt")
-	script := fmt.Sprintf(`echo USER=%%USERNAME%%> "%s" & echo PROFILE=%%USERPROFILE%%>> "%s" & echo LOCAL=%%LOCALAPPDATA%%>> "%s"`, outFile, outFile, outFile)
-	execJSON, err := json.Marshal([]string{`C:\Windows\System32\cmd.exe`, "/c", script})
+	exe, err := filepath.Abs(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	execJSON, err := json.Marshal([]string{exe})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,9 +103,10 @@ func TestWindowsUserManagerOneshotEnableStartAndLogoff(t *testing.T) {
 		"Type=oneshot\n"+
 		"ExecStart=%s\n"+
 		"WorkingDirectory=%s\n"+
+		"Environment=\"WINUNITD_USER_ONESHOT=%s\"\n"+
 		"[Install]\n"+
 		"WantedBy=default.target\n",
-		execJSON, userDir)
+		execJSON, userDir, outFile)
 	if err := os.WriteFile(filepath.Join(units, "hermes.service"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +183,7 @@ WorkingDirectory=C:\Tools
 	errb.Reset()
 	code = runCLIUser([]string{"--user", "start", "hermes"}, &out, &errb, failDial, userDial)
 	if code != 0 {
-		t.Fatalf("start exit %d stderr=%s log=\n%s", code, errb.String(), readFile(t, logPath))
+		t.Fatalf("start exit %d stdout=%s stderr=%s logs=%s log=\n%s", code, out.String(), errb.String(), userLogs(t, userDial, "hermes"), readFile(t, logPath))
 	}
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -249,6 +264,26 @@ func readFile(t *testing.T, path string) string {
 		return err.Error()
 	}
 	return string(b)
+}
+
+func userLogs(t *testing.T, dial func(context.Context) (net.Conn, error), unit string) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn, err := dial(ctx)
+	if err != nil {
+		return err.Error()
+	}
+	defer conn.Close()
+	got, err := protocol.NewClient(conn).Logs(ctx, protocol.LogsParams{Unit: unit})
+	if err != nil {
+		return err.Error()
+	}
+	var b strings.Builder
+	for _, e := range got.Entries {
+		fmt.Fprintf(&b, "%s %s\n", e.Stream, e.Message)
+	}
+	return b.String()
 }
 
 // runCLIUser is defined in cmd/winctl; this package is cmd/winunitd.
