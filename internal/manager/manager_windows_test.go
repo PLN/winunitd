@@ -24,8 +24,22 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// winunitdHelperArgPrefix is passed as ExecStart argv so a CreateProcess
+// helper does not depend on WINUNITD_JOB_HELPER surviving the environment
+// block. TestMain reads it before m.Run() (which would reject the unknown flag).
+const winunitdHelperArgPrefix = "-winunitd-helper="
+
+func helperMode() string {
+	for _, a := range os.Args[1:] {
+		if strings.HasPrefix(a, winunitdHelperArgPrefix) {
+			return strings.TrimPrefix(a, winunitdHelperArgPrefix)
+		}
+	}
+	return strings.TrimSpace(os.Getenv("WINUNITD_JOB_HELPER"))
+}
+
 func TestMain(m *testing.M) {
-	switch os.Getenv("WINUNITD_JOB_HELPER") {
+	switch helperMode() {
 	case "sleep":
 		select {}
 	case "print":
@@ -53,7 +67,7 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(helperExitCode())
 	case "spawn":
-		cmd := exec.Command(os.Args[0])
+		cmd := exec.Command(os.Args[0], winunitdHelperArgPrefix+"sleep")
 		cmd.Env = append(os.Environ(), "WINUNITD_JOB_HELPER=sleep")
 		cmd.SysProcAttr = &windows.SysProcAttr{
 			HideWindow:    true,
@@ -190,7 +204,7 @@ func TestManagerStartUnitJobAndKillTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exeJSON, err := json.Marshal([]string{exe})
+	exeJSON, err := json.Marshal([]string{exe, winunitdHelperArgPrefix + "spawn"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +418,7 @@ func startWindowsHelperUnit(t *testing.T, dir, name, serviceBody, helper string,
 	if err != nil {
 		t.Fatal(err)
 	}
-	exeJSON, err := json.Marshal([]string{exe})
+	exeJSON, err := json.Marshal([]string{exe, winunitdHelperArgPrefix + helper})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -526,7 +540,7 @@ Type=simple
 		"Environment=WINUNITD_JOB_HELPER=sleep\n"+
 		"[Install]\n"+
 		"WantedBy=default.target\n",
-		mustJSONArgv(t, os.Args[0]), dir)
+		mustJSONArgv(t, os.Args[0], "sleep"), dir)
 	if err := os.WriteFile(filepath.Join(dir, "units", "off.service"), []byte(offBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -539,7 +553,7 @@ Type=simple
 		"Environment=WINUNITD_JOB_HELPER=sleep\n"+
 		"[Install]\n"+
 		"WantedBy=default.target\n",
-		mustJSONArgv(t, os.Args[0]), dir)
+		mustJSONArgv(t, os.Args[0], "sleep"), dir)
 	if err := os.WriteFile(filepath.Join(dir, "units", "on.service"), []byte(onBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -566,13 +580,17 @@ Type=simple
 	}
 }
 
-func mustJSONArgv(t *testing.T, exe string) string {
+func mustJSONArgv(t *testing.T, exe string, helper string) string {
 	t.Helper()
 	abs, err := filepath.Abs(exe)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := json.Marshal([]string{abs})
+	argv := []string{abs}
+	if helper != "" {
+		argv = append(argv, winunitdHelperArgPrefix+helper)
+	}
+	b, err := json.Marshal(argv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -656,7 +674,7 @@ func TestWindowsTimerOneshotOnStartupSec(t *testing.T) {
 	if err := os.MkdirAll(units, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	exe := mustJSONArgv(t, os.Args[0])
+	exe := mustJSONArgv(t, os.Args[0], "exit")
 	svc := fmt.Sprintf(""+
 		"[Service]\n"+
 		"Type=oneshot\n"+
@@ -735,7 +753,7 @@ func TestWindowsOnBootSecVsOnStartupSec(t *testing.T) {
 	if err := os.MkdirAll(units, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	exe := mustJSONArgv(t, os.Args[0])
+	exe := mustJSONArgv(t, os.Args[0], "exit")
 	writeTimerPair := func(base, trigger, countPath string) {
 		t.Helper()
 		svc := fmt.Sprintf(""+
@@ -792,7 +810,7 @@ func TestWindowsShutdownStopsAfterOrderedServicesAndClosesJob(t *testing.T) {
 	if err := os.MkdirAll(units, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	exe := mustJSONArgv(t, os.Args[0])
+	exe := mustJSONArgv(t, os.Args[0], "sleep")
 	writeSleep := func(name, extra string) {
 		t.Helper()
 		body := fmt.Sprintf(""+
@@ -871,7 +889,7 @@ func TestWindowsPreshutdownPathStopsUnitsAndClosesJob(t *testing.T) {
 	if err := os.MkdirAll(units, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	exe := mustJSONArgv(t, os.Args[0])
+	exe := mustJSONArgv(t, os.Args[0], "sleep")
 	body := fmt.Sprintf(""+
 		"[Service]\n"+
 		"Type=simple\n"+

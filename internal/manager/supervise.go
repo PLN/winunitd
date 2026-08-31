@@ -236,6 +236,9 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 	if m.stopping[name] || m.gens[name] != gen {
 		return
 	}
+	if m.subOfLocked(name) == core.SubWatchdog {
+		return
+	}
 	oneshot := svc != nil && svc.Type == unit.TypeOneshot
 	if oneshot && kind == core.ExitSuccess {
 		return

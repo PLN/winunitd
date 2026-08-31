@@ -51,7 +51,7 @@ func terminatePID(pid int) error {
 func startSleepHelper(t *testing.T, inherit []windows.Handle) *exec.Cmd {
 	t.Helper()
 	start := func(breakaway bool) (*exec.Cmd, error) {
-		cmd := exec.Command(os.Args[0])
+		cmd := exec.Command(os.Args[0], winunitdHelperArgPrefix+"sleep")
 		cmd.Env = helperEnv("WINUNITD_JOB_HELPER=sleep")
 		flags := uint32(windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW)
 		if breakaway {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -33,7 +34,7 @@ func startHelper(t *testing.T, mode string, typ unit.ServiceType, timeout time.D
 	p, err := DefaultLauncher().Start(context.Background(), StartSpec{
 		Unit:         "test.service",
 		Type:         typ,
-		Argv:         []string{testAbs(t)},
+		Argv:         []string{testAbs(t), winunitdHelperArgPrefix + mode},
 		Dir:          t.TempDir(),
 		Env:          env,
 		TimeoutStart: timeout,
@@ -156,7 +157,7 @@ func TestOneshotWaitsForExit(t *testing.T) {
 	p, err := DefaultLauncher().Start(context.Background(), StartSpec{
 		Unit: "oneshot.service",
 		Type: unit.TypeOneshot,
-		Argv: []string{testAbs(t)},
+		Argv: []string{testAbs(t), winunitdHelperArgPrefix + "oneshot"},
 		Dir:  t.TempDir(),
 		Env:  helperEnv("WINUNITD_JOB_HELPER=oneshot"),
 	})
@@ -176,7 +177,7 @@ func TestOneshotTimeoutKillsJob(t *testing.T) {
 	p, err := DefaultLauncher().Start(context.Background(), StartSpec{
 		Unit:         "oneshot.service",
 		Type:         unit.TypeOneshot,
-		Argv:         []string{testAbs(t)},
+		Argv:         []string{testAbs(t), winunitdHelperArgPrefix + "sleep"},
 		Dir:          t.TempDir(),
 		Env:          helperEnv("WINUNITD_JOB_HELPER=sleep"),
 		TimeoutStart: 200 * time.Millisecond,
@@ -253,7 +254,7 @@ func TestOneshotFailureReturnsExitStatus(t *testing.T) {
 	_, err := DefaultLauncher().Start(context.Background(), StartSpec{
 		Unit: "fail.service",
 		Type: unit.TypeOneshot,
-		Argv: []string{testAbs(t)},
+		Argv: []string{testAbs(t), winunitdHelperArgPrefix + "fail"},
 		Dir:  t.TempDir(),
 		Env:  helperEnv("WINUNITD_JOB_HELPER=fail"),
 	})
@@ -281,4 +282,26 @@ func TestStopKillsUnitJobTree(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("tree still alive after Stop parent=%v child=%v", processAlive(p.PID()), processAlive(child))
+}
+
+func TestCreateProcessWithLoopbackListenerKeepsHelperAlive(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	p := startHelper(t, "sleep", unit.TypeSimple, 0)
+	time.Sleep(400 * time.Millisecond)
+	if !p.Alive() {
+		t.Fatal("sleep helper died while parent held a loopback listener")
+	}
 }

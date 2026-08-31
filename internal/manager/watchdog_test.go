@@ -357,9 +357,24 @@ func assertWatchdogActive(t *testing.T, m *Manager, name string) {
 
 func waitWatchdogFailed(t *testing.T, m *Manager, name string) {
 	t.Helper()
-	waitUntil(t, 3*time.Second, func() bool {
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
 		m.mu.Lock()
-		defer m.mu.Unlock()
-		return m.stateOfLocked(name) == core.Failed && m.subOfLocked(name) == core.SubWatchdog
-	})
+		ok := m.stateOfLocked(name) == core.Failed && m.subOfLocked(name) == core.SubWatchdog
+		m.mu.Unlock()
+		if ok {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	m.mu.Lock()
+	st := m.stateOfLocked(name)
+	sub := m.subOfLocked(name)
+	err := m.errors[name]
+	alive := false
+	if p := m.procs[name]; p != nil {
+		alive = p.Alive()
+	}
+	m.mu.Unlock()
+	t.Fatalf("timeout state=%s sub=%s error=%q alive=%v, want failed/watchdog", st, sub, err, alive)
 }
