@@ -11,7 +11,9 @@ import (
 )
 
 // daemonJob is held for the process lifetime so KILL_ON_JOB_CLOSE still fires
-// if winunitd is killed. The handle is not closed on sc stop (M10).
+// if winunitd is killed. On SCM stop, preshutdown, and console cancel it is
+// closed after ordered unit stop so leftover children cannot outlive
+// winunitd.exe (DESIGN.md §42, §66).
 var daemonJob *runtime.DaemonJob
 
 func serve(ctx context.Context, baseDir string, stderr io.Writer) error {
@@ -26,8 +28,12 @@ func serve(ctx context.Context, baseDir string, stderr io.Writer) error {
 
 	m, err := manager.New(manager.Config{BaseDir: baseDir, Daemon: job})
 	if err != nil {
+		_ = job.Close()
+		daemonJob = nil
 		return err
 	}
+	defer finish(m, job, stderr)
+
 	rel, err := m.Reload()
 	if err != nil {
 		return fmt.Errorf("load units: %w", err)
@@ -51,4 +57,17 @@ func serve(ctx context.Context, baseDir string, stderr io.Writer) error {
 	fmt.Fprintf(stderr, "winunitd: loaded %d units, listening on %s\n", rel.Loaded, protocol.DefaultPipeName)
 
 	return protocol.Serve(ctx, lis, m, protocol.DefaultAuthorizer())
+}
+
+func finish(m *manager.Manager, job *runtime.DaemonJob, stderr io.Writer) {
+	if err := m.Shutdown(context.Background()); err != nil {
+		fmt.Fprintf(stderr, "winunitd: shutdown: %v\n", err)
+	}
+	m.Close()
+	if job != nil {
+		if err := job.Close(); err != nil {
+			fmt.Fprintf(stderr, "winunitd: close daemon job: %v\n", err)
+		}
+	}
+	daemonJob = nil
 }

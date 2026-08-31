@@ -8,7 +8,7 @@ const (
 	// TimersTarget groups enabled timer units. Boot of default.target
 	// Wants= this target so enabled timers arm (M9).
 	TimersTarget = "timers.target"
-	// ShutdownTarget exists for ordered stop (M10).
+	// ShutdownTarget is the manager-stop transaction root (DESIGN.md §42).
 	ShutdownTarget = "shutdown.target"
 )
 

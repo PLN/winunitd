@@ -360,7 +360,8 @@ func (m *Manager) applyRunLocked(run *core.Run) {
 }
 
 // Stop kills the unit Job Object so the whole process tree dies and
-// cancels a pending Restart= relaunch.
+// cancels a pending Restart= relaunch. Stopping a target also stops its
+// Wants=/Requires= in reverse After=/Before= order (DESIGN.md §42).
 func (m *Manager) Stop(name string) (*protocol.UnitResult, error) {
 	m.mu.Lock()
 	ld, err := m.lookup(name)
@@ -368,34 +369,13 @@ func (m *Manager) Stop(name string) (*protocol.UnitResult, error) {
 		m.mu.Unlock()
 		return nil, err
 	}
-	name = ld.unit.Name
-	proc := m.procs[name]
-	delete(m.procs, name)
-	m.stopping[name] = true
-	m.gens[name]++
-	m.cancelRestartLocked(name)
-	timeout := stopTimeout(ld.unit)
-	st, sub := core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventStopRequested)
-	m.states[name] = st
-	m.subs[name] = sub
-	delete(m.errors, name)
 	kind := ld.unit.Kind
+	name = ld.unit.Name
 	m.mu.Unlock()
-
-	if kind == unit.KindTimer && m.engine != nil {
-		m.engine.Disarm(name)
+	if kind == unit.KindTarget {
+		return m.stopTransaction(name)
 	}
-
-	if proc != nil {
-		_ = proc.Stop(timeout)
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	st, sub = core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventStopFinished)
-	m.states[name] = st
-	m.subs[name] = sub
-	return &protocol.UnitResult{Unit: name, ActiveState: core.Inactive.String()}, nil
+	return m.stopUnit(name)
 }
 
 // Restart is stop then start.

@@ -127,6 +127,9 @@ func TestCloseJobKillsAssignedProcess(t *testing.T) {
 	if err := job.Close(); err != nil {
 		t.Fatal(err)
 	}
+	if !job.Closed() {
+		t.Fatal("Close must mark the daemon job closed")
+	}
 	waitDone(t, sleeper, 5*time.Second)
 }
 

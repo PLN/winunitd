@@ -9,6 +9,9 @@ func TestDaemonJobStubOpenClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if j.Closed() {
+		t.Fatal("new job must not be closed")
+	}
 	if err := j.AssignSelf(); err != nil {
 		t.Fatal(err)
 	}
@@ -17,5 +20,8 @@ func TestDaemonJobStubOpenClose(t *testing.T) {
 	}
 	if err := j.Close(); err != nil {
 		t.Fatal(err)
+	}
+	if !j.Closed() {
+		t.Fatal("Close must mark the stub closed")
 	}
 }

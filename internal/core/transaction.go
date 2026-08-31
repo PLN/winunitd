@@ -10,18 +10,21 @@ type JobKind int
 
 const (
 	JobStart JobKind = iota
+	JobStop
 )
 
 func (k JobKind) String() string {
 	switch k {
 	case JobStart:
 		return "start"
+	case JobStop:
+		return "stop"
 	default:
 		return fmt.Sprintf("job(%d)", int(k))
 	}
 }
 
-// Job is one unit activation in a transaction.
+// Job is one unit activation or deactivation in a transaction.
 type Job struct {
 	Name string
 	Kind JobKind
@@ -57,10 +60,27 @@ func (e *MissingUnitError) Error() string {
 // The plan is fully validated (missing Requires, ordering cycles) before
 // it is returned. No Starter is invoked.
 func (g *Graph) PlanStart(names ...string) (*Transaction, error) {
+	return g.plan(JobStart, names...)
+}
+
+// PlanStop builds a stop transaction for the named units (DESIGN.md §42).
+// Requires= and Wants= pull the same set as start, so stopping a target
+// stops what it pulled on boot. Units that After= a root (transitively)
+// are also pulled — stop everything After= the root, reverse of boot.
+// After=/Before= among jobs are reversed: a unit that started later stops
+// first. Missing Requires= is skipped (already gone), not a plan error.
+func (g *Graph) PlanStop(names ...string) (*Transaction, error) {
+	return g.plan(JobStop, names...)
+}
+
+func (g *Graph) plan(kind JobKind, names ...string) (*Transaction, error) {
 	if g == nil {
 		return nil, fmt.Errorf("nil graph")
 	}
 	if len(names) == 0 {
+		if kind == JobStop {
+			return nil, fmt.Errorf("no unit to stop")
+		}
 		return nil, fmt.Errorf("no unit to start")
 	}
 
@@ -74,7 +94,7 @@ func (g *Graph) PlanStart(names ...string) (*Transaction, error) {
 	add = func(name, requiredBy string, required bool) error {
 		name = NormalizeName(name)
 		if name == "" {
-			if required {
+			if required && kind == JobStart {
 				return &MissingUnitError{Unit: name, RequiredBy: requiredBy}
 			}
 			return nil
@@ -84,12 +104,12 @@ func (g *Graph) PlanStart(names ...string) (*Transaction, error) {
 		}
 		n := g.nodes[name]
 		if n == nil {
-			if required {
+			if required && (kind == JobStart || requiredBy == "") {
 				return &MissingUnitError{Unit: name, RequiredBy: requiredBy}
 			}
 			return nil
 		}
-		tx.jobs[name] = &Job{Name: name, Kind: JobStart}
+		tx.jobs[name] = &Job{Name: name, Kind: kind}
 		for _, dep := range n.requires {
 			if err := add(dep, name, true); err != nil {
 				return err
@@ -121,21 +141,94 @@ func (g *Graph) PlanStart(names ...string) (*Transaction, error) {
 	}
 	tx.roots = roots
 
-	for name := range tx.jobs {
-		n := g.nodes[name]
-		var waits []string
-		for _, dep := range n.waitsFor {
-			if _, in := tx.jobs[dep]; in {
-				waits = append(waits, dep)
+	if kind == JobStop {
+		// Stop everything After= a root (reverse of boot), without
+		// pulling After= of Wants=/Requires= members that were not roots.
+		for _, later := range g.afterClosure(roots) {
+			if err := add(later, "", false); err != nil {
+				return nil, err
 			}
 		}
-		tx.waitsFor[name] = uniqueStable(waits)
+	}
+
+	if kind == JobStop {
+		tx.waitsFor = reverseWaits(tx.jobs, g)
+	} else {
+		for name := range tx.jobs {
+			n := g.nodes[name]
+			var waits []string
+			for _, dep := range n.waitsFor {
+				if _, in := tx.jobs[dep]; in {
+					waits = append(waits, dep)
+				}
+			}
+			tx.waitsFor[name] = uniqueStable(waits)
+		}
 	}
 
 	if err := tx.validate(); err != nil {
 		return nil, err
 	}
 	return tx, nil
+}
+
+func (g *Graph) afterSuccessors(name string) []string {
+	name = NormalizeName(name)
+	var out []string
+	for _, other := range g.Names() {
+		n := g.nodes[other]
+		if n == nil {
+			continue
+		}
+		if containsName(n.waitsFor, name) {
+			out = append(out, other)
+		}
+	}
+	return out
+}
+
+func (g *Graph) afterClosure(roots []string) []string {
+	seen := make(map[string]struct{})
+	var walk func(name string)
+	walk = func(name string) {
+		for _, later := range g.afterSuccessors(name) {
+			if _, ok := seen[later]; ok {
+				continue
+			}
+			seen[later] = struct{}{}
+			walk(later)
+		}
+	}
+	for _, r := range roots {
+		walk(NormalizeName(r))
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func reverseWaits(jobs map[string]*Job, g *Graph) map[string][]string {
+	out := make(map[string][]string, len(jobs))
+	for name := range jobs {
+		n := g.nodes[name]
+		if n == nil {
+			continue
+		}
+		for _, pred := range n.waitsFor {
+			if _, in := jobs[pred]; !in {
+				continue
+			}
+			// pred started before name, so name must stop before pred.
+			out[pred] = append(out[pred], name)
+		}
+	}
+	for name := range out {
+		out[name] = uniqueStable(out[name])
+	}
+	return out
 }
 
 func (tx *Transaction) validate() error {

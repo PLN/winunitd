@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -27,6 +29,25 @@ const RecoveryActionCount = 3
 const RecoveryResetPeriodNever = ^uint32(0)
 
 // PreshutdownTimeout is the extra window SCM grants after a preshutdown
-// notification (DESIGN.md §42). Ordered unit stop uses this in M10; M4 only
-// registers the timeout and accepts the control.
+// notification (DESIGN.md §42). Ordered unit stop uses this window.
 const PreshutdownTimeout = 3 * time.Minute
+
+// DataDirNames are created under the install base directory (DESIGN.md §7, §48).
+// units, enabled, journal, runtime. PATH and Event Log provider are not touched.
+var DataDirNames = []string{"units", "enabled", "journal", "runtime"}
+
+// EnsureDataDirs creates baseDir and the MVP data subdirectories if missing.
+func EnsureDataDirs(baseDir string) error {
+	if baseDir == "" {
+		return fmt.Errorf("base directory required")
+	}
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		return err
+	}
+	for _, name := range DataDirNames {
+		if err := os.MkdirAll(filepath.Join(baseDir, name), 0o755); err != nil {
+			return err
+		}
+	}
+	return nil
+}
