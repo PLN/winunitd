@@ -11,6 +11,9 @@
 //	WINUNIT_NOTIFY_PIPE
 //	WINUNIT_WATCHDOG_USEC
 //
+// WINUNIT_INVOCATION_ID is injected by the manager on each start; the
+// notify pipe name stays the unit name.
+//
 // The parser and fake TCP listener are GOOS-independent so protocol tests
 // pass on Linux. Production listen/dial use a Windows named pipe.
 package notify

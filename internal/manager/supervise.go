@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/journal"
 	"github.com/PLN/winunitd/internal/notify"
 	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/unit"
@@ -61,7 +62,12 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 	m.closeNotify(name)
 	m.stopWatchdog(name)
 
-	env := mergeEnv(svc.Environment)
+	inv := journal.NewInvocationID()
+	m.mu.Lock()
+	m.invocations[name] = inv
+	m.mu.Unlock()
+
+	env := journal.InjectEnv(mergeEnv(svc.Environment), inv)
 	var nrt *notifyRuntime
 	if svc.NeedsNotifyPipe() {
 		var err error
@@ -105,7 +111,7 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 	if nrt != nil {
 		nrt.SetMain(proc.PID(), proc.Job())
 	}
-	m.journal.Attach(name, proc.PID(), proc.Stdout(), proc.Stderr())
+	m.journal.Attach(name, proc.PID(), inv, proc.Stdout(), proc.Stderr())
 
 	m.mu.Lock()
 	if m.stopping[name] {

@@ -386,6 +386,41 @@ WorkingDirectory=C:\Windows\System32
 	if !strings.Contains(out.String(), "Main PID:") {
 		t.Fatalf("status missing Main PID: %s", out.String())
 	}
+	id1 := invocationIDFromStatus(t, out.String())
+
+	if code := runCLI([]string{"stop", "foo"}, &out, &errb, dial); code != 0 {
+		t.Fatalf("stop exit %d stderr=%s", code, errb.String())
+	}
+	out.Reset()
+	errb.Reset()
+	if code := runCLI([]string{"start", "foo"}, &out, &errb, dial); code != 0 {
+		t.Fatalf("second start exit %d stderr=%s", code, errb.String())
+	}
+	out.Reset()
+	errb.Reset()
+	if code := runCLI([]string{"status", "foo"}, &out, &errb, dial); code != 0 {
+		t.Fatalf("second status exit %d stderr=%s", code, errb.String())
+	}
+	id2 := invocationIDFromStatus(t, out.String())
+	if id2 == id1 {
+		t.Fatalf("second start reused InvocationID %s", id1)
+	}
+}
+
+func invocationIDFromStatus(t *testing.T, status string) string {
+	t.Helper()
+	for _, line := range strings.Split(status, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "InvocationID=") {
+			id := strings.TrimPrefix(line, "InvocationID=")
+			if id == "" {
+				t.Fatalf("empty InvocationID in: %s", status)
+			}
+			return id
+		}
+	}
+	t.Fatalf("status missing InvocationID=: %s", status)
+	return ""
 }
 
 func TestCLIVerifyUnitNameOverPipe(t *testing.T) {

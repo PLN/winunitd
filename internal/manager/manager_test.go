@@ -337,6 +337,18 @@ WorkingDirectory=C:\Tools
 	if msgs["warn from unit"].Stream != "stderr" {
 		t.Fatalf("stderr = %+v", msgs["warn from unit"])
 	}
+	st, err := client.Status(ctx, "foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Unit == nil || st.Unit.InvocationID == "" {
+		t.Fatalf("status missing InvocationID: %+v", st.Unit)
+	}
+	for _, e := range logs.Entries {
+		if e.InvocationID != st.Unit.InvocationID {
+			t.Fatalf("journal invocation %q != status %q", e.InvocationID, st.Unit.InvocationID)
+		}
+	}
 
 	if _, err := client.DaemonReload(ctx); err != nil {
 		t.Fatal(err)
@@ -383,6 +395,9 @@ WantedBy=default.target
 	}
 	if st.Unit.MainPID != 1 {
 		t.Fatalf("mainPid = %d", st.Unit.MainPID)
+	}
+	if st.Unit.InvocationID == "" {
+		t.Fatal("status missing InvocationID")
 	}
 
 	list, err := client.ListUnits(ctx)
