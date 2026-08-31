@@ -4,7 +4,10 @@
 // the control protocol. Start CreateProcess's ExecStart into a per-unit
 // Job Object; stop kills that job. Restart= (no / always / on-failure /
 // on-watchdog) relaunches the main process into a new unit job. Type=notify
-// stays activating until READY=1. WatchdogSec= uses WINUNIT_NOTIFY_PIPE.
+// stays activating until READY=1. WatchdogSec= uses WINUNIT_NOTIFY_PIPE
+// (WatchdogMode=notify, the default) or probes WatchdogEndpoint= (tcp connect
+// or http GET, localhost only). A missed/failed probe fails the unit the
+// same way as a missed notify heartbeat.
 // Enable writes files under enabled/<target>/<unit>; boot starts default.target, which Wants=
 // timers.target so enabled timers arm. stdout/stderr are stored under
 // journal/<unit>.log and returned by logs. The timer scheduler lives in

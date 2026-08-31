@@ -7,6 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1078,4 +1081,120 @@ func findModuleRoot(t *testing.T) string {
 		}
 		dir = parent
 	}
+}
+
+func TestWindowsTCPWatchdogConnectKeepsUnitActive(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	dir := t.TempDir()
+	m := startWindowsHelperUnit(t, dir, "p5tcp.service", fmt.Sprintf(`
+Type=simple
+WatchdogMode=tcp
+WatchdogEndpoint=%s
+WatchdogSec=150ms
+Restart=no
+`, ln.Addr().String()), "sleep", 0, "")
+	if _, err := m.Start(context.Background(), "p5tcp"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	assertState(t, m, "p5tcp.service", core.Active)
+}
+
+func TestWindowsTCPWatchdogRefusedFails(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close()
+	dir := t.TempDir()
+	m := startWindowsHelperUnit(t, dir, "p5refused.service", fmt.Sprintf(`
+Type=simple
+WatchdogMode=tcp
+WatchdogEndpoint=%s
+WatchdogSec=150ms
+Restart=no
+`, addr), "sleep", 0, "")
+	if _, err := m.Start(context.Background(), "p5refused"); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, 3*time.Second, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.stateOfLocked("p5refused.service") == core.Failed && m.subOfLocked("p5refused.service") == core.SubWatchdog
+	})
+}
+
+func TestWindowsTCPWatchdogWrongHostNotLoaded(t *testing.T) {
+	dir := t.TempDir()
+	m := startWindowsHelperUnit(t, dir, "p5bad.service", `
+Type=simple
+WatchdogMode=tcp
+WatchdogEndpoint=192.0.2.1:80
+WatchdogSec=1s
+Restart=no
+`, "sleep", 0, "")
+	_, err := m.Start(context.Background(), "p5bad")
+	if err == nil {
+		t.Fatal("non-loopback WatchdogEndpoint must not load")
+	}
+}
+
+func TestWindowsHTTPWatchdog200KeepsUnitActive(t *testing.T) {
+	ep := serveWindowsWatchdogHTTP(t, 200)
+	dir := t.TempDir()
+	m := startWindowsHelperUnit(t, dir, "p5http.service", fmt.Sprintf(`
+Type=simple
+WatchdogMode=http
+WatchdogEndpoint=%s
+WatchdogSec=150ms
+Restart=no
+`, ep), "sleep", 0, "")
+	if _, err := m.Start(context.Background(), "p5http"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	assertState(t, m, "p5http.service", core.Active)
+}
+
+func TestWindowsHTTPWatchdogWrongStatusFails(t *testing.T) {
+	ep := serveWindowsWatchdogHTTP(t, 503)
+	dir := t.TempDir()
+	m := startWindowsHelperUnit(t, dir, "p5httpbad.service", fmt.Sprintf(`
+Type=simple
+WatchdogMode=http
+WatchdogEndpoint=%s
+WatchdogExpectedStatus=200
+WatchdogSec=150ms
+Restart=no
+`, ep), "sleep", 0, "")
+	if _, err := m.Start(context.Background(), "p5httpbad"); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, 3*time.Second, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.stateOfLocked("p5httpbad.service") == core.Failed && m.subOfLocked("p5httpbad.service") == core.SubWatchdog
+	})
+}
+
+func serveWindowsWatchdogHTTP(t *testing.T, status int) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, "p5")
+	})
+	srv := &http.Server{Handler: mux}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	return "http://" + ln.Addr().String() + "/health"
 }

@@ -18,18 +18,20 @@ var knownDirectives = map[string]map[string]bool{
 		"RequiresInteractiveSession": true,
 	},
 	"Service": {
-		"Type":             true,
-		"ExecStart":        true,
-		"ExecStartArg":     true,
-		"WorkingDirectory": true,
-		"Environment":      true,
-		"Restart":          true,
-		"RestartSec":       true,
-		"TimeoutStartSec":  true,
-		"TimeoutStopSec":   true,
-		"NotifyAccess":     true,
-		"WatchdogSec":      true,
-		"WatchdogMode":     true,
+		"Type":                   true,
+		"ExecStart":              true,
+		"ExecStartArg":           true,
+		"WorkingDirectory":       true,
+		"Environment":            true,
+		"Restart":                true,
+		"RestartSec":             true,
+		"TimeoutStartSec":        true,
+		"TimeoutStopSec":         true,
+		"NotifyAccess":           true,
+		"WatchdogSec":            true,
+		"WatchdogMode":           true,
+		"WatchdogEndpoint":       true,
+		"WatchdogExpectedStatus": true,
 	},
 	"Timer": {
 		"OnBootSec":       true,
@@ -78,6 +80,10 @@ type serviceBuilder struct {
 	watchdogSecL  int
 	watchdogMode  string
 	watchdogModeL int
+	watchdogEP    string
+	watchdogEPL   int
+	watchdogStat  string
+	watchdogStatL int
 }
 
 type timerBuilder struct {
@@ -277,6 +283,12 @@ func (p *parser) applyService(e iniEntry) {
 	case "WatchdogMode":
 		s.watchdogMode = e.value
 		s.watchdogModeL = e.line
+	case "WatchdogEndpoint":
+		s.watchdogEP = e.value
+		s.watchdogEPL = e.line
+	case "WatchdogExpectedStatus":
+		s.watchdogStat = e.value
+		s.watchdogStatL = e.line
 	}
 }
 
@@ -453,16 +465,7 @@ func (p *parser) finishService() {
 		}
 	}
 
-	mode := strings.ToLower(strings.TrimSpace(s.watchdogMode))
-	if mode == "" {
-		if spec.WatchdogSecSet && spec.WatchdogSec > 0 {
-			spec.WatchdogMode = WatchdogModeNotify
-		}
-	} else if WatchdogMode(mode) == WatchdogModeNotify {
-		spec.WatchdogMode = WatchdogModeNotify
-	} else {
-		p.errorf(s.watchdogModeL, "invalid WatchdogMode %q (supported: notify)", s.watchdogMode)
-	}
+	p.finishWatchdog(spec, s)
 }
 
 func (p *parser) finishTimer() {
