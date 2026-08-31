@@ -97,3 +97,37 @@ func TestEnginePersistentCatchup(t *testing.T) {
 		t.Fatal("Persistent=yes did not catch up")
 	}
 }
+
+func TestEngineOnUnitActiveSecDoesNotRefireSameDue(t *testing.T) {
+	t.Parallel()
+	fired := make(chan string, 32)
+	e := NewEngine(DefaultClock(), nil, func(name string) { fired <- name })
+	t.Cleanup(e.Stop)
+	interval := 40 * time.Millisecond
+	e.Arm(Spec{
+		Name:               "foo.timer",
+		Unit:               "foo.service",
+		OnUnitActiveSec:    interval,
+		OnUnitActiveSecSet: true,
+	})
+	e.UnitActive("foo.service", time.Now())
+	select {
+	case name := <-fired:
+		if name != "foo.timer" {
+			t.Fatalf("fired %q", name)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("OnUnitActiveSec did not fire")
+	}
+	select {
+	case <-fired:
+		t.Fatal("re-fired the same OnUnitActiveSec due")
+	case <-time.After(2 * interval):
+	}
+	e.UnitActive("foo.service", time.Now())
+	select {
+	case <-fired:
+	case <-time.After(2 * time.Second):
+		t.Fatal("did not fire after the next UnitActive")
+	}
+}
