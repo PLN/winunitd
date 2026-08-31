@@ -62,6 +62,68 @@ Conflicts=other.service
 	}
 }
 
+func TestVerifyResourceLimitTable(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		file    string
+		src     string
+		wantErr string
+	}{
+		{
+			name: "MemoryMax=abc",
+			file: "bad-mem.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+MemoryMax=abc
+`,
+			wantErr: `invalid MemoryMax "abc"`,
+		},
+		{
+			name: "ProcessLimit=-1",
+			file: "bad-proc.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+ProcessLimit=-1
+`,
+			wantErr: `invalid ProcessLimit "-1"`,
+		},
+		{
+			name: "PriorityClass=realtime",
+			file: "bad-pri.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+PriorityClass=realtime
+`,
+			wantErr: `invalid PriorityClass "realtime"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := filepath.Join(dir, tt.file)
+			if err := os.WriteFile(p, []byte(tt.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			rep := VerifyPath(p)
+			if !rep.HasError() {
+				t.Fatal("expected verify error")
+			}
+			errs := strings.Join(issueTexts(rep.Errors()), "\n")
+			if !strings.Contains(errs, tt.wantErr) {
+				t.Fatalf("errors = %s, want %q", errs, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestVerifyTimerFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

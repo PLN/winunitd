@@ -336,6 +336,9 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 	}
 	if err := m.errors[name]; err != "" {
 		st.Error = err
+		if err == core.ReasonResourceLimit {
+			st.Reason = core.ReasonResourceLimit
+		}
 	}
 	if ld.unit != nil && ld.unit.Kind == unit.KindTimer && m.engine != nil {
 		snap := m.engine.Status(name)

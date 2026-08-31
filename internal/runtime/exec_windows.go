@@ -101,7 +101,7 @@ func (l *winLauncher) Start(ctx context.Context, spec StartSpec) (Process, error
 }
 
 func (l *winLauncher) create(spec StartSpec) (*winProc, error) {
-	job, err := OpenUnitJob()
+	job, err := OpenUnitJobWith(spec.Limits)
 	if err != nil {
 		return nil, err
 	}

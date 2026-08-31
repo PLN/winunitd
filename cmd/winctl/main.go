@@ -58,6 +58,9 @@ through winunitd.
 Unknown directives are errors. ExecStart must be an absolute Windows path
 (SearchPath=no). An omitted WorkingDirectory is a warning; System32 is not
 used as a default. Type=scm requires ServiceName= and does not use ExecStart=.
+MemoryMax= accepts K/M/G (e.g. 2G). ProcessLimit= must be a positive integer.
+PriorityClass= is idle, below-normal, normal, above-normal, or high (not realtime).
+Those three keys are [Service] only.
 `
 
 type cli struct {
@@ -517,6 +520,9 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		fmt.Fprintf(c.stdout, "● %s\n", title)
 		fmt.Fprintf(c.stdout, "     Loaded: %s (%s; %s)\n", u.LoadState, u.Path, enabled)
 		fmt.Fprintf(c.stdout, "     Active: %s\n", u.ActiveState)
+		if u.Reason != "" {
+			fmt.Fprintf(c.stdout, "     Reason: %s\n", u.Reason)
+		}
 		if u.MainPID != 0 {
 			fmt.Fprintf(c.stdout, "   Main PID: %d\n", u.MainPID)
 		}

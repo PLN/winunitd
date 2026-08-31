@@ -2,7 +2,10 @@
 //
 // It loads unit files, tracks enablement and lifecycle state, and serves
 // the control protocol. Start CreateProcess's ExecStart into a per-unit
-// Job Object; stop kills that job. Restart= (no / always / on-failure /
+// Job Object; stop kills that job. MemoryMax=, ProcessLimit=, and
+// PriorityClass= apply to that existing job (whole tree). Hitting
+// MemoryMax= or ProcessLimit= fails the unit with reason resource-limit.
+// Restart= (no / always / on-failure /
 // on-watchdog) relaunches the main process into a new unit job. Type=notify
 // stays activating until READY=1. WatchdogSec= uses WINUNIT_NOTIFY_PIPE
 // (WatchdogMode=notify, the default) or probes WatchdogEndpoint= (tcp connect
