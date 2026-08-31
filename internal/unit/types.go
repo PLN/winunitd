@@ -40,10 +40,14 @@ type NotifyAccess string
 
 const NotifyAccessMain NotifyAccess = "main"
 
-// WatchdogMode is a [Service] WatchdogMode= value. P4 supports notify only.
+// WatchdogMode is a [Service] WatchdogMode= value (DESIGN.md §19).
 type WatchdogMode string
 
-const WatchdogModeNotify WatchdogMode = "notify"
+const (
+	WatchdogModeNotify WatchdogMode = "notify"
+	WatchdogModeTCP    WatchdogMode = "tcp"
+	WatchdogModeHTTP   WatchdogMode = "http"
+)
 
 // EnvVar is a single Environment= assignment. Values are stored literally;
 // ${} and %VAR% are not expanded.
@@ -77,39 +81,56 @@ type Unit struct {
 
 // ServiceSpec is the [Service] section.
 type ServiceSpec struct {
-	Type             ServiceType
-	ExecStart        []string // argv: executable then arguments
-	WorkingDirectory string
-	Environment      []EnvVar
-	Restart          RestartPolicy
-	RestartSec       time.Duration
-	TimeoutStartSec  time.Duration
-	TimeoutStopSec   time.Duration
-	NotifyAccess     NotifyAccess
-	WatchdogSec      time.Duration
-	WatchdogMode     WatchdogMode
+	Type                   ServiceType
+	ExecStart              []string // argv: executable then arguments
+	WorkingDirectory       string
+	Environment            []EnvVar
+	Restart                RestartPolicy
+	RestartSec             time.Duration
+	TimeoutStartSec        time.Duration
+	TimeoutStopSec         time.Duration
+	NotifyAccess           NotifyAccess
+	WatchdogSec            time.Duration
+	WatchdogMode           WatchdogMode
+	WatchdogEndpoint       string
+	WatchdogExpectedStatus int
+	WatchdogAddr           string // host:port for tcp/http (loopback)
+	WatchdogURL            string // http(s) URL for WatchdogMode=http
 
-	RestartSecSet      bool
-	TimeoutStartSecSet bool
-	TimeoutStopSecSet  bool
-	WatchdogSecSet     bool
+	RestartSecSet             bool
+	TimeoutStartSecSet        bool
+	TimeoutStopSecSet         bool
+	WatchdogSecSet            bool
+	WatchdogEndpointSet       bool
+	WatchdogExpectedStatusSet bool
 }
 
 // NeedsNotifyPipe reports whether the unit process should receive
-// WINUNIT_NOTIFY_PIPE (Type=notify or WatchdogSec=).
+// WINUNIT_NOTIFY_PIPE (Type=notify or WatchdogMode=notify).
 func (s *ServiceSpec) NeedsNotifyPipe() bool {
 	if s == nil {
 		return false
 	}
-	return s.Type == TypeNotify || s.WatchdogEnabled()
+	if s.Type == TypeNotify {
+		return true
+	}
+	return s.WatchdogEnabled() && s.WatchdogMode == WatchdogModeNotify
 }
 
-// WatchdogEnabled reports a positive WatchdogSec= (mode notify).
+// WatchdogEnabled reports a positive WatchdogSec=.
 func (s *ServiceSpec) WatchdogEnabled() bool {
 	if s == nil {
 		return false
 	}
 	return s.WatchdogSecSet && s.WatchdogSec > 0
+}
+
+// WatchdogProbeMode reports WatchdogMode=tcp or http.
+func (s *ServiceSpec) WatchdogProbeMode() bool {
+	if s == nil {
+		return false
+	}
+	return s.WatchdogMode == WatchdogModeTCP || s.WatchdogMode == WatchdogModeHTTP
 }
 
 // TimerSpec is the [Timer] section.

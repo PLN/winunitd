@@ -62,7 +62,7 @@ ExecStart=C:\Tools\foo.exe
 	if err := os.WriteFile(bad, []byte(`
 [Service]
 ExecStart=foo.exe
-WatchdogEndpoint=http://127.0.0.1/health
+KillMode=job
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ OnCalendar=daily
 		if !strings.Contains(s, "absolute path") {
 			t.Fatalf("missing relative ExecStart: %s", s)
 		}
-		if !strings.Contains(s, `unknown directive "WatchdogEndpoint"`) {
+		if !strings.Contains(s, `unknown directive "KillMode"`) {
 			t.Fatalf("unknown directive should fail: %s", s)
 		}
 		if strings.Contains(out.String(), ": verified") {
