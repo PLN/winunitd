@@ -12,6 +12,8 @@ const (
 	ExitFailure
 	// ExitAbnormal is a crash, wait error, or signal-style failure.
 	ExitAbnormal
+	// ExitWatchdog is a missed WatchdogSec= heartbeat.
+	ExitWatchdog
 )
 
 func (k ExitKind) String() string {
@@ -22,6 +24,8 @@ func (k ExitKind) String() string {
 		return "failure"
 	case ExitAbnormal:
 		return "abnormal"
+	case ExitWatchdog:
+		return "watchdog"
 	default:
 		return "exit-kind"
 	}
@@ -30,15 +34,18 @@ func (k ExitKind) String() string {
 // ShouldRestart reports whether Restart= launches the unit again after the
 // main process has exited. There is no StartLimitBurst / StartLimitInterval.
 //
-//	no:         never
-//	always:     any exit, including 0
-//	on-failure: non-zero exit and crash/signal-style failure
+//	no:          never
+//	always:      any exit, including 0 and watchdog
+//	on-failure:  non-zero exit, crash/signal-style failure, and watchdog
+//	on-watchdog: missed WatchdogSec= only
 func ShouldRestart(policy unit.RestartPolicy, kind ExitKind) bool {
 	switch policy {
 	case unit.RestartAlways:
 		return true
 	case unit.RestartOnFailure:
 		return kind != ExitSuccess
+	case unit.RestartOnWatchdog:
+		return kind == ExitWatchdog
 	default:
 		return false
 	}

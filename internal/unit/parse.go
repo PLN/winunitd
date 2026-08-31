@@ -27,6 +27,9 @@ var knownDirectives = map[string]map[string]bool{
 		"RestartSec":       true,
 		"TimeoutStartSec":  true,
 		"TimeoutStopSec":   true,
+		"NotifyAccess":     true,
+		"WatchdogSec":      true,
+		"WatchdogMode":     true,
 	},
 	"Timer": {
 		"OnBootSec":       true,
@@ -68,6 +71,13 @@ type serviceBuilder struct {
 	timeoutStartL int
 	timeoutStop   string
 	timeoutStopL  int
+
+	notifyAccess  string
+	notifyAccessL int
+	watchdogSec   string
+	watchdogSecL  int
+	watchdogMode  string
+	watchdogModeL int
 }
 
 type timerBuilder struct {
@@ -258,6 +268,15 @@ func (p *parser) applyService(e iniEntry) {
 	case "TimeoutStopSec":
 		s.timeoutStop = e.value
 		s.timeoutStopL = e.line
+	case "NotifyAccess":
+		s.notifyAccess = e.value
+		s.notifyAccessL = e.line
+	case "WatchdogSec":
+		s.watchdogSec = e.value
+		s.watchdogSecL = e.line
+	case "WatchdogMode":
+		s.watchdogMode = e.value
+		s.watchdogModeL = e.line
 	}
 }
 
@@ -342,10 +361,10 @@ func (p *parser) finishService() {
 		typ = string(TypeSimple)
 	}
 	switch ServiceType(typ) {
-	case TypeSimple, TypeOneshot:
+	case TypeSimple, TypeOneshot, TypeNotify:
 		spec.Type = ServiceType(typ)
 	default:
-		p.errorf(s.typLine, "invalid Type %q (supported: simple, oneshot)", s.typ)
+		p.errorf(s.typLine, "invalid Type %q (supported: simple, oneshot, notify)", s.typ)
 	}
 
 	if !s.execSet || (strings.TrimSpace(s.execRaw) == "" && len(s.execArgs) == 0) {
@@ -378,11 +397,11 @@ func (p *parser) finishService() {
 		rest = string(RestartNo)
 	}
 	switch RestartPolicy(rest) {
-	case RestartNo, RestartAlways, RestartOnFailure:
+	case RestartNo, RestartAlways, RestartOnFailure, RestartOnWatchdog:
 		spec.Restart = RestartPolicy(rest)
 	default:
 		line := s.restLine
-		p.errorf(line, "invalid Restart %q (supported: no, always, on-failure)", s.restart)
+		p.errorf(line, "invalid Restart %q (supported: no, always, on-failure, on-watchdog)", s.restart)
 	}
 
 	if s.restartSec != "" {
@@ -411,6 +430,38 @@ func (p *parser) finishService() {
 			spec.TimeoutStopSec = d
 			spec.TimeoutStopSecSet = true
 		}
+	}
+
+	access := strings.ToLower(strings.TrimSpace(s.notifyAccess))
+	if access == "" {
+		if spec.Type == TypeNotify {
+			spec.NotifyAccess = NotifyAccessMain
+		}
+	} else if NotifyAccess(access) == NotifyAccessMain {
+		spec.NotifyAccess = NotifyAccessMain
+	} else {
+		p.errorf(s.notifyAccessL, "invalid NotifyAccess %q (supported: main)", s.notifyAccess)
+	}
+
+	if s.watchdogSec != "" {
+		d, err := parseDuration(s.watchdogSec)
+		if err != nil {
+			p.errorf(s.watchdogSecL, "invalid WatchdogSec: %s", err.Error())
+		} else {
+			spec.WatchdogSec = d
+			spec.WatchdogSecSet = true
+		}
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(s.watchdogMode))
+	if mode == "" {
+		if spec.WatchdogSecSet && spec.WatchdogSec > 0 {
+			spec.WatchdogMode = WatchdogModeNotify
+		}
+	} else if WatchdogMode(mode) == WatchdogModeNotify {
+		spec.WatchdogMode = WatchdogModeNotify
+	} else {
+		p.errorf(s.watchdogModeL, "invalid WatchdogMode %q (supported: notify)", s.watchdogMode)
 	}
 }
 

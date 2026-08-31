@@ -29,6 +29,9 @@ func TestSubstateString(t *testing.T) {
 	if SubRunning.String() != "running" {
 		t.Fatalf("running = %q", SubRunning.String())
 	}
+	if SubWatchdog.String() != "watchdog" {
+		t.Fatalf("watchdog = %q", SubWatchdog.String())
+	}
 	if SubNone.String() != "" {
 		t.Fatalf("none = %q", SubNone.String())
 	}
@@ -53,6 +56,7 @@ func TestStep(t *testing.T) {
 		{Active, SubRunning, EventStopRequested, Deactivating, SubStop},
 		{Deactivating, SubStop, EventStopFinished, Inactive, SubNone},
 		{Activating, SubAutoRestart, EventRestartCancelled, Inactive, SubNone},
+		{Active, SubRunning, EventWatchdogFailed, Failed, SubWatchdog},
 		{Activating, SubStart, EventMainExited, Failed, SubNone},
 		{Deactivating, SubStop, EventStartFailed, Failed, SubNone},
 	}
