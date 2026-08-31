@@ -763,6 +763,7 @@ Description=App
 type fakeLauncher struct {
 	mu     sync.Mutex
 	starts []runtime.StartSpec
+	stops  []string
 	stdout string
 	stderr string
 }
@@ -782,6 +783,8 @@ func (f *fakeLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runti
 		return nil, err
 	}
 	return &fakeProc{
+		name:   spec.Unit,
+		rec:    f,
 		pid:    1,
 		job:    job,
 		done:   make(chan struct{}),
@@ -808,8 +811,18 @@ func (f *fakeLauncher) units() []string {
 	return out
 }
 
+func (f *fakeLauncher) stopped() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.stops))
+	copy(out, f.stops)
+	return out
+}
+
 type fakeProc struct {
 	mu       sync.Mutex
+	name     string
+	rec      *fakeLauncher
 	pid      int
 	job      runtime.Job
 	dead     bool
@@ -869,6 +882,11 @@ func (p *fakeProc) Wait(ctx context.Context) error {
 
 func (p *fakeProc) Stop(timeout time.Duration) error {
 	_ = timeout
+	if p.rec != nil && p.name != "" {
+		p.rec.mu.Lock()
+		p.rec.stops = append(p.rec.stops, p.name)
+		p.rec.mu.Unlock()
+	}
 	p.finish()
 	if p.job != nil {
 		_ = p.job.Kill()

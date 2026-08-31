@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"fmt"
+	"os"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -21,8 +22,9 @@ type DaemonJob struct {
 // OpenDaemonJob creates an unnamed job with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE.
 // The current process is not assigned; AssignSelf or AssignPID is required.
 // The daemon must keep the returned job alive until process exit so a crash
-// still tears children down. Do not Close the job while the daemon is in it:
-// that would terminate winunitd itself.
+// still tears children down. Close after ordered unit stop; if this process
+// is in the job, leftover children are terminated first so CloseHandle does
+// not kill winunitd.
 func OpenDaemonJob() (*DaemonJob, error) {
 	h, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
@@ -78,19 +80,98 @@ func (j *DaemonJob) AssignSelf() error {
 	return nil
 }
 
-// Close closes the job handle. With KILL_ON_JOB_CLOSE, remaining assigned
-// processes are terminated. The daemon host does not Close on a clean SCM
-// stop (M10); process death still releases the handle.
+// Close closes the job handle so leftover children cannot outlive
+// winunitd.exe (DESIGN.md §66). If this process is itself in the job,
+// leftover children are terminated first and KILL_ON_JOB_CLOSE is cleared
+// so CloseHandle does not kill the daemon after an ordered stop.
 func (j *DaemonJob) Close() error {
 	if j == nil || j.handle == 0 {
 		return nil
 	}
 	h := j.handle
 	j.handle = 0
+
+	inSelf, err := isProcessInJob(windows.CurrentProcess(), h)
+	if err == nil && inSelf {
+		self := os.Getpid()
+		for _, pid := range jobPIDs(h) {
+			if pid == self {
+				continue
+			}
+			_ = terminatePIDHandle(pid)
+		}
+		_ = clearKillOnClose(h)
+	}
 	if err := windows.CloseHandle(h); err != nil {
 		return fmt.Errorf("close daemon job: %w", err)
 	}
 	return nil
+}
+
+// Closed reports whether Close has released the job handle.
+func (j *DaemonJob) Closed() bool {
+	return j == nil || j.handle == 0
+}
+
+func jobPIDs(h windows.Handle) []int {
+	if h == 0 {
+		return nil
+	}
+	buf := make([]byte, 8+8*8)
+	for {
+		var retlen uint32
+		err := windows.QueryInformationJobObject(
+			h,
+			windows.JobObjectBasicProcessIdList,
+			uintptr(unsafe.Pointer(&buf[0])),
+			uint32(len(buf)),
+			&retlen,
+		)
+		if err == windows.ERROR_MORE_DATA {
+			buf = make([]byte, len(buf)*2)
+			continue
+		}
+		if err != nil {
+			return nil
+		}
+		n := *(*uint32)(unsafe.Pointer(&buf[4]))
+		if n == 0 {
+			return nil
+		}
+		ids := unsafe.Slice((*uintptr)(unsafe.Pointer(&buf[8])), int(n))
+		out := make([]int, len(ids))
+		for i, id := range ids {
+			out[i] = int(id)
+		}
+		return out
+	}
+}
+
+func terminatePIDHandle(pid int) error {
+	if pid <= 0 {
+		return fmt.Errorf("invalid pid %d", pid)
+	}
+	h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(pid))
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(h)
+	return windows.TerminateProcess(h, 1)
+}
+
+func clearKillOnClose(h windows.Handle) error {
+	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{
+		BasicLimitInformation: windows.JOBOBJECT_BASIC_LIMIT_INFORMATION{
+			LimitFlags: 0,
+		},
+	}
+	_, err := windows.SetInformationJobObject(
+		h,
+		windows.JobObjectExtendedLimitInformation,
+		uintptr(unsafe.Pointer(&info)),
+		uint32(unsafe.Sizeof(info)),
+	)
+	return err
 }
 
 func (j *DaemonJob) killOnCloseEnabled() (bool, error) {
