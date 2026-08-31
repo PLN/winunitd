@@ -362,6 +362,132 @@ func waitWindowsCount(t *testing.T, path string, n int, timeout time.Duration) {
 	t.Fatalf("count = %d, want >= %d", got, n)
 }
 
+func TestWindowsEnableFileLayout(t *testing.T) {
+	dir := t.TempDir()
+	units := filepath.Join(dir, "units")
+	if err := os.MkdirAll(units, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "" +
+		"[Service]\n" +
+		"ExecStart=C:\\Tools\\hermes.exe\n" +
+		"WorkingDirectory=C:\\Tools\n" +
+		"[Install]\n" +
+		"WantedBy=default.target\n"
+	if err := os.WriteFile(filepath.Join(units, "hermes.service"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := New(Config{BaseDir: dir, Launch: runtime.StubLauncher()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Enable("hermes.service"); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(dir, "enabled", "default.target", "hermes.service")
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("enable file must not be an NTFS symlink")
+	}
+	attrs, err := windows.GetFileAttributes(windows.StringToUTF16Ptr(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		t.Fatal("enable file must not be a reparse point")
+	}
+	if attrs&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		t.Fatal("enable file must be a regular file")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "hermes.service\n" {
+		t.Fatalf("body = %q", got)
+	}
+
+	if _, err := m.Disable("hermes.service"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("disable did not remove %s: %v", path, err)
+	}
+}
+
+func TestWindowsBootStartsOnlyEnabledUnit(t *testing.T) {
+	dir := t.TempDir()
+	on := startWindowsHelperUnit(t, dir, "on.service", `
+Type=simple
+`, "sleep", 0, "")
+	offBody := fmt.Sprintf(""+
+		"[Service]\n"+
+		"Type=simple\n"+
+		"ExecStart=%s\n"+
+		"WorkingDirectory=%s\n"+
+		"Environment=WINUNITD_JOB_HELPER=sleep\n"+
+		"[Install]\n"+
+		"WantedBy=default.target\n",
+		mustJSONArgv(t, os.Args[0]), dir)
+	if err := os.WriteFile(filepath.Join(dir, "units", "off.service"), []byte(offBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Rewrite on.service with WantedBy so enable has a target.
+	onBody := fmt.Sprintf(""+
+		"[Service]\n"+
+		"Type=simple\n"+
+		"ExecStart=%s\n"+
+		"WorkingDirectory=%s\n"+
+		"Environment=WINUNITD_JOB_HELPER=sleep\n"+
+		"[Install]\n"+
+		"WantedBy=default.target\n",
+		mustJSONArgv(t, os.Args[0]), dir)
+	if err := os.WriteFile(filepath.Join(dir, "units", "on.service"), []byte(onBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := on.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := on.Enable("on.service"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := on.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_ = waitWindowsLiveProc(t, on, "on.service")
+	on.mu.Lock()
+	offProc := on.procs["off.service"]
+	stOff := on.stateOfLocked("off.service")
+	stOn := on.stateOfLocked("on.service")
+	on.mu.Unlock()
+	if offProc != nil || stOff != core.Inactive {
+		t.Fatalf("disabled unit started: proc=%v state=%s", offProc != nil, stOff)
+	}
+	if stOn != core.Active {
+		t.Fatalf("enabled unit state = %s", stOn)
+	}
+}
+
+func mustJSONArgv(t *testing.T, exe string) string {
+	t.Helper()
+	abs, err := filepath.Abs(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal([]string{abs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
 func waitWindowsLiveProc(t *testing.T, m *Manager, name string) runtime.Process {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

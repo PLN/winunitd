@@ -27,7 +27,8 @@ Console mode (no SCM) is used for tests and local runs. --base-dir still
 applies. A daemon-level Job Object enforces strict ownership: if this
 process dies, assigned children die with it (DESIGN.md §66). Each started
 unit gets its own nested Job Object; winctl start CreateProcess's ExecStart
-into that job.
+into that job. On start (SCM or console) the daemon starts default.target,
+which pulls in enabled Wants=/Requires= only.
 
 Listens on \\.\pipe\winunitd\control (LocalSystem and Administrators only).
 

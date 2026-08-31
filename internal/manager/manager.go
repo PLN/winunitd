@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -356,70 +354,6 @@ func (m *Manager) Restart(ctx context.Context, name string) (*protocol.UnitResul
 	return m.Start(ctx, name)
 }
 
-// Enable writes tiny link files under enabled/<target>/ (DESIGN.md §12).
-func (m *Manager) Enable(name string) (*protocol.EnableResult, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	ld, err := m.lookup(name)
-	if err != nil {
-		return nil, err
-	}
-	name = ld.unit.Name
-	targets := ld.unit.WantedBy
-	if len(targets) == 0 {
-		targets = []string{defaultTarget}
-	}
-	normalized := make([]string, 0, len(targets))
-	seen := make(map[string]struct{}, len(targets))
-	for _, t := range targets {
-		t = core.NormalizeName(t)
-		if t == "" {
-			continue
-		}
-		if _, ok := seen[t]; ok {
-			continue
-		}
-		seen[t] = struct{}{}
-		normalized = append(normalized, t)
-	}
-	sort.Strings(normalized)
-	for _, t := range normalized {
-		path := m.cfg.EnabledPath(t, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return nil, protocol.ErrFailed(err.Error())
-		}
-		if err := os.WriteFile(path, []byte(name+"\n"), 0o644); err != nil {
-			return nil, protocol.ErrFailed(err.Error())
-		}
-	}
-	ld.enabled = true
-	ld.targets = normalized
-	return &protocol.EnableResult{Unit: name, Enabled: true, Targets: normalized}, nil
-}
-
-// Disable removes enable files for the unit.
-func (m *Manager) Disable(name string) (*protocol.EnableResult, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	ld, err := m.lookup(name)
-	if err != nil {
-		return nil, err
-	}
-	name = ld.unit.Name
-	_ = filepath.WalkDir(m.cfg.EnabledDir(), func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		if d.Name() == name {
-			_ = os.Remove(path)
-		}
-		return nil
-	})
-	ld.enabled = false
-	ld.targets = nil
-	return &protocol.EnableResult{Unit: name, Enabled: false}, nil
-}
-
 // Logs returns an empty journal snapshot. Follow is ignored (no journal yet).
 func (m *Manager) Logs(p protocol.LogsParams) (*protocol.LogsResult, error) {
 	m.mu.Lock()
@@ -454,23 +388,4 @@ func (m *Manager) Verify(name string) (*protocol.VerifyResult, error) {
 		})
 	}
 	return out, nil
-}
-
-func (m *Manager) enabledTargets(name string) []string {
-	dir := m.cfg.EnabledDir()
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	var targets []string
-	for _, e := range ents {
-		if !e.IsDir() {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(dir, e.Name(), name)); err == nil {
-			targets = append(targets, e.Name())
-		}
-	}
-	sort.Strings(targets)
-	return targets
 }

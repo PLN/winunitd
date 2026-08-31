@@ -39,6 +39,10 @@ func serve(ctx context.Context, baseDir string, stderr io.Writer) error {
 		fmt.Fprintf(stderr, "winunitd: ordering cycle: %s\n", rel.Cycle)
 	}
 
+	if _, err := m.Boot(ctx); err != nil {
+		fmt.Fprintf(stderr, "winunitd: start %s: %v\n", manager.DefaultTarget, err)
+	}
+
 	lis, err := protocol.ListenControl()
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
