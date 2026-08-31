@@ -28,6 +28,22 @@ jobs:
       - name: Build
         run: go build ./cmd/winunitd ./cmd/winctl ./cmd/winunit-notify
 
+  test-linux:
+    name: test (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Test
+        run: go test ./...
+
   compile-linux:
     name: compile (linux, GOOS=windows)
     runs-on: ubuntu-latest
