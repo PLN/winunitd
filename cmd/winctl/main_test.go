@@ -13,6 +13,7 @@ import (
 
 	"github.com/PLN/winunitd/internal/manager"
 	"github.com/PLN/winunitd/internal/protocol"
+	"github.com/PLN/winunitd/internal/runtime"
 )
 
 func TestRunHelp(t *testing.T) {
@@ -258,7 +259,7 @@ WorkingDirectory=C:\Tools
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m, err := manager.New(manager.Config{BaseDir: dir})
+	m, err := manager.New(manager.Config{BaseDir: dir, Launch: runtime.StubLauncher()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,6 +278,7 @@ WorkingDirectory=C:\Tools
 		return d.DialContext(ctx, lis.Addr().Network(), lis.Addr().String())
 	}
 	stop := func() {
+		_, _ = m.Stop("foo")
 		cancel()
 		_ = lis.Close()
 		select {
