@@ -25,24 +25,25 @@ type loaded struct {
 
 // Manager holds loaded units and serves the control protocol.
 type Manager struct {
-	cfg        Config
-	launch     runtime.Launcher
-	journal    *journal.Store
-	engine     *timers.Engine
-	mu         sync.Mutex
-	units      map[string]*loaded
-	graph      *core.Graph
-	states     map[string]core.State
-	errors     map[string]string
-	procs      map[string]runtime.Process
-	subs       map[string]core.Substate
-	gens       map[string]uint64
-	cancels    map[string]context.CancelFunc
-	stopping   map[string]bool
-	notifies   map[string]*notifyRuntime
-	watchdogs  map[string]context.CancelFunc
-	terminated map[string]bool // start-timeout or watchdog killed the process
-	session    sync.Mutex      // serializes graphical-session.target start/stop
+	cfg         Config
+	launch      runtime.Launcher
+	journal     *journal.Store
+	engine      *timers.Engine
+	mu          sync.Mutex
+	units       map[string]*loaded
+	graph       *core.Graph
+	states      map[string]core.State
+	errors      map[string]string
+	procs       map[string]runtime.Process
+	subs        map[string]core.Substate
+	gens        map[string]uint64
+	cancels     map[string]context.CancelFunc
+	stopping    map[string]bool
+	notifies    map[string]*notifyRuntime
+	watchdogs   map[string]context.CancelFunc
+	terminated  map[string]bool // start-timeout or watchdog killed the process
+	invocations map[string]string
+	session     sync.Mutex // serializes graphical-session.target start/stop
 }
 
 // New creates a manager. Reload must be called to load units.
@@ -76,20 +77,21 @@ func New(cfg Config) (*Manager, error) {
 		}
 	}
 	m := &Manager{
-		cfg:        cfg,
-		launch:     launch,
-		journal:    js,
-		units:      make(map[string]*loaded),
-		states:     make(map[string]core.State),
-		errors:     make(map[string]string),
-		procs:      make(map[string]runtime.Process),
-		subs:       make(map[string]core.Substate),
-		gens:       make(map[string]uint64),
-		cancels:    make(map[string]context.CancelFunc),
-		stopping:   make(map[string]bool),
-		notifies:   make(map[string]*notifyRuntime),
-		watchdogs:  make(map[string]context.CancelFunc),
-		terminated: make(map[string]bool),
+		cfg:         cfg,
+		launch:      launch,
+		journal:     js,
+		units:       make(map[string]*loaded),
+		states:      make(map[string]core.State),
+		errors:      make(map[string]string),
+		procs:       make(map[string]runtime.Process),
+		subs:        make(map[string]core.Substate),
+		gens:        make(map[string]uint64),
+		cancels:     make(map[string]context.CancelFunc),
+		stopping:    make(map[string]bool),
+		notifies:    make(map[string]*notifyRuntime),
+		watchdogs:   make(map[string]context.CancelFunc),
+		terminated:  make(map[string]bool),
+		invocations: make(map[string]string),
 	}
 	m.engine = timers.NewEngine(clk, store, m.onTimerElapsed)
 	return m, nil
@@ -308,6 +310,9 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 	}
 	if proc := m.procs[name]; proc != nil && proc.Alive() {
 		st.MainPID = proc.PID()
+	}
+	if id := m.invocations[name]; id != "" {
+		st.InvocationID = id
 	}
 	if err := m.errors[name]; err != "" {
 		st.Error = err

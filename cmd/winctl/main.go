@@ -520,6 +520,9 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		if u.MainPID != 0 {
 			fmt.Fprintf(c.stdout, "   Main PID: %d\n", u.MainPID)
 		}
+		if u.InvocationID != "" {
+			fmt.Fprintf(c.stdout, "InvocationID=%s\n", u.InvocationID)
+		}
 		if u.Error != "" {
 			fmt.Fprintf(c.stdout, "      Error: %s\n", u.Error)
 		}

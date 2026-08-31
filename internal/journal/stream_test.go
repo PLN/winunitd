@@ -9,7 +9,7 @@ import (
 
 func TestAttachDrainsWithoutStore(t *testing.T) {
 	r, w := io.Pipe()
-	(*Store)(nil).Attach("foo.service", 0, r, nil)
+	(*Store)(nil).Attach("foo.service", 0, "", r, nil)
 	if _, err := io.WriteString(w, "hello\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -24,5 +24,5 @@ func TestAttachDrainsWithoutStore(t *testing.T) {
 }
 
 func TestAttachNilWithoutStore(t *testing.T) {
-	(*Store)(nil).Attach("foo.service", 0, nil, strings.NewReader(""))
+	(*Store)(nil).Attach("foo.service", 0, "", nil, strings.NewReader(""))
 }

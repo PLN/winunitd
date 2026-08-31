@@ -2,7 +2,6 @@ package journal
 
 import (
 	"bufio"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -63,17 +62,22 @@ func (s *Store) Dir() string {
 	return s.dir
 }
 
-// Attach writes stdout and stderr to the unit's journal file. Nil streams
-// are ignored. A nil Store still drains so the child cannot block.
-func (s *Store) Attach(unit string, pid int, stdout, stderr io.Reader) {
+// Attach writes stdout and stderr to the unit's journal file, tagging
+// each line with invocationID (DESIGN.md §22, §24). Empty invocationID
+// is replaced with a new ID so isolated journal use still correlates
+// a capture. Nil streams are ignored. A nil Store still drains so the
+// child cannot block.
+func (s *Store) Attach(unit string, pid int, invocationID string, stdout, stderr io.Reader) {
 	if s == nil {
 		go drain(stdout)
 		go drain(stderr)
 		return
 	}
-	inv := newInvocationID()
-	go s.capture(unit, pid, inv, "stdout", stdout)
-	go s.capture(unit, pid, inv, "stderr", stderr)
+	if invocationID == "" {
+		invocationID = NewInvocationID()
+	}
+	go s.capture(unit, pid, invocationID, "stdout", stdout)
+	go s.capture(unit, pid, invocationID, "stderr", stderr)
 }
 
 func (s *Store) capture(unit string, pid int, inv, stream string, r io.Reader) {
@@ -227,14 +231,4 @@ func unitFileName(unit string) string {
 		name = "_unknown"
 	}
 	return name + ".log"
-}
-
-func newInvocationID() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
-	}
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }

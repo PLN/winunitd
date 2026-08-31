@@ -15,7 +15,8 @@ func TestJournalWriteAndRead(t *testing.T) {
 
 	stdout, stdoutW := io.Pipe()
 	stderr, stderrW := io.Pipe()
-	s.Attach("foo.service", 4216, stdout, stderr)
+	inv := NewInvocationID()
+	s.Attach("foo.service", 4216, inv, stdout, stderr)
 
 	if _, err := io.WriteString(stdoutW, "hello stdout\n"); err != nil {
 		t.Fatal(err)
@@ -40,8 +41,8 @@ func TestJournalWriteAndRead(t *testing.T) {
 		if e.PID != 4216 {
 			t.Fatalf("pid = %d", e.PID)
 		}
-		if e.InvocationID == "" {
-			t.Fatal("missing invocation id")
+		if e.InvocationID != inv {
+			t.Fatalf("invocation id = %q, want %q", e.InvocationID, inv)
 		}
 		if e.Timestamp.IsZero() {
 			t.Fatal("missing timestamp")
@@ -68,7 +69,7 @@ func TestJournalSurvivesReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	stdout, w := io.Pipe()
-	s.Attach("bar.service", 7, stdout, nil)
+	s.Attach("bar.service", 7, NewInvocationID(), stdout, nil)
 	if _, err := io.WriteString(w, "persisted line\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +107,7 @@ func TestJournalSkipsEmptyLines(t *testing.T) {
 	t.Parallel()
 	s := testStore(t)
 	r, w := io.Pipe()
-	s.Attach("foo.service", 1, r, nil)
+	s.Attach("foo.service", 1, NewInvocationID(), r, nil)
 	if _, err := io.WriteString(w, "\nkeep me\n\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -122,8 +123,44 @@ func TestJournalSkipsEmptyLines(t *testing.T) {
 func TestStoreAttachNil(t *testing.T) {
 	t.Parallel()
 	s := testStore(t)
-	s.Attach("foo.service", 0, nil, strings.NewReader(""))
-	(*Store)(nil).Attach("foo.service", 0, nil, strings.NewReader("x"))
+	s.Attach("foo.service", 0, NewInvocationID(), nil, strings.NewReader(""))
+	(*Store)(nil).Attach("foo.service", 0, "", nil, strings.NewReader("x"))
+}
+
+func TestAttachUsesCallerInvocationID(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	id1 := "11111111-1111-4111-8111-111111111111"
+	id2 := "22222222-2222-4222-8222-222222222222"
+
+	r1, w1 := io.Pipe()
+	s.Attach("foo.service", 1, id1, r1, nil)
+	if _, err := io.WriteString(w1, "first run\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w1.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_ = waitEntries(t, s, "foo.service", 1)
+
+	r2, w2 := io.Pipe()
+	s.Attach("foo.service", 2, id2, r2, nil)
+	if _, err := io.WriteString(w2, "second run\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w2.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got := waitEntries(t, s, "foo.service", 2)
+	if got[0].Message != "first run" || got[0].InvocationID != id1 {
+		t.Fatalf("first = %+v", got[0])
+	}
+	if got[1].Message != "second run" || got[1].InvocationID != id2 {
+		t.Fatalf("second = %+v", got[1])
+	}
+	if got[1].InvocationID == got[0].InvocationID {
+		t.Fatal("second run must not share the first invocation id")
+	}
 }
 
 func TestOpenRequiresDir(t *testing.T) {
