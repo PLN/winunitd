@@ -13,7 +13,7 @@ import (
 // (DESIGN.md §66). Processes assigned to it are terminated when the last
 // handle is closed — including when winunitd.exe is killed.
 //
-// Per-unit jobs, KillMode, and breakaway policy are M5.
+// Per-unit jobs nest under this job on modern Windows (M5).
 type DaemonJob struct {
 	handle windows.Handle
 }
