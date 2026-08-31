@@ -15,10 +15,19 @@ import (
 // NewLauncher; tests that exercise CLI/protocol without a real executable
 // (C:\Tools\foo.exe) use this so they pass on Windows CI.
 func StubLauncher() Launcher {
-	return stubLauncher{}
+	return StubLauncherOutput("", "")
 }
 
-type stubLauncher struct{}
+// StubLauncherOutput is StubLauncher with stdout/stderr that the journal
+// can persist. Empty strings yield empty streams.
+func StubLauncherOutput(stdout, stderr string) Launcher {
+	return stubLauncher{stdout: stdout, stderr: stderr}
+}
+
+type stubLauncher struct {
+	stdout string
+	stderr string
+}
 
 type stubProc struct {
 	mu       sync.Mutex
@@ -33,7 +42,7 @@ type stubProc struct {
 	done     chan struct{}
 }
 
-func (stubLauncher) Start(ctx context.Context, spec StartSpec) (Process, error) {
+func (l stubLauncher) Start(ctx context.Context, spec StartSpec) (Process, error) {
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -50,10 +59,10 @@ func (stubLauncher) Start(ctx context.Context, spec StartSpec) (Process, error) 
 		return nil, err
 	}
 	return &stubProc{
-		pid:    0,
+		pid:    1,
 		job:    job,
-		stdout: io.NopCloser(strings.NewReader("")),
-		stderr: io.NopCloser(strings.NewReader("")),
+		stdout: io.NopCloser(strings.NewReader(l.stdout)),
+		stderr: io.NopCloser(strings.NewReader(l.stderr)),
 		done:   make(chan struct{}),
 	}, nil
 }

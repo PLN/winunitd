@@ -7,8 +7,10 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/journal"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/unit"
@@ -24,6 +26,7 @@ type loaded struct {
 type Manager struct {
 	cfg      Config
 	launch   runtime.Launcher
+	journal  *journal.Store
 	mu       sync.Mutex
 	units    map[string]*loaded
 	graph    *core.Graph
@@ -45,9 +48,14 @@ func New(cfg Config) (*Manager, error) {
 	if launch == nil {
 		launch = runtime.NewLauncher(cfg.Daemon)
 	}
+	js, err := journal.Open(cfg.JournalDir())
+	if err != nil {
+		return nil, err
+	}
 	return &Manager{
 		cfg:      cfg,
 		launch:   launch,
+		journal:  js,
 		units:    make(map[string]*loaded),
 		states:   make(map[string]core.State),
 		errors:   make(map[string]string),
@@ -238,6 +246,9 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 		st.Kind = string(ld.unit.Kind)
 		st.Path = ld.unit.Path
 	}
+	if proc := m.procs[name]; proc != nil && proc.Alive() {
+		st.MainPID = proc.PID()
+	}
 	if err := m.errors[name]; err != "" {
 		st.Error = err
 	}
@@ -354,15 +365,41 @@ func (m *Manager) Restart(ctx context.Context, name string) (*protocol.UnitResul
 	return m.Start(ctx, name)
 }
 
-// Logs returns an empty journal snapshot. Follow is ignored (no journal yet).
+// Logs returns stored stdout/stderr for the unit. Follow is ignored
+// (snapshot only; no streaming RPC).
 func (m *Manager) Logs(p protocol.LogsParams) (*protocol.LogsResult, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	ld, err := m.lookup(p.Unit)
 	if err != nil {
+		m.mu.Unlock()
 		return nil, err
 	}
-	return &protocol.LogsResult{Unit: ld.unit.Name, Entries: []protocol.LogEntry{}}, nil
+	name := ld.unit.Name
+	js := m.journal
+	m.mu.Unlock()
+
+	entries := []protocol.LogEntry{}
+	if js != nil {
+		got, err := js.Read(name)
+		if err != nil {
+			return nil, protocol.ErrFailed(err.Error())
+		}
+		entries = make([]protocol.LogEntry, 0, len(got))
+		for _, e := range got {
+			le := protocol.LogEntry{
+				Unit:         e.Unit,
+				PID:          e.PID,
+				Stream:       e.Stream,
+				Message:      e.Message,
+				InvocationID: e.InvocationID,
+			}
+			if !e.Timestamp.IsZero() {
+				le.Timestamp = e.Timestamp.UTC().Format(time.RFC3339Nano)
+			}
+			entries = append(entries, le)
+		}
+	}
+	return &protocol.LogsResult{Unit: name, Entries: entries}, nil
 }
 
 // Verify re-reads a loaded unit file (daemon-side; path verify stays in winctl).

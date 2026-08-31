@@ -175,6 +175,59 @@ func TestCLIListUnitsOverPipe(t *testing.T) {
 	}
 }
 
+func TestCLILogsOverPipe(t *testing.T) {
+	_, dial, stop := startTestDaemonUnit(t, `
+[Unit]
+Description=Foo
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`, runtime.StubLauncherOutput("hello from unit\n", "warn from unit\n"))
+	defer stop()
+
+	var out, errb bytes.Buffer
+	code := runCLI([]string{"start", "foo"}, &out, &errb, dial)
+	if code != 0 {
+		t.Fatalf("start exit %d stderr=%s", code, errb.String())
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var logs string
+	for time.Now().Before(deadline) {
+		out.Reset()
+		errb.Reset()
+		code = runCLI([]string{"logs", "foo"}, &out, &errb, dial)
+		if code != 0 {
+			t.Fatalf("logs exit %d stderr=%s", code, errb.String())
+		}
+		logs = out.String()
+		if strings.Contains(logs, "hello from unit") && strings.Contains(logs, "warn from unit") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(logs, "hello from unit") {
+		t.Fatalf("logs missing stdout: %s", logs)
+	}
+	if !strings.Contains(logs, "warn from unit") {
+		t.Fatalf("logs missing stderr: %s", logs)
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = runCLI([]string{"list-units"}, &out, &errb, dial)
+	if code != 0 {
+		t.Fatalf("list exit %d stderr=%s", code, errb.String())
+	}
+	list := out.String()
+	if !strings.Contains(list, "foo.service") || !strings.Contains(list, "active") {
+		t.Fatalf("list=%s", list)
+	}
+	if !strings.Contains(list, "1") {
+		t.Fatalf("list missing pid: %s", list)
+	}
+}
+
 func TestCLIStartAndStatusOverPipe(t *testing.T) {
 	// Start is real CreateProcess. Use ping.exe so this is valid on
 	// windows-latest; Linux DefaultLauncher is a stub and ignores the path.
@@ -204,6 +257,9 @@ WorkingDirectory=C:\Windows\System32
 	}
 	if !strings.Contains(out.String(), "foo.service") || !strings.Contains(out.String(), "active") {
 		t.Fatalf("stdout=%s", out.String())
+	}
+	if !strings.Contains(out.String(), "Main PID:") {
+		t.Fatalf("status missing Main PID: %s", out.String())
 	}
 }
 

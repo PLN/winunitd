@@ -95,8 +95,8 @@ type MachineStatus struct {
 	TimersLoaded int    `json:"timersLoaded"`
 }
 
-// UnitStatus is one loaded unit (DESIGN.md §45). Process fields are omitted
-// until Job Object supervision exists.
+// UnitStatus is one loaded unit (DESIGN.md §45). MainPID is set when the
+// unit has a live process. Resource metrics are not reported.
 type UnitStatus struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
@@ -105,6 +105,7 @@ type UnitStatus struct {
 	LoadState   string `json:"loadState"`
 	ActiveState string `json:"activeState"`
 	Enabled     bool   `json:"enabled"`
+	MainPID     int    `json:"mainPid,omitempty"`
 	Error       string `json:"error,omitempty"`
 }
 
@@ -129,18 +130,21 @@ type LogsParams struct {
 	Since  string `json:"since,omitempty"`
 }
 
-// LogsResult is the logs payload. The journal is not implemented yet, so
-// Entries is empty; the method still goes through the protocol.
+// LogsResult is a snapshot of stored journal entries. Follow is ignored
+// (no streaming RPC); Since is reserved.
 type LogsResult struct {
 	Unit    string     `json:"unit"`
 	Entries []LogEntry `json:"entries"`
 }
 
-// LogEntry is one journal line.
+// LogEntry is one journal line (DESIGN.md §22).
 type LogEntry struct {
-	Timestamp string `json:"timestamp,omitempty"`
-	Unit      string `json:"unit,omitempty"`
-	Message   string `json:"message"`
+	Timestamp    string `json:"timestamp,omitempty"`
+	Unit         string `json:"unit,omitempty"`
+	PID          int    `json:"pid,omitempty"`
+	Stream       string `json:"stream,omitempty"`
+	Message      string `json:"message"`
+	InvocationID string `json:"invocationId,omitempty"`
 }
 
 // DaemonReloadParams is the body for daemon-reload.
