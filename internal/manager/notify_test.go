@@ -2,19 +2,22 @@ package manager
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/notify"
+	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/unit"
 )
 
 func TestNotifyStaysActivatingUntilReady(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}
-	m := managerWith(t, launch, map[string]string{
+	m := notifyManagerWith(t, launch, map[string]string{
 		"worker.service": `
 [Service]
 Type=notify
@@ -51,7 +54,7 @@ TimeoutStartSec=5s
 func TestNotifyTimeoutStartWithoutReadyFails(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}
-	m := managerWith(t, launch, map[string]string{
+	m := notifyManagerWith(t, launch, map[string]string{
 		"late.service": `
 [Service]
 Type=notify
@@ -73,7 +76,7 @@ TimeoutStartSec=200ms
 func TestWatchdogPulseRefreshesTimer(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}
-	m := managerWith(t, launch, map[string]string{
+	m := notifyManagerWith(t, launch, map[string]string{
 		"hb.service": `
 [Service]
 Type=notify
@@ -120,7 +123,7 @@ WatchdogSec=250ms
 func TestMissedWatchdogSecFailsUnit(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}
-	m := managerWith(t, launch, map[string]string{
+	m := notifyManagerWith(t, launch, map[string]string{
 		"miss.service": `
 [Service]
 Type=notify
@@ -155,7 +158,7 @@ Restart=no
 func TestRestartOnWatchdogRelaunches(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}
-	m := managerWith(t, launch, map[string]string{
+	m := notifyManagerWith(t, launch, map[string]string{
 		"wd.service": `
 [Service]
 Type=notify
@@ -177,7 +180,7 @@ RestartSec=20ms
 func TestNotifyInjectsEnv(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}
-	m := managerWith(t, launch, map[string]string{
+	m := notifyManagerWith(t, launch, map[string]string{
 		"env.service": `
 [Service]
 Type=notify
@@ -239,7 +242,7 @@ WorkingDirectory=C:\Tools
 func TestWinunitNotifyCLIAgainstLiveManager(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}
-	m := managerWith(t, launch, map[string]string{
+	m := notifyManagerWith(t, launch, map[string]string{
 		"cli.service": `
 [Service]
 Type=notify
@@ -275,6 +278,37 @@ WatchdogSec=2s
 		t.Fatal(err)
 	}
 	assertState(t, m, "cli.service", core.Active)
+}
+
+// notifyManagerWith uses a fake TCP notify listener so portable tests can
+// send READY/WATCHDOG from the test process. On Windows, NotifyAccess=main
+// would otherwise reject that PID (named-pipe ClientPID). Windows
+// CreateProcess coverage lives in manager_windows_test.go.
+func notifyManagerWith(t *testing.T, launch runtime.Launcher, files map[string]string) *Manager {
+	t.Helper()
+	dir := t.TempDir()
+	units := filepath.Join(dir, "units")
+	if err := os.MkdirAll(units, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range files {
+		writeUnit(t, units, name, body)
+	}
+	m, err := New(Config{
+		BaseDir: dir,
+		Launch:  launch,
+		NotifyListen: func(string) (notify.Listener, error) {
+			return notify.ListenTCP()
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopAll(m) })
+	return m
 }
 
 func waitNotifyPipe(t *testing.T, launch *fakeLauncher, unit string, timeout time.Duration) string {
