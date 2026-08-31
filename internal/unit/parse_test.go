@@ -167,6 +167,33 @@ Environment=BAZ=%QUX%
 			},
 		},
 		{
+			name: "unquoted Environment value with spaces fails",
+			file: "log.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+Environment=WINUNITD_JOB_PRINT=hello from journal
+`,
+			wantErr: []string{"invalid Environment assignment"},
+		},
+		{
+			name: "quoted Environment value with spaces",
+			file: "log.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+Environment="WINUNITD_JOB_PRINT=hello from journal"
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if len(u.Service.Environment) != 1 || u.Service.Environment[0].Value != "hello from journal" {
+					t.Fatalf("env = %#v", u.Service.Environment)
+				}
+			},
+		},
+		{
 			name: "list accumulation and reset",
 			file: "foo.service",
 			src: `

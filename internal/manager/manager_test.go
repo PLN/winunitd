@@ -400,6 +400,55 @@ WantedBy=default.target
 	}
 }
 
+func TestReloadSkipsUnitWithUnquotedEnvironmentSpaces(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	units := filepath.Join(dir, "units")
+	if err := os.MkdirAll(units, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeUnit(t, units, "log.service", `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+Environment=WINUNITD_JOB_PRINT=hello from journal
+`)
+	m, err := New(Config{BaseDir: dir, Launch: &fakeLauncher{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopAll(m) })
+	rel, err := m.Reload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rel.Errors) == 0 {
+		t.Fatal("unquoted Environment value with spaces must produce a reload error")
+	}
+	_, err = m.Start(context.Background(), "log")
+	pe, ok := err.(*protocol.Error)
+	if !ok || pe.Code != protocol.CodeNotFound {
+		t.Fatalf("start after failed load: %v", err)
+	}
+
+	writeUnit(t, units, "log.service", `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+Environment="WINUNITD_JOB_PRINT=hello from journal"
+`)
+	rel, err = m.Reload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rel.Errors) != 0 {
+		t.Fatalf("quoted Environment should load: %v", rel.Errors)
+	}
+	if _, err := m.Start(context.Background(), "log"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestListTimers(t *testing.T) {
 	t.Parallel()
 	m := testManager(t, map[string]string{
