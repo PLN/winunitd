@@ -68,10 +68,10 @@ OnCalendar=daily
 		var out, errb bytes.Buffer
 		code := run([]string{"verify", warn}, &out, &errb)
 		if code != 0 {
-			t.Fatalf("exit %d stdout=%s", code, out.String())
+			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
 		}
-		if !strings.Contains(out.String(), "WorkingDirectory is omitted") {
-			t.Fatalf("stdout=%s", out.String())
+		if !strings.Contains(errb.String(), "WorkingDirectory is omitted") {
+			t.Fatalf("stderr=%s", errb.String())
 		}
 		if !strings.Contains(out.String(), "warn.service: verified") {
 			t.Fatalf("stdout=%s", out.String())
@@ -82,17 +82,17 @@ OnCalendar=daily
 		var out, errb bytes.Buffer
 		code := run([]string{"verify", bad}, &out, &errb)
 		if code != 1 {
-			t.Fatalf("exit %d, want 1; stdout=%s", code, out.String())
+			t.Fatalf("exit %d, want 1; stdout=%s stderr=%s", code, out.String(), errb.String())
 		}
-		s := out.String()
+		s := errb.String()
 		if !strings.Contains(s, "absolute path") {
 			t.Fatalf("missing relative ExecStart: %s", s)
 		}
 		if !strings.Contains(s, `unknown directive "WatchdogSec"`) {
 			t.Fatalf("unknown directive should fail: %s", s)
 		}
-		if strings.Contains(s, ": verified") {
-			t.Fatalf("failed unit should not be verified: %s", s)
+		if strings.Contains(out.String(), ": verified") {
+			t.Fatalf("failed unit should not be verified: %s", out.String())
 		}
 	})
 
@@ -119,7 +119,10 @@ OnCalendar=daily
 		var out, errb bytes.Buffer
 		code := run([]string{"verify", filepath.Join(dir, "absent.service")}, &out, &errb)
 		if code != 1 {
-			t.Fatalf("exit %d stdout=%s", code, out.String())
+			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(errb.String(), "absent.service") {
+			t.Fatalf("stderr=%s", errb.String())
 		}
 	})
 }

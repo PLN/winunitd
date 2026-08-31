@@ -3,6 +3,8 @@ package unit
 import (
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 type iniFile struct {
@@ -104,7 +106,7 @@ func joinContinuations(lines []string, path string) ([]rawLine, []Issue) {
 	for i < len(lines) {
 		text := strings.TrimRight(lines[i], "\r")
 		n := i + 1
-		for strings.HasSuffix(text, `\`) {
+		for isLineContinuation(text) {
 			if i+1 >= len(lines) {
 				issues = append(issues, Issue{
 					Path:     path,
@@ -122,6 +124,21 @@ func joinContinuations(lines []string, path string) ([]rawLine, []Issue) {
 		i++
 	}
 	return out, issues
+}
+
+// isLineContinuation reports whether s ends with a systemd-style continuation
+// marker: a backslash preceded by whitespace. A Windows path such as
+// C:\Tools\ is not a continuation.
+func isLineContinuation(s string) bool {
+	if !strings.HasSuffix(s, `\`) {
+		return false
+	}
+	prefix := s[:len(s)-1]
+	if prefix == "" {
+		return false
+	}
+	r, _ := utf8.DecodeLastRuneInString(prefix)
+	return unicode.IsSpace(r)
 }
 
 func splitLines(s string) []string {
