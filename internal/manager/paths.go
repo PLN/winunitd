@@ -3,6 +3,8 @@ package manager
 import (
 	"os"
 	"path/filepath"
+
+	"github.com/PLN/winunitd/internal/runtime"
 )
 
 const (
@@ -16,6 +18,10 @@ type Config struct {
 	// BaseDir is the data root. Production uses C:\ProgramData\winunitd
 	// (DESIGN.md §7, §12). Tests pass a temporary directory.
 	BaseDir string
+	// Launch starts unit processes. Nil uses runtime.NewLauncher(Daemon).
+	Launch runtime.Launcher
+	// Daemon is the M4 daemon Job Object. Unit processes nest under it.
+	Daemon *runtime.DaemonJob
 }
 
 // DefaultBaseDir is C:\ProgramData\winunitd when ProgramData is set.

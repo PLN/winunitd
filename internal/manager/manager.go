@@ -12,6 +12,7 @@ import (
 
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/protocol"
+	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/unit"
 )
 
@@ -24,11 +25,13 @@ type loaded struct {
 // Manager holds loaded units and serves the control protocol.
 type Manager struct {
 	cfg    Config
+	launch runtime.Launcher
 	mu     sync.Mutex
 	units  map[string]*loaded
 	graph  *core.Graph
 	states map[string]core.State
 	errors map[string]string
+	procs  map[string]runtime.Process
 }
 
 // New creates a manager. Reload must be called to load units.
@@ -36,11 +39,17 @@ func New(cfg Config) (*Manager, error) {
 	if cfg.BaseDir == "" {
 		return nil, fmt.Errorf("base directory required")
 	}
+	launch := cfg.Launch
+	if launch == nil {
+		launch = runtime.NewLauncher(cfg.Daemon)
+	}
 	return &Manager{
 		cfg:    cfg,
+		launch: launch,
 		units:  make(map[string]*loaded),
 		states: make(map[string]core.State),
 		errors: make(map[string]string),
+		procs:  make(map[string]runtime.Process),
 	}, nil
 }
 
@@ -245,11 +254,7 @@ func (m *Manager) names() []string {
 	return names
 }
 
-var nopStarter core.Starter = core.StartFunc(func(context.Context, string) error {
-	return nil
-})
-
-// Start runs a start transaction with a no-op process starter (no Job Objects).
+// Start runs a start transaction, then CreateProcess into a per-unit job.
 func (m *Manager) Start(ctx context.Context, name string) (*protocol.UnitResult, error) {
 	name, err := requireUnit(name)
 	if err != nil {
@@ -267,10 +272,11 @@ func (m *Manager) Start(ctx context.Context, name string) (*protocol.UnitResult,
 		return nil, protocol.ErrFailed("no units loaded")
 	}
 
-	run, err := g.Start(ctx, nopStarter, name)
+	run, err := g.Start(ctx, core.StartFunc(m.startOne), name)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.applyRunLocked(run)
+	m.reapFailedLocked()
 	if err != nil {
 		m.errors[name] = err.Error()
 		return &protocol.UnitResult{
@@ -297,21 +303,33 @@ func (m *Manager) applyRunLocked(run *core.Run) {
 	}
 }
 
-// Stop marks a unit inactive. No process is killed (no Job Objects yet).
+// Stop kills the unit Job Object so the whole process tree dies.
 func (m *Manager) Stop(name string) (*protocol.UnitResult, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	ld, err := m.lookup(name)
 	if err != nil {
+		m.mu.Unlock()
 		return nil, err
 	}
 	name = ld.unit.Name
-	m.states[name] = core.Inactive
+	proc := m.procs[name]
+	delete(m.procs, name)
+	timeout := stopTimeout(ld.unit)
+	m.states[name] = core.Deactivating
 	delete(m.errors, name)
+	m.mu.Unlock()
+
+	if proc != nil {
+		_ = proc.Stop(timeout)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.states[name] = core.Inactive
 	return &protocol.UnitResult{Unit: name, ActiveState: core.Inactive.String()}, nil
 }
 
-// Restart is stop then start, still without process supervision.
+// Restart is stop then start. Restart= policy is M6.
 func (m *Manager) Restart(ctx context.Context, name string) (*protocol.UnitResult, error) {
 	if _, err := m.Stop(name); err != nil {
 		return nil, err

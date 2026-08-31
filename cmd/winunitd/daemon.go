@@ -15,7 +15,16 @@ import (
 var daemonJob *runtime.DaemonJob
 
 func serve(ctx context.Context, baseDir string, stderr io.Writer) error {
-	m, err := manager.New(manager.Config{BaseDir: baseDir})
+	job, err := runtime.OpenDaemonJob()
+	if err != nil {
+		return err
+	}
+	daemonJob = job
+	if err := job.AssignSelf(); err != nil {
+		fmt.Fprintf(stderr, "winunitd: assign daemon job: %v\n", err)
+	}
+
+	m, err := manager.New(manager.Config{BaseDir: baseDir, Daemon: job})
 	if err != nil {
 		return err
 	}
@@ -28,15 +37,6 @@ func serve(ctx context.Context, baseDir string, stderr io.Writer) error {
 	}
 	if rel.Cycle != "" {
 		fmt.Fprintf(stderr, "winunitd: ordering cycle: %s\n", rel.Cycle)
-	}
-
-	job, err := runtime.OpenDaemonJob()
-	if err != nil {
-		return err
-	}
-	daemonJob = job
-	if err := job.AssignSelf(); err != nil {
-		fmt.Fprintf(stderr, "winunitd: assign daemon job: %v\n", err)
 	}
 
 	lis, err := protocol.ListenControl()

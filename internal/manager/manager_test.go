@@ -3,13 +3,18 @@ package manager
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/PLN/winunitd/internal/protocol"
+	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/unit"
 )
 
 func TestListUnitsOverPipe(t *testing.T) {
@@ -407,14 +412,24 @@ func testManager(t *testing.T, files map[string]string) *Manager {
 	for name, body := range files {
 		writeUnit(t, units, name, body)
 	}
-	m, err := New(Config{BaseDir: dir})
+	m, err := New(Config{BaseDir: dir, Launch: &fakeLauncher{}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.Reload(); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { stopAll(m) })
 	return m
+}
+
+func stopAll(m *Manager) {
+	m.mu.Lock()
+	names := append([]string(nil), m.names()...)
+	m.mu.Unlock()
+	for _, name := range names {
+		_, _ = m.Stop(name)
+	}
 }
 
 func writeUnit(t *testing.T, dir, name, body string) {
@@ -450,4 +465,236 @@ func serveManager(t *testing.T, m *Manager, auth protocol.Authorizer) (*protocol
 		}
 	}
 	return protocol.NewClient(conn), stop
+}
+
+func TestStartPassesExecStartToLauncher(t *testing.T) {
+	t.Parallel()
+	launch := &fakeLauncher{}
+	dir := t.TempDir()
+	units := filepath.Join(dir, "units")
+	if err := os.MkdirAll(units, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeUnit(t, units, "foo.service", `
+[Service]
+Type=simple
+ExecStart=C:\Tools\foo.exe
+ExecStartArg=--listen
+WorkingDirectory=C:\Tools
+TimeoutStartSec=30s
+`)
+	m, err := New(Config{BaseDir: dir, Launch: launch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopAll(m) })
+	if _, err := m.Start(context.Background(), "foo"); err != nil {
+		t.Fatal(err)
+	}
+	got := launch.specs()
+	if len(got) != 1 {
+		t.Fatalf("starts = %+v", got)
+	}
+	if got[0].Unit != "foo.service" || got[0].Type != unit.TypeSimple {
+		t.Fatalf("spec = %+v", got[0])
+	}
+	if len(got[0].Argv) != 2 || got[0].Argv[0] != `C:\Tools\foo.exe` || got[0].Argv[1] != "--listen" {
+		t.Fatalf("argv = %v", got[0].Argv)
+	}
+	if got[0].Dir != `C:\Tools` || got[0].TimeoutStart != 30*time.Second {
+		t.Fatalf("spec = %+v", got[0])
+	}
+}
+
+func TestStartHonorsGraphOrdering(t *testing.T) {
+	t.Parallel()
+	launch := &fakeLauncher{}
+	dir := t.TempDir()
+	units := filepath.Join(dir, "units")
+	if err := os.MkdirAll(units, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeUnit(t, units, "web.service", `
+[Unit]
+Requires=db.service
+After=db.service
+[Service]
+ExecStart=C:\Tools\web.exe
+WorkingDirectory=C:\Tools
+`)
+	writeUnit(t, units, "db.service", `
+[Service]
+ExecStart=C:\Tools\db.exe
+WorkingDirectory=C:\Tools
+`)
+	m, err := New(Config{BaseDir: dir, Launch: launch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopAll(m) })
+	if _, err := m.Start(context.Background(), "web"); err != nil {
+		t.Fatal(err)
+	}
+	got := launch.units()
+	if len(got) != 2 || got[0] != "db.service" || got[1] != "web.service" {
+		t.Fatalf("start order = %v", got)
+	}
+}
+
+func TestStartTargetDoesNotLaunch(t *testing.T) {
+	t.Parallel()
+	launch := &fakeLauncher{}
+	dir := t.TempDir()
+	units := filepath.Join(dir, "units")
+	if err := os.MkdirAll(units, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeUnit(t, units, "app.target", `
+[Unit]
+Description=App
+`)
+	m, err := New(Config{BaseDir: dir, Launch: launch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopAll(m) })
+	st, err := m.Start(context.Background(), "app.target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.ActiveState != "active" {
+		t.Fatalf("target = %+v", st)
+	}
+	if specs := launch.specs(); len(specs) != 0 {
+		t.Fatalf("target must not CreateProcess: %+v", specs)
+	}
+}
+
+type fakeLauncher struct {
+	mu     sync.Mutex
+	starts []runtime.StartSpec
+}
+
+func (f *fakeLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
+	f.mu.Lock()
+	f.starts = append(f.starts, spec)
+	f.mu.Unlock()
+	job, err := runtime.OpenUnitJob()
+	if err != nil {
+		return nil, err
+	}
+	return &fakeProc{
+		job:    job,
+		done:   make(chan struct{}),
+		stdout: io.NopCloser(strings.NewReader("")),
+		stderr: io.NopCloser(strings.NewReader("")),
+	}, nil
+}
+
+func (f *fakeLauncher) specs() []runtime.StartSpec {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]runtime.StartSpec, len(f.starts))
+	copy(out, f.starts)
+	return out
+}
+
+func (f *fakeLauncher) units() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.starts))
+	for i, s := range f.starts {
+		out[i] = s.Unit
+	}
+	return out
+}
+
+type fakeProc struct {
+	mu     sync.Mutex
+	job    runtime.Job
+	dead   bool
+	closed bool
+	done   chan struct{}
+	stdout io.ReadCloser
+	stderr io.ReadCloser
+}
+
+func (p *fakeProc) PID() int { return 1 }
+
+func (p *fakeProc) Job() runtime.Job { return p.job }
+
+func (p *fakeProc) Stdout() io.ReadCloser { return p.stdout }
+
+func (p *fakeProc) Stderr() io.ReadCloser { return p.stderr }
+
+func (p *fakeProc) Alive() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return !p.dead && !p.closed
+}
+
+func (p *fakeProc) Wait(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-p.done:
+		return nil
+	}
+}
+
+func (p *fakeProc) Stop(timeout time.Duration) error {
+	_ = timeout
+	p.finish()
+	if p.job != nil {
+		_ = p.job.Kill()
+	}
+	return p.Close()
+}
+
+func (p *fakeProc) finish() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.dead = true
+	select {
+	case <-p.done:
+	default:
+		close(p.done)
+	}
+}
+
+func (p *fakeProc) Close() error {
+	p.finish()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return nil
+	}
+	p.closed = true
+	if p.job != nil {
+		_ = p.job.Close()
+	}
+	if p.stdout != nil {
+		_ = p.stdout.Close()
+	}
+	if p.stderr != nil {
+		_ = p.stderr.Close()
+	}
+	return nil
 }
