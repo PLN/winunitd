@@ -44,8 +44,9 @@ func serveUser(ctx context.Context, sid, baseDir string, stderr io.Writer) error
 	}
 
 	m, err := manager.New(manager.Config{
-		BaseDir: baseDir,
-		Daemon:  job,
+		BaseDir:   baseDir,
+		Daemon:    job,
+		UserScope: true,
 		HasInteractiveSession: func() bool {
 			return runtime.SIDHasInteractiveSession(sid)
 		},
@@ -71,6 +72,9 @@ func serveUser(ctx context.Context, sid, baseDir string, stderr io.Writer) error
 	if _, err := m.Boot(ctx); err != nil {
 		fmt.Fprintf(stderr, "winunitd: start %s: %v\n", manager.DefaultTarget, err)
 	}
+	if err := m.SyncGraphicalSession(ctx); err != nil {
+		fmt.Fprintf(stderr, "winunitd: %s: %v\n", manager.GraphicalSessionTarget, err)
+	}
 
 	lis, err := protocol.ListenUserControl(sid)
 	if err != nil {
@@ -78,6 +82,10 @@ func serveUser(ctx context.Context, sid, baseDir string, stderr io.Writer) error
 	}
 	defer lis.Close()
 	fmt.Fprintf(stderr, "winunitd: user manager %s loaded %d units, listening on %s\n", sid, rel.Loaded, protocol.UserPipeName(sid))
+
+	ch := make(chan runtime.SessionChange, 32)
+	go runtime.WatchSessions(ctx, ch)
+	go m.WatchGraphicalSession(ctx, ch)
 
 	return protocol.Serve(ctx, lis, m, protocol.DefaultAuthorizer())
 }
