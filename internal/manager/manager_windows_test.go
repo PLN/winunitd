@@ -618,10 +618,18 @@ func TestWindowsTimerOneshotOnStartupSec(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitWindowsCount(t, count, 1, 5*time.Second)
-	m.mu.Lock()
-	st := m.stateOfLocked("job.service")
-	timerSt := m.stateOfLocked("job.timer")
-	m.mu.Unlock()
+	deadline := time.Now().Add(5 * time.Second)
+	var st, timerSt core.State
+	for time.Now().Before(deadline) {
+		m.mu.Lock()
+		st = m.stateOfLocked("job.service")
+		timerSt = m.stateOfLocked("job.timer")
+		m.mu.Unlock()
+		if st == core.Active && timerSt == core.Active {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	if st != core.Active {
 		t.Fatalf("oneshot activated by timer state = %s", st)
 	}
