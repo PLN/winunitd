@@ -40,13 +40,14 @@ func TestWindowsPipeACLDeniesNonAdmin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("admin dial: %v", err)
 	}
-	_ = adminConn.Close()
 	select {
 	case err := <-acceptErr:
+		_ = adminConn.Close()
 		if err != nil {
 			t.Fatalf("admin accept: %v", err)
 		}
 	case <-time.After(5 * time.Second):
+		_ = adminConn.Close()
 		t.Fatal("admin accept timed out")
 	}
 
@@ -161,13 +162,14 @@ func TestUserPipeSDDLAllowsOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("owner dial: %v", err)
 	}
-	_ = conn.Close()
 	select {
 	case err := <-acceptErr:
+		_ = conn.Close()
 		if err != nil {
 			t.Fatalf("owner accept: %v", err)
 		}
 	case <-time.After(5 * time.Second):
+		_ = conn.Close()
 		t.Fatal("owner accept timed out")
 	}
 }
