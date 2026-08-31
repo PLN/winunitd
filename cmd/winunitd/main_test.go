@@ -40,6 +40,9 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(got, "default.target") {
 		t.Fatalf("help missing boot target: %s", got)
 	}
+	if !strings.Contains(got, "graphical-session.target") {
+		t.Fatalf("help missing graphical-session.target: %s", got)
+	}
 }
 
 func TestRunUnexpectedArg(t *testing.T) {

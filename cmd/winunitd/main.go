@@ -45,7 +45,10 @@ are controlled on \\.\pipe\winunitd\user\<SID>\control. Last logoff
 kills the user manager unless lingering is enabled
 (C:\ProgramData\winunitd\linger\<SID>). System list-units does not show
 user units. RequiresInteractiveSession=yes skips a unit when no suitable
-interactive session exists.
+interactive session exists. The user manager watches WTS for its SID and
+starts builtin graphical-session.target while that SID has a suitable
+interactive session; the target is Inactive when none (linger-without-session
+does not activate it).
 
 enable-linger / disable-linger are administrator verbs on the system
 pipe (not winctl --user).

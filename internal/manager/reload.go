@@ -57,7 +57,7 @@ func (m *Manager) Reload() (*protocol.DaemonReloadResult, error) {
 		loaded = append(loaded, rep.Unit)
 	}
 
-	loaded = mergeBuiltins(loaded)
+	loaded = mergeBuiltins(loaded, m.cfg.UserScope)
 	graphUnits := withEnabledWants(loaded, m.readEnabledLinks())
 	g, err := core.Build(graphUnits)
 	if err != nil {

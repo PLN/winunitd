@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/manager"
@@ -134,6 +135,33 @@ func TestWindowsLingerBootNoSessionAndLogoff(t *testing.T) {
 		return protocol.DialUser(ctx, sid)
 	}
 	waitUserPipe(t, userDial)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := userDial(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := protocol.NewClient(conn).ListUnits(ctx)
+	_ = conn.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	inactive := false
+	for _, u := range list.Units {
+		if u.Name == manager.GraphicalSessionTarget {
+			found = true
+			inactive = u.ActiveState == "inactive"
+			break
+		}
+	}
+	if !found {
+		t.Fatal("lingering user manager must list graphical-session.target")
+	}
+	if !runtime.SIDHasInteractiveSession(sid) && !inactive {
+		t.Fatal("linger-without-session must not activate graphical-session.target")
+	}
 }
 
 func TestWindowsRequiresInteractiveSessionHeadless(t *testing.T) {
