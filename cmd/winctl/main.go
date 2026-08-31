@@ -415,6 +415,12 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		if u.Error != "" {
 			fmt.Fprintf(c.stdout, "      Error: %s\n", u.Error)
 		}
+		if u.Next != "" {
+			fmt.Fprintf(c.stdout, "       Next: %s\n", u.Next)
+		}
+		if u.Last != "" {
+			fmt.Fprintf(c.stdout, "       Last: %s\n", u.Last)
+		}
 		return 0
 	}
 	return 0
@@ -437,13 +443,21 @@ func (c *cli) printListUnits(got *protocol.ListUnitsResult) int {
 }
 
 func (c *cli) printListTimers(got *protocol.ListTimersResult) int {
-	fmt.Fprintf(c.stdout, "%-28s %-20s %-12s %-8s\n", "TIMER", "ACTIVATES", "ACTIVE", "ENABLED")
+	fmt.Fprintf(c.stdout, "%-28s %-20s %-24s %-24s %-12s %-8s\n", "TIMER", "ACTIVATES", "NEXT", "LAST", "ACTIVE", "ENABLED")
 	for _, u := range got.Timers {
 		en := "no"
 		if u.Enabled {
 			en = "yes"
 		}
-		fmt.Fprintf(c.stdout, "%-28s %-20s %-12s %-8s\n", u.Name, u.Unit, u.ActiveState, en)
+		next := u.Next
+		if next == "" {
+			next = "-"
+		}
+		last := u.Last
+		if last == "" {
+			last = "-"
+		}
+		fmt.Fprintf(c.stdout, "%-28s %-20s %-24s %-24s %-12s %-8s\n", u.Name, u.Unit, next, last, u.ActiveState, en)
 	}
 	return 0
 }

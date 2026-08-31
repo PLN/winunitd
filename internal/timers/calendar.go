@@ -233,6 +233,88 @@ func parseWeekdays(s string) ([]time.Weekday, error) {
 	return days, nil
 }
 
+// Next returns the next matching instant strictly after after.
+// Zero means no future match in a reasonable search window.
+func (c Calendar) Next(after time.Time) time.Time {
+	return c.search(after, false)
+}
+
+// Previous returns the latest matching instant strictly before before.
+// Zero means no past match in a reasonable search window.
+func (c Calendar) Previous(before time.Time) time.Time {
+	return c.search(before, true)
+}
+
+func (c Calendar) search(from time.Time, backward bool) time.Time {
+	loc := from.Location()
+	if loc == nil {
+		loc = time.Local
+	}
+	if c.Year >= 0 && c.Month >= 0 && c.Day >= 0 {
+		cand := time.Date(c.Year, time.Month(c.Month), c.Day, c.Hour, c.Minute, c.Second, 0, loc)
+		if !c.wallOK(cand) || !c.AllowsWeekday(cand.Weekday()) {
+			return time.Time{}
+		}
+		if backward && cand.Before(from) {
+			return cand
+		}
+		if !backward && cand.After(from) {
+			return cand
+		}
+		return time.Time{}
+	}
+
+	start := time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, loc)
+	const maxDays = 366*8 + 2
+	for i := 0; i < maxDays; i++ {
+		var day time.Time
+		if backward {
+			day = start.AddDate(0, 0, -i)
+		} else {
+			day = start.AddDate(0, 0, i)
+		}
+		cand := c.atDate(day)
+		if cand.IsZero() || !c.AllowsWeekday(cand.Weekday()) {
+			continue
+		}
+		if backward {
+			if cand.Before(from) {
+				return cand
+			}
+			continue
+		}
+		if cand.After(from) {
+			return cand
+		}
+	}
+	return time.Time{}
+}
+
+func (c Calendar) atDate(day time.Time) time.Time {
+	y, m, d := day.Year(), day.Month(), day.Day()
+	if c.Year >= 0 {
+		y = c.Year
+	}
+	if c.Month >= 0 {
+		m = time.Month(c.Month)
+	}
+	if c.Day >= 0 {
+		d = c.Day
+	}
+	cand := time.Date(y, m, d, c.Hour, c.Minute, c.Second, 0, day.Location())
+	if !c.wallOK(cand) {
+		return time.Time{}
+	}
+	return cand
+}
+
+func (c Calendar) wallOK(t time.Time) bool {
+	if t.IsZero() {
+		return false
+	}
+	return t.Hour() == c.Hour && t.Minute() == c.Minute && t.Second() == c.Second
+}
+
 func weekdayName(s string) (time.Weekday, bool) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "sun", "sunday":
