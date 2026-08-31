@@ -21,14 +21,16 @@ func StubLauncher() Launcher {
 type stubLauncher struct{}
 
 type stubProc struct {
-	mu     sync.Mutex
-	pid    int
-	job    *UnitJob
-	dead   bool
-	closed bool
-	stdout io.ReadCloser
-	stderr io.ReadCloser
-	done   chan struct{}
+	mu       sync.Mutex
+	pid      int
+	job      *UnitJob
+	dead     bool
+	closed   bool
+	exitCode uint32
+	exited   bool
+	stdout   io.ReadCloser
+	stderr   io.ReadCloser
+	done     chan struct{}
 }
 
 func (stubLauncher) Start(ctx context.Context, spec StartSpec) (Process, error) {
@@ -58,6 +60,15 @@ func (stubLauncher) Start(ctx context.Context, spec StartSpec) (Process, error) 
 
 func (p *stubProc) PID() int { return p.pid }
 
+func (p *stubProc) ExitCode() (uint32, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.exited && !p.dead && !p.closed {
+		return 0, false
+	}
+	return p.exitCode, true
+}
+
 func (p *stubProc) Job() Job { return p.job }
 
 func (p *stubProc) Stdout() io.ReadCloser { return p.stdout }
@@ -78,7 +89,13 @@ func (p *stubProc) Wait(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-p.done:
-		return nil
+		p.mu.Lock()
+		code := p.exitCode
+		p.mu.Unlock()
+		if code == 0 {
+			return nil
+		}
+		return &ExitStatus{Code: code}
 	}
 }
 
@@ -95,6 +112,7 @@ func (p *stubProc) finish() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.dead = true
+	p.exited = true
 	select {
 	case <-p.done:
 	default:
