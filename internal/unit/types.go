@@ -22,16 +22,28 @@ type ServiceType string
 const (
 	TypeSimple  ServiceType = "simple"
 	TypeOneshot ServiceType = "oneshot"
+	TypeNotify  ServiceType = "notify"
 )
 
 // RestartPolicy is a [Service] Restart= value.
 type RestartPolicy string
 
 const (
-	RestartNo        RestartPolicy = "no"
-	RestartAlways    RestartPolicy = "always"
-	RestartOnFailure RestartPolicy = "on-failure"
+	RestartNo         RestartPolicy = "no"
+	RestartAlways     RestartPolicy = "always"
+	RestartOnFailure  RestartPolicy = "on-failure"
+	RestartOnWatchdog RestartPolicy = "on-watchdog"
 )
+
+// NotifyAccess is a [Service] NotifyAccess= value. P4 supports main only.
+type NotifyAccess string
+
+const NotifyAccessMain NotifyAccess = "main"
+
+// WatchdogMode is a [Service] WatchdogMode= value. P4 supports notify only.
+type WatchdogMode string
+
+const WatchdogModeNotify WatchdogMode = "notify"
 
 // EnvVar is a single Environment= assignment. Values are stored literally;
 // ${} and %VAR% are not expanded.
@@ -73,10 +85,31 @@ type ServiceSpec struct {
 	RestartSec       time.Duration
 	TimeoutStartSec  time.Duration
 	TimeoutStopSec   time.Duration
+	NotifyAccess     NotifyAccess
+	WatchdogSec      time.Duration
+	WatchdogMode     WatchdogMode
 
 	RestartSecSet      bool
 	TimeoutStartSecSet bool
 	TimeoutStopSecSet  bool
+	WatchdogSecSet     bool
+}
+
+// NeedsNotifyPipe reports whether the unit process should receive
+// WINUNIT_NOTIFY_PIPE (Type=notify or WatchdogSec=).
+func (s *ServiceSpec) NeedsNotifyPipe() bool {
+	if s == nil {
+		return false
+	}
+	return s.Type == TypeNotify || s.WatchdogEnabled()
+}
+
+// WatchdogEnabled reports a positive WatchdogSec= (mode notify).
+func (s *ServiceSpec) WatchdogEnabled() bool {
+	if s == nil {
+		return false
+	}
+	return s.WatchdogSecSet && s.WatchdogSec > 0
 }
 
 // TimerSpec is the [Timer] section.

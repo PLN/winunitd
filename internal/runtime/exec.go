@@ -38,7 +38,8 @@ type StartSpec struct {
 	// manager process environment.
 	Env []string
 	// TimeoutStart bounds CreateProcess for Type=simple. For Type=oneshot it
-	// bounds waiting for the process to exit. Zero means no extra timeout.
+	// bounds waiting for the process to exit. Type=notify ignores this
+	// (the manager bounds READY=1 with TimeoutStartSec). Zero means no extra timeout.
 	TimeoutStart time.Duration
 }
 

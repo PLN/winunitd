@@ -22,6 +22,12 @@ func TestShouldRestart(t *testing.T) {
 		{unit.RestartOnFailure, ExitSuccess, false},
 		{unit.RestartOnFailure, ExitFailure, true},
 		{unit.RestartOnFailure, ExitAbnormal, true},
+		{unit.RestartOnFailure, ExitWatchdog, true},
+		{unit.RestartOnWatchdog, ExitSuccess, false},
+		{unit.RestartOnWatchdog, ExitFailure, false},
+		{unit.RestartOnWatchdog, ExitWatchdog, true},
+		{unit.RestartAlways, ExitWatchdog, true},
+		{unit.RestartNo, ExitWatchdog, false},
 		{"", ExitFailure, false},
 	}
 	for _, tt := range tests {

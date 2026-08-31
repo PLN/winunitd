@@ -11,11 +11,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/notify"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
 	"golang.org/x/sys/windows"
@@ -61,6 +63,70 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 		select {}
+	case "notify-ready":
+		if d := os.Getenv("WINUNITD_NOTIFY_DELAY"); d != "" {
+			if n, err := strconv.Atoi(d); err == nil && n > 0 {
+				time.Sleep(time.Duration(n) * time.Millisecond)
+			}
+		}
+		if err := sendNotifyFromEnv(notify.Message{Ready: true}); err != nil {
+			fmt.Fprintf(os.Stderr, "notify-ready: %v\n", err)
+			os.Exit(1)
+		}
+		select {}
+	case "notify-never":
+		select {}
+	case "notify-watchdog":
+		if err := sendNotifyFromEnv(notify.Message{Ready: true}); err != nil {
+			fmt.Fprintf(os.Stderr, "notify-watchdog ready: %v\n", err)
+			os.Exit(1)
+		}
+		every := 50 * time.Millisecond
+		if v := os.Getenv("WINUNITD_WATCHDOG_EVERY"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				every = time.Duration(n) * time.Millisecond
+			}
+		}
+		for {
+			_ = sendNotifyFromEnv(notify.Message{Watchdog: true})
+			time.Sleep(every)
+		}
+	case "spawn-notify":
+		exe := os.Getenv("WINUNIT_NOTIFY_EXE")
+		if exe == "" {
+			fmt.Fprintln(os.Stderr, "WINUNIT_NOTIFY_EXE is empty")
+			os.Exit(1)
+		}
+		runNotify := func(args ...string) error {
+			cmd := exec.Command(exe, args...)
+			cmd.Env = os.Environ()
+			cmd.SysProcAttr = &windows.SysProcAttr{
+				HideWindow:    true,
+				CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW,
+			}
+			return cmd.Run()
+		}
+		var last error
+		for i := 0; i < 30; i++ {
+			last = runNotify("--ready")
+			if last == nil {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if last != nil {
+			fmt.Fprintf(os.Stderr, "winunit-notify --ready: %v\n", last)
+			os.Exit(1)
+		}
+		if os.Getenv("WINUNITD_NOTIFY_WATCHDOG") != "" {
+			go func() {
+				for {
+					_ = runNotify("--watchdog")
+					time.Sleep(50 * time.Millisecond)
+				}
+			}()
+		}
+		select {}
 	}
 	os.Exit(m.Run())
 }
@@ -104,6 +170,13 @@ func helperCountLines(path string) int {
 		}
 	}
 	return n
+}
+
+func sendNotifyFromEnv(msg notify.Message) error {
+	addr := os.Getenv(notify.EnvNotifyPipe)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return notify.SendRetry(ctx, addr, msg)
 }
 
 func TestManagerStartUnitJobAndKillTree(t *testing.T) {
@@ -879,4 +952,130 @@ func (p *orderProc) Stop(d time.Duration) error {
 	p.rec.stops = append(p.rec.stops, p.name)
 	p.rec.mu.Unlock()
 	return p.Process.Stop(d)
+}
+
+func TestWindowsNotifyStaysActivatingUntilReady(t *testing.T) {
+	dir := t.TempDir()
+	m := startWindowsHelperUnit(t, dir, "p4ready.service", `
+Type=notify
+TimeoutStartSec=5s
+Environment=WINUNITD_NOTIFY_DELAY=300
+`, "notify-ready", 0, "")
+
+	errc := make(chan error, 1)
+	go func() {
+		_, err := m.Start(context.Background(), "p4ready")
+		errc <- err
+	}()
+	waitUntil(t, 2*time.Second, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.stateOfLocked("p4ready.service") == core.Activating && m.procs["p4ready.service"] != nil
+	})
+	if err := <-errc; err != nil {
+		t.Fatal(err)
+	}
+	assertState(t, m, "p4ready.service", core.Active)
+}
+
+func TestWindowsNotifyTimeoutStartWithoutReadyFails(t *testing.T) {
+	dir := t.TempDir()
+	m := startWindowsHelperUnit(t, dir, "p4late.service", `
+Type=notify
+TimeoutStartSec=300ms
+`, "notify-never", 0, "")
+	_, err := m.Start(context.Background(), "p4late")
+	if err == nil {
+		t.Fatal("expected TimeoutStartSec failure")
+	}
+	if !strings.Contains(err.Error(), "READY") && !strings.Contains(err.Error(), "TimeoutStartSec") {
+		t.Fatalf("err = %v", err)
+	}
+	assertState(t, m, "p4late.service", core.Failed)
+}
+
+func TestWindowsWatchdogPulseKeepsUnitActive(t *testing.T) {
+	dir := t.TempDir()
+	m := startWindowsHelperUnit(t, dir, "p4hb.service", `
+Type=notify
+TimeoutStartSec=5s
+WatchdogSec=300ms
+Environment=WINUNITD_WATCHDOG_EVERY=50
+`, "notify-watchdog", 0, "")
+	if _, err := m.Start(context.Background(), "p4hb"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(700 * time.Millisecond)
+	assertState(t, m, "p4hb.service", core.Active)
+}
+
+func TestWindowsMissedWatchdogSecFailsUnit(t *testing.T) {
+	dir := t.TempDir()
+	m := startWindowsHelperUnit(t, dir, "p4miss.service", `
+Type=notify
+TimeoutStartSec=5s
+WatchdogSec=200ms
+Restart=no
+`, "notify-ready", 0, "")
+	if _, err := m.Start(context.Background(), "p4miss"); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, 3*time.Second, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.stateOfLocked("p4miss.service") == core.Failed
+	})
+	m.mu.Lock()
+	sub := m.subOfLocked("p4miss.service")
+	err := m.errors["p4miss.service"]
+	m.mu.Unlock()
+	if sub != core.SubWatchdog {
+		t.Fatalf("sub = %s error=%q", sub, err)
+	}
+}
+
+func TestWindowsWinunitNotifyReadyAgainstLiveManager(t *testing.T) {
+	exe := buildWinunitNotify(t)
+	dir := t.TempDir()
+	m := startWindowsHelperUnit(t, dir, "p4cli.service", fmt.Sprintf(""+
+		"Type=notify\n"+
+		"TimeoutStartSec=5s\n"+
+		"WatchdogSec=300ms\n"+
+		"Environment=\"WINUNIT_NOTIFY_EXE=%s\"\n"+
+		"Environment=WINUNITD_NOTIFY_WATCHDOG=1\n", exe), "spawn-notify", 0, "")
+	if _, err := m.Start(context.Background(), "p4cli"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(700 * time.Millisecond)
+	assertState(t, m, "p4cli.service", core.Active)
+}
+
+func buildWinunitNotify(t *testing.T) string {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), "winunit-notify.exe")
+	cmd := exec.Command("go", "build", "-o", out, "github.com/PLN/winunitd/cmd/winunit-notify")
+	cmd.Dir = findModuleRoot(t)
+	b, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go build winunit-notify: %v\n%s", err, b)
+	}
+	return out
+}
+
+func findModuleRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("go.mod not found")
+		}
+		dir = parent
+	}
 }

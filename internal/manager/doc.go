@@ -2,9 +2,10 @@
 //
 // It loads unit files, tracks enablement and lifecycle state, and serves
 // the control protocol. Start CreateProcess's ExecStart into a per-unit
-// Job Object; stop kills that job. Restart= (no / always / on-failure)
-// relaunches the main process into a new unit job. Enable writes files
-// under enabled/<target>/<unit>; boot starts default.target, which Wants=
+// Job Object; stop kills that job. Restart= (no / always / on-failure /
+// on-watchdog) relaunches the main process into a new unit job. Type=notify
+// stays activating until READY=1. WatchdogSec= uses WINUNIT_NOTIFY_PIPE.
+// Enable writes files under enabled/<target>/<unit>; boot starts default.target, which Wants=
 // timers.target so enabled timers arm. stdout/stderr are stored under
 // journal/<unit>.log and returned by logs. The timer scheduler lives in
 // internal/timers (not Task Scheduler). Manager shutdown stops units in
