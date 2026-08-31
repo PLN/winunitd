@@ -3,6 +3,7 @@
 package runtime
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 func helperEnv(extra ...string) []string {
@@ -48,19 +51,27 @@ func runHolder() int {
 	if err := os.WriteFile(os.Getenv("WINUNITD_JOB_READYFILE"), []byte("ok\n"), 0o644); err != nil {
 		return 5
 	}
-	select {}
+	// Stay alive until the parent drops stdin or the process is terminated.
+	// The job handle is not Closed; process death releases it and
+	// KILL_ON_JOB_CLOSE tears down assigned children (DESIGN.md §66).
+	_, _ = io.Copy(io.Discard, os.Stdin)
+	return 0
 }
 
 func startSleeper(t *testing.T) *exec.Cmd {
 	t.Helper()
 	cmd := exec.Command(os.Args[0])
 	cmd.Env = helperEnv("WINUNITD_JOB_HELPER=sleep")
+	cmd.SysProcAttr = &windows.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW,
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
+			_ = terminatePID(cmd.Process.Pid)
 			_ = cmd.Wait()
 		}
 	})
@@ -77,6 +88,15 @@ func waitDone(t *testing.T, cmd *exec.Cmd, timeout time.Duration) {
 	case <-time.After(timeout):
 		t.Fatalf("process pid %d still running after %s", cmd.Process.Pid, timeout)
 	}
+}
+
+func terminatePID(pid int) error {
+	h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(pid))
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(h)
+	return windows.TerminateProcess(h, 1)
 }
 
 func TestDaemonJobKillOnCloseFlag(t *testing.T) {
@@ -118,23 +138,38 @@ func TestKillDaemonTearsDownJob(t *testing.T) {
 		"WINUNITD_JOB_CHILD_PID="+strconv.Itoa(sleeper.Process.Pid),
 		"WINUNITD_JOB_READYFILE="+ready,
 	)
+	holder.SysProcAttr = &windows.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW,
+	}
+	stdin, err := holder.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := holder.Start(); err != nil {
 		t.Fatal(err)
 	}
+
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		if _, err := os.Stat(ready); err == nil {
 			break
 		}
 		if time.Now().After(deadline) {
-			_ = holder.Process.Kill()
+			_ = terminatePID(holder.Process.Pid)
+			_ = stdin.Close()
 			_ = holder.Wait()
 			t.Fatal("holder did not become ready")
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if err := holder.Process.Kill(); err != nil {
-		t.Fatal(err)
+
+	// Drop the daemon process so its job handle is released. TerminateProcess
+	// is the kill path; some CI job-object setups deny it on the test binary,
+	// in which case closing stdin makes the process exit the same way a crash
+	// would for KILL_ON_JOB_CLOSE.
+	if err := terminatePID(holder.Process.Pid); err != nil {
+		_ = stdin.Close()
 	}
 	_ = holder.Wait()
 	waitDone(t, sleeper, 5*time.Second)
