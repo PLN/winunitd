@@ -140,7 +140,10 @@ func TestManagerStartUnitJobAndKillTree(t *testing.T) {
 	if _, err := m.Start(context.Background(), "tree"); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _, _ = m.Stop("tree") })
+	t.Cleanup(func() {
+		_, _ = m.Stop("tree")
+		m.Close()
+	})
 
 	m.mu.Lock()
 	proc := m.procs["tree.service"]
@@ -353,7 +356,10 @@ func startWindowsHelperUnit(t *testing.T, dir, name, serviceBody, helper string,
 	if _, err := m.Reload(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _, _ = m.Stop(name) })
+	t.Cleanup(func() {
+		_, _ = m.Stop(name)
+		m.Close()
+	})
 	return m
 }
 
@@ -390,6 +396,7 @@ func TestWindowsEnableFileLayout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(m.Close)
 	if _, err := m.Reload(); err != nil {
 		t.Fatal(err)
 	}
@@ -565,4 +572,118 @@ func hasLogMessage(logs *protocol.LogsResult, msg string) bool {
 		}
 	}
 	return false
+}
+
+func TestWindowsTimerOneshotOnStartupSec(t *testing.T) {
+	dir := t.TempDir()
+	count := filepath.Join(dir, "count.txt")
+	units := filepath.Join(dir, "units")
+	if err := os.MkdirAll(units, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	exe := mustJSONArgv(t, os.Args[0])
+	svc := fmt.Sprintf(""+
+		"[Service]\n"+
+		"Type=oneshot\n"+
+		"ExecStart=%s\n"+
+		"WorkingDirectory=%s\n"+
+		"Environment=WINUNITD_JOB_HELPER=exit\n"+
+		"Environment=WINUNITD_JOB_EXIT=0\n"+
+		"Environment=\"WINUNITD_JOB_COUNT=%s\"\n",
+		exe, dir, count)
+	if err := os.WriteFile(filepath.Join(units, "job.service"), []byte(svc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	timer := "" +
+		"[Timer]\n" +
+		"OnStartupSec=200ms\n" +
+		"[Install]\n" +
+		"WantedBy=timers.target\n"
+	if err := os.WriteFile(filepath.Join(units, "job.timer"), []byte(timer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := New(Config{BaseDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopAll(m) })
+	if _, err := m.Enable("job.timer"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitWindowsCount(t, count, 1, 5*time.Second)
+	m.mu.Lock()
+	st := m.stateOfLocked("job.service")
+	timerSt := m.stateOfLocked("job.timer")
+	m.mu.Unlock()
+	if st != core.Active {
+		t.Fatalf("oneshot activated by timer state = %s", st)
+	}
+	if timerSt != core.Active {
+		t.Fatalf("timer state = %s", timerSt)
+	}
+}
+
+func TestWindowsOnBootSecVsOnStartupSec(t *testing.T) {
+	dir := t.TempDir()
+	bootCount := filepath.Join(dir, "boot.txt")
+	startCount := filepath.Join(dir, "start.txt")
+	units := filepath.Join(dir, "units")
+	if err := os.MkdirAll(units, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	exe := mustJSONArgv(t, os.Args[0])
+	writeTimerPair := func(base, trigger, countPath string) {
+		t.Helper()
+		svc := fmt.Sprintf(""+
+			"[Service]\n"+
+			"Type=oneshot\n"+
+			"ExecStart=%s\n"+
+			"WorkingDirectory=%s\n"+
+			"Environment=WINUNITD_JOB_HELPER=exit\n"+
+			"Environment=WINUNITD_JOB_EXIT=0\n"+
+			"Environment=\"WINUNITD_JOB_COUNT=%s\"\n",
+			exe, dir, countPath)
+		if err := os.WriteFile(filepath.Join(units, base+".service"), []byte(svc), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		tm := fmt.Sprintf(""+
+			"[Timer]\n"+
+			"%s\n"+
+			"[Install]\n"+
+			"WantedBy=timers.target\n", trigger)
+		if err := os.WriteFile(filepath.Join(units, base+".timer"), []byte(tm), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeTimerPair("boot", "OnBootSec=10ms", bootCount)
+	writeTimerPair("start", "OnStartupSec=10s", startCount)
+
+	m, err := New(Config{BaseDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopAll(m) })
+	if _, err := m.Enable("boot.timer"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Enable("start.timer"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitWindowsCount(t, bootCount, 1, 5*time.Second)
+	time.Sleep(400 * time.Millisecond)
+	if n := helperCountLines(startCount); n != 0 {
+		t.Fatalf("OnStartupSec fired too early (starts=%d); OnBootSec and OnStartupSec must differ after a long machine uptime", n)
+	}
 }

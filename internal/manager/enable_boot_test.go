@@ -173,6 +173,7 @@ WorkingDirectory=C:\Tools
 		t.Fatal(err)
 	}
 	assertState(t, m, DefaultTarget, core.Active)
+	assertState(t, m, TimersTarget, core.Active)
 	assertState(t, m, "on.service", core.Active)
 	assertState(t, m, "off.service", core.Inactive)
 	assertState(t, m, "also.service", core.Inactive)

@@ -110,3 +110,57 @@ func TestParseCalendar(t *testing.T) {
 		})
 	}
 }
+
+func TestCalendarNextPrevious(t *testing.T) {
+	t.Parallel()
+	loc := time.FixedZone("test", 0)
+	from := time.Date(2026, 8, 31, 12, 0, 0, 0, loc) // Monday
+
+	daily, err := ParseCalendar("daily")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := daily.Next(from)
+	wantNext := time.Date(2026, 9, 1, 0, 0, 0, 0, loc)
+	if !next.Equal(wantNext) {
+		t.Fatalf("daily next = %v, want %v", next, wantNext)
+	}
+	prev := daily.Previous(from)
+	wantPrev := time.Date(2026, 8, 31, 0, 0, 0, 0, loc)
+	if !prev.Equal(wantPrev) {
+		t.Fatalf("daily previous = %v, want %v", prev, wantPrev)
+	}
+
+	tod, err := ParseCalendar("*-*-* 15:04:05")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next = tod.Next(from)
+	wantNext = time.Date(2026, 8, 31, 15, 4, 5, 0, loc)
+	if !next.Equal(wantNext) {
+		t.Fatalf("*-*-* next = %v, want %v", next, wantNext)
+	}
+	afterSlot := time.Date(2026, 8, 31, 15, 4, 5, 0, loc)
+	next = tod.Next(afterSlot)
+	wantNext = time.Date(2026, 9, 1, 15, 4, 5, 0, loc)
+	if !next.Equal(wantNext) {
+		t.Fatalf("strictly after slot: %v, want %v", next, wantNext)
+	}
+
+	weekdays, err := ParseCalendar("Mon..Fri 03:00")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Monday 12:00 -> Tuesday 03:00
+	next = weekdays.Next(from)
+	wantNext = time.Date(2026, 9, 1, 3, 0, 0, 0, loc)
+	if !next.Equal(wantNext) {
+		t.Fatalf("Mon..Fri next = %v, want %v", next, wantNext)
+	}
+	fridayNight := time.Date(2026, 9, 4, 12, 0, 0, 0, loc) // Friday
+	next = weekdays.Next(fridayNight)
+	wantNext = time.Date(2026, 9, 7, 3, 0, 0, 0, loc) // Monday
+	if !next.Equal(wantNext) {
+		t.Fatalf("weekend skip: %v, want %v", next, wantNext)
+	}
+}

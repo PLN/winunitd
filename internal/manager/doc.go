@@ -4,6 +4,8 @@
 // the control protocol. Start CreateProcess's ExecStart into a per-unit
 // Job Object; stop kills that job. Restart= (no / always / on-failure)
 // relaunches the main process into a new unit job. Enable writes files
-// under enabled/<target>/<unit>; boot starts default.target. stdout/stderr
-// are stored under journal/<unit>.log and returned by logs.
+// under enabled/<target>/<unit>; boot starts default.target, which Wants=
+// timers.target so enabled timers arm. stdout/stderr are stored under
+// journal/<unit>.log and returned by logs. The timer scheduler lives in
+// internal/timers (not Task Scheduler).
 package manager

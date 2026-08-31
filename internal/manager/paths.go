@@ -5,12 +5,14 @@ import (
 	"path/filepath"
 
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/timers"
 )
 
 const (
 	unitsDirName   = "units"
 	enabledDirName = "enabled"
 	journalDirName = "journal"
+	runtimeDirName = "runtime"
 )
 
 // Config is the on-disk layout for a manager instance.
@@ -23,6 +25,8 @@ type Config struct {
 	Launch runtime.Launcher
 	// Daemon is the M4 daemon Job Object. Unit processes nest under it.
 	Daemon *runtime.DaemonJob
+	// Clock drives the timer scheduler. Zero uses timers.DefaultClock().
+	Clock timers.Clock
 }
 
 // DefaultBaseDir is C:\ProgramData\winunitd when ProgramData is set.
@@ -47,4 +51,12 @@ func (c Config) EnabledPath(target, unit string) string {
 
 func (c Config) JournalDir() string {
 	return filepath.Join(c.BaseDir, journalDirName)
+}
+
+func (c Config) RuntimeDir() string {
+	return filepath.Join(c.BaseDir, runtimeDirName)
+}
+
+func (c Config) TimerStateDir() string {
+	return filepath.Join(c.RuntimeDir(), "timers")
 }
