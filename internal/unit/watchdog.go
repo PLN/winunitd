@@ -239,7 +239,21 @@ func dialLoopback(ctx context.Context, network, address string) (net.Conn, error
 	if err != nil {
 		return nil, err
 	}
-	var d net.Dialer
+	ip := net.ParseIP(canon)
+	if ip != nil {
+		if ip.To4() != nil {
+			network = "tcp4"
+		} else {
+			network = "tcp6"
+		}
+	}
+	timeout := 2 * time.Second
+	if dl, ok := ctx.Deadline(); ok {
+		if r := time.Until(dl); r > 0 && r < timeout {
+			timeout = r
+		}
+	}
+	d := net.Dialer{Timeout: timeout}
 	c, err := d.DialContext(ctx, network, net.JoinHostPort(canon, port))
 	if err != nil {
 		return nil, err
@@ -280,11 +294,13 @@ func ProbeHTTP(ctx context.Context, rawURL string, wantStatus int) error {
 	if err != nil {
 		return err
 	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = nil
+	tr.DialContext = dialLoopback
+	tr.DisableKeepAlives = true
+	tr.ForceAttemptHTTP2 = false
 	client := &http.Client{
-		Transport: &http.Transport{
-			Proxy:       nil,
-			DialContext: dialLoopback,
-		},
+		Transport: tr,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
