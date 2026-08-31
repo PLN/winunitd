@@ -624,16 +624,27 @@ func (f *fakeLauncher) units() []string {
 }
 
 type fakeProc struct {
-	mu     sync.Mutex
-	job    runtime.Job
-	dead   bool
-	closed bool
-	done   chan struct{}
-	stdout io.ReadCloser
-	stderr io.ReadCloser
+	mu       sync.Mutex
+	job      runtime.Job
+	dead     bool
+	closed   bool
+	exitCode uint32
+	exited   bool
+	done     chan struct{}
+	stdout   io.ReadCloser
+	stderr   io.ReadCloser
 }
 
 func (p *fakeProc) PID() int { return 1 }
+
+func (p *fakeProc) ExitCode() (uint32, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.exited && !p.dead && !p.closed {
+		return 0, false
+	}
+	return p.exitCode, true
+}
 
 func (p *fakeProc) Job() runtime.Job { return p.job }
 
@@ -655,7 +666,13 @@ func (p *fakeProc) Wait(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-p.done:
-		return nil
+		p.mu.Lock()
+		code := p.exitCode
+		p.mu.Unlock()
+		if code == 0 {
+			return nil
+		}
+		return &runtime.ExitStatus{Code: code}
 	}
 }
 
@@ -672,6 +689,7 @@ func (p *fakeProc) finish() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.dead = true
+	p.exited = true
 	select {
 	case <-p.done:
 	default:
