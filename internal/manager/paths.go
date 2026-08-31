@@ -10,7 +10,6 @@ import (
 const (
 	unitsDirName   = "units"
 	enabledDirName = "enabled"
-	defaultTarget  = "default.target"
 )
 
 // Config is the on-disk layout for a manager instance.

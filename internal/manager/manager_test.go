@@ -43,9 +43,6 @@ Description=App
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Units) != 3 {
-		t.Fatalf("units = %+v", got.Units)
-	}
 	byName := map[string]protocol.UnitStatus{}
 	for _, u := range got.Units {
 		byName[u.Name] = u
@@ -58,6 +55,14 @@ Description=App
 	}
 	if byName["app.target"].Kind != "target" {
 		t.Fatalf("target = %+v", byName["app.target"])
+	}
+	for _, name := range []string{DefaultTarget, TimersTarget, ShutdownTarget} {
+		if byName[name].Kind != "target" {
+			t.Fatalf("builtin %s = %+v", name, byName[name])
+		}
+	}
+	if _, ok := byName["network-online.target"]; ok {
+		t.Fatal("network-online.target must not be shipped")
 	}
 }
 
@@ -169,8 +174,17 @@ WantedBy=default.target
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !list.Units[0].Enabled {
-		t.Fatalf("list after enable: %+v", list.Units[0])
+	found := false
+	for _, u := range list.Units {
+		if u.Name == "hermes.service" {
+			found = true
+			if !u.Enabled {
+				t.Fatalf("list after enable: %+v", u)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("hermes.service missing after enable")
 	}
 
 	dis, err := client.Disable(ctx, "hermes.service")
@@ -212,7 +226,7 @@ WorkingDirectory=C:\Tools
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Machine == nil || st.Machine.UnitsLoaded != 1 || st.Machine.State != "running" {
+	if st.Machine == nil || st.Machine.UnitsLoaded != 4 || st.Machine.State != "running" {
 		t.Fatalf("machine = %+v", st.Machine)
 	}
 
@@ -227,7 +241,7 @@ WorkingDirectory=C:\Tools
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rel.Loaded != 2 {
+	if rel.Loaded != 5 {
 		t.Fatalf("reload = %+v", rel)
 	}
 
