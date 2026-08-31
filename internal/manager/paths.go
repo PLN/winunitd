@@ -10,12 +10,14 @@ import (
 const (
 	unitsDirName   = "units"
 	enabledDirName = "enabled"
+	journalDirName = "journal"
 )
 
 // Config is the on-disk layout for a manager instance.
 type Config struct {
 	// BaseDir is the data root. Production uses C:\ProgramData\winunitd
-	// (DESIGN.md §7, §12). Tests pass a temporary directory.
+	// (DESIGN.md §7, §12, §22). Tests pass a temporary directory.
+	// Layout: units\, enabled\, journal\.
 	BaseDir string
 	// Launch starts unit processes. Nil uses runtime.NewLauncher(Daemon).
 	Launch runtime.Launcher
@@ -41,4 +43,8 @@ func (c Config) EnabledDir() string {
 
 func (c Config) EnabledPath(target, unit string) string {
 	return filepath.Join(c.EnabledDir(), target, unit)
+}
+
+func (c Config) JournalDir() string {
+	return filepath.Join(c.BaseDir, journalDirName)
 }

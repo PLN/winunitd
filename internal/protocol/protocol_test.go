@@ -177,7 +177,12 @@ func TestAllMethodsRoundTrip(t *testing.T) {
 			if err := DecodeParams(params, &p); err != nil {
 				return nil, err
 			}
-			return LogsResult{Unit: p.Unit, Entries: []LogEntry{}}, nil
+			return LogsResult{Unit: p.Unit, Entries: []LogEntry{{
+				Unit:    p.Unit,
+				Stream:  "stdout",
+				Message: "hello",
+				PID:     1,
+			}}}, nil
 		case MethodDaemonReload:
 			return DaemonReloadResult{Loaded: 1}, nil
 		case MethodVerify:
@@ -218,8 +223,12 @@ func TestAllMethodsRoundTrip(t *testing.T) {
 	if _, err := client.Disable(ctx, "foo"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Logs(ctx, LogsParams{Unit: "foo"}); err != nil {
+	gotLogs, err := client.Logs(ctx, LogsParams{Unit: "foo"})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if len(gotLogs.Entries) != 1 || gotLogs.Entries[0].Message != "hello" || gotLogs.Entries[0].Stream != "stdout" {
+		t.Fatalf("logs = %+v", gotLogs)
 	}
 	if _, err := client.DaemonReload(ctx); err != nil {
 		t.Fatal(err)
