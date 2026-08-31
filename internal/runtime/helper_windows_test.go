@@ -6,13 +6,25 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/windows"
 )
 
+const winunitdHelperArgPrefix = "-winunitd-helper="
+
+func helperMode() string {
+	for _, a := range os.Args[1:] {
+		if strings.HasPrefix(a, winunitdHelperArgPrefix) {
+			return strings.TrimPrefix(a, winunitdHelperArgPrefix)
+		}
+	}
+	return strings.TrimSpace(os.Getenv("WINUNITD_JOB_HELPER"))
+}
+
 func TestMain(m *testing.M) {
-	switch os.Getenv("WINUNITD_JOB_HELPER") {
+	switch helperMode() {
 	case "sleep":
 		select {}
 	case "oneshot":
@@ -53,7 +65,7 @@ func TestMain(m *testing.M) {
 }
 
 func startHelperChild(breakaway bool) (int, error) {
-	cmd := exec.Command(os.Args[0])
+	cmd := exec.Command(os.Args[0], winunitdHelperArgPrefix+"sleep")
 	cmd.Env = helperEnv("WINUNITD_JOB_HELPER=sleep")
 	flags := uint32(windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW)
 	if breakaway {

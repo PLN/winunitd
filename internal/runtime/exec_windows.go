@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	goruntime "runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -153,33 +155,67 @@ func (l *winLauncher) create(spec StartSpec) (*winProc, error) {
 			return nil, err
 		}
 	}
-	envp, err := envBlock(spec.Env)
+	block, err := envBlock(spec.Env)
 	if err != nil {
 		cleanupHandles()
 		return nil, err
 	}
+	var envp *uint16
+	if len(block) > 0 {
+		envp = &block[0]
+	}
 
-	var si windows.StartupInfo
+	// Only stdin/stdout/stderr are inherited. A blanket bInheritHandles=true
+	// would leak the manager's listen sockets and IOCP into the unit process
+	// (overlapped AcceptEx on those sockets can then fault the child).
+	attrList, err := windows.NewProcThreadAttributeList(1)
+	if err != nil {
+		cleanupHandles()
+		return nil, fmt.Errorf("ProcThreadAttributeList: %w", err)
+	}
+	defer attrList.Delete()
+	inherit := make([]windows.Handle, 0, 3)
+	for _, h := range []windows.Handle{stdin, stdoutW, stderrW} {
+		if h != 0 {
+			inherit = append(inherit, h)
+		}
+	}
+	if len(inherit) > 0 {
+		if err := attrList.Update(
+			windows.PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+			unsafe.Pointer(&inherit[0]),
+			uintptr(len(inherit))*unsafe.Sizeof(inherit[0]),
+		); err != nil {
+			cleanupHandles()
+			return nil, fmt.Errorf("PROC_THREAD_ATTRIBUTE_HANDLE_LIST: %w", err)
+		}
+	}
+
+	var si windows.StartupInfoEx
 	si.Cb = uint32(unsafe.Sizeof(si))
 	si.Flags = windows.STARTF_USESTDHANDLES
 	si.StdInput = stdin
 	si.StdOutput = stdoutW
 	si.StdErr = stderrW
+	si.ProcThreadAttributeList = attrList.List()
 
 	var pi windows.ProcessInformation
-	flags := uint32(windows.CREATE_SUSPENDED | windows.CREATE_UNICODE_ENVIRONMENT | windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW)
+	flags := uint32(windows.CREATE_SUSPENDED | windows.CREATE_UNICODE_ENVIRONMENT | windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW | windows.EXTENDED_STARTUPINFO_PRESENT)
 	err = windows.CreateProcess(
 		app,
 		cmdLine,
 		nil,
 		nil,
-		true,
+		len(inherit) > 0,
 		flags,
 		envp,
 		dirp,
-		&si,
+		&si.StartupInfo,
 		&pi,
 	)
+	goruntime.KeepAlive(block)
+	goruntime.KeepAlive(inherit)
+	goruntime.KeepAlive(attrList)
 	_ = windows.CloseHandle(stdin)
 	_ = windows.CloseHandle(stdoutW)
 	_ = windows.CloseHandle(stderrW)
@@ -262,12 +298,19 @@ func openNUL() (windows.Handle, error) {
 	)
 }
 
-func envBlock(env []string) (*uint16, error) {
+func envBlock(env []string) ([]uint16, error) {
 	if env == nil {
 		return nil, nil
 	}
+	sorted := append([]string(nil), env...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return strings.ToUpper(sorted[i]) < strings.ToUpper(sorted[j])
+	})
+	if len(sorted) == 0 {
+		return []uint16{0, 0}, nil
+	}
 	var buf []uint16
-	for _, e := range env {
+	for _, e := range sorted {
 		if strings.IndexByte(e, 0) >= 0 {
 			return nil, fmt.Errorf("environment entry contains NUL")
 		}
@@ -278,7 +321,7 @@ func envBlock(env []string) (*uint16, error) {
 		buf = append(buf, u...)
 	}
 	buf = append(buf, 0)
-	return &buf[0], nil
+	return buf, nil
 }
 
 func (p *winProc) PID() int { return p.pid }
