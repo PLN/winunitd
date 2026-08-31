@@ -37,6 +37,17 @@ func DefaultBaseDir() string {
 	return `C:\ProgramData\winunitd`
 }
 
+// DefaultUserBaseDir is %LOCALAPPDATA%\winunitd (DESIGN.md §7).
+func DefaultUserBaseDir() string {
+	if la := os.Getenv("LOCALAPPDATA"); la != "" {
+		return filepath.Join(la, "winunitd")
+	}
+	if up := os.Getenv("USERPROFILE"); up != "" {
+		return filepath.Join(up, "AppData", "Local", "winunitd")
+	}
+	return filepath.Join(os.TempDir(), "winunitd")
+}
+
 func (c Config) UnitsDir() string {
 	return filepath.Join(c.BaseDir, unitsDirName)
 }

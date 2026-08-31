@@ -170,7 +170,7 @@ func stopService(s *mgr.Service) error {
 	return fmt.Errorf("service %s did not stop within %s", ServiceName, PreshutdownTimeout)
 }
 
-const acceptedControls = svc.AcceptStop | svc.AcceptShutdown | svc.AcceptPreShutdown
+const acceptedControls = svc.AcceptStop | svc.AcceptShutdown | svc.AcceptPreShutdown | svc.AcceptSessionChange
 
 func isStopCmd(cmd svc.Cmd) bool {
 	switch cmd {
@@ -182,7 +182,8 @@ func isStopCmd(cmd svc.Cmd) bool {
 }
 
 type host struct {
-	run func(ctx context.Context) error
+	run       func(ctx context.Context) error
+	onSession func(SessionChange)
 }
 
 func (h *host) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
@@ -209,6 +210,10 @@ func (h *host) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<-
 			switch c.Cmd {
 			case svc.Interrogate:
 				changes <- c.CurrentStatus
+			case svc.SessionChange:
+				if sc, ok := ParseSessionChange(c.Cmd, c.EventType, c.EventData); ok && h.onSession != nil {
+					h.onSession(sc)
+				}
 			default:
 				if isStopCmd(c.Cmd) {
 					// Cancel the host. serve() then runs ordered unit stop
@@ -226,8 +231,14 @@ func (h *host) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<-
 // RunHost runs run as the winunitd Windows Service. ctx is cancelled on
 // SERVICE_CONTROL_STOP, SHUTDOWN, and PRESHUTDOWN.
 func RunHost(run func(ctx context.Context) error) error {
+	return RunHostNotify(run, nil)
+}
+
+// RunHostNotify is RunHost plus SESSIONCHANGE callbacks (user manager
+// auto-start on first logon).
+func RunHostNotify(run func(ctx context.Context) error, onSession func(SessionChange)) error {
 	if run == nil {
 		return fmt.Errorf("nil service run function")
 	}
-	return svc.Run(ServiceName, &host{run: run})
+	return svc.Run(ServiceName, &host{run: run, onSession: onSession})
 }

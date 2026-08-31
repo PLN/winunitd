@@ -99,6 +99,79 @@ func TestWindowsSecurityDescriptorParses(t *testing.T) {
 	}
 }
 
+func TestUserPipeSDDLParses(t *testing.T) {
+	sid, err := CurrentUserSID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sddl, err := UserPipeSDDL(sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sd, err := windows.SecurityDescriptorFromString(sddl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dacl == nil {
+		t.Fatal("missing DACL")
+	}
+	control, _, err := sd.Control()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if control&windows.SE_DACL_PROTECTED == 0 {
+		t.Fatal("DACL should be protected (D:P)")
+	}
+}
+
+func TestUserPipeSDDLAllowsOwner(t *testing.T) {
+	sid, err := CurrentUserSID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sddl, err := UserPipeSDDL(sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := fmt.Sprintf(`\\.\pipe\winunitd-user-test-%d-%d`, os.Getpid(), time.Now().UnixNano())
+	lis, err := ListenPipeSDDL(name, sddl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lis.Close()
+
+	acceptErr := make(chan error, 1)
+	go func() {
+		conn, err := lis.Accept()
+		if err != nil {
+			acceptErr <- err
+			return
+		}
+		_ = conn.Close()
+		acceptErr <- nil
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := DialPipe(ctx, name)
+	if err != nil {
+		t.Fatalf("owner dial: %v", err)
+	}
+	_ = conn.Close()
+	select {
+	case err := <-acceptErr:
+		if err != nil {
+			t.Fatalf("owner accept: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("owner accept timed out")
+	}
+}
+
 var procCreateRestrictedToken = windows.NewLazySystemDLL("advapi32.dll").NewProc("CreateRestrictedToken")
 
 const disableMaxPrivilege = 0x1
