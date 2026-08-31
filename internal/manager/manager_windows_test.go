@@ -515,34 +515,11 @@ func waitWindowsLiveProc(t *testing.T, m *Manager, name string) runtime.Process 
 
 func TestWindowsJournalWriteAndRead(t *testing.T) {
 	dir := t.TempDir()
-	units := filepath.Join(dir, "units")
-	if err := os.MkdirAll(units, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	body := fmt.Sprintf(""+
-		"[Service]\n"+
-		"Type=simple\n"+
-		"ExecStart=%s\n"+
-		"WorkingDirectory=%s\n"+
-		"Environment=WINUNITD_JOB_HELPER=print\n"+
-		"Environment=\"WINUNITD_JOB_PRINT=hello from journal\"\n"+
-		"Environment=\"WINUNITD_JOB_PRINT_ERR=warn from journal\"\n",
-		mustJSONArgv(t, os.Args[0]), dir)
-	if err := os.WriteFile(filepath.Join(units, "log.service"), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	m, err := New(Config{BaseDir: dir})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rel, err := m.Reload()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rel.Errors) > 0 {
-		t.Fatalf("reload errors: %v", rel.Errors)
-	}
-	t.Cleanup(func() { _, _ = m.Stop("log") })
+	m := startWindowsHelperUnit(t, dir, "log.service", `
+Type=simple
+Environment="WINUNITD_JOB_PRINT=hello from journal"
+Environment="WINUNITD_JOB_PRINT_ERR=warn from journal"
+`, "print", 0, "")
 	if _, err := m.Start(context.Background(), "log"); err != nil {
 		t.Fatal(err)
 	}
