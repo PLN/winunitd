@@ -16,9 +16,9 @@ Windows is the first-class target (`GOOS=windows`).
 
 ## Status
 
-**Now:** unit file loader and `winctl verify` (no daemon required), plus command stubs and CI.
+**Now:** unit file loader, `winctl verify` (no daemon required), and a dependency graph with start transactions (Requires/Wants vs After/Before). Still no daemon.
 
-**Later:** dependency graph, process supervision (Job Objects, tokens, sessions), timers at runtime, journal, and a named-pipe control API — as described in DESIGN.md.
+**Later:** process supervision (Job Objects, tokens, sessions), timers at runtime, journal, and a named-pipe control API — as described in DESIGN.md.
 
 ## Build
 
