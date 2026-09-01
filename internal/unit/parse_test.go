@@ -1261,8 +1261,8 @@ WantedBy=multi-user.target
 				if u.Kind != KindTarget {
 					t.Fatalf("kind = %s", u.Kind)
 				}
-				if u.Service != nil || u.Timer != nil || u.Registry != nil || u.EventLog != nil {
-					t.Fatal("target should not have service/timer/registry/eventlog specs")
+				if u.Service != nil || u.Timer != nil || u.Registry != nil || u.EventLog != nil || u.PathWatch != nil {
+					t.Fatal("target should not have service/timer/registry/eventlog/path specs")
 				}
 			},
 		},
@@ -1470,6 +1470,110 @@ EventLogTrigger=Application:EventID=1
 RegistryChanged=HKLM\Software\Example
 `,
 			wantErr: []string{"section [Registry] is not valid in a eventlog unit"},
+		},
+		{
+			name: "path implicit unit",
+			file: "foo.path",
+			src: `
+[Path]
+PathChanged=C:\Data\incoming
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Kind != KindPath {
+					t.Fatalf("kind = %s", u.Kind)
+				}
+				if u.PathWatch.Unit != "foo.service" {
+					t.Fatalf("activated = %q", u.PathWatch.Unit)
+				}
+				if len(u.PathWatch.Changed) != 1 || u.PathWatch.Changed[0].Raw != `C:\Data\incoming` {
+					t.Fatalf("changed = %#v", u.PathWatch.Changed)
+				}
+			},
+		},
+		{
+			name: "path repeatable paths",
+			file: "pair.path",
+			src: `
+[Path]
+PathChanged=C:\Data\a
+PathChanged=C:\Data\b
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if len(u.PathWatch.Changed) != 2 {
+					t.Fatalf("changed = %#v", u.PathWatch.Changed)
+				}
+				if u.PathWatch.Changed[0].Raw != `C:\Data\a` || u.PathWatch.Changed[1].Raw != `C:\Data\b` {
+					t.Fatalf("changed = %#v", u.PathWatch.Changed)
+				}
+			},
+		},
+		{
+			name: "path relative fails",
+			file: "foo.path",
+			src: `
+[Path]
+PathChanged=incoming
+`,
+			wantErr: []string{"absolute Windows path"},
+		},
+		{
+			name: "path posix rooted fails",
+			file: "foo.path",
+			src: `
+[Path]
+PathChanged=/tmp/incoming
+`,
+			wantErr: []string{"absolute Windows path"},
+		},
+		{
+			name: "path empty fails",
+			file: "foo.path",
+			src: `
+[Path]
+PathChanged=
+`,
+			wantErr: []string{"empty path"},
+		},
+		{
+			name: "path missing trigger fails",
+			file: "foo.path",
+			src: `
+[Path]
+`,
+			wantErr: []string{"PathChanged"},
+		},
+		{
+			name: "path Unit= is unknown",
+			file: "foo.path",
+			src: `
+[Path]
+PathChanged=C:\Data\incoming
+Unit=other.service
+`,
+			wantErr: []string{`unknown directive "Unit"`},
+		},
+		{
+			name: "path PathExists= is unknown",
+			file: "foo.path",
+			src: `
+[Path]
+PathChanged=C:\Data\incoming
+PathExists=C:\Data\incoming
+`,
+			wantErr: []string{`unknown directive "PathExists"`},
+		},
+		{
+			name: "path cannot have registry section",
+			file: "foo.path",
+			src: `
+[Path]
+PathChanged=C:\Data\incoming
+[Registry]
+RegistryChanged=HKLM\Software\Example
+`,
+			wantErr: []string{"section [Registry] is not valid in a path unit"},
 		},
 	}
 
