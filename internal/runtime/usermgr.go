@@ -19,6 +19,10 @@ type UserManagerSpec struct {
 	ExtraArgs []string
 	Env       []string
 	Daemon    *DaemonJob
+	// cmdArgv, if set, is the full CreateProcessAsUser command (exe +
+	// args) and skips UserManagerArgs. Tests use it to launch ping the
+	// same way the unit-path listener regression does. Production is nil.
+	cmdArgv []string
 }
 
 // UserManagerProc is one running per-user manager process.

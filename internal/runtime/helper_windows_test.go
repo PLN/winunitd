@@ -3,11 +3,14 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"testing"
+	"time"
 
+	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
 )
 
@@ -57,6 +60,9 @@ func TestMain(m *testing.M) {
 	case "spawn-hold":
 		_, _ = startHelperChild(false)
 		select {}
+	case "stdio-write":
+		runStdioWriteHelper()
+		os.Exit(0)
 	case "scm-proxy":
 		runSCMProxyTestService()
 		os.Exit(0)
@@ -90,4 +96,44 @@ func runAllocUntilKilled() {
 		}
 		held = append(held, b)
 	}
+}
+
+func runStdioWriteHelper() {
+	stdoutOK := writeStdHandle(windows.STD_OUTPUT_HANDLE, []byte("um-stdout\n")) == nil
+	stderrOK := writeStdHandle(windows.STD_ERROR_HANDLE, []byte("um-stderr\n")) == nil
+	pipeName := os.Getenv("WINUNITD_STDIO_REPORT_PIPE")
+	if pipeName == "" {
+		if stdoutOK && stderrOK {
+			os.Exit(0)
+		}
+		os.Exit(1)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, err := winio.DialPipeContext(ctx, pipeName)
+	if err != nil {
+		os.Exit(2)
+	}
+	defer c.Close()
+	stdout := "err"
+	if stdoutOK {
+		stdout = "ok"
+	}
+	stderr := "err"
+	if stderrOK {
+		stderr = "ok"
+	}
+	_, _ = fmt.Fprintf(c, "stdout=%s stderr=%s\n", stdout, stderr)
+}
+
+func writeStdHandle(std uint32, data []byte) error {
+	h, err := windows.GetStdHandle(std)
+	if err != nil {
+		return err
+	}
+	if h == 0 || h == windows.InvalidHandle {
+		return fmt.Errorf("invalid std handle")
+	}
+	var written uint32
+	return windows.WriteFile(h, data, &written, nil)
 }

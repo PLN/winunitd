@@ -78,7 +78,10 @@ func createUserManager(tok windows.Token, spec UserManagerSpec, job *DaemonJob) 
 		cleanup()
 		return nil, err
 	}
-	argv := append([]string{spec.Exe}, UserManagerArgs(spec.SID, spec.ExtraArgs)...)
+	argv := spec.cmdArgv
+	if len(argv) == 0 {
+		argv = append([]string{spec.Exe}, UserManagerArgs(spec.SID, spec.ExtraArgs)...)
+	}
 	cmdLine, err := windows.UTF16PtrFromString(windows.ComposeCommandLine(argv))
 	if err != nil {
 		cleanup()
@@ -106,35 +109,78 @@ func createUserManager(tok windows.Token, spec UserManagerSpec, job *DaemonJob) 
 		envp = &block[0]
 	}
 
-	var si windows.StartupInfo
-	si.Cb = uint32(unsafe.Sizeof(si))
+	// Same inherit list as the unit launcher / Go StartProcess: inheritable
+	// duplicates of stdin/stdout/stderr only. Blanket bInheritHandles=true
+	// would leak the system manager's control-pipe listener, IOCPs, and
+	// other units' pipes into a lower-privileged user process.
+	dupIn, err := duplicateInheritable(stdin)
+	if err != nil {
+		cleanup()
+		return nil, fmt.Errorf("duplicate stdin: %w", err)
+	}
+	dupOut, err := duplicateInheritable(stdout)
+	if err != nil {
+		_ = windows.CloseHandle(dupIn)
+		cleanup()
+		return nil, fmt.Errorf("duplicate stdout: %w", err)
+	}
+	dupErr, err := duplicateInheritable(stderr)
+	if err != nil {
+		_ = windows.CloseHandle(dupIn)
+		_ = windows.CloseHandle(dupOut)
+		cleanup()
+		return nil, fmt.Errorf("duplicate stderr: %w", err)
+	}
+	closeDups := func() {
+		_ = windows.CloseHandle(dupIn)
+		_ = windows.CloseHandle(dupOut)
+		_ = windows.CloseHandle(dupErr)
+	}
+
+	attrList, inherit, err := inheritHandleList(dupIn, dupOut, dupErr)
+	if err != nil {
+		closeDups()
+		cleanup()
+		return nil, err
+	}
+	defer attrList.Delete()
+
+	// Heap StartupInfoEx so the attribute-list pointer stays valid across
+	// the CreateProcessAsUser syscall (same as Go's StartProcess).
+	si := &windows.StartupInfoEx{}
+	si.Cb = uint32(unsafe.Sizeof(*si))
 	si.Flags = windows.STARTF_USESTDHANDLES
-	si.StdInput = stdin
-	si.StdOutput = stdout
-	si.StdErr = stderr
+	si.StdInput = dupIn
+	si.StdOutput = dupOut
+	si.StdErr = dupErr
+	si.ProcThreadAttributeList = attrList.List()
 
 	var pi windows.ProcessInformation
-	flags := uint32(windows.CREATE_SUSPENDED | windows.CREATE_UNICODE_ENVIRONMENT | windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW)
+	flags := uint32(windows.CREATE_SUSPENDED | windows.CREATE_UNICODE_ENVIRONMENT | windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW | windows.EXTENDED_STARTUPINFO_PRESENT)
 	err = windows.CreateProcessAsUser(
 		tok,
 		app,
 		cmdLine,
 		nil,
 		nil,
-		true,
+		len(inherit) > 0,
 		flags,
 		envp,
 		dirp,
-		&si,
+		&si.StartupInfo,
 		&pi,
 	)
 	goruntime.KeepAlive(block)
+	goruntime.KeepAlive(inherit)
+	goruntime.KeepAlive(attrList)
+	goruntime.KeepAlive(si)
+	closeDups()
 	cleanup()
 	if err != nil {
 		return nil, fmt.Errorf("CreateProcessAsUser %s: %w", spec.Exe, err)
 	}
 
-	if err := job.AssignPID(int(pi.ProcessId)); err != nil {
+	if err := job.Assign(pi.Process); err != nil {
 		_ = windows.TerminateProcess(pi.Process, 1)
 		_ = windows.CloseHandle(pi.Thread)
 		_ = windows.CloseHandle(pi.Process)
