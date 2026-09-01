@@ -195,7 +195,8 @@ func (p *parser) warnf(line int, format string, args ...any) {
 }
 
 // Parse parses and verifies a unit file from memory.
-// name is the unit file name (foo.service); path is used in diagnostics.
+// name is the unit file name (foo.service); it is stored lower-case
+// (DESIGN.md §36). path is used in diagnostics and may keep on-disk case.
 func Parse(path, name string, src []byte) Report {
 	kind, err := KindFromName(name)
 	if err != nil {
@@ -206,12 +207,13 @@ func Parse(path, name string, src []byte) Report {
 		}}}
 	}
 
+	canon := NormalizeName(name)
 	p := &parser{
 		path: path,
-		name: name,
+		name: canon,
 		kind: kind,
 		unit: &Unit{
-			Name: name,
+			Name: canon,
 			Path: path,
 			Kind: kind,
 		},
@@ -463,7 +465,14 @@ func applyList(cur []string, value string) []string {
 	if value == "" {
 		return nil
 	}
-	return append(cur, parseUnitNames(value)...)
+	for _, n := range parseUnitNames(value) {
+		n = NormalizeName(n)
+		if n == "" {
+			continue
+		}
+		cur = append(cur, n)
+	}
+	return cur
 }
 
 func (p *parser) finish() {
@@ -791,7 +800,7 @@ func (p *parser) finishTimer() {
 	}
 
 	if t.unitSet {
-		name := strings.TrimSpace(t.unit)
+		name := NormalizeName(t.unit)
 		if name == "" {
 			p.errorf(0, "Unit= is empty")
 		} else {

@@ -185,6 +185,41 @@ func TestWaitAfterCloseFlushesCapture(t *testing.T) {
 	}
 }
 
+func TestJournalCaseVariantsShareOneFile(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	stdout, w := io.Pipe()
+	s.Attach("FOO.SERVICE", 9, NewInvocationID(), stdout, nil)
+	if _, err := io.WriteString(w, "from upper\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s.Wait("foo.service")
+	got := waitEntries(t, s, "Foo.service", 1)
+	if got[0].Unit != "foo.service" || got[0].Message != "from upper" {
+		t.Fatalf("got = %+v", got)
+	}
+	path := filepath.Join(s.Dir(), "foo.service.log")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("journal file: %v", err)
+	}
+	ents, err := os.ReadDir(s.Dir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs := 0
+	for _, e := range ents {
+		if strings.HasSuffix(strings.ToLower(e.Name()), ".log") {
+			logs++
+		}
+	}
+	if logs != 1 {
+		t.Fatalf("journal files = %d, want 1", logs)
+	}
+}
+
 func TestOpenRequiresDir(t *testing.T) {
 	t.Parallel()
 	if _, err := Open(""); err == nil {
@@ -196,6 +231,9 @@ func TestUnitFileNameSanitizes(t *testing.T) {
 	t.Parallel()
 	if unitFileName("foo.service") != "foo.service.log" {
 		t.Fatalf("got %q", unitFileName("foo.service"))
+	}
+	if unitFileName("FOO.SERVICE") != "foo.service.log" {
+		t.Fatalf("mixed case = %q", unitFileName("FOO.SERVICE"))
 	}
 	if unitFileName(`foo/../bar:baz`) != "foo_.._bar_baz.log" {
 		t.Fatalf("got %q", unitFileName(`foo/../bar:baz`))

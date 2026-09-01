@@ -262,12 +262,14 @@ type PathSpec struct {
 
 // CompanionService returns the basename .service for a companion unit
 // (foo.timer / foo.registry / foo.eventlog / foo.path → foo.service).
+// The result is a DESIGN.md §36 normalized name.
 func CompanionService(name string) string {
+	name = NormalizeName(name)
 	base := name
 	if i := strings.LastIndex(base, "."); i >= 0 {
 		base = base[:i]
 	}
-	return base + ".service"
+	return NormalizeName(base + ".service")
 }
 
 // Severity is an issue level collected during parse/verify.
