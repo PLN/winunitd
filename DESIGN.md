@@ -827,6 +827,18 @@ Avoid naïvely relying on `Sleep()` until the next timer.
 
 Use a scheduler heap/priority queue and recalculate calendar deadlines after relevant clock-change notifications.
 
+### Calendar Next / Previous (civil time)
+
+`OnCalendar=` matching uses the zone of the reference instant (`from` / `before`). Candidates are civil dates, not `time.Date` overflow:
+
+- Reject a candidate whose year, month, or day after construction is not the intended civil date. `*-*-31` matches 31 January, 31 March, … and never 3 March (February 31 does not exist). The same rule applies to `*-2-29` in a non-leap year (skip to the next leap-year 29 February).
+- Iterate chronologically from `max(from, earliest civil date allowed by fixed year/month/day fields)` (and the symmetric latest-date bound for Previous). Do not substitute fixed fields into “today + i”: `2027-*-*` from 2026-09-01 is 2027-01-01, not 2027-09-01; `*-12-*` from January is 1 December, not 15 December.
+
+DST, pinned (not left to `time.Date`, which disagrees across zones):
+
+- **Spring-forward gap** (the specified wall time does not exist that day): fire at the **first valid instant after the gap**. Example: `*-*-* 02:30` on the US spring-forward Sunday fires at 03:00 local, not the next day and not 03:30.
+- **Fall-back overlap** (the specified wall time occurs twice): fire at the **first occurrence**, once. Next after that instant is the next matching civil day, not the second copy the same morning.
+
 ---
 
 ## 19. Watchdog Architecture
