@@ -881,25 +881,43 @@ Restart=on-abnormal
 Restart=on-watchdog
 ```
 
+Shipped restart policies are `no`, `always`, `on-failure`, and `on-watchdog`.
+`on-success` and `on-abnormal` are not parsed.
+
 Additional parameters:
 
 ```ini
 RestartSec=5s
-RestartMaxDelaySec=5m
-RestartBackoff=exponential
 ```
 
-Rate limiting:
+`RestartMaxDelaySec=` and `RestartBackoff=` are not parsed (unknown
+directive; same verify policy as other deferred keys).
+
+Rate limiting is `[Unit]`:
 
 ```ini
-StartLimitIntervalSec=60s
+StartLimitIntervalSec=10s
 StartLimitBurst=5
 ```
+
+Omitted values default to Interval=10s and Burst=5 (systemd-shaped).
+`StartLimitBurst=0` disables the limit (unlimited). A non-positive
+`StartLimitIntervalSec=` also disables it.
+
+Each unit start (including a `Restart=` relaunch) records a timestamp on
+the per-unit runtime. When `StartLimitBurst` starts fall inside
+`StartLimitIntervalSec`, the manager does not schedule another restart:
+the unit becomes `failed` with reason `start-limit` (`winctl status`,
+§44).
+
+An explicit `winctl start` (manager Start) on a start-limit-hit unit
+resets the timestamp list and may launch again. The limit can then hit
+again. `RestartSec` is unchanged.
 
 After burst limit is exceeded:
 
 ```text
-failed (start-limit-hit)
+failed (start-limit)
 ```
 
 ---
@@ -1591,7 +1609,7 @@ PriorityClass=below-normal
 - Omitting all three leaves today's job (no extra Job Object limits).
 - Hitting `MemoryMax=` or `ProcessLimit=` fails the unit with reason
   `resource-limit` (`winctl status`, §44). `Restart=` still applies,
-  including `on-failure`.
+  including `on-failure`. Start-limit still applies to those relaunches.
 
 These are Windows Job Object semantics, not cgroup `memory.max` / `cpu.max`.
 
@@ -2430,6 +2448,8 @@ WorkingDirectory=
 Environment=
 Restart=
 RestartSec=
+StartLimitIntervalSec=
+StartLimitBurst=
 TimeoutStartSec=
 TimeoutStopSec=
 WantedBy=

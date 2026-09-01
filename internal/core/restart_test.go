@@ -47,6 +47,9 @@ func TestStatusReason(t *testing.T) {
 	if StatusReason(ReasonResourceLimit) != ReasonResourceLimit {
 		t.Fatal("resource-limit")
 	}
+	if StatusReason(ReasonStartLimit) != ReasonStartLimit {
+		t.Fatal("start-limit")
+	}
 	if StatusReason(ReasonConfiguration) != ReasonConfiguration {
 		t.Fatal("configuration")
 	}
@@ -55,5 +58,8 @@ func TestStatusReason(t *testing.T) {
 	}
 	if StatusReason("main process exited") != "" {
 		t.Fatal("other errors have no reason")
+	}
+	if StatusReason("start-limit-hit") != "" {
+		t.Fatal("start-limit-hit is not the status reason token")
 	}
 }
