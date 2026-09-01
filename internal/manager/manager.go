@@ -147,6 +147,9 @@ func (m *Manager) Close() {
 	if m.engine != nil {
 		m.engine.Stop()
 	}
+	if m.journal != nil {
+		_ = m.journal.Close()
+	}
 }
 
 // Handle implements protocol.Handler.
@@ -488,8 +491,9 @@ func (m *Manager) Restart(ctx context.Context, name string) (*protocol.UnitResul
 	return m.Start(ctx, name)
 }
 
-// Logs returns stored stdout/stderr for the unit. Follow is ignored
-// (snapshot only; no streaming RPC).
+// Logs returns stored stdout/stderr for the unit. Since is a lower bound
+// (invalid values are invalid-params, not ignored). Follow waits briefly
+// for new lines after Cursor; the client polls with the returned cursor.
 func (m *Manager) Logs(p protocol.LogsParams) (*protocol.LogsResult, error) {
 	m.mu.Lock()
 	rt, err := m.lookup(p.Unit)
@@ -499,15 +503,30 @@ func (m *Manager) Logs(p protocol.LogsParams) (*protocol.LogsResult, error) {
 	}
 	name := rt.unit.Name
 	js := m.journal
+	now := time.Now().UTC()
+	if m.clk.Now != nil {
+		now = m.clk.Now()
+	}
 	m.mu.Unlock()
 
-	entries := []protocol.LogEntry{}
-	if js != nil {
-		got, err := js.Read(name)
+	var since time.Time
+	if strings.TrimSpace(p.Since) != "" {
+		t, err := journal.ParseSince(p.Since, now)
 		if err != nil {
-			return nil, protocol.ErrFailed(err.Error())
+			return nil, protocol.ErrInvalidParams(err.Error())
 		}
-		entries = make([]protocol.LogEntry, 0, len(got))
+		since = t
+	}
+
+	collect := func() ([]protocol.LogEntry, string, error) {
+		if js == nil {
+			return []protocol.LogEntry{}, p.Cursor, nil
+		}
+		got, cursor, err := js.Query(name, since, p.Cursor)
+		if err != nil {
+			return nil, cursor, err
+		}
+		entries := make([]protocol.LogEntry, 0, len(got))
 		for _, e := range got {
 			le := protocol.LogEntry{
 				Unit:         e.Unit,
@@ -521,8 +540,27 @@ func (m *Manager) Logs(p protocol.LogsParams) (*protocol.LogsResult, error) {
 			}
 			entries = append(entries, le)
 		}
+		return entries, cursor, nil
 	}
-	return &protocol.LogsResult{Unit: name, Entries: entries}, nil
+
+	entries, cursor, err := collect()
+	if err != nil {
+		return nil, protocol.ErrFailed(err.Error())
+	}
+	if p.Follow && len(entries) == 0 {
+		deadline := time.Now().Add(journal.FollowWait())
+		for len(entries) == 0 && time.Now().Before(deadline) {
+			time.Sleep(journal.FollowPoll())
+			entries, cursor, err = collect()
+			if err != nil {
+				return nil, protocol.ErrFailed(err.Error())
+			}
+		}
+	}
+	if entries == nil {
+		entries = []protocol.LogEntry{}
+	}
+	return &protocol.LogsResult{Unit: name, Entries: entries, Cursor: cursor}, nil
 }
 
 // Verify re-reads a loaded unit file (daemon-side; path verify stays in winctl).

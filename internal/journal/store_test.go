@@ -1,10 +1,13 @@
 package journal
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -76,12 +79,16 @@ func TestJournalSurvivesReopen(t *testing.T) {
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	_ = waitEntries(t, s, "bar.service", 1)
+	s.Wait("bar.service")
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	s2, err := Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = s2.Close() })
 	got, err := s2.Read("bar.service")
 	if err != nil {
 		t.Fatal(err)
@@ -227,7 +234,7 @@ func TestOpenRequiresDir(t *testing.T) {
 	}
 }
 
-func TestUnitFileNameSanitizes(t *testing.T) {
+func TestUnitFileNameEncoding(t *testing.T) {
 	t.Parallel()
 	if unitFileName("foo.service") != "foo.service.log" {
 		t.Fatalf("got %q", unitFileName("foo.service"))
@@ -235,9 +242,258 @@ func TestUnitFileNameSanitizes(t *testing.T) {
 	if unitFileName("FOO.SERVICE") != "foo.service.log" {
 		t.Fatalf("mixed case = %q", unitFileName("FOO.SERVICE"))
 	}
-	if unitFileName(`foo/../bar:baz`) != "foo_.._bar_baz.log" {
+	if unitFileName("foo:bar") == unitFileName("foo*bar") {
+		t.Fatal("colon and star must not collide")
+	}
+	if unitFileName("foo:bar") != "foo%3Abar.log" {
+		t.Fatalf("colon = %q", unitFileName("foo:bar"))
+	}
+	if unitFileName("foo*bar") != "foo%2Abar.log" {
+		t.Fatalf("star = %q", unitFileName("foo*bar"))
+	}
+	if unitFileName(`foo/../bar:baz`) != "foo%2F..%2Fbar%3Abaz.log" {
 		t.Fatalf("got %q", unitFileName(`foo/../bar:baz`))
 	}
+}
+
+func TestNoCrossUnitBleed(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	colon := "foo:bar.service"
+	star := "foo*bar.service"
+	qmark := "foo?bar.service"
+	pipe := "foo|bar.service"
+	appendLine(t, s, colon, "from colon")
+	appendLine(t, s, star, "from star")
+	appendLine(t, s, qmark, "from qmark")
+	appendLine(t, s, pipe, "from pipe")
+
+	names := map[string]string{
+		colon: "from colon",
+		star:  "from star",
+		qmark: "from qmark",
+		pipe:  "from pipe",
+	}
+	files := map[string]bool{}
+	for unit, msg := range names {
+		got, err := s.Read(unit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || got[0].Message != msg || got[0].Unit != canonicalUnit(unit) {
+			t.Fatalf("%s = %+v", unit, got)
+		}
+		fn := unitFileName(unit)
+		if files[fn] {
+			t.Fatalf("filename collision %q", fn)
+		}
+		files[fn] = true
+		if _, err := os.Stat(filepath.Join(s.Dir(), fn)); err != nil {
+			t.Fatalf("%s file: %v", fn, err)
+		}
+	}
+
+	// Defense in depth: mixed records in one file are filtered on read.
+	path := s.path("mixed.service")
+	recOther, _ := json.Marshal(record{V: 1, Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Unit: "other.service", Message: "bleed"})
+	recMine, _ := json.Marshal(record{V: 1, Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Unit: "mixed.service", Message: "keep"})
+	body := string(recOther) + "\n" + string(recMine) + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Read("mixed.service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Message != "keep" {
+		t.Fatalf("filter = %+v", got)
+	}
+}
+
+func TestRotateKeepsGenerations(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	s.maxSize = 400
+	s.keep = 3
+	for i := 0; i < 40; i++ {
+		s.append(Entry{
+			Timestamp: time.Now().UTC(),
+			Unit:      "rot.service",
+			PID:       1,
+			Stream:    "stdout",
+			Message:   strings.Repeat("x", 80) + strconv.Itoa(i),
+		})
+	}
+	s.syncUnit("rot.service")
+
+	base := s.path("rot.service")
+	if _, err := os.Stat(base); err != nil {
+		t.Fatalf("current: %v", err)
+	}
+	if _, err := os.Stat(base + ".1"); err != nil {
+		t.Fatalf("rotated .1: %v", err)
+	}
+	st, err := os.Stat(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Size() > s.maxSize {
+		t.Fatalf("current size %d exceeds cap %d", st.Size(), s.maxSize)
+	}
+	for _, suf := range []string{".1", ".2", ".3"} {
+		st, err := os.Stat(base + suf)
+		if err != nil {
+			t.Fatalf("rotated %s: %v", suf, err)
+		}
+		if st.Size() > s.maxSize {
+			t.Fatalf("%s size %d exceeds cap %d", suf, st.Size(), s.maxSize)
+		}
+	}
+	if _, err := os.Stat(base + ".4"); !os.IsNotExist(err) {
+		t.Fatalf("keep 3 must drop .4: %v", err)
+	}
+
+	got, err := s.Read("rot.service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) < 2 {
+		t.Fatalf("rotated read = %d lines", len(got))
+	}
+	if len(got) >= 40 {
+		t.Fatalf("rotation did not drop old lines: %d", len(got))
+	}
+	last := got[len(got)-1].Message
+	if !strings.HasSuffix(last, "39") {
+		t.Fatalf("newest line lost: %q", last)
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i].Timestamp.Before(got[i-1].Timestamp) {
+			t.Fatalf("out of order: %+v then %+v", got[i-1], got[i])
+		}
+	}
+}
+
+func TestQuerySinceAndCursor(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	t1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := t1.Add(time.Hour)
+	t3 := t2.Add(time.Hour)
+	s.append(Entry{Timestamp: t1, Unit: "foo.service", Message: "old"})
+	s.append(Entry{Timestamp: t2, Unit: "foo.service", Message: "mid"})
+	s.append(Entry{Timestamp: t3, Unit: "foo.service", Message: "new"})
+
+	got, _, err := s.Query("foo.service", t2, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Message != "mid" || got[1].Message != "new" {
+		t.Fatalf("since = %+v", got)
+	}
+
+	all, cur, err := s.Query("foo.service", time.Time{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 || cur == "" {
+		t.Fatalf("all = %+v cursor %q", all, cur)
+	}
+	more, _, err := s.Query("foo.service", time.Time{}, cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(more) != 0 {
+		t.Fatalf("after cursor = %+v", more)
+	}
+
+	first, cur1, err := s.Query("foo.service", time.Time{}, "")
+	if err != nil || len(first) < 1 {
+		t.Fatalf("first = %+v %v", first, err)
+	}
+	rest, _, err := s.Query("foo.service", time.Time{}, formatCursor(entryID(first[0]), 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rest) != 2 || rest[0].Message != "mid" || rest[1].Message != "new" {
+		t.Fatalf("rest = %+v (cur1=%s)", rest, cur1)
+	}
+
+	dupT := t3.Add(time.Hour)
+	s.append(Entry{Timestamp: dupT, Unit: "foo.service", Message: "same"})
+	s.append(Entry{Timestamp: dupT, Unit: "foo.service", Message: "same"})
+	allDup, dupCur, err := s.Query("foo.service", dupT, "")
+	if err != nil || len(allDup) != 2 {
+		t.Fatalf("dups = %+v %v", allDup, err)
+	}
+	afterDup, _, err := s.Query("foo.service", dupT, dupCur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(afterDup) != 0 {
+		t.Fatalf("duplicate cursor replay = %+v", afterDup)
+	}
+}
+
+func TestOpenReuseNoFsyncPerLine(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	s.flushEvery = time.Hour
+	var opens, syncs atomic.Int32
+	s.onOpen = func() { opens.Add(1) }
+	s.onSync = func() { syncs.Add(1) }
+
+	const n = 25
+	for i := 0; i < n; i++ {
+		s.append(Entry{
+			Timestamp: time.Now().UTC(),
+			Unit:      "hook.service",
+			Message:   "line " + strconv.Itoa(i),
+		})
+	}
+	if g := opens.Load(); g != 1 {
+		t.Fatalf("opens after %d lines = %d, want 1 (reuse)", n, g)
+	}
+	if g := syncs.Load(); g != 0 {
+		t.Fatalf("Sync after %d lines = %d, want 0 (no fsync-per-line)", n, g)
+	}
+
+	s.Wait("hook.service")
+	if g := syncs.Load(); g != 1 {
+		t.Fatalf("Wait Sync = %d, want 1", g)
+	}
+
+	s.maxSize = 200
+	for i := 0; i < 20; i++ {
+		s.append(Entry{
+			Timestamp: time.Now().UTC(),
+			Unit:      "hook.service",
+			Message:   strings.Repeat("y", 80) + strconv.Itoa(i),
+		})
+	}
+	if g := opens.Load(); g < 2 {
+		t.Fatalf("rotate should reopen, opens = %d", g)
+	}
+	if g := syncs.Load(); g < 2 {
+		t.Fatalf("rotate should Sync, syncs = %d", g)
+	}
+
+	beforeClose := syncs.Load()
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if g := syncs.Load(); g != beforeClose+1 {
+		t.Fatalf("Close Sync = %d, want %d", g, beforeClose+1)
+	}
+}
+
+func appendLine(t *testing.T, s *Store, unit, msg string) {
+	t.Helper()
+	s.append(Entry{
+		Timestamp: time.Now().UTC(),
+		Unit:      unit,
+		Message:   msg,
+	})
 }
 
 func testStore(t *testing.T) *Store {
@@ -246,6 +502,7 @@ func testStore(t *testing.T) *Store {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
 

@@ -130,6 +130,8 @@ func (c *Client) Disable(ctx context.Context, unit string) (*EnableResult, error
 	return &out, nil
 }
 
+// Logs fetches a journal snapshot. Pass Since / Follow / Cursor as on
+// LogsParams (DESIGN.md §22); invalid Since is invalid-params.
 func (c *Client) Logs(ctx context.Context, p LogsParams) (*LogsResult, error) {
 	var out LogsResult
 	if err := c.Call(ctx, MethodLogs, p, &out); err != nil {
