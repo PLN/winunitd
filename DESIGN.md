@@ -1422,6 +1422,8 @@ foo
 
 where unqualified names default to `.service`.
 
+Unit names are **case-insensitive** and are normalized to **lower-case** at load and at every entry point: CLI arguments, `Requires=` / `Wants=` / `After=` / `Before=` / `WantedBy=`, companion basename activation (`.timer` / `.registry` / `.eventlog` / `.path` → `.service`), and enable keys. Map keys and journal files use the normalized name. Display may keep the on-disk path. Two unit files that differ only in case are a load error.
+
 Possible aliases:
 
 ```ini

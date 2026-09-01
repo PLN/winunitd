@@ -78,6 +78,7 @@ func (s *Store) Attach(unit string, pid int, invocationID string, stdout, stderr
 		go drain(stderr)
 		return
 	}
+	unit = canonicalUnit(unit)
 	if invocationID == "" {
 		invocationID = NewInvocationID()
 	}
@@ -99,6 +100,7 @@ func (s *Store) Wait(unit string) {
 	if s == nil {
 		return
 	}
+	unit = canonicalUnit(unit)
 	s.mu.Lock()
 	wg := s.capWG[unit]
 	s.mu.Unlock()
@@ -108,6 +110,7 @@ func (s *Store) Wait(unit string) {
 }
 
 func (s *Store) beginCapture(unit string) func() {
+	unit = canonicalUnit(unit)
 	s.mu.Lock()
 	prev := s.capWG[unit]
 	wg := new(sync.WaitGroup)
@@ -185,6 +188,7 @@ func (s *Store) Read(unit string) ([]Entry, error) {
 	if s == nil {
 		return nil, nil
 	}
+	unit = canonicalUnit(unit)
 	mu := s.lockUnit(unit)
 	mu.Lock()
 	defer mu.Unlock()
@@ -237,6 +241,7 @@ func (s *Store) Read(unit string) ([]Entry, error) {
 }
 
 func (s *Store) lockUnit(unit string) *sync.Mutex {
+	unit = canonicalUnit(unit)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.unitMu == nil {
@@ -251,10 +256,15 @@ func (s *Store) lockUnit(unit string) *sync.Mutex {
 }
 
 func (s *Store) path(unit string) string {
-	return filepath.Join(s.dir, unitFileName(unit))
+	return filepath.Join(s.dir, unitFileName(canonicalUnit(unit)))
+}
+
+func canonicalUnit(unit string) string {
+	return strings.ToLower(strings.TrimSpace(unit))
 }
 
 func unitFileName(unit string) string {
+	unit = canonicalUnit(unit)
 	if unit == "" {
 		return "_unknown.log"
 	}

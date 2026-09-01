@@ -61,12 +61,12 @@ func mergeBuiltins(loaded []*unit.Unit, userScope bool) []*unit.Unit {
 	seen := make(map[string]struct{}, len(loaded)+len(targets))
 	for _, u := range loaded {
 		if u != nil {
-			seen[u.Name] = struct{}{}
+			seen[unit.NormalizeName(u.Name)] = struct{}{}
 		}
 	}
 	out := append([]*unit.Unit(nil), loaded...)
 	for _, bt := range targets {
-		if _, ok := seen[bt.name]; ok {
+		if _, ok := seen[unit.NormalizeName(bt.name)]; ok {
 			continue
 		}
 		out = append(out, builtinUnit(bt))
