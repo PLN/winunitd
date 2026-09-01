@@ -104,7 +104,7 @@ func joinContinuations(lines []string, path string) ([]rawLine, []Issue) {
 	var issues []Issue
 	i := 0
 	for i < len(lines) {
-		text := strings.TrimRight(lines[i], "\r")
+		text := lines[i]
 		n := i + 1
 		for isLineContinuation(text) {
 			if i+1 >= len(lines) {

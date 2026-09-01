@@ -1,6 +1,7 @@
 package unit
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ func TestParseUnits(t *testing.T) {
 		name      string
 		file      string
 		src       string
+		existExec []string
 		wantErr   []string
 		forbidErr []string
 		wantWarn  []string
@@ -147,6 +149,37 @@ WorkingDirectory=C:\Tools
 					t.Fatalf("default restart = %s", u.Service.Restart)
 				}
 			},
+		},
+		{
+			name: "RestartSec micro sign and greek mu",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+RestartSec=5µs
+TimeoutStartSec=5μs
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if !u.Service.RestartSecSet || u.Service.RestartSec != 5*time.Microsecond {
+					t.Fatalf("RestartSec = %v set=%v", u.Service.RestartSec, u.Service.RestartSecSet)
+				}
+				if !u.Service.TimeoutStartSecSet || u.Service.TimeoutStartSec != 5*time.Microsecond {
+					t.Fatalf("TimeoutStartSec = %v set=%v", u.Service.TimeoutStartSec, u.Service.TimeoutStartSecSet)
+				}
+			},
+		},
+		{
+			name: "RestartSec overflow is an error",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+RestartSec=99999999999d
+`,
+			wantErr: []string{"overflow"},
 		},
 		{
 			name: "RequiresInteractiveSession yes",
@@ -304,13 +337,47 @@ ExecStartArg=--listen
 ExecStartArg=127.0.0.1:8080
 WorkingDirectory=C:\Program Files\Foo
 `,
-			noWarn: true,
+			existExec: []string{`C:\Program Files\Foo\foo.exe`},
+			noWarn:    true,
 			check: func(t *testing.T, u *Unit) {
 				want := []string{`C:\Program Files\Foo\foo.exe`, "--listen", "127.0.0.1:8080"}
 				if strings.Join(u.Service.ExecStart, "\x00") != strings.Join(want, "\x00") {
 					t.Fatalf("argv = %#v", u.Service.ExecStart)
 				}
 			},
+		},
+		{
+			name: "execstartarg spaced path that does not stat is an error",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Program Files\Foo\foo.exe
+ExecStartArg=--listen
+WorkingDirectory=C:\Program Files\Foo
+`,
+			wantErr: []string{"ExecStart must be an executable path when ExecStartArg is set"},
+		},
+		{
+			name: "execstartarg with leftover flags is an error",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\App\foo.exe --verbose
+ExecStartArg=--x
+WorkingDirectory=C:\App
+`,
+			wantErr: []string{"ExecStart must be an executable path when ExecStartArg is set"},
+		},
+		{
+			name: "execstartarg with leftover positional after exe is an error",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\App\foo.exe config.json
+ExecStartArg=--x
+WorkingDirectory=C:\App
+`,
+			wantErr: []string{"ExecStart must be an executable path when ExecStartArg is set"},
 		},
 		{
 			name: "json array execstart",
@@ -480,6 +547,16 @@ ExecStart=C:\Tools\foo.exe
 					t.Fatalf("wd should be empty, got %q", u.Service.WorkingDirectory)
 				}
 			},
+		},
+		{
+			name: "service without Service section",
+			file: "foo.service",
+			src: `
+[Unit]
+Description=nope
+`,
+			wantErr: []string{"service unit requires a [Service] section"},
+			noWarn:  true,
 		},
 		{
 			name: "relative execstart fails",
@@ -1267,6 +1344,16 @@ Unit=other.service
 			},
 		},
 		{
+			name: "timer empty Unit=",
+			file: "foo.timer",
+			src: `
+[Timer]
+OnCalendar=daily
+Unit=
+`,
+			wantErr: []string{"Unit= is empty"},
+		},
+		{
 			name: "timer Unit= is lower-cased",
 			file: "FOO.TIMER",
 			src: `
@@ -1365,9 +1452,12 @@ ExecStart=C:\Tools\foo.exe
 			wantErr: []string{"section [Service] is not valid in a timer unit"},
 		},
 		{
-			name:    "unsupported suffix",
-			file:    "foo.socket",
-			src:     `[Unit]\nDescription=nope\n`,
+			name: "unsupported suffix",
+			file: "foo.socket",
+			src: `
+[Unit]
+Description=nope
+`,
 			wantErr: []string{"unsupported unit type"},
 		},
 		{
@@ -1750,7 +1840,20 @@ RegistryChanged=HKLM\Software\Example
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			rep := ParseUnit(tt.file, tt.src)
+			var stat func(string) (os.FileInfo, error)
+			if len(tt.existExec) > 0 {
+				ok := make(map[string]bool, len(tt.existExec))
+				for _, p := range tt.existExec {
+					ok[p] = true
+				}
+				stat = func(name string) (os.FileInfo, error) {
+					if ok[name] {
+						return regularFileInfo(name), nil
+					}
+					return nil, os.ErrNotExist
+				}
+			}
+			rep := parseReport(tt.file, tt.file, []byte(tt.src), stat)
 			errs := issueTexts(rep.Errors())
 			warns := issueTexts(rep.Warnings())
 			for _, sub := range tt.wantErr {
@@ -1840,5 +1943,37 @@ Restart=always
 				t.Fatalf("following line was joined into WorkingDirectory; Restart = %s", rep.Unit.Service.Restart)
 			}
 		})
+	}
+}
+
+func TestTimerEmptyUnitReportsLine(t *testing.T) {
+	t.Parallel()
+	src := "[Timer]\nOnCalendar=daily\nUnit=\n"
+	rep := ParseUnit("foo.timer", src)
+	var empty *Issue
+	errs := rep.Errors()
+	for i := range errs {
+		if strings.Contains(errs[i].Message, "Unit= is empty") {
+			empty = &errs[i]
+			break
+		}
+	}
+	if empty == nil {
+		t.Fatalf("missing Unit= is empty error: %v", issueTexts(errs))
+	}
+	if empty.Line != 3 {
+		t.Fatalf("Unit= is empty reported on line %d, want 3", empty.Line)
+	}
+}
+
+func TestParseCRLFUnitFile(t *testing.T) {
+	t.Parallel()
+	src := "[Service]\r\nExecStart=C:\\Tools\\foo.exe\r\nWorkingDirectory=C:\\Tools\r\n"
+	rep := ParseUnit("foo.service", src)
+	if rep.HasError() {
+		t.Fatalf("CRLF unit file: %v", issueTexts(rep.Errors()))
+	}
+	if got := rep.Unit.Service.ExecStart; len(got) != 1 || got[0] != `C:\Tools\foo.exe` {
+		t.Fatalf("argv = %#v", got)
 	}
 }
