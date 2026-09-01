@@ -234,6 +234,8 @@ Requires=
 Requires=c.service
 Wants=one.service
 Wants=two.service
+BindsTo=seat.service
+PartOf=app.target
 
 [Service]
 ExecStart=C:\Tools\foo.exe
@@ -246,6 +248,12 @@ WorkingDirectory=C:\Tools
 				}
 				if len(u.Wants) != 2 {
 					t.Fatalf("wants = %#v", u.Wants)
+				}
+				if len(u.BindsTo) != 1 || u.BindsTo[0] != "seat.service" {
+					t.Fatalf("bindsto = %#v", u.BindsTo)
+				}
+				if len(u.PartOf) != 1 || u.PartOf[0] != "app.target" {
+					t.Fatalf("partof = %#v", u.PartOf)
 				}
 			},
 		},

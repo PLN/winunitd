@@ -96,11 +96,24 @@ func (g *Graph) Start(ctx context.Context, starter Starter, names ...string) (*R
 	return tx.Execute(ctx, starter)
 }
 
-// Stop plans and executes a stop transaction. Independent branches stop
-// concurrently; reverse After= is honored without serializing the graph.
-// A Stopper error does not skip the rest of the transaction (DESIGN.md §42).
+// Stop plans and executes a single-unit stop transaction. The named units
+// plus reverse Requires=/BindsTo=/PartOf= stop; forward Requires=/Wants=
+// and pure After=/Before= neighbors do not (DESIGN.md §10, §42). Independent
+// branches stop concurrently. A Stopper error does not skip the rest.
 func (g *Graph) Stop(ctx context.Context, stopper Stopper, names ...string) (*Run, error) {
 	tx, err := g.PlanStop(names...)
+	if err != nil {
+		return nil, err
+	}
+	return tx.ExecuteStop(ctx, stopper)
+}
+
+// Shutdown plans and executes the manager-stop transaction: reverse
+// After=/Before= over the After-closure of the roots (typically
+// shutdown.target plus active units). A Stopper error does not skip
+// the rest of the transaction (DESIGN.md §42).
+func (g *Graph) Shutdown(ctx context.Context, stopper Stopper, names ...string) (*Run, error) {
+	tx, err := g.PlanShutdown(names...)
 	if err != nil {
 		return nil, err
 	}
@@ -300,7 +313,7 @@ func (e *executor) requiresFailed(name string) error {
 	if n == nil {
 		return nil
 	}
-	for _, req := range n.requires {
+	for _, req := range n.startRequireNames() {
 		if _, in := e.tx.jobs[req]; !in {
 			continue
 		}
@@ -368,7 +381,7 @@ func (e *executor) markFailed(name string, err error) {
 		if on == nil {
 			continue
 		}
-		if !containsName(on.requires, name) {
+		if !on.startRequiresName(name) {
 			continue
 		}
 		if !e.jobNotYetStarted(other) {

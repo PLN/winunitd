@@ -34,7 +34,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		return nil
 	}
 
-	run, err := g.Stop(ctx, core.StopFunc(m.stopUnitCtx), roots...)
+	run, err := g.Shutdown(ctx, core.StopFunc(m.stopUnitCtx), roots...)
 	m.mu.Lock()
 	m.applyRunLocked(run)
 	m.mu.Unlock()

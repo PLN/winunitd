@@ -96,6 +96,39 @@ func TestRequiresAndWantsPull(t *testing.T) {
 	}
 }
 
+func TestBindsToPullsOnStart(t *testing.T) {
+	t.Parallel()
+	g := mustBuild(t,
+		&unit.Unit{Name: "session.service", BindsTo: []string{"seat.service"}},
+		&unit.Unit{Name: "seat.service"},
+	)
+	tx, err := g.PlanStart("session.service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equalNames(tx.Units(), "seat.service", "session.service") {
+		t.Fatalf("units = %v", tx.Units())
+	}
+}
+
+func TestPartOfDoesNotPullOnStart(t *testing.T) {
+	t.Parallel()
+	g := mustBuild(t,
+		&unit.Unit{Name: "web.service", PartOf: []string{"app.target"}},
+		&unit.Unit{Name: "app.target"},
+	)
+	tx, err := g.PlanStart("web.service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tx.Contains("app.target") {
+		t.Fatal("PartOf= must not start the listed unit")
+	}
+	if !equalNames(tx.Units(), "web.service") {
+		t.Fatalf("units = %v", tx.Units())
+	}
+}
+
 func TestMissingRequiresFailsPlan(t *testing.T) {
 	t.Parallel()
 	g := mustBuild(t, &unit.Unit{Name: "web.service", Requires: []string{"db.service"}})

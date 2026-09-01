@@ -14,6 +14,8 @@ var knownDirectives = map[string]map[string]bool{
 		"Description":                true,
 		"Requires":                   true,
 		"Wants":                      true,
+		"BindsTo":                    true,
+		"PartOf":                     true,
 		"After":                      true,
 		"Before":                     true,
 		"RequiresInteractiveSession": true,
@@ -256,6 +258,10 @@ func (p *parser) applyUnit(e iniEntry) {
 		p.unit.Requires = applyList(p.unit.Requires, e.value)
 	case "Wants":
 		p.unit.Wants = applyList(p.unit.Wants, e.value)
+	case "BindsTo":
+		p.unit.BindsTo = applyList(p.unit.BindsTo, e.value)
+	case "PartOf":
+		p.unit.PartOf = applyList(p.unit.PartOf, e.value)
 	case "After":
 		p.unit.After = applyList(p.unit.After, e.value)
 	case "Before":

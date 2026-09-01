@@ -168,6 +168,7 @@ func TestGraphicalSessionStopStopsWantedByInReverse(t *testing.T) {
 		"web.service": `
 [Unit]
 After=db.service
+PartOf=graphical-session.target
 [Service]
 ExecStart=C:\Tools\web.exe
 WorkingDirectory=C:\Tools
@@ -175,6 +176,8 @@ WorkingDirectory=C:\Tools
 WantedBy=graphical-session.target
 `,
 		"db.service": `
+[Unit]
+PartOf=graphical-session.target
 [Service]
 ExecStart=C:\Tools\db.exe
 WorkingDirectory=C:\Tools
@@ -222,6 +225,7 @@ WantedBy=default.target
 		"gui.service": `
 [Unit]
 RequiresInteractiveSession=yes
+PartOf=graphical-session.target
 [Service]
 ExecStart=C:\Tools\gui.exe
 WorkingDirectory=C:\Tools

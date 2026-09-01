@@ -43,7 +43,7 @@ WorkingDirectory=C:\Tools
 	}
 }
 
-func TestStopTargetStopsWantsInReverse(t *testing.T) {
+func TestStopTargetDoesNotStopWants(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}
 	m := managerWith(t, launch, map[string]string{
@@ -70,6 +70,50 @@ WorkingDirectory=C:\Tools
 	if _, err := m.Stop("app.target"); err != nil {
 		t.Fatal(err)
 	}
+	assertState(t, m, "app.target", core.Inactive)
+	assertState(t, m, "web.service", core.Active)
+	assertState(t, m, "db.service", core.Active)
+	if containsString(launch.stopped(), "web.service") || containsString(launch.stopped(), "db.service") {
+		t.Fatalf("stopping a target must not stop its Wants=: %v", launch.stopped())
+	}
+}
+
+func TestStopTargetStopsPartOfInReverse(t *testing.T) {
+	t.Parallel()
+	launch := &fakeLauncher{}
+	m := managerWith(t, launch, map[string]string{
+		"app.target": `
+[Unit]
+Description=App
+`,
+		"web.service": `
+[Unit]
+PartOf=app.target
+After=db.service
+[Service]
+ExecStart=C:\Tools\web.exe
+WorkingDirectory=C:\Tools
+`,
+		"db.service": `
+[Unit]
+PartOf=app.target
+[Service]
+ExecStart=C:\Tools\db.exe
+WorkingDirectory=C:\Tools
+`,
+	})
+	if _, err := m.Start(context.Background(), "web"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Start(context.Background(), "db"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Start(context.Background(), "app.target"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Stop("app.target"); err != nil {
+		t.Fatal(err)
+	}
 	got := launch.stopped()
 	if len(got) < 2 || got[0] != "web.service" || got[1] != "db.service" {
 		t.Fatalf("stop order = %v, want web then db", got)
@@ -77,6 +121,71 @@ WorkingDirectory=C:\Tools
 	assertState(t, m, "app.target", core.Inactive)
 	assertState(t, m, "web.service", core.Inactive)
 	assertState(t, m, "db.service", core.Inactive)
+}
+
+func TestStopServiceStopsReverseRequires(t *testing.T) {
+	t.Parallel()
+	launch := &fakeLauncher{}
+	m := managerWith(t, launch, map[string]string{
+		"web.service": `
+[Unit]
+Requires=db.service
+After=db.service
+[Service]
+ExecStart=C:\Tools\web.exe
+WorkingDirectory=C:\Tools
+`,
+		"db.service": `
+[Service]
+ExecStart=C:\Tools\db.exe
+WorkingDirectory=C:\Tools
+`,
+	})
+	if _, err := m.Start(context.Background(), "web"); err != nil {
+		t.Fatal(err)
+	}
+	assertState(t, m, "web.service", core.Active)
+	assertState(t, m, "db.service", core.Active)
+	if _, err := m.Stop("db"); err != nil {
+		t.Fatal(err)
+	}
+	assertState(t, m, "web.service", core.Inactive)
+	assertState(t, m, "db.service", core.Inactive)
+	got := launch.stopped()
+	if len(got) < 2 || got[0] != "web.service" || got[1] != "db.service" {
+		t.Fatalf("stop order = %v, want web then db", got)
+	}
+}
+
+func TestStopServiceLeavesForwardRequires(t *testing.T) {
+	t.Parallel()
+	launch := &fakeLauncher{}
+	m := managerWith(t, launch, map[string]string{
+		"web.service": `
+[Unit]
+Requires=db.service
+After=db.service
+[Service]
+ExecStart=C:\Tools\web.exe
+WorkingDirectory=C:\Tools
+`,
+		"db.service": `
+[Service]
+ExecStart=C:\Tools\db.exe
+WorkingDirectory=C:\Tools
+`,
+	})
+	if _, err := m.Start(context.Background(), "web"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Stop("web"); err != nil {
+		t.Fatal(err)
+	}
+	assertState(t, m, "web.service", core.Inactive)
+	assertState(t, m, "db.service", core.Active)
+	if containsString(launch.stopped(), "db.service") {
+		t.Fatal("stopping a consumer must not stop its forward Requires=")
+	}
 }
 
 func TestStopServiceDoesNotStopAfterDependents(t *testing.T) {
