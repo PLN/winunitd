@@ -32,6 +32,7 @@ type Manager struct {
 	scm     runtime.SCM
 	regOpen registry.OpenFunc
 	session sync.Mutex // serializes graphical-session.target start/stop
+	ops     unitOps    // per-unit start/stop/restart (issue #24)
 }
 
 // New creates a manager. Reload must be called to load units.
@@ -394,6 +395,20 @@ func (m *Manager) applyRunLocked(run *core.Run) {
 		// failure of a dependency after this unit started). Issue #35.
 		if st == core.Failed && rt.state == core.Active {
 			continue
+		}
+		// Do not stamp Active onto a unit stopped mid-transaction (#24).
+		if st == core.Active && rt.stopping {
+			continue
+		}
+		// Do not stamp Inactive over a unit that started after this run's
+		// stop (stop-transaction apply vs a later Start).
+		if st == core.Inactive && !rt.stopping {
+			if rt.state == core.Active || rt.state == core.Activating {
+				continue
+			}
+			if live := rt.proc; live != nil && live.Alive() {
+				continue
+			}
 		}
 		rt.state = st
 	}

@@ -76,7 +76,7 @@ func (m *Manager) startSCM(ctx context.Context, name string, u *unit.Unit, autoR
 	_ = st
 	m.mu.Lock()
 	if autoRestart {
-		if rt := m.units[name]; rt != nil {
+		if rt := m.units[name]; rt != nil && !rt.stopping {
 			if rt.step(core.EventStartSucceeded) {
 				rt.err = ""
 			}
