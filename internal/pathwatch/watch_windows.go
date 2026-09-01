@@ -30,8 +30,10 @@ type winWatch struct {
 	filter string // basename; empty means any change in the directory
 	ch     chan struct{}
 
-	mu     sync.Mutex
-	closed bool
+	mu        sync.Mutex
+	closed    bool
+	armedOnce sync.Once
+	armed     chan struct{}
 }
 
 // OpenWatch watches spec via ReadDirectoryChangesW (non-recursive).
@@ -80,13 +82,18 @@ func openDirWatch(watchDir, filter string) (Watch, error) {
 		_ = windows.CloseHandle(h)
 		return nil, fmt.Errorf("%w: %s: %v", ErrUnwatchable, watchDir, err)
 	}
+	armed := make(chan struct{})
 	w := &winWatch{
 		dir:    h,
 		event:  ev,
 		filter: filter,
 		ch:     make(chan struct{}, 1),
+		armed:  armed,
 	}
 	go w.loop()
+	// Return only after ReadDirectoryChangesW is pending so a create
+	// immediately after OpenWatch / OpenExistsWatch cannot be missed.
+	<-armed
 	return w, nil
 }
 
@@ -107,8 +114,17 @@ func (w *winWatch) Close() error {
 	return nil
 }
 
+func (w *winWatch) noteArmed() {
+	w.armedOnce.Do(func() {
+		if w.armed != nil {
+			close(w.armed)
+		}
+	})
+}
+
 func (w *winWatch) loop() {
 	defer close(w.ch)
+	defer w.noteArmed()
 	buf := make([]byte, notifyBufSize)
 	for {
 		if w.isClosed() {
@@ -126,6 +142,7 @@ func (w *winWatch) loop() {
 			&ov,
 			0,
 		)
+		w.noteArmed()
 		if err != nil && !errors.Is(err, windows.ERROR_IO_PENDING) {
 			return
 		}
@@ -160,14 +177,16 @@ func (w *winWatch) signal() {
 }
 
 func (w *winWatch) match(buf []byte) bool {
-	if len(buf) == 0 {
-		return w.filter == ""
-	}
-	names := notifyNames(buf)
 	if w.filter == "" {
-		return len(names) > 0
+		// Directory PathChanged= / PathExists= ancestor: any completion
+		// is a change. Do not require a parsed filename; empty or
+		// unparseable buffers still mean something happened here.
+		return true
 	}
-	for _, name := range names {
+	if len(buf) == 0 {
+		return false
+	}
+	for _, name := range notifyNames(buf) {
 		if nameMatches(name, w.filter) {
 			return true
 		}
