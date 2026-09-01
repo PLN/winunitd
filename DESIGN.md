@@ -418,7 +418,10 @@ Semantics must remain separate:
 - `Requires=` defines requirement
 - `After=` defines ordering
 
-This distinction is one of systemd's best design choices and should be preserved.
+This distinction is one of systemd's best design choices and should be preserved. It applies to stop as well as start:
+
+- Stopping a unit does not stop its forward `Requires=` (or `Wants=`): units it lists stay up.
+- `After=` / `Before=` never propagate a single-unit stop. They only order units already in the transaction.
 
 Example:
 
@@ -1511,10 +1514,15 @@ Timers must also correctly account for sleep intervals.
 
 `winunitd` should receive SCM preshutdown notification and perform dependency-aware shutdown.
 
-Expected behavior:
+There are two stop plans:
+
+1. **Shutdown** (root = `shutdown.target`): stop every active unit, ordered by reverse `After=` / `Before=`. This is the manager-stop transaction on `sc stop`, preshutdown, or console SIGINT.
+2. **Single-unit stop** (`winctl stop foo` / `PlanStop`): stop `foo` plus its reverse requirement closure only — units that `Requires=` / `BindsTo=` / `PartOf=` `foo` (dependents that cannot run without it), dependents first. Do not stop foo's forward `Requires=` / `Wants=`. Do not stop pure `After=` / `Before=` neighbors.
+
+Expected shutdown order:
 
 ```text
-reverse dependency order
+reverse After=/Before= order
 ```
 
 Example:
