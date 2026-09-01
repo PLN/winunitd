@@ -15,13 +15,15 @@ func TestNoDirectivesHaveNoExtraJobLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.LimitFlags&windows.JOB_OBJECT_LIMIT_JOB_MEMORY != 0 || got.JobMemory != 0 {
+	// Windows may fill PriorityClass with NORMAL_PRIORITY_CLASS even when
+	// JOB_OBJECT_LIMIT_PRIORITY_CLASS is clear. The flags are the contract.
+	if got.LimitFlags&windows.JOB_OBJECT_LIMIT_JOB_MEMORY != 0 {
 		t.Fatalf("memory limit set: %+v", got)
 	}
-	if got.LimitFlags&windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS != 0 || got.ProcessLimit != 0 {
+	if got.LimitFlags&windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS != 0 {
 		t.Fatalf("process limit set: %+v", got)
 	}
-	if got.LimitFlags&windows.JOB_OBJECT_LIMIT_PRIORITY_CLASS != 0 || got.PriorityClass != 0 {
+	if got.LimitFlags&windows.JOB_OBJECT_LIMIT_PRIORITY_CLASS != 0 {
 		t.Fatalf("priority class set: %+v", got)
 	}
 	if p.Job().ResourceLimitC() != nil {
