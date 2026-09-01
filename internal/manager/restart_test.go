@@ -137,16 +137,15 @@ RestartSec=1s
 	}
 	launch.releaseExits()
 	waitSub(t, m, "foo.service", core.SubAutoRestart)
+	waitCond(t, fk.Waiting)
 	if atEpsilon {
-		advanceWait(t, fk, time.Millisecond)
+		fk.Advance(time.Millisecond)
 	}
 	if _, err := m.Stop("foo"); err != nil {
 		t.Fatal(err)
 	}
 	n := launch.nstarts()
-	if fk.Waiting() {
-		advanceWait(t, fk, time.Second)
-	}
+	fk.Advance(time.Second)
 	if got := launch.nstarts(); got != n {
 		t.Fatalf("relaunched after stop: starts %d -> %d", n, got)
 	}

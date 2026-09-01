@@ -74,7 +74,8 @@ func TestFakeSuspendLeavesSinceBoot(t *testing.T) {
 
 func waitFired(t *testing.T, ch <-chan string) string {
 	t.Helper()
-	for i := 0; i < 5_000_000; i++ {
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
 		select {
 		case name := <-ch:
 			return name
@@ -100,7 +101,8 @@ func waitQuiet(t *testing.T, ch <-chan string) {
 
 func waitNext(t *testing.T, e *Engine, name string, want time.Time) {
 	t.Helper()
-	for i := 0; i < 5_000_000; i++ {
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
 		got := e.Status(name).Next
 		if got.Equal(want) {
 			return

@@ -164,11 +164,7 @@ OnStartupSec=5s
 	if _, err := m.Stop("foo.timer"); err != nil {
 		t.Fatal(err)
 	}
-	if fk.Waiting() {
-		advanceWait(t, fk, 5*time.Second)
-	} else {
-		fk.Advance(5 * time.Second)
-	}
+	fk.Advance(5 * time.Second)
 	if containsString(launch.units(), "foo.service") {
 		t.Fatal("stopped timer must not activate the service")
 	}
