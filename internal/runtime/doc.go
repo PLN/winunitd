@@ -3,7 +3,9 @@
 // MemoryMax=/ProcessLimit=/PriorityClass=), CreateProcess
 // supervision, WTS tokens, S4U linger tokens, user-manager process launch,
 // and the Type=scm SCM proxy client (StartService / StopService /
-// QueryServiceStatusEx; never CreateService / ChangeServiceConfig / Delete).
+// QueryServiceStatusEx; never CreateService / ChangeServiceConfig / Delete),
+// and the Type=scheduled-task Task Scheduler proxy client (IRegisteredTask.Run /
+// Stop / State; never RegisterTask / DeleteTask / put_Enabled).
 //
 // SCM stop and preshutdown cancel the host; the daemon then stops units in
 // reverse After=/Before= order and closes the daemon Job Object. Session

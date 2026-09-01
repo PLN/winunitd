@@ -101,6 +101,9 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 	if svc.Type == unit.TypeSCM {
 		return m.startSCM(ctx, name, u, autoRestart)
 	}
+	if svc.Type == unit.TypeScheduledTask {
+		return m.startTask(ctx, name, u, autoRestart)
+	}
 	m.closeNotify(name)
 	m.stopWatchdog(name)
 

@@ -844,6 +844,121 @@ ServiceName=WuP7Test
 			},
 		},
 		{
+			name: "type scheduled-task with TaskName",
+			file: "legacy-backup.service",
+			src: `
+[Unit]
+Description=Legacy backup task
+[Service]
+Type=scheduled-task
+TaskName=\Backups\LegacyBackup
+TimeoutStartSec=30s
+TimeoutStopSec=20s
+Restart=on-failure
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Service.Type != TypeScheduledTask {
+					t.Fatalf("type = %s", u.Service.Type)
+				}
+				if u.Service.TaskName != `\Backups\LegacyBackup` {
+					t.Fatalf("TaskName = %q", u.Service.TaskName)
+				}
+				if len(u.Service.ExecStart) != 0 {
+					t.Fatalf("ExecStart = %#v", u.Service.ExecStart)
+				}
+				if !u.Service.TimeoutStartSecSet || u.Service.TimeoutStartSec != 30*time.Second {
+					t.Fatalf("TimeoutStartSec = %v set=%v", u.Service.TimeoutStartSec, u.Service.TimeoutStartSecSet)
+				}
+				if u.Service.Restart != RestartOnFailure {
+					t.Fatalf("restart = %s", u.Service.Restart)
+				}
+				if u.Service.NeedsNotifyPipe() || u.Service.WatchdogEnabled() {
+					t.Fatal("Type=scheduled-task must not enable notify or watchdog")
+				}
+				if !u.Service.IsScheduledTask() || !u.Service.IsExternalProxy() {
+					t.Fatal("IsScheduledTask / IsExternalProxy")
+				}
+			},
+		},
+		{
+			name: "type scheduled-task missing TaskName",
+			file: "legacy-backup.service",
+			src: `
+[Service]
+Type=scheduled-task
+`,
+			wantErr: []string{"TaskName is required for Type=scheduled-task"},
+		},
+		{
+			name: "type scheduled-task empty TaskName",
+			file: "legacy-backup.service",
+			src: `
+[Service]
+Type=scheduled-task
+TaskName=
+`,
+			wantErr: []string{"TaskName is required for Type=scheduled-task"},
+		},
+		{
+			name: "type scheduled-task does not require ExecStart",
+			file: "proxy.service",
+			src: `
+[Service]
+Type=scheduled-task
+TaskName=\Backups\LegacyBackup
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Service.TaskName != `\Backups\LegacyBackup` {
+					t.Fatalf("TaskName = %q", u.Service.TaskName)
+				}
+			},
+		},
+		{
+			name: "type scheduled-task rejects ExecStart",
+			file: "proxy.service",
+			src: `
+[Service]
+Type=scheduled-task
+TaskName=\Backups\LegacyBackup
+ExecStart=C:\Tools\foo.exe
+`,
+			wantErr: []string{"ExecStart is not valid for Type=scheduled-task"},
+		},
+		{
+			name: "type scheduled-task rejects ExecStartArg",
+			file: "proxy.service",
+			src: `
+[Service]
+Type=scheduled-task
+TaskName=\Backups\LegacyBackup
+ExecStartArg=--legacy
+`,
+			wantErr: []string{"ExecStart is not valid for Type=scheduled-task"},
+		},
+		{
+			name: "type scheduled-task combo with notify is invalid Type",
+			file: "proxy.service",
+			src: `
+[Service]
+Type=scheduled-task,notify
+TaskName=\Backups\LegacyBackup
+`,
+			wantErr: []string{`invalid Type "scheduled-task,notify"`},
+		},
+		{
+			name: "TaskName on simple is unused",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+TaskName=\Backups\LegacyBackup
+`,
+			wantWarn: []string{"TaskName is only used with Type=scheduled-task"},
+		},
+		{
 			name: "invalid restart fails",
 			file: "foo.service",
 			src: `
@@ -992,6 +1107,24 @@ PriorityClass=below-normal
 			check: func(t *testing.T, u *Unit) {
 				if u.Service.MemoryMaxSet || u.Service.ProcessLimitSet || u.Service.PriorityClassSet {
 					t.Fatal("Type=scm must not keep job limits")
+				}
+			},
+		},
+		{
+			name: "type scheduled-task ignores job limits",
+			file: "proxy.service",
+			src: `
+[Service]
+Type=scheduled-task
+TaskName=\Backups\LegacyBackup
+MemoryMax=2G
+ProcessLimit=4
+PriorityClass=below-normal
+`,
+			wantWarn: []string{"MemoryMax is ignored for Type=scheduled-task", "ProcessLimit is ignored for Type=scheduled-task", "PriorityClass is ignored for Type=scheduled-task"},
+			check: func(t *testing.T, u *Unit) {
+				if u.Service.MemoryMaxSet || u.Service.ProcessLimitSet || u.Service.PriorityClassSet {
+					t.Fatal("Type=scheduled-task must not keep job limits")
 				}
 			},
 		},

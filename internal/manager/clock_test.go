@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	rt "runtime"
 	"testing"
 	"time"
 
@@ -61,7 +60,7 @@ func waitCond(t *testing.T, ok func() bool) {
 		if ok() {
 			return
 		}
-		rt.Gosched()
+		time.Sleep(time.Millisecond)
 	}
 	t.Fatal("condition not met")
 }
@@ -91,17 +90,15 @@ func waitStarts(t *testing.T, launch *scriptedLauncher, n int, timeout time.Dura
 
 func waitErr(t *testing.T, errc <-chan error) error {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		select {
-		case err := <-errc:
-			return err
-		default:
-			rt.Gosched()
-		}
+	// Blocking wait: a Gosched spin (CI #92/#93) starved Start on Windows so
+	// READY=1 never completed waitReady (TestNotifyReadyLeavesOnlyWatchdogTimer).
+	select {
+	case err := <-errc:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive error result")
+		return nil
 	}
-	t.Fatal("did not receive error result")
-	return nil
 }
 
 func advanceWait(t *testing.T, fk *timers.Fake, d time.Duration) {
