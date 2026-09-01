@@ -7,8 +7,8 @@ import (
 )
 
 // VerifyPath reads a unit file from disk, parses it, and verifies it.
-// It does not require a running daemon. A .registry or .eventlog unit
-// also requires the companion basename .service next to the file.
+// It does not require a running daemon. A .registry, .eventlog, or .path
+// unit also requires the companion basename .service next to the file.
 func VerifyPath(path string) Report {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -20,10 +20,14 @@ func VerifyPath(path string) Report {
 	}
 	name := UnitNameFromPath(path)
 	rep := Parse(path, name, data)
-	if rep.Unit != nil && (rep.Unit.Kind == KindRegistry || rep.Unit.Kind == KindEventLog) {
+	if rep.Unit != nil && companionKind(rep.Unit.Kind) {
 		rep.Issues = append(rep.Issues, companionIssues(path, rep.Unit.Name)...)
 	}
 	return rep
+}
+
+func companionKind(k Kind) bool {
+	return k == KindRegistry || k == KindEventLog || k == KindPath
 }
 
 // RegistryScopeIssues reports hive/scope errors. System manager: HKLM only.

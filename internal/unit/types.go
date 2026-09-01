@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/eventlog"
+	"github.com/PLN/winunitd/internal/pathwatch"
 	"github.com/PLN/winunitd/internal/registry"
 	"github.com/PLN/winunitd/internal/timers"
 )
@@ -19,6 +20,7 @@ const (
 	KindTarget   Kind = "target"
 	KindRegistry Kind = "registry"
 	KindEventLog Kind = "eventlog"
+	KindPath     Kind = "path"
 )
 
 // ServiceType is a [Service] Type= value.
@@ -124,10 +126,11 @@ type Unit struct {
 	StartLimitInterval time.Duration
 	StartLimitBurst    int
 
-	Service  *ServiceSpec
-	Timer    *TimerSpec
-	Registry *RegistrySpec
-	EventLog *EventLogSpec
+	Service   *ServiceSpec
+	Timer     *TimerSpec
+	Registry  *RegistrySpec
+	EventLog  *EventLogSpec
+	PathWatch *PathSpec
 
 	WantedBy []string
 }
@@ -250,8 +253,15 @@ type EventLogSpec struct {
 	Unit     string
 }
 
+// PathSpec is the [Path] section. The activated unit is always
+// the same basename with a .service suffix (no Unit=).
+type PathSpec struct {
+	Changed []pathwatch.Spec
+	Unit    string
+}
+
 // CompanionService returns the basename .service for a companion unit
-// (foo.timer / foo.registry / foo.eventlog → foo.service).
+// (foo.timer / foo.registry / foo.eventlog / foo.path → foo.service).
 func CompanionService(name string) string {
 	base := name
 	if i := strings.LastIndex(base, "."); i >= 0 {

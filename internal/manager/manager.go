@@ -12,6 +12,7 @@ import (
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/eventlog"
 	"github.com/PLN/winunitd/internal/journal"
+	"github.com/PLN/winunitd/internal/pathwatch"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/registry"
 	"github.com/PLN/winunitd/internal/runtime"
@@ -32,8 +33,9 @@ type Manager struct {
 	closed  bool
 	scm     runtime.SCM
 	tasks   runtime.TaskScheduler
-	regOpen registry.OpenFunc
-	evtOpen eventlog.OpenFunc
+	regOpen  registry.OpenFunc
+	evtOpen  eventlog.OpenFunc
+	pathOpen pathwatch.OpenFunc
 	session sync.Mutex // serializes graphical-session.target start/stop
 	ops     unitOps    // per-unit start/stop/restart (issue #24)
 }
@@ -98,13 +100,18 @@ func New(cfg Config) (*Manager, error) {
 	} else {
 		m.evtOpen = eventlog.OpenSubscribe
 	}
+	if cfg.PathOpen != nil {
+		m.pathOpen = cfg.PathOpen
+	} else {
+		m.pathOpen = pathwatch.OpenWatch
+	}
 	m.engine = timers.NewEngine(clk, store, m.onTimerElapsed)
 	return m, nil
 }
 
-// Close stops the timer scheduler, notify listeners, watchdogs, and
-// pending Restart= timers. No relaunch runs after Close returns; Shutdown
-// is not required first (issue #26).
+// Close stops the timer scheduler, notify listeners, watchdogs,
+// registry/eventlog/path watches, and pending Restart= timers. No relaunch
+// runs after Close returns; Shutdown is not required first (issue #26).
 func (m *Manager) Close() {
 	if m == nil {
 		return
@@ -520,7 +527,7 @@ func (m *Manager) Verify(name string) (*protocol.VerifyResult, error) {
 	m.mu.Lock()
 	userScope := m.cfg.UserScope
 	var companionMissing string
-	if kind == unit.KindRegistry || kind == unit.KindEventLog {
+	if kind == unit.KindRegistry || kind == unit.KindEventLog || kind == unit.KindPath {
 		companion := unit.CompanionService(unitName)
 		if _, ok := m.units[companion]; !ok {
 			companionMissing = companion

@@ -138,5 +138,6 @@ func (m *Manager) replaceLocked(units []*unit.Unit, g *core.Graph, links map[str
 	m.syncTimersLocked()
 	m.syncRegistryLocked()
 	m.syncEventLogLocked()
+	m.syncPathLocked()
 	return dropped
 }

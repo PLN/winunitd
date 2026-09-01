@@ -161,6 +161,35 @@ EventLogTrigger=Application:EventID=1
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "incoming.service"), []byte(`
+[Service]
+Type=oneshot
+ExecStart=C:\Tools\run-once.exe
+WorkingDirectory=C:\Tools
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pathOK := filepath.Join(dir, "incoming.path")
+	if err := os.WriteFile(pathOK, []byte(`
+[Path]
+PathChanged=C:\Data\incoming
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pathOrphan := filepath.Join(dir, "orphan.path")
+	if err := os.WriteFile(pathOrphan, []byte(`
+[Path]
+PathChanged=C:\Data\incoming
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pathBad := filepath.Join(dir, "rel.path")
+	if err := os.WriteFile(pathBad, []byte(`
+[Path]
+PathChanged=incoming
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	scm := filepath.Join(dir, "mssql.service")
 	if err := os.WriteFile(scm, []byte(`
 [Service]
@@ -361,6 +390,39 @@ ExecStart=C:\Tools\foo.exe
 			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
 		}
 		if !strings.Contains(errb.String(), "EventID") {
+			t.Fatalf("stderr=%s", errb.String())
+		}
+	})
+
+	t.Run("path pair", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"verify", pathOK}, &out, &errb)
+		if code != 0 {
+			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(out.String(), "incoming.path: verified") {
+			t.Fatalf("stdout=%s", out.String())
+		}
+	})
+
+	t.Run("path missing companion", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"verify", pathOrphan}, &out, &errb)
+		if code != 1 {
+			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(errb.String(), "missing companion orphan.service") {
+			t.Fatalf("stderr=%s", errb.String())
+		}
+	})
+
+	t.Run("path relative fails", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"verify", pathBad}, &out, &errb)
+		if code != 1 {
+			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(errb.String(), "absolute Windows path") {
 			t.Fatalf("stderr=%s", errb.String())
 		}
 	})

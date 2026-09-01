@@ -6,6 +6,7 @@ import (
 
 	"github.com/PLN/winunitd/internal/eventlog"
 	"github.com/PLN/winunitd/internal/notify"
+	"github.com/PLN/winunitd/internal/pathwatch"
 	"github.com/PLN/winunitd/internal/registry"
 	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/timers"
@@ -69,6 +70,10 @@ type Config struct {
 	// eventlog.OpenSubscribe (Windows EvtSubscribe; stub on Linux).
 	// Tests inject a fake so Linux can exercise start-on-match.
 	EventLogOpen eventlog.OpenFunc
+	// PathOpen opens a PathChanged= file/directory watch. Nil uses
+	// pathwatch.OpenWatch (Windows ReadDirectoryChangesW; stub on Linux).
+	// Tests inject a fake so Linux can exercise start-on-change.
+	PathOpen pathwatch.OpenFunc
 }
 
 // DefaultBaseDir is C:\ProgramData\winunitd when ProgramData is set.

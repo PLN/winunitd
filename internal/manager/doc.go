@@ -27,7 +27,9 @@
 // internal/timers (not Task Scheduler). .registry units watch
 // RegistryChanged= keys (RegNotifyChangeKeyValue on Windows; tests inject
 // a stub). .eventlog units watch EventLogTrigger= channels (EvtSubscribe
-// on Windows; tests inject a stub). A change or matching event starts the
+// on Windows; tests inject a stub). .path units watch PathChanged= files
+// and directories (ReadDirectoryChangesW on Windows, non-recursive; tests
+// inject a stub). A change or matching event starts the
 // basename .service if it is not already running. Manager shutdown stops units in
 // reverse After=/Before= order (shutdown.target as root) then the daemon
 // closes the daemon Job Object.
