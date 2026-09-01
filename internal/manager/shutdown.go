@@ -105,6 +105,21 @@ func (m *Manager) stopUnitCtx(ctx context.Context, name string) error {
 }
 
 func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
+	if norm, nerr := requireUnit(name); nerr == nil {
+		name = norm
+		// Set stopping before ops.lock so Type=notify waitReady
+		// (which holds that lock until READY=1 or TimeoutStartSec)
+		// can return. Otherwise Stop waits for waitReady and
+		// waitReady waits for stopping — a deadlock on a fake
+		// clock that never Advances TimeoutStartSec.
+		m.mu.Lock()
+		if rt := m.units[name]; rt != nil {
+			rt.stopping = true
+			rt.cancelRestart()
+		}
+		m.mu.Unlock()
+	}
+
 	unlock := m.ops.lock(name)
 	defer unlock()
 

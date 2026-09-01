@@ -125,6 +125,121 @@ WorkingDirectory=C:\Tools
 			wantErr: []string{`unknown directive "SessionMode"`},
 		},
 		{
+			name: "start limit defaults when omitted",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`,
+			check: func(t *testing.T, u *Unit) {
+				if u.StartLimitInterval != DefaultStartLimitInterval {
+					t.Fatalf("StartLimitInterval = %v, want %v", u.StartLimitInterval, DefaultStartLimitInterval)
+				}
+				if u.StartLimitBurst != DefaultStartLimitBurst {
+					t.Fatalf("StartLimitBurst = %d, want %d", u.StartLimitBurst, DefaultStartLimitBurst)
+				}
+			},
+		},
+		{
+			name: "start limit parsed from Unit",
+			file: "foo.service",
+			src: `
+[Unit]
+StartLimitIntervalSec=60s
+StartLimitBurst=3
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.StartLimitInterval != 60*time.Second {
+					t.Fatalf("StartLimitInterval = %v", u.StartLimitInterval)
+				}
+				if u.StartLimitBurst != 3 {
+					t.Fatalf("StartLimitBurst = %d", u.StartLimitBurst)
+				}
+			},
+		},
+		{
+			name: "StartLimitBurst zero is unlimited",
+			file: "foo.service",
+			src: `
+[Unit]
+StartLimitBurst=0
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.StartLimitBurst != 0 {
+					t.Fatalf("StartLimitBurst = %d", u.StartLimitBurst)
+				}
+				if u.StartLimitInterval != DefaultStartLimitInterval {
+					t.Fatalf("omitted interval = %v", u.StartLimitInterval)
+				}
+			},
+		},
+		{
+			name: "StartLimitBurst negative fails",
+			file: "foo.service",
+			src: `
+[Unit]
+StartLimitBurst=-1
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`,
+			wantErr: []string{`invalid StartLimitBurst "-1"`},
+		},
+		{
+			name: "StartLimitIntervalSec invalid fails",
+			file: "foo.service",
+			src: `
+[Unit]
+StartLimitIntervalSec=nope
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`,
+			wantErr: []string{`invalid StartLimitIntervalSec:`},
+		},
+		{
+			name: "RestartMaxDelaySec is not parsed in S1",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+RestartMaxDelaySec=5m
+`,
+			wantErr: []string{`unknown directive "RestartMaxDelaySec"`},
+		},
+		{
+			name: "RestartBackoff is not parsed in S1",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+RestartBackoff=exponential
+`,
+			wantErr: []string{`unknown directive "RestartBackoff"`},
+		},
+		{
+			name: "StartLimitBurst in Service is unknown",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+StartLimitBurst=5
+`,
+			wantErr: []string{`unknown directive "StartLimitBurst"`},
+		},
+		{
 			name: "execstartarg",
 			file: "foo.service",
 			src: `

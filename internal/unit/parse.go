@@ -20,6 +20,8 @@ var knownDirectives = map[string]map[string]bool{
 		"After":                      true,
 		"Before":                     true,
 		"RequiresInteractiveSession": true,
+		"StartLimitIntervalSec":      true,
+		"StartLimitBurst":            true,
 	},
 	"Service": {
 		"Type":                   true,
@@ -153,6 +155,11 @@ type parser struct {
 	ris     string
 	risLine int
 	risSet  bool
+
+	startLimitInterval  string
+	startLimitIntervalL int
+	startLimitBurst     string
+	startLimitBurstL    int
 }
 
 func (p *parser) errorf(line int, format string, args ...any) {
@@ -289,6 +296,12 @@ func (p *parser) applyUnit(e iniEntry) {
 		p.ris = e.value
 		p.risLine = e.line
 		p.risSet = true
+	case "StartLimitIntervalSec":
+		p.startLimitInterval = e.value
+		p.startLimitIntervalL = e.line
+	case "StartLimitBurst":
+		p.startLimitBurst = e.value
+		p.startLimitBurstL = e.line
 	}
 }
 
@@ -433,6 +446,28 @@ func (p *parser) finish() {
 		// targets have no extra required fields
 	}
 	p.finishInteractiveSession()
+	p.finishStartLimit()
+}
+
+func (p *parser) finishStartLimit() {
+	p.unit.StartLimitInterval = DefaultStartLimitInterval
+	p.unit.StartLimitBurst = DefaultStartLimitBurst
+	if p.startLimitInterval != "" {
+		d, err := parseDuration(p.startLimitInterval)
+		if err != nil {
+			p.errorf(p.startLimitIntervalL, "invalid StartLimitIntervalSec: %s", err.Error())
+		} else {
+			p.unit.StartLimitInterval = d
+		}
+	}
+	if p.startLimitBurst != "" {
+		n, err := parseStartLimitBurst(p.startLimitBurst)
+		if err != nil {
+			p.errorf(p.startLimitBurstL, "%s", err.Error())
+		} else {
+			p.unit.StartLimitBurst = n
+		}
+	}
 }
 
 func (p *parser) finishInteractiveSession() {

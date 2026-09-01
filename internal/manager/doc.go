@@ -7,7 +7,10 @@
 // PriorityClass= apply to that existing job (whole tree). Hitting
 // MemoryMax= or ProcessLimit= fails the unit with reason resource-limit.
 // Restart= (no / always / on-failure /
-// on-watchdog) relaunches the main process into a new unit job. Type=notify
+// on-watchdog) relaunches the main process into a new unit job. StartLimitBurst
+// starts inside StartLimitIntervalSec fail the unit with reason start-limit
+// instead of scheduling another restart (StartLimitBurst=0 is unlimited;
+// explicit Start resets). Type=notify
 // stays activating until READY=1. WatchdogSec= uses WINUNIT_NOTIFY_PIPE
 // (WatchdogMode=notify, the default) or probes WatchdogEndpoint= (tcp connect
 // or http GET, localhost only). A missed/failed probe fails the unit the

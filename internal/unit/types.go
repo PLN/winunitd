@@ -112,6 +112,12 @@ type Unit struct {
 	// implemented.
 	RequiresInteractiveSession bool
 
+	// StartLimitInterval / StartLimitBurst are [Unit] start rate limits
+	// (DESIGN.md §20). Parse fills systemd-shaped defaults when omitted
+	// (10s / 5). Burst 0 is unlimited.
+	StartLimitInterval time.Duration
+	StartLimitBurst    int
+
 	Service  *ServiceSpec
 	Timer    *TimerSpec
 	Registry *RegistrySpec
