@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PLN/winunitd/internal/registry"
 	"github.com/PLN/winunitd/internal/timers"
 )
 
@@ -45,15 +46,19 @@ var knownDirectives = map[string]map[string]bool{
 		"Persistent":      true,
 		"Unit":            true,
 	},
+	"Registry": {
+		"RegistryChanged": true,
+	},
 	"Install": {
 		"WantedBy": true,
 	},
 }
 
 var sectionsByKind = map[Kind]map[string]bool{
-	KindService: {"Unit": true, "Service": true, "Install": true},
-	KindTimer:   {"Unit": true, "Timer": true, "Install": true},
-	KindTarget:  {"Unit": true, "Install": true},
+	KindService:  {"Unit": true, "Service": true, "Install": true},
+	KindTimer:    {"Unit": true, "Timer": true, "Install": true},
+	KindTarget:   {"Unit": true, "Install": true},
+	KindRegistry: {"Unit": true, "Registry": true, "Install": true},
 }
 
 type serviceBuilder struct {
@@ -116,6 +121,11 @@ type timerBuilder struct {
 	unitSet       bool
 }
 
+type registryBuilder struct {
+	changed []string
+	lines   []int
+}
+
 type parser struct {
 	path   string
 	name   string
@@ -125,6 +135,7 @@ type parser struct {
 
 	svc   *serviceBuilder
 	timer *timerBuilder
+	reg   *registryBuilder
 
 	ris     string
 	risLine int
@@ -192,6 +203,9 @@ func Parse(path, name string, src []byte) Report {
 			}
 			continue
 		}
+		if sec.name == "Registry" && p.reg == nil {
+			p.reg = &registryBuilder{}
+		}
 		for _, e := range sec.entries {
 			if !known[e.key] {
 				p.errorf(e.line, "unknown directive %q in section [%s]", e.key, sec.name)
@@ -224,6 +238,11 @@ func (p *parser) apply(section string, e iniEntry) {
 			p.timer = &timerBuilder{}
 		}
 		p.applyTimer(e)
+	case "Registry":
+		if p.reg == nil {
+			p.reg = &registryBuilder{}
+		}
+		p.applyRegistry(e)
 	case "Install":
 		p.applyInstall(e)
 	}
@@ -343,6 +362,15 @@ func (p *parser) applyTimer(e iniEntry) {
 	}
 }
 
+func (p *parser) applyRegistry(e iniEntry) {
+	r := p.reg
+	switch e.key {
+	case "RegistryChanged":
+		r.changed = append(r.changed, e.value)
+		r.lines = append(r.lines, e.line)
+	}
+}
+
 func (p *parser) applyInstall(e iniEntry) {
 	switch e.key {
 	case "WantedBy":
@@ -363,6 +391,8 @@ func (p *parser) finish() {
 		p.finishService()
 	case KindTimer:
 		p.finishTimer()
+	case KindRegistry:
+		p.finishRegistry()
 	case KindTarget:
 		// targets have no extra required fields
 	}
@@ -647,9 +677,31 @@ func (p *parser) finishTimer() {
 }
 
 func (p *parser) defaultTimerUnit(spec *TimerSpec) {
-	base := p.name
-	if i := strings.LastIndex(base, "."); i >= 0 {
-		base = base[:i]
+	spec.Unit = CompanionService(p.name)
+}
+
+func (p *parser) finishRegistry() {
+	spec := &RegistrySpec{Unit: CompanionService(p.name)}
+	p.unit.Registry = spec
+	r := p.reg
+	if r == nil {
+		p.errorf(0, "registry unit requires a [Registry] section")
+		return
 	}
-	spec.Unit = base + ".service"
+	for i, raw := range r.changed {
+		line := r.lines[i]
+		if strings.TrimSpace(raw) == "" {
+			p.errorf(line, "empty registry path")
+			continue
+		}
+		key, err := registry.ParseKey(raw)
+		if err != nil {
+			p.errorf(line, "invalid RegistryChanged: %s", err.Error())
+			continue
+		}
+		spec.Changed = append(spec.Changed, key)
+	}
+	if len(r.changed) == 0 {
+		p.errorf(0, "registry must specify RegistryChanged")
+	}
 }

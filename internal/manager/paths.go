@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/PLN/winunitd/internal/notify"
+	"github.com/PLN/winunitd/internal/registry"
 	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/timers"
 )
@@ -50,6 +51,10 @@ type Config struct {
 	// runtime.DefaultSCM(). It never creates, changes, or deletes SCM
 	// configuration. Tests inject a fake so Linux does not call a real SCM.
 	SCM runtime.SCM
+	// RegistryOpen opens a registry key+subtree watch. Nil uses
+	// registry.OpenWatch (Windows RegNotifyChangeKeyValue; stub on Linux).
+	// Tests inject a fake so Linux can exercise start-on-change.
+	RegistryOpen registry.OpenFunc
 }
 
 // DefaultBaseDir is C:\ProgramData\winunitd when ProgramData is set.

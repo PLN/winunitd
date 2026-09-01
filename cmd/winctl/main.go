@@ -61,6 +61,11 @@ used as a default. Type=scm requires ServiceName= and does not use ExecStart=.
 MemoryMax= accepts K/M/G (e.g. 2G). ProcessLimit= must be a positive integer.
 PriorityClass= is idle, below-normal, normal, above-normal, or high (not realtime).
 Those three keys are [Service] only.
+
+A foo.registry unit watches [Registry] RegistryChanged= (HKLM\\... or HKCU\\...
+only; no PowerShell drive) and activates foo.service by basename. Path verify
+checks the companion .service next to the file. System-scope verify rejects
+HKCU (LocalSystem hive); winctl --user verify accepts HKCU and HKLM.
 `
 
 type cli struct {
@@ -271,7 +276,7 @@ func (c *cli) verify(args []string) int {
 		return 2
 	}
 	if anyLooksLikeFilePath(args) {
-		return runVerify(args, c.stdout, c.stderr)
+		return runVerify(args, c.user, c.stdout, c.stderr)
 	}
 	failed := false
 	for _, name := range args {

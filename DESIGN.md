@@ -232,15 +232,13 @@ Logical grouping and synchronization point.
 
 ### 6.4 `.path`
 
-Optional later addition.
+Optional later addition. File and directory watches only (`ReadDirectoryChangesW`). Do not overload `.path` for registry; that is `.registry`.
 
 Triggers a unit when:
 
 - File exists
 - File changes
 - Directory changes
-
-Windows implementation could use `ReadDirectoryChangesW`.
 
 ### 6.5 `.socket`
 
@@ -254,6 +252,23 @@ Could initially support:
 - TCP listener proxy activation
 
 But should not be required for MVP.
+
+### 6.6 `.registry` ★
+
+Windows-native companion unit. `foo.registry` activates `foo.service` by basename (same lock as timers; no `Unit=`). While the registry unit is active it is watching.
+
+```ini
+[Registry]
+RegistryChanged=HKLM\Software\Example
+```
+
+`RegistryChanged=` is repeatable (watch each key). Hive syntax is `HKLM\…` or `HKCU\…` only: no PowerShell drive (`HKLM:\`), no implicit PowerShell. Watch the key and its subtree (`RegNotifyChangeKeyValue`).
+
+The system manager accepts `HKLM` only (`HKCU` there is LocalSystem’s hive; `verify` fails). A user manager accepts `HKCU` (that user) and `HKLM`. A missing key at activate fails the registry unit with reason `configuration`; the daemon stays up.
+
+A change **starts** `foo.service` if it is inactive or failed. If the service is already `active`, do not restart it. A oneshot that exits is the repeatable pattern.
+
+Enable with `WantedBy=` like other units (usually `default.target`). There is no `registries.target`. `winctl list-units` shows `.registry` units. `verify` on the pair fails for a missing `foo.service`, a bad hive, or an empty path.
 
 ---
 
@@ -1404,13 +1419,18 @@ Potential future trigger types:
 
 ### File
 
+Later. File watches stay on `.path` (see §6.4). Do not overload `.path` for registry.
+
 ```ini
 PathChanged=C:\Data\incoming
 ```
 
-### Registry
+### Registry ★
+
+Windows-native companion (see §6.6). Implemented as `.registry`, not as a `.path` variant.
 
 ```ini
+[Registry]
 RegistryChanged=HKLM\Software\Example
 ```
 
@@ -2422,8 +2442,8 @@ At this point the project becomes genuinely distinctive.
 
 Add:
 
-- path units
-- registry/event triggers
+- path units (file watches; later)
+- registry/event triggers — `.registry` is the Windows-native companion (★); Event Log stays later
 - templates
 - remaining resource limits (CPUWeight=, CPUQuota=, IoPriority=)
 - credentials
