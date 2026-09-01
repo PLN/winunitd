@@ -2,7 +2,8 @@
 //
 // It loads unit files, tracks enablement and lifecycle state, and serves
 // the control protocol. Start CreateProcess's ExecStart into a per-unit
-// Job Object; stop kills that job. MemoryMax=, ProcessLimit=, and
+// Job Object; stop of a unit kills that job plus reverse requirers
+// (Requires=/BindsTo=/PartOf=). MemoryMax=, ProcessLimit=, and
 // PriorityClass= apply to that existing job (whole tree). Hitting
 // MemoryMax= or ProcessLimit= fails the unit with reason resource-limit.
 // Restart= (no / always / on-failure /

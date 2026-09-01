@@ -424,9 +424,10 @@ func (m *Manager) applyRunLocked(run *core.Run) {
 	}
 }
 
-// Stop kills the unit Job Object so the whole process tree dies and
-// cancels a pending Restart= relaunch. Stopping a target also stops its
-// Wants=/Requires= in reverse After=/Before= order (DESIGN.md §42).
+// Stop stops the named unit plus reverse requirers (units that
+// Requires=/BindsTo=/PartOf= it), dependents first. Forward Requires=/Wants=
+// and pure After=/Before= neighbors are not stopped (DESIGN.md §10, §42).
+// Manager.Shutdown is a separate plan (full reverse After=/Before=).
 func (m *Manager) Stop(name string) (*protocol.UnitResult, error) {
 	m.mu.Lock()
 	rt, err := m.lookup(name)
@@ -434,13 +435,9 @@ func (m *Manager) Stop(name string) (*protocol.UnitResult, error) {
 		m.mu.Unlock()
 		return nil, err
 	}
-	kind := rt.unit.Kind
 	name = rt.unit.Name
 	m.mu.Unlock()
-	if kind == unit.KindTarget {
-		return m.stopTransaction(name)
-	}
-	return m.stopUnit(name)
+	return m.stopTransaction(name)
 }
 
 // Restart is stop then start.
