@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	rt "runtime"
@@ -11,6 +12,20 @@ import (
 	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/timers"
 )
+
+func TestClockTimeoutCancelStopsFakeTimer(t *testing.T) {
+	t.Parallel()
+	fk := timers.NewFake(time.Time{})
+	m := &Manager{clk: fk.Clock()}
+	_, cancel := m.clockTimeout(context.Background(), 5*time.Second)
+	if !fk.Waiting() {
+		t.Fatal("expected TimeoutStartSec timer")
+	}
+	cancel()
+	if fk.Waiting() {
+		t.Fatal("cancel must Stop the clock timer")
+	}
+}
 
 func managerWithClock(t *testing.T, launch runtime.Launcher, clk timers.Clock, files map[string]string) *Manager {
 	t.Helper()
@@ -92,5 +107,17 @@ func waitErr(t *testing.T, errc <-chan error) error {
 func advanceWait(t *testing.T, fk *timers.Fake, d time.Duration) {
 	t.Helper()
 	waitCond(t, fk.Waiting)
+	fk.Advance(d)
+}
+
+// advanceArmed waits until a fake NewTimer is due at or before now+d, then
+// Advances d. advanceWait only checks that some wait is pending, so a leftover
+// TimeoutStartSec / long wait can make it Advance before RestartSec is armed.
+func advanceArmed(t *testing.T, fk *timers.Fake, d time.Duration) {
+	t.Helper()
+	waitCond(t, func() bool {
+		when, ok := fk.NextWhen()
+		return ok && !when.After(fk.Now().Add(d))
+	})
 	fk.Advance(d)
 }

@@ -134,6 +134,43 @@ WatchdogSec=1s
 	waitState(t, m, "hb.service", core.Failed)
 }
 
+func TestNotifyReadyLeavesOnlyWatchdogTimer(t *testing.T) {
+	t.Parallel()
+	launch := fakeNotifyLaunch()
+	m, fk := managerWithFake(t, launch, map[string]string{
+		"onlywd.service": `
+[Service]
+Type=notify
+ExecStart=C:\App\onlywd.exe
+WorkingDirectory=C:\App
+TimeoutStartSec=5s
+WatchdogSec=1s
+Restart=no
+`,
+	})
+	errc := make(chan error, 1)
+	go func() {
+		_, err := m.Start(context.Background(), "onlywd")
+		errc <- err
+	}()
+	pipe := waitNotifyPipe(t, launch, "onlywd.service")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := notify.SendRetry(ctx, pipe, notify.Message{Ready: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitErr(t, errc); err != nil {
+		t.Fatal(err)
+	}
+	when, ok := fk.NextWhen()
+	if !ok {
+		t.Fatal("expected WatchdogSec timer")
+	}
+	if remain := when.Sub(fk.Now()); remain > time.Second+time.Millisecond {
+		t.Fatalf("pending wait %v, want WatchdogSec=1s", remain)
+	}
+}
+
 func TestMissedWatchdogSecFailsUnit(t *testing.T) {
 	t.Parallel()
 	launch := fakeNotifyLaunch()
@@ -234,8 +271,8 @@ RestartSec=2s
 		t.Fatal(err)
 	}
 	advanceWait(t, fk, time.Second)
-	waitCond(t, func() bool { return len(launch.specs()) >= 1 })
-	advanceWait(t, fk, 2*time.Second)
+	waitSub(t, m, "wd.service", core.SubAutoRestart)
+	advanceArmed(t, fk, 2*time.Second)
 	waitCond(t, func() bool { return len(launch.specs()) >= 2 })
 }
 
@@ -371,21 +408,30 @@ func waitNotifyPipe(t *testing.T, launch *fakeLauncher, unit string) string {
 
 func keepReady(t *testing.T, launch *fakeLauncher, unit string) {
 	t.Helper()
-	seen := map[string]bool{}
-	for i := 0; i < 5_000_000 && len(seen) < 2; i++ {
-		for _, spec := range launch.specs() {
-			if spec.Unit != unit {
-				continue
-			}
-			pipe, ok := notify.LookupEnv(spec.Env, notify.EnvNotifyPipe)
-			if !ok || pipe == "" || seen[pipe] {
-				continue
-			}
-			seen[pipe] = true
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			_ = notify.SendRetry(ctx, pipe, notify.Message{Ready: true})
-			cancel()
+	// Windows named-pipe addresses are the unit name, so two launches share
+	// the same WINUNIT_NOTIFY_PIPE string. Send READY once per Start, not
+	// once per distinct address.
+	sent := 0
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) && sent < 2 {
+		specs := launch.specs()
+		if sent >= len(specs) {
+			goruntime.Gosched()
+			continue
 		}
-		goruntime.Gosched()
+		spec := specs[sent]
+		if spec.Unit != unit {
+			goruntime.Gosched()
+			continue
+		}
+		pipe, ok := notify.LookupEnv(spec.Env, notify.EnvNotifyPipe)
+		if !ok || pipe == "" {
+			goruntime.Gosched()
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = notify.SendRetry(ctx, pipe, notify.Message{Ready: true})
+		cancel()
+		sent++
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/PLN/winunitd/internal/protocol"
@@ -24,11 +25,21 @@ func Listen(unitID, sid string) (Listener, error) {
 	}
 	name := PipeName(unitID)
 	sddl := PipeSDDL(sid)
-	ln, err := protocol.ListenPipeSDDL(name, sddl)
-	if err != nil {
-		return nil, err
+	// RestartSec=0 and fake-clock Advance re-Listen immediately after Close.
+	// Windows can still report the previous instance until Accept unwinds.
+	var last error
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		ln, err := protocol.ListenPipeSDDL(name, sddl)
+		if err == nil {
+			return &pipeListener{name: name, ln: ln}, nil
+		}
+		last = err
+		if !time.Now().Before(deadline) {
+			return nil, last
+		}
+		time.Sleep(time.Millisecond)
 	}
-	return &pipeListener{name: name, ln: ln}, nil
 }
 
 // PipeSDDL allows the unit user, LocalSystem, and Administrators.
