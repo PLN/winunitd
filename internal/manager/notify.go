@@ -321,7 +321,10 @@ func (m *Manager) onWatchdogTimeout(name string, gen uint64) {
 		m.mu.Unlock()
 		return
 	}
-	rt.step(core.EventWatchdogFailed)
+	if !rt.step(core.EventWatchdogFailed) {
+		m.mu.Unlock()
+		return
+	}
 	rt.err = "watchdog timed out"
 	rt.terminated = true
 	u := rt.unit

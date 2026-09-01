@@ -128,8 +128,9 @@ func (m *Manager) failRegistryWatch(name string, err error) {
 	reg := rt.regWatch
 	rt.regWatch = nil
 	if rt.state == core.Active || rt.state == core.Activating {
-		rt.step(core.EventStartFailed)
-		rt.err = err.Error()
+		if rt.step(core.EventStartFailed) {
+			rt.err = err.Error()
+		}
 	}
 	m.mu.Unlock()
 	if reg != nil {

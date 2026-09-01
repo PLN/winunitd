@@ -6,4 +6,8 @@
 // Requires does not start the dependency. Stop reverses After=/Before=
 // (DESIGN.md §42). See DESIGN.md §10, §35, §69, §70.
 // Lifecycle states and Restart= decisions live here (DESIGN.md §20, §68).
+// core.Step is a closed allowlist: illegal (from, fromSub, event) triples
+// return ErrIllegalTransition and do not invent a destination state.
+// Requires= start-failure propagates only to not-yet-started jobs
+// (queued or Activating); already-Active requirers stay Active.
 package core
