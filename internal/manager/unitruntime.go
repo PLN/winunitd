@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"log"
+	"time"
 
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/runtime"
@@ -29,6 +30,7 @@ type unitRuntime struct {
 	regWatch      *registryRuntime
 	evtWatch      *eventLogRuntime
 	err           string
+	startTimes    []time.Time
 }
 
 // step applies a lifecycle event. Illegal transitions are logged and

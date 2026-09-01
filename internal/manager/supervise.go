@@ -59,6 +59,11 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 		rt.stopping = false
 		rt.gen++
 		rt.cancelRestart()
+		rt.startTimes = nil
+	} else if m.startLimitHitLocked(rt) {
+		m.failStartLimitLocked(rt)
+		m.mu.Unlock()
+		return nil
 	}
 	startGen := rt.gen
 	// Dead-but-unreaped: we are removing the proc, so we own job.Kill
@@ -87,6 +92,11 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 	if u.Kind != unit.KindService || u.Service == nil {
 		return nil
 	}
+	m.mu.Lock()
+	if rt := m.units[name]; rt != nil && rt.gen == startGen && !m.closed {
+		m.recordStartLocked(rt)
+	}
+	m.mu.Unlock()
 	svc := u.Service
 	if svc.Type == unit.TypeSCM {
 		return m.startSCM(ctx, name, u, autoRestart)
@@ -368,6 +378,11 @@ func (m *Manager) beginRestart(name string, gen uint64, delay time.Duration) {
 	m.mu.Lock()
 	rt := m.units[name]
 	if m.closed || rt == nil || rt.stopping || rt.gen != gen {
+		m.mu.Unlock()
+		return
+	}
+	if m.startLimitHitLocked(rt) {
+		m.failStartLimitLocked(rt)
 		m.mu.Unlock()
 		return
 	}

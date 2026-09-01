@@ -698,6 +698,28 @@ func TestCLIVerifyUnitNameOverPipe(t *testing.T) {
 	}
 }
 
+func TestPrintStatusStartLimit(t *testing.T) {
+	var out bytes.Buffer
+	c := &cli{stdout: &out}
+	code := c.printStatus(&protocol.StatusResult{Unit: &protocol.UnitStatus{
+		Name:        "loop.service",
+		LoadState:   "loaded",
+		ActiveState: "failed",
+		Reason:      "start-limit",
+		Error:       "start-limit",
+	}})
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	got := out.String()
+	if !strings.Contains(got, "Active: failed") {
+		t.Fatalf("missing failed: %s", got)
+	}
+	if !strings.Contains(got, "Reason: start-limit") {
+		t.Fatalf("missing reason: %s", got)
+	}
+}
+
 func TestPrintStatusResourceLimit(t *testing.T) {
 	var out bytes.Buffer
 	c := &cli{stdout: &out}

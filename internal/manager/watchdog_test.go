@@ -196,6 +196,8 @@ func TestTCPWatchdogRestartOnWatchdog(t *testing.T) {
 	launch := &fakeLauncher{}
 	m, fk := managerWithFake(t, launch, map[string]string{
 		"wd.service": fmt.Sprintf(`
+[Unit]
+StartLimitBurst=0
 [Service]
 Type=simple
 ExecStart=C:\App\wd.exe
