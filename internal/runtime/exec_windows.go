@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -168,28 +169,12 @@ func (l *winLauncher) create(spec StartSpec) (*winProc, error) {
 	// Only stdin/stdout/stderr are inherited. A blanket bInheritHandles=true
 	// would leak the manager's listen sockets and IOCP into the unit process
 	// (overlapped AcceptEx on those sockets can then fault the child).
-	attrList, err := windows.NewProcThreadAttributeList(1)
+	attrList, inherit, err := inheritHandleList(stdin, stdoutW, stderrW)
 	if err != nil {
 		cleanupHandles()
-		return nil, fmt.Errorf("ProcThreadAttributeList: %w", err)
+		return nil, err
 	}
 	defer attrList.Delete()
-	inherit := make([]windows.Handle, 0, 3)
-	for _, h := range []windows.Handle{stdin, stdoutW, stderrW} {
-		if h != 0 {
-			inherit = append(inherit, h)
-		}
-	}
-	if len(inherit) > 0 {
-		if err := attrList.Update(
-			windows.PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-			unsafe.Pointer(&inherit[0]),
-			uintptr(len(inherit))*unsafe.Sizeof(inherit[0]),
-		); err != nil {
-			cleanupHandles()
-			return nil, fmt.Errorf("PROC_THREAD_ATTRIBUTE_HANDLE_LIST: %w", err)
-		}
-	}
 
 	var si windows.StartupInfoEx
 	si.Cb = uint32(unsafe.Sizeof(si))
@@ -280,6 +265,12 @@ func makeStdPipe() (r, w windows.Handle, err error) {
 }
 
 func openNUL() (windows.Handle, error) {
+	// GENERIC_WRITE is required when this handle is used as stdout/stderr
+	// (user-manager launch). GENERIC_READ covers stdin. NUL accepts both.
+	return openNULAccess(windows.GENERIC_READ | windows.GENERIC_WRITE)
+}
+
+func openNULAccess(access uint32) (windows.Handle, error) {
 	var sa windows.SecurityAttributes
 	sa.Length = uint32(unsafe.Sizeof(sa))
 	sa.InheritHandle = 1
@@ -289,13 +280,71 @@ func openNUL() (windows.Handle, error) {
 	}
 	return windows.CreateFile(
 		name,
-		windows.GENERIC_READ,
+		access,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
 		&sa,
 		windows.OPEN_EXISTING,
 		0,
 		0,
 	)
+}
+
+// duplicateInheritable copies h into this process with HANDLE_FLAG_INHERIT set.
+// Go's StartProcess does this before PROC_THREAD_ATTRIBUTE_HANDLE_LIST so the
+// listed handles are independently inheritable copies, not the caller's originals.
+func duplicateInheritable(h windows.Handle) (windows.Handle, error) {
+	if h == 0 || h == windows.InvalidHandle {
+		return 0, nil
+	}
+	var dup windows.Handle
+	err := windows.DuplicateHandle(
+		windows.CurrentProcess(),
+		h,
+		windows.CurrentProcess(),
+		&dup,
+		0,
+		true,
+		windows.DUPLICATE_SAME_ACCESS,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return dup, nil
+}
+
+// inheritHandleList builds PROC_THREAD_ATTRIBUTE_HANDLE_LIST so only these
+// handles are inherited. Callers must KeepAlive inherit until CreateProcess
+// returns, then attrList.Delete(). Two attribute slots match Go's StartProcess
+// (HANDLE_LIST plus optional PARENT_PROCESS).
+func inheritHandleList(handles ...windows.Handle) (*windows.ProcThreadAttributeListContainer, []windows.Handle, error) {
+	attrList, err := windows.NewProcThreadAttributeList(2)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ProcThreadAttributeList: %w", err)
+	}
+	inherit := make([]windows.Handle, 0, len(handles))
+	for _, h := range handles {
+		if h == 0 || h == windows.InvalidHandle {
+			continue
+		}
+		// HANDLE_LIST is ignored for non-inheritable handles; CreateFile
+		// SECURITY_ATTRIBUTES is not always enough (see x/sys exec tests).
+		if err := windows.SetHandleInformation(h, windows.HANDLE_FLAG_INHERIT, windows.HANDLE_FLAG_INHERIT); err != nil {
+			attrList.Delete()
+			return nil, nil, fmt.Errorf("HANDLE_FLAG_INHERIT: %w", err)
+		}
+		inherit = append(inherit, h)
+	}
+	if len(inherit) > 0 {
+		if err := attrList.Update(
+			windows.PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+			unsafe.Pointer(&inherit[0]),
+			uintptr(len(inherit))*unsafe.Sizeof(inherit[0]),
+		); err != nil {
+			attrList.Delete()
+			return nil, nil, fmt.Errorf("PROC_THREAD_ATTRIBUTE_HANDLE_LIST: %w", err)
+		}
+	}
+	return attrList, inherit, nil
 }
 
 func envBlock(env []string) ([]uint16, error) {
@@ -420,6 +469,10 @@ func (p *winProc) Close() error {
 	return nil
 }
 
+// errWaitCanceled is sent when the wait goroutine wakes on the cancel
+// event rather than process exit. Callers map it back to ctx.Err().
+var errWaitCanceled = errors.New("process wait canceled")
+
 func (p *winProc) wait(ctx context.Context) error {
 	if p == nil {
 		return nil
@@ -456,39 +509,89 @@ func (p *winProc) wait(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer windows.CloseHandle(dup)
+
+	// Manual-reset cancel event. WaitForMultipleObjects so ctx.Done()
+	// unblocks the wait goroutine without CloseHandle on a handle another
+	// thread is waiting on (undefined behavior). The wait goroutine owns
+	// dup and the duplicated cancel handle and closes both when it returns.
+	cancelEvent, err := windows.CreateEvent(nil, 1, 0, nil)
+	if err != nil {
+		_ = windows.CloseHandle(dup)
+		return err
+	}
+	var cancelWait windows.Handle
+	err = windows.DuplicateHandle(
+		windows.CurrentProcess(),
+		cancelEvent,
+		windows.CurrentProcess(),
+		&cancelWait,
+		0,
+		false,
+		windows.DUPLICATE_SAME_ACCESS,
+	)
+	if err != nil {
+		_ = windows.CloseHandle(dup)
+		_ = windows.CloseHandle(cancelEvent)
+		return err
+	}
+	defer windows.CloseHandle(cancelEvent)
 
 	done := make(chan error, 1)
 	go func() {
-		s, err := windows.WaitForSingleObject(dup, windows.INFINITE)
-		if err != nil {
-			done <- err
-			return
+		defer func() {
+			_ = windows.CloseHandle(dup)
+			_ = windows.CloseHandle(cancelWait)
+		}()
+		handles := []windows.Handle{dup, cancelWait}
+		for {
+			s, err := windows.WaitForMultipleObjects(handles, false, windows.INFINITE)
+			goruntime.KeepAlive(handles)
+			if err != nil {
+				done <- err
+				return
+			}
+			switch s {
+			case windows.WAIT_OBJECT_0:
+				var exit uint32
+				if err := windows.GetExitCodeProcess(dup, &exit); err != nil {
+					done <- err
+					return
+				}
+				if exit == stillActiveExit {
+					continue
+				}
+				p.mu.Lock()
+				p.exitCode = exit
+				p.exited = true
+				p.mu.Unlock()
+				if exit == 0 {
+					done <- nil
+					return
+				}
+				done <- &ExitStatus{Code: exit}
+				return
+			case windows.WAIT_OBJECT_0 + 1:
+				done <- errWaitCanceled
+				return
+			default:
+				done <- fmt.Errorf("WaitForMultipleObjects: %d", s)
+				return
+			}
 		}
-		if s != windows.WAIT_OBJECT_0 {
-			done <- fmt.Errorf("WaitForSingleObject: %d", s)
-			return
-		}
-		var exit uint32
-		if err := windows.GetExitCodeProcess(dup, &exit); err != nil {
-			done <- err
-			return
-		}
-		p.mu.Lock()
-		p.exitCode = exit
-		p.exited = true
-		p.mu.Unlock()
-		if exit == 0 {
-			done <- nil
-			return
-		}
-		done <- &ExitStatus{Code: exit}
 	}()
 
 	select {
-	case <-ctx.Done():
-		return ctx.Err()
 	case err := <-done:
+		if err == errWaitCanceled {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return err
+		}
 		return err
+	case <-ctx.Done():
+		_ = windows.SetEvent(cancelEvent)
+		<-done
+		return ctx.Err()
 	}
 }

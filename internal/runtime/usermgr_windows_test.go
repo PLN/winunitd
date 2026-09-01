@@ -3,14 +3,21 @@
 package runtime
 
 import (
+	"io"
+	"net"
 	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
 )
 
-func TestStartUserManagerCreateProcessAsUser(t *testing.T) {
+func testUserToken(t *testing.T) *UserToken {
+	t.Helper()
 	var tok windows.Token
 	if err := windows.OpenProcessToken(
 		windows.CurrentProcess(),
@@ -19,7 +26,7 @@ func TestStartUserManagerCreateProcessAsUser(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	defer tok.Close()
+	t.Cleanup(func() { _ = tok.Close() })
 
 	var primary windows.Token
 	if err := windows.DuplicateTokenEx(
@@ -34,18 +41,23 @@ func TestStartUserManagerCreateProcessAsUser(t *testing.T) {
 	}
 	info, err := userInfoFromToken(primary)
 	if err != nil {
-		primary.Close()
+		_ = primary.Close()
 		t.Fatal(err)
 	}
 	userTok := &UserToken{Info: info, native: winToken(primary)}
-	defer userTok.Close()
+	t.Cleanup(func() { _ = userTok.Close() })
+	return userTok
+}
 
-	env := MergeDeterministicUserEnv(helperEnv("WINUNITD_JOB_HELPER=sleep"), info)
+func TestStartUserManagerCreateProcessAsUser(t *testing.T) {
+	userTok := testUserToken(t)
+	env := MergeDeterministicUserEnv(helperEnv("WINUNITD_JOB_HELPER=sleep"), userTok.Info)
 	proc, err := StartUserManager(UserManagerSpec{
-		SID:   info.SID,
-		Token: userTok,
-		Exe:   testAbs(t),
-		Env:   env,
+		SID:       userTok.Info.SID,
+		Token:     userTok,
+		Exe:       testAbs(t),
+		Env:       env,
+		ExtraArgs: []string{winunitdHelperArgPrefix + "sleep"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -57,8 +69,8 @@ func TestStartUserManagerCreateProcessAsUser(t *testing.T) {
 	if proc.PID() <= 0 {
 		t.Fatalf("pid = %d", proc.PID())
 	}
-	if proc.SID() != info.SID {
-		t.Fatalf("SID = %q, want %q", proc.SID(), info.SID)
+	if proc.SID() != userTok.Info.SID {
+		t.Fatalf("SID = %q, want %q", proc.SID(), userTok.Info.SID)
 	}
 	if err := proc.Kill(); err != nil {
 		t.Fatal(err)
@@ -86,4 +98,132 @@ func TestStartUserManagerFailsClosedWithoutNativeToken(t *testing.T) {
 	if err == nil {
 		t.Fatal("missing WTS token handle must fail closed")
 	}
+}
+
+func TestUserManagerStdioWriteAccess(t *testing.T) {
+	userTok := testUserToken(t)
+	pipeName := `\\.\pipe\winunitd-um-stdio-` + strconv.Itoa(os.Getpid()) + `-` + strconv.FormatInt(time.Now().UnixNano(), 10)
+	ln, err := winio.ListenPipe(pipeName, &winio.PipeConfig{
+		SecurityDescriptor: "D:P(A;;GA;;;WD)",
+		InputBufferSize:    4096,
+		OutputBufferSize:   4096,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	type result struct {
+		line string
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			ch <- result{err: err}
+			return
+		}
+		defer c.Close()
+		_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+		b, err := io.ReadAll(c)
+		if err != nil && len(b) == 0 {
+			ch <- result{err: err}
+			return
+		}
+		ch <- result{line: strings.TrimSpace(string(b))}
+	}()
+
+	env := MergeDeterministicUserEnv(helperEnv(
+		"WINUNITD_JOB_HELPER=stdio-write",
+		"WINUNITD_STDIO_REPORT_PIPE="+pipeName,
+	), userTok.Info)
+	proc, err := StartUserManager(UserManagerSpec{
+		SID:       userTok.Info.SID,
+		Token:     userTok,
+		Exe:       testAbs(t),
+		Env:       env,
+		ExtraArgs: []string{winunitdHelperArgPrefix + "stdio-write"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proc.Kill()
+
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			t.Fatal(r.err)
+		}
+		if r.line != "stdout=ok stderr=ok" {
+			t.Fatalf("stdio report = %q, want stdout=ok stderr=ok", r.line)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for stdio WriteFile report")
+	}
+}
+
+func TestUserManagerCreateProcessDoesNotInheritListener(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+
+	// Same child as TestCreateProcessWithLoopbackListenerKeepsHelperAlive.
+	// A Go test-binary helper can die on an inherited overlapped socket even
+	// when ping (the unit-path regression) stays alive; ExtraArgs sleep was
+	// not enough to keep that helper running under CreateProcessAsUser.
+	root := os.Getenv("SystemRoot")
+	if root == "" {
+		root = `C:\Windows`
+	}
+	ping := filepath.Join(root, "System32", "ping.exe")
+	if _, err := os.Stat(ping); err != nil {
+		t.Fatalf("ping.exe: %v", err)
+	}
+
+	userTok := testUserToken(t)
+	proc, err := StartUserManager(UserManagerSpec{
+		SID:     userTok.Info.SID,
+		Token:   userTok,
+		Exe:     ping,
+		Env:     helperEnv(),
+		cmdArgv: []string{ping, "-t", "127.0.0.1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proc.Kill()
+	if !proc.Alive() {
+		t.Fatalf("user manager died immediately (exit=%d)", userManagerExitCode(proc))
+	}
+	time.Sleep(400 * time.Millisecond)
+	if !proc.Alive() {
+		t.Fatalf("user manager died while parent held a loopback listener (exit=%d)", userManagerExitCode(proc))
+	}
+}
+
+func userManagerExitCode(proc UserManagerProc) uint32 {
+	p, ok := proc.(*userMgrProc)
+	if !ok || p == nil {
+		return 0
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.process == 0 {
+		return 0
+	}
+	var code uint32
+	_ = windows.GetExitCodeProcess(p.process, &code)
+	return code
 }
