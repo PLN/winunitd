@@ -13,7 +13,8 @@ import (
 
 // UserHostConfig launches per-SID user managers from the system daemon.
 // Production QueryToken is WTSQueryUserToken (interactive). Linger uses
-// S4U first, then an optional named CredMan/LSA URI on the linger record.
+// trusted-LSA S4U first, then an optional named CredMan/LSA URI on the
+// linger record only when S4U is insufficient for outbound network creds.
 type UserHostConfig struct {
 	Exe         string
 	ExtraArgs   []string
@@ -360,6 +361,9 @@ func (h *UserHost) startLinger(rec runtime.LingerRecord) error {
 	}
 	if tok != nil {
 		defer tok.Close()
+		if tok.Source != "" {
+			h.cfg.Logf("linger token for %s via %s", rec.SID, tok.Source)
+		}
 	}
 	return h.ensureRunning(rec.SID, tok)
 }

@@ -634,6 +634,18 @@ interactive session
 
 This is crucial for lingering.
 
+### Linger token (no session)
+
+At boot, a lingering user manager is launched with no interactive session. Token acquisition:
+
+1. **S4U over a trusted LSA connection.** winunitd runs as LocalSystem and therefore holds `SeTcbPrivilege`. It calls `LsaRegisterLogonProcess` (not `LsaConnectUntrusted`). An untrusted connection yields an identification-level token; `DuplicateTokenEx` to `SecurityImpersonation` / `TokenPrimary` then fails with `ERROR_BAD_IMPERSONATION_LEVEL`, so `CreateProcessAsUser` never gets a usable primary token.
+
+2. **Optional named CredMan/LSA URI** on the linger record only. The URI is a store name (`credman://…` or `lsa://…`), never a password. Passwords must not appear in unit files, environment, or files.
+
+3. **Path selection.** S4U always runs first. The store URI is tried only when it is present **and** the S4U token is insufficient for outbound network credentials. Sufficiency is a real logon-session probe (`TokenStatistics` + `LsaGetLogonSessionData` `LogonType`), not a hardcoded “S4U never has network creds”. Network logons do not cache outbound creds; Batch / Interactive / Service / NetworkCleartext / NewCredentials and the interactive variants do. If the URI logon fails, the S4U token is kept. The daemon logs which path produced the token (`s4u` vs `store-uri`).
+
+4. **URI fallback logon type.** `LogonUserW` uses `LOGON32_LOGON_BATCH` (4), not `LOGON32_LOGON_NETWORK` (3). Network logons do not cache credentials for outbound SSO; Batch does, which is the reason the URI exists. The password is held as `[]uint16` through `LogonUserW` and zeroed after use. CredMan generic blobs written by `cmdkey` / PowerShell are UTF-16LE (`CRED_TYPE_GENERIC`, then `CRED_TYPE_DOMAIN_PASSWORD`).
+
 ---
 
 ## 15. Lingering
