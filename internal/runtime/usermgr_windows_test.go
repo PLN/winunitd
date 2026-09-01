@@ -52,10 +52,11 @@ func TestStartUserManagerCreateProcessAsUser(t *testing.T) {
 	userTok := testUserToken(t)
 	env := MergeDeterministicUserEnv(helperEnv("WINUNITD_JOB_HELPER=sleep"), userTok.Info)
 	proc, err := StartUserManager(UserManagerSpec{
-		SID:   userTok.Info.SID,
-		Token: userTok,
-		Exe:   testAbs(t),
-		Env:   env,
+		SID:       userTok.Info.SID,
+		Token:     userTok,
+		Exe:       testAbs(t),
+		Env:       env,
+		ExtraArgs: []string{winunitdHelperArgPrefix + "sleep"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -180,15 +181,19 @@ func TestUserManagerCreateProcessDoesNotInheritListener(t *testing.T) {
 	userTok := testUserToken(t)
 	env := MergeDeterministicUserEnv(helperEnv("WINUNITD_JOB_HELPER=sleep"), userTok.Info)
 	proc, err := StartUserManager(UserManagerSpec{
-		SID:   userTok.Info.SID,
-		Token: userTok,
-		Exe:   testAbs(t),
-		Env:   env,
+		SID:       userTok.Info.SID,
+		Token:     userTok,
+		Exe:       testAbs(t),
+		Env:       env,
+		ExtraArgs: []string{winunitdHelperArgPrefix + "sleep"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer proc.Kill()
+	if !proc.Alive() {
+		t.Fatal("user manager died immediately")
+	}
 	time.Sleep(400 * time.Millisecond)
 	if !proc.Alive() {
 		t.Fatal("user manager died while parent held a loopback listener")

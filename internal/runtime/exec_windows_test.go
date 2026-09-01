@@ -345,13 +345,36 @@ func TestCreateProcessWithLoopbackListenerKeepsHelperAlive(t *testing.T) {
 }
 
 func TestWaitCancelDoesNotCloseWaitedHandle(t *testing.T) {
-	p := startHelper(t, "sleep", unit.TypeSimple, 0)
-	time.Sleep(50 * time.Millisecond)
+	// ping -t stays running without TestMain. A Go test-binary helper can
+	// exit 2 (runtime fatal / unknown flag) and that is not a Wait-cancel bug.
+	root := os.Getenv("SystemRoot")
+	if root == "" {
+		root = `C:\Windows`
+	}
+	ping := filepath.Join(root, "System32", "ping.exe")
+	if _, err := os.Stat(ping); err != nil {
+		t.Fatalf("ping.exe: %v", err)
+	}
+	p, err := DefaultLauncher().Start(context.Background(), StartSpec{
+		Unit: "waitcancel.service",
+		Type: unit.TypeSimple,
+		Argv: []string{ping, "-t", "127.0.0.1"},
+		Dir:  t.TempDir(),
+		Env:  helperEnv(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = p.Stop(2 * time.Second) })
+	if !p.Alive() {
+		t.Fatal("ping helper died before Wait")
+	}
+
 	goruntime.GC()
 	baseline := goruntime.NumGoroutine()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	err := p.Wait(ctx)
+	err = p.Wait(ctx)
 	cancel()
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Wait = %v, want context.DeadlineExceeded", err)
