@@ -115,6 +115,27 @@ func (f *Fake) Waiting() bool {
 	return len(f.timers) > 0
 }
 
+// NextWhen is the earliest pending NewTimer deadline, if any.
+func (f *Fake) NextWhen() (time.Time, bool) {
+	if f == nil {
+		return time.Time{}, false
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var earliest time.Time
+	found := false
+	for tm := range f.timers {
+		if tm.stopped || tm.fired {
+			continue
+		}
+		if !found || tm.when.Before(earliest) {
+			earliest = tm.when
+			found = true
+		}
+	}
+	return earliest, found
+}
+
 func (f *Fake) newTimer(d time.Duration) Timer {
 	f.mu.Lock()
 	defer f.mu.Unlock()

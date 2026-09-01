@@ -164,9 +164,7 @@ RestartSec=1s
 		t.Fatal(err)
 	}
 	n := launch.nstarts()
-	if fk.Waiting() {
-		advanceWait(t, fk, time.Second)
-	}
+	fk.Advance(time.Second)
 	if got := launch.nstarts(); got != n {
 		t.Fatalf("restart after shutdown: starts %d -> %d", n, got)
 	}

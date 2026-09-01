@@ -41,7 +41,8 @@ func managerWithFake(t *testing.T, launch runtime.Launcher, files map[string]str
 
 func waitCond(t *testing.T, ok func() bool) {
 	t.Helper()
-	for i := 0; i < 5_000_000; i++ {
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
 		if ok() {
 			return
 		}
@@ -75,7 +76,8 @@ func waitStarts(t *testing.T, launch *scriptedLauncher, n int, timeout time.Dura
 
 func waitErr(t *testing.T, errc <-chan error) error {
 	t.Helper()
-	for i := 0; i < 5_000_000; i++ {
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
 		select {
 		case err := <-errc:
 			return err

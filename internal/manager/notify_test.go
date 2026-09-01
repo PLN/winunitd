@@ -121,11 +121,15 @@ WatchdogSec=1s
 		t.Fatal(err)
 	}
 
+	advanceWait(t, fk, 400*time.Millisecond)
+	assertState(t, m, "hb.service", core.Active)
 	if err := notify.Send(ctx, pipe, notify.Message{Watchdog: true}); err != nil {
 		t.Fatal(err)
 	}
-	advanceWait(t, fk, 500*time.Millisecond)
-	assertState(t, m, "hb.service", core.Active)
+	waitCond(t, func() bool {
+		when, ok := fk.NextWhen()
+		return ok && !when.Before(fk.Now().Add(900*time.Millisecond))
+	})
 	advanceWait(t, fk, time.Second)
 	waitState(t, m, "hb.service", core.Failed)
 }
