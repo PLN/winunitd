@@ -26,6 +26,11 @@ const (
 // (DESIGN.md §44).
 const ReasonResourceLimit = "resource-limit"
 
+// ReasonSignalEquivalent is the winctl status reason for an NTSTATUS
+// error-severity exit (>= 0xC0000000), e.g. STATUS_ACCESS_VIOLATION
+// (DESIGN.md §44).
+const ReasonSignalEquivalent = "signal-equivalent"
+
 // ReasonConfiguration is the winctl status reason for a unit that failed
 // because its configuration cannot be applied (e.g. a missing registry key
 // or an unwatchable PathChanged=/PathExists= path).
@@ -36,6 +41,8 @@ func StatusReason(err string) string {
 	switch {
 	case err == ReasonResourceLimit:
 		return ReasonResourceLimit
+	case err == ReasonSignalEquivalent:
+		return ReasonSignalEquivalent
 	case err == ReasonStartLimit:
 		return ReasonStartLimit
 	case err == ReasonConfiguration || strings.HasPrefix(err, ReasonConfiguration+":") || strings.HasPrefix(err, ReasonConfiguration+" "):

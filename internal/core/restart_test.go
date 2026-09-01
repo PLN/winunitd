@@ -47,6 +47,9 @@ func TestStatusReason(t *testing.T) {
 	if StatusReason(ReasonResourceLimit) != ReasonResourceLimit {
 		t.Fatal("resource-limit")
 	}
+	if StatusReason(ReasonSignalEquivalent) != ReasonSignalEquivalent {
+		t.Fatal("signal-equivalent")
+	}
 	if StatusReason(ReasonStartLimit) != ReasonStartLimit {
 		t.Fatal("start-limit")
 	}

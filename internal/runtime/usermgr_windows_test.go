@@ -3,10 +3,13 @@
 package runtime
 
 import (
+	"context"
+	"errors"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -226,4 +229,57 @@ func userManagerExitCode(proc UserManagerProc) uint32 {
 	var code uint32
 	_ = windows.GetExitCodeProcess(p.process, &code)
 	return code
+}
+
+func TestUserManagerWaitCancelDoesNotPoll(t *testing.T) {
+	root := os.Getenv("SystemRoot")
+	if root == "" {
+		root = `C:\Windows`
+	}
+	ping := filepath.Join(root, "System32", "ping.exe")
+	if _, err := os.Stat(ping); err != nil {
+		t.Fatalf("ping.exe: %v", err)
+	}
+
+	userTok := testUserToken(t)
+	proc, err := StartUserManager(UserManagerSpec{
+		SID:     userTok.Info.SID,
+		Token:   userTok,
+		Exe:     ping,
+		Env:     helperEnv(),
+		cmdArgv: []string{ping, "-t", "127.0.0.1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proc.Kill()
+	if !proc.Alive() {
+		t.Fatalf("user manager died immediately (exit=%d)", userManagerExitCode(proc))
+	}
+
+	goruntime.GC()
+	baseline := goruntime.NumGoroutine()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	err = proc.Wait(ctx)
+	cancel()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Wait = %v, want context.DeadlineExceeded", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var n int
+	for time.Now().Before(deadline) {
+		n = goruntime.NumGoroutine()
+		if n <= baseline+1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n > baseline+2 {
+		t.Fatalf("goroutines after cancel: %d (baseline %d)", n, baseline)
+	}
+	if !proc.Alive() {
+		t.Fatal("helper exited during cancelled Wait")
+	}
 }

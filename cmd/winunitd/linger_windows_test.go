@@ -15,6 +15,7 @@ import (
 	"github.com/PLN/winunitd/internal/manager"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/runtime/runtimetest"
 )
 
 func TestWindowsLingerBootNoSessionAndLogoff(t *testing.T) {
@@ -212,7 +213,7 @@ func TestWindowsNonAdminEnableLingerDenied(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "units"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	m, err := manager.New(manager.Config{BaseDir: dir, Launch: runtime.StubLauncher()})
+	m, err := manager.New(manager.Config{BaseDir: dir, Launch: runtimetest.Launcher()})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -227,10 +227,28 @@ func (h *host) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<-
 				if isStopCmd(c.Cmd) {
 					// Cancel the host. serve() then runs ordered unit stop
 					// and closes the daemon Job Object (DESIGN.md §42).
-					changes <- svc.Status{State: svc.StopPending}
+					hint := uint32(StopPendingWaitHint / time.Millisecond)
+					checkpoint := uint32(1)
+					changes <- svc.Status{State: svc.StopPending, WaitHint: hint, CheckPoint: checkpoint}
 					cancel()
-					<-errc
-					return false, 0
+					tick := stopPendingTick
+					if tick <= 0 {
+						tick = time.Second
+					}
+					ticker := time.NewTicker(tick)
+					defer ticker.Stop()
+					for {
+						select {
+						case err := <-errc:
+							if err != nil && !errors.Is(err, context.Canceled) {
+								return true, 1
+							}
+							return false, 0
+						case <-ticker.C:
+							checkpoint++
+							changes <- svc.Status{State: svc.StopPending, WaitHint: hint, CheckPoint: checkpoint}
+						}
+					}
 				}
 			}
 		}

@@ -3,8 +3,10 @@
 package runtime
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -16,6 +18,7 @@ import (
 //
 // Per-unit jobs nest under this job on modern Windows (M5).
 type DaemonJob struct {
+	mu     sync.Mutex
 	handle windows.Handle
 }
 
@@ -49,7 +52,7 @@ func OpenDaemonJob() (*DaemonJob, error) {
 
 // AssignPID assigns an existing process to the daemon job.
 func (j *DaemonJob) AssignPID(pid int) error {
-	if j == nil || j.handle == 0 {
+	if j == nil {
 		return fmt.Errorf("daemon job is closed")
 	}
 	if pid <= 0 {
@@ -61,7 +64,15 @@ func (j *DaemonJob) AssignPID(pid int) error {
 		return fmt.Errorf("open process %d: %w", pid, err)
 	}
 	defer windows.CloseHandle(h)
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.handle == 0 {
+		return fmt.Errorf("daemon job is closed")
+	}
 	if err := windows.AssignProcessToJobObject(j.handle, h); err != nil {
+		if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			return errAlreadyInJob
+		}
 		return fmt.Errorf("assign pid %d to daemon job: %w", pid, err)
 	}
 	return nil
@@ -70,11 +81,16 @@ func (j *DaemonJob) AssignPID(pid int) error {
 // Assign attaches an already-open process handle to the daemon job.
 // Same as UnitJob.Assign: use the CreateProcess handle, do not reopen by PID.
 func (j *DaemonJob) Assign(process windows.Handle) error {
-	if j == nil || j.handle == 0 {
+	if j == nil {
 		return fmt.Errorf("daemon job is closed")
 	}
 	if process == 0 {
 		return fmt.Errorf("process handle is closed")
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.handle == 0 {
+		return fmt.Errorf("daemon job is closed")
 	}
 	if err := windows.AssignProcessToJobObject(j.handle, process); err != nil {
 		return fmt.Errorf("assign process to daemon job: %w", err)
@@ -86,7 +102,12 @@ func (j *DaemonJob) Assign(process windows.Handle) error {
 // unless they break away (breakaway is not enabled). Nested per-unit jobs
 // in M5 remain possible on modern Windows.
 func (j *DaemonJob) AssignSelf() error {
-	if j == nil || j.handle == 0 {
+	if j == nil {
+		return fmt.Errorf("daemon job is closed")
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.handle == 0 {
 		return fmt.Errorf("daemon job is closed")
 	}
 	if err := windows.AssignProcessToJobObject(j.handle, windows.CurrentProcess()); err != nil {
@@ -100,11 +121,16 @@ func (j *DaemonJob) AssignSelf() error {
 // leftover children are terminated first and KILL_ON_JOB_CLOSE is cleared
 // so CloseHandle does not kill the daemon after an ordered stop.
 func (j *DaemonJob) Close() error {
-	if j == nil || j.handle == 0 {
+	if j == nil {
 		return nil
 	}
+	j.mu.Lock()
 	h := j.handle
 	j.handle = 0
+	j.mu.Unlock()
+	if h == 0 {
+		return nil
+	}
 
 	inSelf, err := isProcessInJob(windows.CurrentProcess(), h)
 	if err == nil && inSelf {
@@ -125,7 +151,12 @@ func (j *DaemonJob) Close() error {
 
 // Closed reports whether Close has released the job handle.
 func (j *DaemonJob) Closed() bool {
-	return j == nil || j.handle == 0
+	if j == nil {
+		return true
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.handle == 0
 }
 
 func jobPIDs(h windows.Handle) []int {
@@ -190,12 +221,18 @@ func clearKillOnClose(h windows.Handle) error {
 }
 
 func (j *DaemonJob) killOnCloseEnabled() (bool, error) {
-	if j == nil || j.handle == 0 {
+	if j == nil {
+		return false, fmt.Errorf("daemon job is closed")
+	}
+	j.mu.Lock()
+	h := j.handle
+	j.mu.Unlock()
+	if h == 0 {
 		return false, fmt.Errorf("daemon job is closed")
 	}
 	var info windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
 	err := windows.QueryInformationJobObject(
-		j.handle,
+		h,
 		windows.JobObjectExtendedLimitInformation,
 		uintptr(unsafe.Pointer(&info)),
 		uint32(unsafe.Sizeof(info)),
@@ -208,13 +245,19 @@ func (j *DaemonJob) killOnCloseEnabled() (bool, error) {
 }
 
 func (j *DaemonJob) inheritDup() (windows.Handle, error) {
-	if j == nil || j.handle == 0 {
+	if j == nil {
+		return 0, fmt.Errorf("daemon job is closed")
+	}
+	j.mu.Lock()
+	h := j.handle
+	j.mu.Unlock()
+	if h == 0 {
 		return 0, fmt.Errorf("daemon job is closed")
 	}
 	var dup windows.Handle
 	err := windows.DuplicateHandle(
 		windows.CurrentProcess(),
-		j.handle,
+		h,
 		windows.CurrentProcess(),
 		&dup,
 		0,
