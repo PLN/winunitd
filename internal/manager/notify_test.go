@@ -162,10 +162,11 @@ Restart=no
 	if err := waitErr(t, errc); err != nil {
 		t.Fatal(err)
 	}
-	when, ok := fk.NextWhen()
-	if !ok {
-		t.Fatal("expected WatchdogSec timer")
-	}
+	waitCond(t, func() bool {
+		_, ok := fk.NextWhen()
+		return ok
+	})
+	when, _ := fk.NextWhen()
 	if remain := when.Sub(fk.Now()); remain > time.Second+time.Millisecond {
 		t.Fatalf("pending wait %v, want WatchdogSec=1s", remain)
 	}
