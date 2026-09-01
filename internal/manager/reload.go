@@ -11,19 +11,45 @@ import (
 )
 
 // Reload reparses unit files, rebuilds the graph, and preserves process
-// instances by keeping states (and running jobs) for units that remain
+// instances by keeping the whole unitRuntime for units that remain
 // (DESIGN.md §33). Enable files under enabled/<target>/<unit> become
-// extra Wants= on those targets.
+// extra Wants= on those targets. Parse and directory reads happen
+// outside m.mu; the map swap is under the lock (issue #26).
 func (m *Manager) Reload() (*protocol.DaemonReloadResult, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	loaded, result, err := m.parseUnitDir()
+	if err != nil {
+		return nil, err
+	}
 
+	loaded = mergeBuiltins(loaded, m.cfg.UserScope)
+	links := m.readEnabledLinks()
+	graphUnits := withEnabledWants(loaded, links)
+	g, err := core.Build(graphUnits)
+	if err != nil {
+		return nil, protocol.ErrFailed(err.Error())
+	}
+	if c := g.OrderingCycle(); c != nil {
+		result.Cycle = c.Error()
+	}
+
+	m.mu.Lock()
+	dropped := m.replaceLocked(loaded, g, links)
+	m.mu.Unlock()
+	for _, td := range dropped {
+		td.closeBlocking()
+	}
+
+	result.Loaded = len(loaded)
+	return result, nil
+}
+
+func (m *Manager) parseUnitDir() ([]*unit.Unit, *protocol.DaemonReloadResult, error) {
 	unitsPath := m.cfg.UnitsDir()
 	result := &protocol.DaemonReloadResult{}
 
 	entries, err := os.ReadDir(unitsPath)
 	if err != nil && !os.IsNotExist(err) {
-		return nil, protocol.ErrFailed(err.Error())
+		return nil, nil, protocol.ErrFailed(err.Error())
 	}
 
 	var loaded []*unit.Unit
@@ -68,48 +94,40 @@ func (m *Manager) Reload() (*protocol.DaemonReloadResult, error) {
 		}
 		loaded = append(loaded, rep.Unit)
 	}
-
-	loaded = mergeBuiltins(loaded, m.cfg.UserScope)
-	graphUnits := withEnabledWants(loaded, m.readEnabledLinks())
-	g, err := core.Build(graphUnits)
-	if err != nil {
-		return nil, protocol.ErrFailed(err.Error())
-	}
-	if c := g.OrderingCycle(); c != nil {
-		result.Cycle = c.Error()
-	}
-
-	m.replaceLocked(loaded, g)
-	result.Loaded = len(loaded)
-	return result, nil
+	return loaded, result, nil
 }
 
-func (m *Manager) replaceLocked(units []*unit.Unit, g *core.Graph) {
-	oldStates := m.states
-	oldErrors := m.errors
-	m.units = make(map[string]*loaded, len(units))
-	m.states = make(map[string]core.State, len(units))
-	m.errors = make(map[string]string)
-	m.graph = g
+func (m *Manager) replaceLocked(units []*unit.Unit, g *core.Graph, links map[string][]string) []unitTeardown {
+	next := make(map[string]*unitRuntime, len(units))
+	keep := make(map[string]bool, len(units))
 	for _, u := range units {
 		name := core.NormalizeName(u.Name)
-		targets := m.enabledTargets(name)
-		m.units[name] = &loaded{
-			unit:    u,
-			enabled: len(targets) > 0,
-			targets: targets,
+		keep[name] = true
+		rt := m.units[name]
+		if rt == nil {
+			rt = &unitRuntime{state: core.Inactive}
 		}
-		if s, ok := oldStates[name]; ok {
-			m.states[name] = s
-		} else {
-			m.states[name] = core.Inactive
-		}
-		if err, ok := oldErrors[name]; ok {
-			m.errors[name] = err
-		}
+		targets := enabledTargetsFrom(links, name)
+		rt.unit = u
+		rt.enabled = len(targets) > 0
+		rt.targets = targets
+		next[name] = rt
 	}
-	// Running jobs (procs, gens, subs, cancels) stay on the manager for
-	// units that remain. Vanished units are not stopped (DESIGN.md §33).
+	var dropped []unitTeardown
+	for name, rt := range m.units {
+		if keep[name] {
+			continue
+		}
+		td := rt.detachAsync()
+		td.cancelNonblocking()
+		dropped = append(dropped, td)
+	}
+	m.units = next
+	m.graph = g
+	// Running jobs stay on the kept unitRuntime. Vanished units are not
+	// stopped (DESIGN.md §33); their restart timers are cancelled above
+	// so a mid-delay drop cannot relaunch or leave SubAutoRestart.
 	m.syncTimersLocked()
 	m.syncRegistryLocked()
+	return dropped
 }

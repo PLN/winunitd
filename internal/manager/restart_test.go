@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -317,6 +319,109 @@ WorkingDirectory=C:\Tools
 	fk.Advance(5 * time.Second)
 	if got := launch.nstarts(); got != 1 {
 		t.Fatalf("starts = %d, want 1", got)
+	}
+}
+
+func TestReloadRemovesUnitDuringRestartDelay(t *testing.T) {
+	t.Parallel()
+	launch := &scriptedLauncher{exitAll: intPtr(0), holdAutoExit: true}
+	fk := timers.NewFake(time.Time{})
+	dir := t.TempDir()
+	units := filepath.Join(dir, "units")
+	if err := os.MkdirAll(units, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeUnit(t, units, "foo.service", `
+[Service]
+Type=simple
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+Restart=always
+RestartSec=5s
+`)
+	m, err := New(Config{BaseDir: dir, Launch: launch, Clock: fk.Clock()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopAll(m) })
+	if _, err := m.Start(context.Background(), "foo"); err != nil {
+		t.Fatal(err)
+	}
+	launch.releaseExits()
+	waitSub(t, m, "foo.service", core.SubAutoRestart)
+	waitCond(t, fk.Waiting)
+
+	if err := os.Remove(filepath.Join(units, "foo.service")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+
+	m.mu.Lock()
+	_, still := m.units["foo.service"]
+	sub := m.subOfLocked("foo.service")
+	m.mu.Unlock()
+	if still {
+		t.Fatal("vanished unit still in the runtime map")
+	}
+	if sub != core.SubNone {
+		t.Fatalf("stale sub %s after drop", sub)
+	}
+
+	n := launch.nstarts()
+	fk.Advance(5 * time.Second)
+	if got := launch.nstarts(); got != n {
+		t.Fatalf("relaunched after reload drop: starts %d -> %d", n, got)
+	}
+
+	writeUnit(t, units, "foo.service", `
+[Service]
+Type=simple
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+Restart=always
+RestartSec=5s
+`)
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	assertState(t, m, "foo.service", core.Inactive)
+	m.mu.Lock()
+	if got := m.subOfLocked("foo.service"); got != core.SubNone {
+		m.mu.Unlock()
+		t.Fatalf("re-added unit sub = %s, want none", got)
+	}
+	m.mu.Unlock()
+}
+
+func TestCloseCancelsPendingRestart(t *testing.T) {
+	t.Parallel()
+	launch := &scriptedLauncher{exitAll: intPtr(0), holdAutoExit: true}
+	m, fk := managerWithFake(t, launch, map[string]string{
+		"foo.service": `
+[Service]
+Type=simple
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+Restart=always
+RestartSec=5s
+`,
+	})
+	if _, err := m.Start(context.Background(), "foo"); err != nil {
+		t.Fatal(err)
+	}
+	launch.releaseExits()
+	waitSub(t, m, "foo.service", core.SubAutoRestart)
+	waitCond(t, fk.Waiting)
+	n := launch.nstarts()
+	m.Close()
+	fk.Advance(5 * time.Second)
+	if got := launch.nstarts(); got != n {
+		t.Fatalf("relaunched after Close: starts %d -> %d", n, got)
 	}
 }
 

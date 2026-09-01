@@ -41,17 +41,21 @@ func (m *Manager) armRegistry(u *unit.Unit) error {
 	}
 	rt := &registryRuntime{cancel: cancel, watches: opened}
 	m.mu.Lock()
-	if existing := m.regWatches[u.Name]; existing != nil {
-		delete(m.regWatches, u.Name)
+	unitRT := m.units[u.Name]
+	if unitRT == nil {
+		m.mu.Unlock()
+		cancel()
+		closeWatches(opened)
+		return fmt.Errorf("unit %q is not loaded", u.Name)
+	}
+	if existing := unitRT.regWatch; existing != nil {
+		unitRT.regWatch = nil
 		go func() {
 			existing.cancel()
 			closeWatches(existing.watches)
 		}()
 	}
-	if m.regWatches == nil {
-		m.regWatches = make(map[string]*registryRuntime)
-	}
-	m.regWatches[u.Name] = rt
+	unitRT.regWatch = rt
 	m.mu.Unlock()
 
 	for _, w := range opened {
@@ -93,20 +97,20 @@ func (m *Manager) onRegistryChanged(name string) {
 		m.mu.Unlock()
 		return
 	}
-	if _, watching := m.regWatches[name]; !watching {
+	rt := m.units[name]
+	if rt == nil || rt.regWatch == nil {
 		m.mu.Unlock()
 		return
 	}
-	ld := m.units[name]
 	activated := ""
-	if ld != nil && ld.unit != nil && ld.unit.Registry != nil {
-		activated = ld.unit.Registry.Unit
+	if rt.unit != nil && rt.unit.Registry != nil {
+		activated = rt.unit.Registry.Unit
 	}
 	if activated == "" {
 		m.mu.Unlock()
 		return
 	}
-	if proc := m.procs[activated]; proc != nil && proc.Alive() {
+	if proc := m.procOfLocked(activated); proc != nil && proc.Alive() {
 		m.mu.Unlock()
 		return
 	}
@@ -116,22 +120,21 @@ func (m *Manager) onRegistryChanged(name string) {
 
 func (m *Manager) failRegistryWatch(name string, err error) {
 	m.mu.Lock()
-	rt, ok := m.regWatches[name]
-	if !ok {
+	rt := m.units[name]
+	if rt == nil || rt.regWatch == nil {
 		m.mu.Unlock()
 		return
 	}
-	delete(m.regWatches, name)
-	if m.stateOfLocked(name) == core.Active || m.stateOfLocked(name) == core.Activating {
-		st, sub := core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventStartFailed)
-		m.states[name] = st
-		m.subs[name] = sub
-		m.errors[name] = err.Error()
+	reg := rt.regWatch
+	rt.regWatch = nil
+	if rt.state == core.Active || rt.state == core.Activating {
+		rt.step(core.EventStartFailed)
+		rt.err = err.Error()
 	}
 	m.mu.Unlock()
-	if rt != nil {
-		rt.cancel()
-		closeWatches(rt.watches)
+	if reg != nil {
+		reg.cancel()
+		closeWatches(reg.watches)
 	}
 }
 
@@ -140,67 +143,50 @@ func (m *Manager) disarmRegistry(name string) {
 		return
 	}
 	m.mu.Lock()
-	rt := m.regWatches[name]
-	delete(m.regWatches, name)
+	var reg *registryRuntime
+	if rt := m.units[name]; rt != nil {
+		reg = rt.regWatch
+		rt.regWatch = nil
+	}
 	m.mu.Unlock()
-	if rt == nil {
+	if reg == nil {
 		return
 	}
-	rt.cancel()
-	closeWatches(rt.watches)
-}
-
-func (m *Manager) disarmAllRegistry() {
-	if m == nil {
-		return
-	}
-	m.mu.Lock()
-	all := m.regWatches
-	m.regWatches = make(map[string]*registryRuntime)
-	m.mu.Unlock()
-	for _, rt := range all {
-		if rt == nil {
-			continue
-		}
-		rt.cancel()
-		closeWatches(rt.watches)
-	}
+	reg.cancel()
+	closeWatches(reg.watches)
 }
 
 func (m *Manager) syncRegistryLocked() {
 	keep := make(map[string]bool)
-	var toArm []*unit.Unit
-	for name, ld := range m.units {
-		if ld == nil || ld.unit == nil || ld.unit.Kind != unit.KindRegistry {
+	for name, rt := range m.units {
+		if rt == nil || rt.unit == nil || rt.unit.Kind != unit.KindRegistry {
 			continue
 		}
-		if m.stateOfLocked(name) != core.Active {
+		if rt.state != core.Active {
 			continue
 		}
 		keep[name] = true
-		toArm = append(toArm, ld.unit)
 	}
 	var stale []*registryRuntime
-	for name, rt := range m.regWatches {
+	for name, rt := range m.units {
+		if rt == nil || rt.regWatch == nil {
+			continue
+		}
 		if keep[name] {
 			continue
 		}
-		stale = append(stale, rt)
-		delete(m.regWatches, name)
+		stale = append(stale, rt.regWatch)
+		rt.regWatch = nil
 	}
 	go func() {
-		for _, rt := range stale {
-			if rt == nil {
+		for _, reg := range stale {
+			if reg == nil {
 				continue
 			}
-			rt.cancel()
-			closeWatches(rt.watches)
+			reg.cancel()
+			closeWatches(reg.watches)
 		}
 	}()
-	// Re-arm after this lock is released by walking toArm without Open here:
-	// startOne already armed Active units; reload of a still-active watch
-	// keeps the existing handle (name is in keep).
-	_ = toArm
 }
 
 func closeWatches(ws []registry.Watch) {

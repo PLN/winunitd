@@ -27,27 +27,38 @@ func (m *Manager) startOne(ctx context.Context, name string) error {
 
 func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool) error {
 	m.mu.Lock()
-	if autoRestart && m.stopping[name] {
+	if m.closed {
+		m.mu.Unlock()
+		return nil
+	}
+	rt := m.units[name]
+	if rt == nil {
+		m.mu.Unlock()
+		if autoRestart {
+			return nil
+		}
+		return fmt.Errorf("unit %q is not loaded", name)
+	}
+	if autoRestart && rt.stopping {
 		m.mu.Unlock()
 		return nil
 	}
 	if !autoRestart {
-		m.stopping[name] = false
-		m.gens[name]++
-		m.cancelRestartLocked(name)
+		rt.stopping = false
+		rt.gen++
+		rt.cancelRestart()
 	}
-	ld := m.units[name]
-	if live := m.procs[name]; live != nil && live.Alive() {
+	if live := rt.proc; live != nil && live.Alive() {
 		m.mu.Unlock()
 		return nil
 	}
-	delete(m.procs, name)
+	rt.proc = nil
+	u := rt.unit
 	m.mu.Unlock()
 
-	if ld == nil || ld.unit == nil {
+	if u == nil {
 		return fmt.Errorf("unit %q is not loaded", name)
 	}
-	u := ld.unit
 	if u.RequiresInteractiveSession && !m.hasInteractiveSession() {
 		return core.ErrSkipped
 	}
@@ -70,7 +81,9 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 
 	inv := journal.NewInvocationID()
 	m.mu.Lock()
-	m.invocations[name] = inv
+	if rt := m.units[name]; rt != nil {
+		rt.invocation = inv
+	}
 	m.mu.Unlock()
 
 	env := journal.InjectEnv(mergeEnv(svc.Environment), inv)
@@ -82,9 +95,15 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 			return err
 		}
 		m.mu.Lock()
-		m.notifies[name] = nrt
-		delete(m.terminated, name)
-		m.mu.Unlock()
+		if rt := m.units[name]; rt != nil && !m.closed {
+			rt.notify = nrt
+			rt.terminated = false
+			m.mu.Unlock()
+		} else {
+			m.mu.Unlock()
+			nrt.Close()
+			return nil
+		}
 		wd := time.Duration(0)
 		if svc.WatchdogMode == unit.WatchdogModeNotify {
 			wd = svc.WatchdogSec
@@ -121,48 +140,44 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 	m.journal.Attach(name, proc.PID(), inv, proc.Stdout(), proc.Stderr())
 
 	m.mu.Lock()
-	if m.stopping[name] {
+	rt = m.units[name]
+	if rt == nil || m.closed || rt.stopping {
 		m.mu.Unlock()
 		_ = proc.Stop(0)
 		m.closeNotify(name)
 		return nil
 	}
-	if existing := m.procs[name]; existing != nil && existing.Alive() {
+	if existing := rt.proc; existing != nil && existing.Alive() {
 		m.mu.Unlock()
 		_ = proc.Stop(0)
 		m.closeNotify(name)
 		return nil
 	}
-	m.procs[name] = proc
+	rt.proc = proc
 	if svc.Type == unit.TypeNotify {
-		st, sub := core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventStartRequested)
-		m.states[name] = st
-		m.subs[name] = sub
+		rt.step(core.EventStartRequested)
 	} else if autoRestart {
-		st, sub := core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventStartSucceeded)
 		if proc.Alive() {
-			m.states[name] = st
-			m.subs[name] = sub
-			delete(m.errors, name)
+			rt.step(core.EventStartSucceeded)
+			rt.err = ""
 		}
 	}
-	gen := m.gens[name]
+	gen := rt.gen
 	m.mu.Unlock()
 
 	if svc.Type == unit.TypeNotify {
 		if err := m.waitReady(ctx, name, proc, svc.TimeoutStartSec); err != nil {
 			m.mu.Lock()
-			m.terminated[name] = true
-			if m.procs[name] == proc {
-				delete(m.procs, name)
+			rt = m.units[name]
+			if rt != nil && rt.proc == proc {
+				rt.terminated = true
+				rt.proc = nil
 			}
-			if !m.stopping[name] {
-				st, sub := core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventStartFailed)
-				m.states[name] = st
-				m.subs[name] = sub
-				m.errors[name] = err.Error()
+			stopping := rt != nil && rt.stopping
+			if rt != nil && !rt.stopping {
+				rt.step(core.EventStartFailed)
+				rt.err = err.Error()
 			}
-			stopping := m.stopping[name]
 			m.mu.Unlock()
 			_ = proc.Stop(0)
 			m.closeNotify(name)
@@ -172,11 +187,9 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 			return err
 		}
 		m.mu.Lock()
-		if !m.stopping[name] {
-			st, sub := core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventStartSucceeded)
-			m.states[name] = st
-			m.subs[name] = sub
-			delete(m.errors, name)
+		if rt := m.units[name]; rt != nil && !rt.stopping {
+			rt.step(core.EventStartSucceeded)
+			rt.err = ""
 		}
 		m.mu.Unlock()
 	}
@@ -203,27 +216,28 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 	// CreateProcess into a new per-unit job.
 	err, limitHit := waitProcOrLimit(proc)
 	m.mu.Lock()
-	if m.procs[name] != proc {
+	rt := m.units[name]
+	if rt == nil || rt.proc != proc {
 		m.mu.Unlock()
 		return
 	}
-	delete(m.procs, name)
-	stopping := m.stopping[name]
-	terminated := m.terminated[name]
-	delete(m.terminated, name)
-	ld := m.units[name]
-	gen := m.gens[name]
-	rt := m.notifies[name]
-	delete(m.notifies, name)
-	wdCancel := m.watchdogs[name]
-	delete(m.watchdogs, name)
+	rt.proc = nil
+	stopping := rt.stopping
+	terminated := rt.terminated
+	rt.terminated = false
+	u := rt.unit
+	gen := rt.gen
+	nrt := rt.notify
+	rt.notify = nil
+	wdCancel := rt.watchdog
+	rt.watchdog = nil
 	m.mu.Unlock()
 
 	if wdCancel != nil {
 		wdCancel()
 	}
-	if rt != nil {
-		rt.Close()
+	if nrt != nil {
+		nrt.Close()
 	}
 
 	if job := proc.Job(); job != nil {
@@ -236,8 +250,8 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 	}
 
 	var svc *unit.ServiceSpec
-	if ld != nil && ld.unit != nil {
-		svc = ld.unit.Service
+	if u != nil {
+		svc = u.Service
 	}
 	kind := classifyWait(err)
 	if limitHit {
@@ -250,23 +264,22 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.stopping[name] || m.gens[name] != gen {
+	rt = m.units[name]
+	if rt == nil || rt.stopping || rt.gen != gen {
 		return
 	}
-	if m.subOfLocked(name) == core.SubWatchdog {
+	if rt.sub == core.SubWatchdog {
 		return
 	}
 	oneshot := svc != nil && svc.Type == unit.TypeOneshot
 	if oneshot && kind == core.ExitSuccess {
 		return
 	}
-	st, sub := core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventMainExited)
-	m.states[name] = st
-	m.subs[name] = sub
+	rt.step(core.EventMainExited)
 	if limitHit {
-		m.errors[name] = core.ReasonResourceLimit
+		rt.err = core.ReasonResourceLimit
 	} else {
-		m.errors[name] = "main process exited"
+		rt.err = "main process exited"
 	}
 }
 
@@ -321,28 +334,28 @@ func (m *Manager) maybeRestart(name string, kind core.ExitKind, svc *unit.Servic
 		return
 	}
 	m.mu.Lock()
-	if m.stopping[name] {
+	rt := m.units[name]
+	if m.closed || rt == nil || rt.stopping {
 		m.mu.Unlock()
 		return
 	}
-	gen := m.gens[name]
+	gen := rt.gen
 	m.mu.Unlock()
 	go m.beginRestart(name, gen, restartDelay(svc))
 }
 
 func (m *Manager) beginRestart(name string, gen uint64, delay time.Duration) {
 	m.mu.Lock()
-	if m.stopping[name] || m.gens[name] != gen {
+	rt := m.units[name]
+	if m.closed || rt == nil || rt.stopping || rt.gen != gen {
 		m.mu.Unlock()
 		return
 	}
-	st, sub := core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventAutoRestart)
-	m.states[name] = st
-	m.subs[name] = sub
-	delete(m.errors, name)
+	rt.step(core.EventAutoRestart)
+	rt.err = ""
 	ctx, cancel := context.WithCancel(context.Background())
-	m.cancelRestartLocked(name)
-	m.cancels[name] = cancel
+	rt.cancelRestart()
+	rt.restartCancel = cancel
 	m.mu.Unlock()
 
 	if delay > 0 {
@@ -358,7 +371,8 @@ func (m *Manager) beginRestart(name string, gen uint64, delay time.Duration) {
 	}
 
 	m.mu.Lock()
-	if m.stopping[name] || m.gens[name] != gen {
+	rt = m.units[name]
+	if m.closed || rt == nil || rt.stopping || rt.gen != gen {
 		m.mu.Unlock()
 		return
 	}
@@ -367,30 +381,20 @@ func (m *Manager) beginRestart(name string, gen uint64, delay time.Duration) {
 	_ = m.launchUnit(context.Background(), name, true)
 }
 
-func (m *Manager) cancelRestartLocked(name string) {
-	if c := m.cancels[name]; c != nil {
-		c()
-		delete(m.cancels, name)
-	}
-}
-
 func (m *Manager) subOfLocked(name string) core.Substate {
-	if s, ok := m.subs[name]; ok {
-		return s
+	if rt := m.units[name]; rt != nil {
+		return rt.sub
 	}
 	return core.SubNone
 }
 
 func (m *Manager) reapFailedLocked() {
-	for name, st := range m.states {
-		if st != core.Failed {
+	for _, rt := range m.units {
+		if rt == nil || rt.state != core.Failed || rt.proc == nil {
 			continue
 		}
-		proc := m.procs[name]
-		if proc == nil {
-			continue
-		}
-		delete(m.procs, name)
+		proc := rt.proc
+		rt.proc = nil
 		go func(p runtime.Process) {
 			_ = p.Stop(defaultStopTimeout)
 		}(proc)

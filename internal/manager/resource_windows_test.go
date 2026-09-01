@@ -68,7 +68,8 @@ ProcessLimit=1
 		t.Fatalf("reason = %q error=%q state=%s", st.Reason, st.Error, st.ActiveState)
 	}
 	m.mu.Lock()
-	alive := m.procs["cap.service"] != nil && m.procs["cap.service"].Alive()
+	proc := m.procOfLocked("cap.service")
+	alive := proc != nil && proc.Alive()
 	m.mu.Unlock()
 	if alive {
 		t.Fatal("unit process still running after resource-limit; daemon must stay up and the unit must fail")

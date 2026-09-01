@@ -12,15 +12,18 @@ import (
 
 // Enable writes tiny link files under enabled/<target>/ (DESIGN.md §12).
 // Enable does not start the unit. An empty WantedBy= means default.target.
+// Directory writes happen outside m.mu; the graph swap is under the lock.
 func (m *Manager) Enable(name string) (*protocol.EnableResult, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	ld, err := m.lookup(name)
+	rt, err := m.lookup(name)
 	if err != nil {
+		m.mu.Unlock()
 		return nil, err
 	}
-	name = ld.unit.Name
-	targets := ld.unit.WantedBy
+	name = rt.unit.Name
+	targets := append([]string(nil), rt.unit.WantedBy...)
+	m.mu.Unlock()
+
 	if len(targets) == 0 {
 		targets = []string{DefaultTarget}
 	}
@@ -34,23 +37,33 @@ func (m *Manager) Enable(name string) (*protocol.EnableResult, error) {
 			return nil, protocol.ErrFailed(err.Error())
 		}
 	}
-	if err := m.rebuildGraphLocked(); err != nil {
+	links := m.readEnabledLinks()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rt, err = m.lookup(name)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.rebuildGraphWithLinksLocked(links); err != nil {
 		return nil, protocol.ErrFailed(err.Error())
 	}
-	ld.enabled = true
-	ld.targets = normalized
+	rt.enabled = true
+	rt.targets = normalized
 	return &protocol.EnableResult{Unit: name, Enabled: true, Targets: normalized}, nil
 }
 
 // Disable removes enable files for the unit.
 func (m *Manager) Disable(name string) (*protocol.EnableResult, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	ld, err := m.lookup(name)
+	rt, err := m.lookup(name)
 	if err != nil {
+		m.mu.Unlock()
 		return nil, err
 	}
-	name = ld.unit.Name
+	name = rt.unit.Name
+	m.mu.Unlock()
+
 	_ = filepath.WalkDir(m.cfg.EnabledDir(), func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
@@ -60,11 +73,19 @@ func (m *Manager) Disable(name string) (*protocol.EnableResult, error) {
 		}
 		return nil
 	})
-	if err := m.rebuildGraphLocked(); err != nil {
+	links := m.readEnabledLinks()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rt, err = m.lookup(name)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.rebuildGraphWithLinksLocked(links); err != nil {
 		return nil, protocol.ErrFailed(err.Error())
 	}
-	ld.enabled = false
-	ld.targets = nil
+	rt.enabled = false
+	rt.targets = nil
 	return &protocol.EnableResult{Unit: name, Enabled: false}, nil
 }
 
@@ -86,8 +107,7 @@ func uniqueTargets(targets []string) []string {
 	return normalized
 }
 
-func (m *Manager) enabledTargets(name string) []string {
-	links := m.readEnabledLinks()
+func enabledTargetsFrom(links map[string][]string, name string) []string {
 	var targets []string
 	for target, units := range links {
 		for _, u := range units {
@@ -167,17 +187,17 @@ func withEnabledWants(units []*unit.Unit, enabled map[string][]string) []*unit.U
 	return out
 }
 
-func (m *Manager) rebuildGraphLocked() error {
+func (m *Manager) rebuildGraphWithLinksLocked(links map[string][]string) error {
 	parsed := m.parsedUnitsLocked()
-	g, err := core.Build(withEnabledWants(parsed, m.readEnabledLinks()))
+	g, err := core.Build(withEnabledWants(parsed, links))
 	if err != nil {
 		return err
 	}
 	m.graph = g
-	for name, ld := range m.units {
-		targets := m.enabledTargets(name)
-		ld.enabled = len(targets) > 0
-		ld.targets = targets
+	for name, rt := range m.units {
+		targets := enabledTargetsFrom(links, name)
+		rt.enabled = len(targets) > 0
+		rt.targets = targets
 	}
 	return nil
 }
@@ -185,7 +205,9 @@ func (m *Manager) rebuildGraphLocked() error {
 func (m *Manager) parsedUnitsLocked() []*unit.Unit {
 	out := make([]*unit.Unit, 0, len(m.units))
 	for _, name := range m.names() {
-		out = append(out, m.units[name].unit)
+		if rt := m.units[name]; rt != nil && rt.unit != nil {
+			out = append(out, rt.unit)
+		}
 	}
 	return out
 }
