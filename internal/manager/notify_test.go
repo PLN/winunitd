@@ -93,6 +93,47 @@ TimeoutStartSec=5s
 	assertState(t, m, "late.service", core.Failed)
 }
 
+func TestStopUnblocksNotifyWaitReady(t *testing.T) {
+	t.Parallel()
+	launch := fakeNotifyLaunch()
+	m, _ := managerWithFake(t, launch, map[string]string{
+		"worker.service": `
+[Service]
+Type=notify
+ExecStart=C:\App\worker.exe
+WorkingDirectory=C:\App
+TimeoutStartSec=5m
+`,
+	})
+	errc := make(chan error, 1)
+	go func() {
+		_, err := m.Start(context.Background(), "worker")
+		errc <- err
+	}()
+	waitNotifyPipe(t, launch, "worker.service")
+	waitUntil(t, 2*time.Second, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.stateOfLocked("worker.service") == core.Activating
+	})
+	done := make(chan error, 1)
+	go func() {
+		_, err := m.Stop("worker")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop blocked behind waitReady holding the per-unit start lock")
+	}
+	if err := waitErr(t, errc); err == nil {
+		t.Fatal("expected Start to fail after Stop")
+	}
+}
+
 func TestWatchdogPulseRefreshesTimer(t *testing.T) {
 	t.Parallel()
 	launch := fakeNotifyLaunch()
@@ -322,6 +363,7 @@ RestartSec=2s
 	waitSub(t, m, "wd.service", core.SubAutoRestart)
 	advanceArmed(t, fk, 2*time.Second)
 	waitCond(t, func() bool { return len(launch.specs()) >= 2 })
+	waitState(t, m, "wd.service", core.Active)
 }
 
 func TestNotifyInjectsEnv(t *testing.T) {
@@ -478,8 +520,12 @@ func keepReady(t *testing.T, launch *fakeLauncher, unit string) {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_ = notify.SendRetry(ctx, pipe, notify.Message{Ready: true})
+		err := notify.SendRetry(ctx, pipe, notify.Message{Ready: true})
 		cancel()
+		if err != nil {
+			goruntime.Gosched()
+			continue
+		}
 		sent++
 	}
 }
