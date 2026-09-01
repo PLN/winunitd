@@ -765,8 +765,10 @@ MemoryMax=2G
 `,
 	})
 	m.mu.Lock()
-	m.states["cap.service"] = core.Failed
-	m.errors["cap.service"] = core.ReasonResourceLimit
+	if rt := m.units["cap.service"]; rt != nil {
+		rt.state = core.Failed
+		rt.err = core.ReasonResourceLimit
+	}
 	m.mu.Unlock()
 	st, err := m.Status("cap")
 	if err != nil {

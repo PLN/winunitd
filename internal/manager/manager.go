@@ -18,37 +18,20 @@ import (
 	"github.com/PLN/winunitd/internal/unit"
 )
 
-type loaded struct {
-	unit    *unit.Unit
-	enabled bool
-	targets []string
-}
-
 // Manager holds loaded units and serves the control protocol.
 type Manager struct {
-	cfg         Config
-	clk         timers.Clock
-	launch      runtime.Launcher
-	journal     *journal.Store
-	engine      *timers.Engine
-	mu          sync.Mutex
-	units       map[string]*loaded
-	graph       *core.Graph
-	states      map[string]core.State
-	errors      map[string]string
-	procs       map[string]runtime.Process
-	subs        map[string]core.Substate
-	gens        map[string]uint64
-	cancels     map[string]context.CancelFunc
-	stopping    map[string]bool
-	notifies    map[string]*notifyRuntime
-	watchdogs   map[string]context.CancelFunc
-	terminated  map[string]bool // start-timeout or watchdog killed the process
-	invocations map[string]string
-	scm         runtime.SCM
-	regOpen     registry.OpenFunc
-	regWatches  map[string]*registryRuntime
-	session     sync.Mutex // serializes graphical-session.target start/stop
+	cfg     Config
+	clk     timers.Clock
+	launch  runtime.Launcher
+	journal *journal.Store
+	engine  *timers.Engine
+	mu      sync.Mutex
+	units   map[string]*unitRuntime
+	graph   *core.Graph
+	closed  bool
+	scm     runtime.SCM
+	regOpen registry.OpenFunc
+	session sync.Mutex // serializes graphical-session.target start/stop
 }
 
 // New creates a manager. Reload must be called to load units.
@@ -89,24 +72,12 @@ func New(cfg Config) (*Manager, error) {
 		}
 	}
 	m := &Manager{
-		cfg:         cfg,
-		clk:         clk,
-		launch:      launch,
-		scm:         scm,
-		journal:     js,
-		units:       make(map[string]*loaded),
-		states:      make(map[string]core.State),
-		errors:      make(map[string]string),
-		procs:       make(map[string]runtime.Process),
-		subs:        make(map[string]core.Substate),
-		gens:        make(map[string]uint64),
-		cancels:     make(map[string]context.CancelFunc),
-		stopping:    make(map[string]bool),
-		notifies:    make(map[string]*notifyRuntime),
-		watchdogs:   make(map[string]context.CancelFunc),
-		terminated:  make(map[string]bool),
-		invocations: make(map[string]string),
-		regWatches:  make(map[string]*registryRuntime),
+		cfg:     cfg,
+		clk:     clk,
+		launch:  launch,
+		scm:     scm,
+		journal: js,
+		units:   make(map[string]*unitRuntime),
 	}
 	if cfg.RegistryOpen != nil {
 		m.regOpen = cfg.RegistryOpen
@@ -117,35 +88,29 @@ func New(cfg Config) (*Manager, error) {
 	return m, nil
 }
 
-// Close stops the timer scheduler and notify listeners.
+// Close stops the timer scheduler, notify listeners, watchdogs, and
+// pending Restart= timers. No relaunch runs after Close returns; Shutdown
+// is not required first (issue #26).
 func (m *Manager) Close() {
 	if m == nil {
 		return
 	}
 	m.mu.Lock()
-	rts := make([]*notifyRuntime, 0, len(m.notifies))
-	for name, rt := range m.notifies {
-		rts = append(rts, rt)
-		delete(m.notifies, name)
-	}
-	cancels := make([]context.CancelFunc, 0, len(m.watchdogs))
-	for name, c := range m.watchdogs {
-		cancels = append(cancels, c)
-		delete(m.watchdogs, name)
+	m.closed = true
+	tds := make([]unitTeardown, 0, len(m.units))
+	for _, rt := range m.units {
+		tds = append(tds, rt.detachAsync())
 	}
 	m.mu.Unlock()
-	for _, c := range cancels {
-		if c != nil {
-			c()
-		}
+	for _, td := range tds {
+		td.cancelNonblocking()
 	}
-	for _, rt := range rts {
-		rt.Close()
+	for _, td := range tds {
+		td.closeBlocking()
 	}
 	if m.engine != nil {
 		m.engine.Stop()
 	}
-	m.disarmAllRegistry()
 }
 
 // Handle implements protocol.Handler.
@@ -230,16 +195,16 @@ func requireUnit(name string) (string, error) {
 	return core.NormalizeName(name), nil
 }
 
-func (m *Manager) lookup(name string) (*loaded, error) {
+func (m *Manager) lookup(name string) (*unitRuntime, error) {
 	name, err := requireUnit(name)
 	if err != nil {
 		return nil, err
 	}
-	ld, ok := m.units[name]
-	if !ok {
+	rt, ok := m.units[name]
+	if !ok || rt == nil {
 		return nil, protocol.ErrNotFound(name)
 	}
-	return ld, nil
+	return rt, nil
 }
 
 // ListUnits returns loaded units in name order.
@@ -251,8 +216,8 @@ func (m *Manager) ListUnits() (*protocol.ListUnitsResult, error) {
 	for _, name := range names {
 		out = append(out, m.unitStatusLocked(name))
 		var u *unit.Unit
-		if ld := m.units[name]; ld != nil {
-			u = ld.unit
+		if rt := m.units[name]; rt != nil {
+			u = rt.unit
 		}
 		scmNames = append(scmNames, scmServiceName(u))
 	}
@@ -269,14 +234,14 @@ func (m *Manager) ListTimers() (*protocol.ListTimersResult, error) {
 	defer m.mu.Unlock()
 	var out []protocol.TimerStatus
 	for _, name := range m.names() {
-		ld := m.units[name]
-		if ld.unit.Kind != unit.KindTimer {
+		rt := m.units[name]
+		if rt == nil || rt.unit == nil || rt.unit.Kind != unit.KindTimer {
 			continue
 		}
 		st := m.unitStatusLocked(name)
 		activated := ""
-		if ld.unit.Timer != nil {
-			activated = ld.unit.Timer.Unit
+		if rt.unit.Timer != nil {
+			activated = rt.unit.Timer.Unit
 		}
 		out = append(out, protocol.TimerStatus{
 			Name:        st.Name,
@@ -301,13 +266,13 @@ func (m *Manager) Status(name string) (*protocol.StatusResult, error) {
 		m.mu.Unlock()
 		return &protocol.StatusResult{Machine: ms}, nil
 	}
-	ld, err := m.lookup(name)
+	rt, err := m.lookup(name)
 	if err != nil {
 		m.mu.Unlock()
 		return nil, err
 	}
-	st := m.unitStatusLocked(ld.unit.Name)
-	svcName := scmServiceName(ld.unit)
+	st := m.unitStatusLocked(rt.unit.Name)
+	svcName := scmServiceName(rt.unit)
 	m.mu.Unlock()
 	m.overlaySCM(&st, svcName)
 	return &protocol.StatusResult{Unit: &st}, nil
@@ -315,9 +280,9 @@ func (m *Manager) Status(name string) (*protocol.StatusResult, error) {
 
 func (m *Manager) machineLocked() *protocol.MachineStatus {
 	ms := &protocol.MachineStatus{State: "running"}
-	for name, ld := range m.units {
+	for name, rt := range m.units {
 		ms.UnitsLoaded++
-		if ld.unit.Kind == unit.KindTimer {
+		if rt != nil && rt.unit != nil && rt.unit.Kind == unit.KindTimer {
 			ms.TimersLoaded++
 		}
 		switch m.stateOfLocked(name) {
@@ -331,41 +296,43 @@ func (m *Manager) machineLocked() *protocol.MachineStatus {
 }
 
 func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
-	ld := m.units[name]
+	rt := m.units[name]
 	st := protocol.UnitStatus{
 		Name:        name,
 		LoadState:   "loaded",
 		ActiveState: m.stateOfLocked(name).String(),
-		Enabled:     ld.enabled,
 	}
-	if ld.unit != nil {
-		st.Description = ld.unit.Description
-		st.Kind = string(ld.unit.Kind)
-		st.Path = ld.unit.Path
-	}
-	if proc := m.procs[name]; proc != nil && proc.Alive() {
-		st.MainPID = proc.PID()
-	}
-	if id := m.invocations[name]; id != "" {
-		st.InvocationID = id
-	}
-	if err := m.errors[name]; err != "" {
-		st.Error = err
-		if r := core.StatusReason(err); r != "" {
-			st.Reason = r
+	if rt != nil {
+		st.Enabled = rt.enabled
+		if rt.unit != nil {
+			st.Description = rt.unit.Description
+			st.Kind = string(rt.unit.Kind)
+			st.Path = rt.unit.Path
 		}
-	}
-	if ld.unit != nil && ld.unit.Kind == unit.KindTimer && m.engine != nil {
-		snap := m.engine.Status(name)
-		st.Next = formatTimerStamp(snap.Next)
-		st.Last = formatTimerStamp(snap.Last)
+		if rt.proc != nil && rt.proc.Alive() {
+			st.MainPID = rt.proc.PID()
+		}
+		if rt.invocation != "" {
+			st.InvocationID = rt.invocation
+		}
+		if rt.err != "" {
+			st.Error = rt.err
+			if r := core.StatusReason(rt.err); r != "" {
+				st.Reason = r
+			}
+		}
+		if rt.unit != nil && rt.unit.Kind == unit.KindTimer && m.engine != nil {
+			snap := m.engine.Status(name)
+			st.Next = formatTimerStamp(snap.Next)
+			st.Last = formatTimerStamp(snap.Last)
+		}
 	}
 	return st
 }
 
 func (m *Manager) stateOfLocked(name string) core.State {
-	if s, ok := m.states[name]; ok {
-		return s
+	if rt := m.units[name]; rt != nil {
+		return rt.state
 	}
 	return core.Inactive
 }
@@ -403,14 +370,14 @@ func (m *Manager) Start(ctx context.Context, name string) (*protocol.UnitResult,
 	m.applyRunLocked(run)
 	m.reapFailedLocked()
 	if err != nil {
-		m.errors[name] = err.Error()
+		m.setErrLocked(name, err.Error())
 		return &protocol.UnitResult{
 			Unit:        name,
 			ActiveState: m.stateOfLocked(name).String(),
 			Error:       err.Error(),
 		}, protocol.ErrFailed(err.Error())
 	}
-	delete(m.errors, name)
+	m.clearErrLocked(name)
 	return &protocol.UnitResult{Unit: name, ActiveState: m.stateOfLocked(name).String()}, nil
 }
 
@@ -419,15 +386,18 @@ func (m *Manager) applyRunLocked(run *core.Run) {
 		return
 	}
 	for name, st := range run.States {
-		if m.subOfLocked(name) == core.SubAutoRestart {
+		rt := m.units[name]
+		if rt == nil || rt.sub == core.SubAutoRestart {
 			continue
 		}
-		m.states[name] = st
+		rt.state = st
 	}
 	for name, err := range run.Errors {
-		if err != nil {
-			m.errors[name] = err.Error()
+		rt := m.units[name]
+		if rt == nil || err == nil {
+			continue
 		}
+		rt.err = err.Error()
 	}
 }
 
@@ -436,13 +406,13 @@ func (m *Manager) applyRunLocked(run *core.Run) {
 // Wants=/Requires= in reverse After=/Before= order (DESIGN.md §42).
 func (m *Manager) Stop(name string) (*protocol.UnitResult, error) {
 	m.mu.Lock()
-	ld, err := m.lookup(name)
+	rt, err := m.lookup(name)
 	if err != nil {
 		m.mu.Unlock()
 		return nil, err
 	}
-	kind := ld.unit.Kind
-	name = ld.unit.Name
+	kind := rt.unit.Kind
+	name = rt.unit.Name
 	m.mu.Unlock()
 	if kind == unit.KindTarget {
 		return m.stopTransaction(name)
@@ -462,12 +432,12 @@ func (m *Manager) Restart(ctx context.Context, name string) (*protocol.UnitResul
 // (snapshot only; no streaming RPC).
 func (m *Manager) Logs(p protocol.LogsParams) (*protocol.LogsResult, error) {
 	m.mu.Lock()
-	ld, err := m.lookup(p.Unit)
+	rt, err := m.lookup(p.Unit)
 	if err != nil {
 		m.mu.Unlock()
 		return nil, err
 	}
-	name := ld.unit.Name
+	name := rt.unit.Name
 	js := m.journal
 	m.mu.Unlock()
 
@@ -498,20 +468,21 @@ func (m *Manager) Logs(p protocol.LogsParams) (*protocol.LogsResult, error) {
 // Verify re-reads a loaded unit file (daemon-side; path verify stays in winctl).
 func (m *Manager) Verify(name string) (*protocol.VerifyResult, error) {
 	m.mu.Lock()
-	ld, err := m.lookup(name)
+	rt, err := m.lookup(name)
 	if err != nil {
 		m.mu.Unlock()
 		return nil, err
 	}
-	path := ld.unit.Path
-	unitName := ld.unit.Name
+	path := rt.unit.Path
+	unitName := rt.unit.Name
+	kind := rt.unit.Kind
 	m.mu.Unlock()
 
 	rep := unit.VerifyPath(path)
 	m.mu.Lock()
 	userScope := m.cfg.UserScope
 	var companionMissing string
-	if ld.unit.Kind == unit.KindRegistry {
+	if kind == unit.KindRegistry {
 		companion := unit.CompanionService(unitName)
 		if _, ok := m.units[companion]; !ok {
 			companionMissing = companion

@@ -59,13 +59,11 @@ func (m *Manager) shutdownRootsLocked() []string {
 		roots = append(roots, name)
 	}
 	add(ShutdownTarget)
-	for name := range m.units {
-		if m.stateOfLocked(name) != core.Inactive {
+	for name, rt := range m.units {
+		if rt != nil && rt.state != core.Inactive {
 			add(name)
 		}
-	}
-	for name, proc := range m.procs {
-		if proc != nil {
+		if rt != nil && rt.proc != nil {
 			add(name)
 		}
 	}
@@ -89,14 +87,14 @@ func (m *Manager) stopTransaction(name string) (*protocol.UnitResult, error) {
 	defer m.mu.Unlock()
 	m.applyRunLocked(run)
 	if err != nil {
-		m.errors[name] = err.Error()
+		m.setErrLocked(name, err.Error())
 		return &protocol.UnitResult{
 			Unit:        name,
 			ActiveState: m.stateOfLocked(name).String(),
 			Error:       err.Error(),
 		}, protocol.ErrFailed(err.Error())
 	}
-	delete(m.errors, name)
+	m.clearErrLocked(name)
 	return &protocol.UnitResult{Unit: name, ActiveState: m.stateOfLocked(name).String()}, nil
 }
 
@@ -108,35 +106,33 @@ func (m *Manager) stopUnitCtx(ctx context.Context, name string) error {
 
 func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 	m.mu.Lock()
-	ld, err := m.lookup(name)
+	rt, err := m.lookup(name)
 	if err != nil {
 		m.mu.Unlock()
 		return nil, err
 	}
-	name = ld.unit.Name
-	proc := m.procs[name]
-	delete(m.procs, name)
-	m.stopping[name] = true
-	m.gens[name]++
-	m.cancelRestartLocked(name)
-	rt := m.notifies[name]
-	delete(m.notifies, name)
-	wdCancel := m.watchdogs[name]
-	delete(m.watchdogs, name)
-	timeout := stopTimeout(ld.unit)
-	st, sub := core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventStopRequested)
-	m.states[name] = st
-	m.subs[name] = sub
-	delete(m.errors, name)
-	kind := ld.unit.Kind
-	scmName := scmServiceName(ld.unit)
+	name = rt.unit.Name
+	proc := rt.proc
+	rt.proc = nil
+	rt.stopping = true
+	rt.gen++
+	rt.cancelRestart()
+	nrt := rt.notify
+	rt.notify = nil
+	wdCancel := rt.watchdog
+	rt.watchdog = nil
+	timeout := stopTimeout(rt.unit)
+	rt.step(core.EventStopRequested)
+	rt.err = ""
+	kind := rt.unit.Kind
+	scmName := scmServiceName(rt.unit)
 	m.mu.Unlock()
 
 	if wdCancel != nil {
 		wdCancel()
 	}
-	if rt != nil {
-		rt.Close()
+	if nrt != nil {
+		nrt.Close()
 	}
 
 	if kind == unit.KindTimer && m.engine != nil {
@@ -157,19 +153,20 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	rt = m.units[name]
 	if stopErr != nil {
-		st, sub = core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventStartFailed)
-		m.states[name] = st
-		m.subs[name] = sub
-		m.errors[name] = stopErr.Error()
+		if rt != nil {
+			rt.step(core.EventStartFailed)
+			rt.err = stopErr.Error()
+		}
 		return &protocol.UnitResult{
 			Unit:        name,
 			ActiveState: core.Failed.String(),
 			Error:       stopErr.Error(),
 		}, protocol.ErrFailed(stopErr.Error())
 	}
-	st, sub = core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventStopFinished)
-	m.states[name] = st
-	m.subs[name] = sub
+	if rt != nil {
+		rt.step(core.EventStopFinished)
+	}
 	return &protocol.UnitResult{Unit: name, ActiveState: core.Inactive.String()}, nil
 }
