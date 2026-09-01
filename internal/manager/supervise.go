@@ -43,14 +43,16 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 		m.mu.Unlock()
 		return nil
 	}
+	// Bump gen only for a real launch. A redundant Start on a live
+	// process must not invalidate the running watchdog (issue #23).
+	if live := rt.proc; live != nil && live.Alive() {
+		m.mu.Unlock()
+		return nil
+	}
 	if !autoRestart {
 		rt.stopping = false
 		rt.gen++
 		rt.cancelRestart()
-	}
-	if live := rt.proc; live != nil && live.Alive() {
-		m.mu.Unlock()
-		return nil
 	}
 	rt.proc = nil
 	u := rt.unit

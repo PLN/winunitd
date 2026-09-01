@@ -208,6 +208,53 @@ Restart=no
 	})
 }
 
+func TestRedundantStartKeepsNotifyWatchdog(t *testing.T) {
+	t.Parallel()
+	launch := fakeNotifyLaunch()
+	m, fk := managerWithFake(t, launch, map[string]string{
+		"again.service": `
+[Service]
+Type=notify
+ExecStart=C:\App\again.exe
+WorkingDirectory=C:\App
+TimeoutStartSec=5s
+WatchdogSec=1s
+Restart=no
+`,
+	})
+	errc := make(chan error, 1)
+	go func() {
+		_, err := m.Start(context.Background(), "again")
+		errc <- err
+	}()
+	pipe := waitNotifyPipe(t, launch, "again.service")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := notify.SendRetry(ctx, pipe, notify.Message{Ready: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitErr(t, errc); err != nil {
+		t.Fatal(err)
+	}
+	assertState(t, m, "again.service", core.Active)
+	gen := genOf(t, m, "again.service")
+	if _, err := m.Start(context.Background(), "again"); err != nil {
+		t.Fatal(err)
+	}
+	if got := genOf(t, m, "again.service"); got != gen {
+		t.Fatalf("gen = %d after redundant Start, want %d", got, gen)
+	}
+	if n := len(launch.specs()); n != 1 {
+		t.Fatalf("starts = %d, want 1", n)
+	}
+	advanceWait(t, fk, time.Second)
+	waitCond(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.stateOfLocked("again.service") == core.Failed && m.subOfLocked("again.service") == core.SubWatchdog
+	})
+}
+
 func TestWatchdogExactlyAtBoundary(t *testing.T) {
 	t.Parallel()
 	launch := fakeNotifyLaunch()

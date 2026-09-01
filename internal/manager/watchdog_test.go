@@ -242,6 +242,84 @@ Restart=no
 	assertWatchdogActive(t, m, "v6.service")
 }
 
+func TestRedundantStartKeepsTCPWatchdog(t *testing.T) {
+	ln, addr := listenLoopbackTCP(t)
+	launch := &fakeLauncher{}
+	m, fk := managerWithFake(t, launch, map[string]string{
+		"tcp.service": fmt.Sprintf(`
+[Service]
+Type=simple
+ExecStart=C:\App\tcp.exe
+WorkingDirectory=C:\App
+WatchdogMode=tcp
+WatchdogEndpoint=%s
+WatchdogSec=1s
+Restart=no
+`, addr),
+	})
+	if _, err := m.Start(context.Background(), "tcp"); err != nil {
+		t.Fatal(err)
+	}
+	assertState(t, m, "tcp.service", core.Active)
+	gen := genOf(t, m, "tcp.service")
+	if _, err := m.Start(context.Background(), "tcp"); err != nil {
+		t.Fatal(err)
+	}
+	if got := genOf(t, m, "tcp.service"); got != gen {
+		t.Fatalf("gen = %d after redundant Start, want %d", got, gen)
+	}
+	if n := len(launch.specs()); n != 1 {
+		t.Fatalf("starts = %d, want 1", n)
+	}
+	_ = ln.Close()
+	advanceWait(t, fk, time.Second)
+	waitWatchdogFailed(t, m, "tcp.service")
+}
+
+func TestTimerElapseDoesNotDisarmSimpleWatchdog(t *testing.T) {
+	ln, addr := listenLoopbackTCP(t)
+	launch := &fakeLauncher{}
+	m, fk := managerWithFake(t, launch, map[string]string{
+		"wd.service": fmt.Sprintf(`
+[Service]
+Type=simple
+ExecStart=C:\App\wd.exe
+WorkingDirectory=C:\App
+WatchdogMode=tcp
+WatchdogEndpoint=%s
+WatchdogSec=2s
+Restart=no
+`, addr),
+		"wd.timer": `
+[Timer]
+OnStartupSec=1s
+`,
+	})
+	if _, err := m.Start(context.Background(), "wd.service"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Start(context.Background(), "wd.timer"); err != nil {
+		t.Fatal(err)
+	}
+	assertState(t, m, "wd.service", core.Active)
+	gen := genOf(t, m, "wd.service")
+	advanceArmed(t, fk, time.Second)
+	waitCond(t, func() bool {
+		st, err := m.Status("wd.timer")
+		return err == nil && st.Unit != nil && st.Unit.Last != ""
+	})
+	if got := genOf(t, m, "wd.service"); got != gen {
+		t.Fatalf("gen = %d after timer elapse Start, want %d", got, gen)
+	}
+	if n := len(launch.specs()); n != 1 {
+		t.Fatalf("starts = %d after timer elapse, want 1", n)
+	}
+	assertState(t, m, "wd.service", core.Active)
+	_ = ln.Close()
+	advanceArmed(t, fk, time.Second)
+	waitWatchdogFailed(t, m, "wd.service")
+}
+
 func TestWatchdogProbeModeHelper(t *testing.T) {
 	t.Parallel()
 	s := &unit.ServiceSpec{WatchdogMode: unit.WatchdogModeTCP}
