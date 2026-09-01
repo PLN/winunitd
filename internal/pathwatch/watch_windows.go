@@ -52,9 +52,13 @@ func OpenWatch(s Spec) (Watch, error) {
 	if err != nil {
 		return nil, err
 	}
+	return openDirWatch(watchDir, filter)
+}
+
+func openDirWatch(watchDir, filter string) (Watch, error) {
 	p, err := windows.UTF16PtrFromString(watchDir)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrUnwatchable, s.Raw)
+		return nil, fmt.Errorf("%w: %s", ErrUnwatchable, watchDir)
 	}
 	h, err := windows.CreateFile(
 		p,
@@ -67,14 +71,14 @@ func OpenWatch(s Spec) (Watch, error) {
 	)
 	if err != nil {
 		if isMissing(err) {
-			return nil, fmt.Errorf("%w: %s", ErrMissingPath, s.Raw)
+			return nil, fmt.Errorf("%w: %s", ErrMissingPath, watchDir)
 		}
-		return nil, fmt.Errorf("%w: %s: %v", ErrUnwatchable, s.Raw, err)
+		return nil, fmt.Errorf("%w: %s: %v", ErrUnwatchable, watchDir, err)
 	}
 	ev, err := windows.CreateEvent(nil, 0, 0, nil)
 	if err != nil {
 		_ = windows.CloseHandle(h)
-		return nil, fmt.Errorf("%w: %s: %v", ErrUnwatchable, s.Raw, err)
+		return nil, fmt.Errorf("%w: %s: %v", ErrUnwatchable, watchDir, err)
 	}
 	w := &winWatch{
 		dir:    h,

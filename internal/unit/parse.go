@@ -61,6 +61,7 @@ var knownDirectives = map[string]map[string]bool{
 	},
 	"Path": {
 		"PathChanged": true,
+		"PathExists":  true,
 	},
 	"Install": {
 		"WantedBy": true,
@@ -149,8 +150,10 @@ type eventLogBuilder struct {
 }
 
 type pathBuilder struct {
-	changed []string
-	lines   []int
+	changed      []string
+	changedLines []int
+	exists       []string
+	existsLines  []int
 }
 
 type parser struct {
@@ -450,7 +453,10 @@ func (p *parser) applyPath(e iniEntry) {
 	switch e.key {
 	case "PathChanged":
 		ph.changed = append(ph.changed, e.value)
-		ph.lines = append(ph.lines, e.line)
+		ph.changedLines = append(ph.changedLines, e.line)
+	case "PathExists":
+		ph.exists = append(ph.exists, e.value)
+		ph.existsLines = append(ph.existsLines, e.line)
 	}
 }
 
@@ -881,7 +887,7 @@ func (p *parser) finishPath() {
 		return
 	}
 	for i, raw := range ph.changed {
-		line := ph.lines[i]
+		line := ph.changedLines[i]
 		if strings.TrimSpace(raw) == "" {
 			p.errorf(line, "empty path")
 			continue
@@ -893,7 +899,20 @@ func (p *parser) finishPath() {
 		}
 		spec.Changed = append(spec.Changed, sp)
 	}
-	if len(ph.changed) == 0 {
-		p.errorf(0, "path must specify PathChanged")
+	for i, raw := range ph.exists {
+		line := ph.existsLines[i]
+		if strings.TrimSpace(raw) == "" {
+			p.errorf(line, "empty path")
+			continue
+		}
+		sp, err := pathwatch.ParseExists(raw)
+		if err != nil {
+			p.errorf(line, "invalid PathExists: %s", err.Error())
+			continue
+		}
+		spec.Exists = append(spec.Exists, sp)
+	}
+	if len(ph.changed) == 0 && len(ph.exists) == 0 {
+		p.errorf(0, "path must specify PathChanged or PathExists")
 	}
 }

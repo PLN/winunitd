@@ -22,22 +22,24 @@ import (
 
 // Manager holds loaded units and serves the control protocol.
 type Manager struct {
-	cfg     Config
-	clk     timers.Clock
-	launch  runtime.Launcher
-	journal *journal.Store
-	engine  *timers.Engine
-	mu      sync.Mutex
-	units   map[string]*unitRuntime
-	graph   *core.Graph
-	closed  bool
-	scm     runtime.SCM
-	tasks   runtime.TaskScheduler
-	regOpen  registry.OpenFunc
-	evtOpen  eventlog.OpenFunc
-	pathOpen pathwatch.OpenFunc
-	session sync.Mutex // serializes graphical-session.target start/stop
-	ops     unitOps    // per-unit start/stop/restart (issue #24)
+	cfg            Config
+	clk            timers.Clock
+	launch         runtime.Launcher
+	journal        *journal.Store
+	engine         *timers.Engine
+	mu             sync.Mutex
+	units          map[string]*unitRuntime
+	graph          *core.Graph
+	closed         bool
+	scm            runtime.SCM
+	tasks          runtime.TaskScheduler
+	regOpen        registry.OpenFunc
+	evtOpen        eventlog.OpenFunc
+	pathOpen       pathwatch.OpenFunc
+	pathExistsOpen pathwatch.OpenFunc
+	pathExists     pathwatch.ExistsFunc
+	session        sync.Mutex // serializes graphical-session.target start/stop
+	ops            unitOps    // per-unit start/stop/restart (issue #24)
 }
 
 // New creates a manager. Reload must be called to load units.
@@ -107,6 +109,16 @@ func New(cfg Config) (*Manager, error) {
 		m.pathOpen = cfg.PathOpen
 	} else {
 		m.pathOpen = pathwatch.OpenWatch
+	}
+	if cfg.PathExistsOpen != nil {
+		m.pathExistsOpen = cfg.PathExistsOpen
+	} else {
+		m.pathExistsOpen = pathwatch.OpenExistsWatch
+	}
+	if cfg.PathExists != nil {
+		m.pathExists = cfg.PathExists
+	} else {
+		m.pathExists = pathwatch.Exists
 	}
 	m.engine = timers.NewEngine(clk, store, m.onTimerElapsed)
 	return m, nil

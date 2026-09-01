@@ -1629,7 +1629,7 @@ PathChanged=
 			src: `
 [Path]
 `,
-			wantErr: []string{"PathChanged"},
+			wantErr: []string{"PathChanged or PathExists"},
 		},
 		{
 			name: "path Unit= is unknown",
@@ -1642,14 +1642,97 @@ Unit=other.service
 			wantErr: []string{`unknown directive "Unit"`},
 		},
 		{
-			name: "path PathExists= is unknown",
+			name: "path PathExists= implicit unit",
+			file: "foo.path",
+			src: `
+[Path]
+PathExists=C:\Data\incoming
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.PathWatch.Unit != "foo.service" {
+					t.Fatalf("activated = %q", u.PathWatch.Unit)
+				}
+				if len(u.PathWatch.Exists) != 1 || u.PathWatch.Exists[0].Raw != `C:\Data\incoming` {
+					t.Fatalf("exists = %#v", u.PathWatch.Exists)
+				}
+				if len(u.PathWatch.Changed) != 0 {
+					t.Fatalf("changed = %#v", u.PathWatch.Changed)
+				}
+			},
+		},
+		{
+			name: "path PathExists= repeatable AND stored in order",
+			file: "pair.path",
+			src: `
+[Path]
+PathExists=C:\Data\a
+PathExists=C:\Data\b
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if len(u.PathWatch.Exists) != 2 {
+					t.Fatalf("exists = %#v", u.PathWatch.Exists)
+				}
+				if u.PathWatch.Exists[0].Raw != `C:\Data\a` || u.PathWatch.Exists[1].Raw != `C:\Data\b` {
+					t.Fatalf("exists = %#v", u.PathWatch.Exists)
+				}
+			},
+		},
+		{
+			name: "path mix PathChanged and PathExists",
 			file: "foo.path",
 			src: `
 [Path]
 PathChanged=C:\Data\incoming
-PathExists=C:\Data\incoming
+PathExists=C:\Data\ready.flag
 `,
-			wantErr: []string{`unknown directive "PathExists"`},
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if len(u.PathWatch.Changed) != 1 || u.PathWatch.Changed[0].Raw != `C:\Data\incoming` {
+					t.Fatalf("changed = %#v", u.PathWatch.Changed)
+				}
+				if len(u.PathWatch.Exists) != 1 || u.PathWatch.Exists[0].Raw != `C:\Data\ready.flag` {
+					t.Fatalf("exists = %#v", u.PathWatch.Exists)
+				}
+			},
+		},
+		{
+			name: "path PathExists= relative fails",
+			file: "foo.path",
+			src: `
+[Path]
+PathExists=incoming
+`,
+			wantErr: []string{"absolute Windows path"},
+		},
+		{
+			name: "path PathExists= posix rooted fails",
+			file: "foo.path",
+			src: `
+[Path]
+PathExists=/tmp/incoming
+`,
+			wantErr: []string{"absolute Windows path"},
+		},
+		{
+			name: "path PathExists= empty fails",
+			file: "foo.path",
+			src: `
+[Path]
+PathExists=
+`,
+			wantErr: []string{"empty path"},
+		},
+		{
+			name: "path PathExistsIsDirectory= is unknown",
+			file: "foo.path",
+			src: `
+[Path]
+PathExists=C:\Data\incoming
+PathExistsIsDirectory=C:\Data\incoming
+`,
+			wantErr: []string{`unknown directive "PathExistsIsDirectory"`},
 		},
 		{
 			name: "path cannot have registry section",

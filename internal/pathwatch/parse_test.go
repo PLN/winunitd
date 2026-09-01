@@ -23,6 +23,14 @@ func TestParse(t *testing.T) {
 		t.Fatalf("unc = %q", unc.Raw)
 	}
 
+	exists, err := ParseExists(`C:\Data\ready.flag`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists.Raw != `C:\Data\ready.flag` {
+		t.Fatalf("exists = %q", exists.Raw)
+	}
+
 	fwd, err := Parse(`C:/Data/incoming`)
 	if err != nil {
 		t.Fatal(err)
@@ -43,9 +51,19 @@ func TestParse(t *testing.T) {
 		{`C:incoming`, "absolute Windows path"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.raw, func(t *testing.T) {
+		t.Run("changed "+tt.raw, func(t *testing.T) {
 			t.Parallel()
 			_, err := Parse(tt.raw)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("err = %v, want %q", err, tt.wantErr)
+			}
+		})
+		t.Run("exists "+tt.raw, func(t *testing.T) {
+			t.Parallel()
+			_, err := ParseExists(tt.raw)
 			if err == nil {
 				t.Fatal("expected error")
 			}
