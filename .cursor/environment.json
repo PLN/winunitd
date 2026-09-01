@@ -1,0 +1,4 @@
+{
+  "name": "winunitd",
+  "install": "go mod download && go build -o /tmp/winunitd-build-linux/ ./cmd/... && GOOS=windows GOARCH=amd64 go build -o /tmp/winunitd-build-windows/ ./cmd/..."
+}
