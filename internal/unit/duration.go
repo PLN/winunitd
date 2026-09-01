@@ -2,11 +2,15 @@ package unit
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
+
+const maxDuration = time.Duration(math.MaxInt64)
 
 // parseDuration parses a systemd-style time span.
 // A bare number is seconds. Units may be concatenated or whitespace-separated
@@ -17,7 +21,7 @@ func parseDuration(s string) (time.Duration, error) {
 		return 0, fmt.Errorf("empty duration")
 	}
 	if strings.EqualFold(s, "infinity") {
-		return time.Duration(1<<63 - 1), nil
+		return maxDuration, nil
 	}
 
 	var total time.Duration
@@ -44,13 +48,13 @@ func parseDuration(s string) (time.Duration, error) {
 		}
 		uStart := i
 		for i < n {
-			r := rune(s[i])
+			r, size := utf8.DecodeRuneInString(s[i:])
 			if r == 'µ' || r == 'μ' {
-				i++
+				i += size
 				continue
 			}
 			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
-				i++
+				i += size
 				continue
 			}
 			break
@@ -67,6 +71,9 @@ func parseDuration(s string) (time.Duration, error) {
 		if err != nil {
 			return 0, fmt.Errorf("invalid duration %q: %w", s, err)
 		}
+		if d > 0 && total > maxDuration-d {
+			return 0, fmt.Errorf("invalid duration %q: duration overflow", s)
+		}
 		total += d
 		parsed = true
 	}
@@ -81,7 +88,22 @@ func durationUnit(unit string, n float64) (time.Duration, error) {
 	if !ok {
 		return 0, fmt.Errorf("unknown unit %q", unit)
 	}
-	return time.Duration(n * float64(mult)), nil
+	if n < 0 || math.IsNaN(n) || math.IsInf(n, 0) {
+		return 0, fmt.Errorf("duration overflow")
+	}
+	maxN := float64(maxDuration) / float64(mult)
+	if n > maxN {
+		return 0, fmt.Errorf("duration overflow")
+	}
+	ns := n * float64(mult)
+	if ns > float64(maxDuration) {
+		return 0, fmt.Errorf("duration overflow")
+	}
+	d := time.Duration(ns)
+	if d < 0 {
+		return 0, fmt.Errorf("duration overflow")
+	}
+	return d, nil
 }
 
 var durationUnits = map[string]time.Duration{

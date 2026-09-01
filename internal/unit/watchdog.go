@@ -332,8 +332,9 @@ func (s *ServiceSpec) ProbeWatchdog(ctx context.Context) error {
 	}
 }
 
-// WatchdogProbeTimeout is the per-probe deadline, capped so a hung localhost
-// connect cannot outlast WatchdogSec=.
+// WatchdogProbeTimeout is the per-probe deadline. It equals the watchdog
+// interval so a hung localhost connect cannot outlast WatchdogSec=. A
+// non-positive interval yields 1s.
 func WatchdogProbeTimeout(interval time.Duration) time.Duration {
 	if interval <= 0 {
 		return time.Second
