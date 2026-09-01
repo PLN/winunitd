@@ -58,6 +58,19 @@ func logIllegalTransition(name string, err error) {
 	log.Printf("winunitd: %s: %v (not applied)", name, err)
 }
 
+// sameOp reports whether this runtime still owns the lifecycle op that
+// captured gen. If a different proc is now installed, the captured op
+// must not apply a terminal state (issue #24; same idea as watch()).
+func (rt *unitRuntime) sameOp(gen uint64, proc runtime.Process) bool {
+	if rt == nil || rt.gen != gen {
+		return false
+	}
+	if rt.proc != nil && rt.proc != proc {
+		return false
+	}
+	return true
+}
+
 func (rt *unitRuntime) cancelRestart() {
 	if rt == nil || rt.restartCancel == nil {
 		return
