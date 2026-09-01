@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -178,24 +179,51 @@ func TestUserManagerCreateProcessDoesNotInheritListener(t *testing.T) {
 		}
 	}()
 
+	// Same child as TestCreateProcessWithLoopbackListenerKeepsHelperAlive.
+	// A Go test-binary helper can die on an inherited overlapped socket even
+	// when ping (the unit-path regression) stays alive; ExtraArgs sleep was
+	// not enough to keep that helper running under CreateProcessAsUser.
+	root := os.Getenv("SystemRoot")
+	if root == "" {
+		root = `C:\Windows`
+	}
+	ping := filepath.Join(root, "System32", "ping.exe")
+	if _, err := os.Stat(ping); err != nil {
+		t.Fatalf("ping.exe: %v", err)
+	}
+
 	userTok := testUserToken(t)
-	env := MergeDeterministicUserEnv(helperEnv("WINUNITD_JOB_HELPER=sleep"), userTok.Info)
 	proc, err := StartUserManager(UserManagerSpec{
-		SID:       userTok.Info.SID,
-		Token:     userTok,
-		Exe:       testAbs(t),
-		Env:       env,
-		ExtraArgs: []string{winunitdHelperArgPrefix + "sleep"},
+		SID:     userTok.Info.SID,
+		Token:   userTok,
+		Exe:     ping,
+		Env:     helperEnv(),
+		cmdArgv: []string{ping, "-t", "127.0.0.1"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer proc.Kill()
 	if !proc.Alive() {
-		t.Fatal("user manager died immediately")
+		t.Fatalf("user manager died immediately (exit=%d)", userManagerExitCode(proc))
 	}
 	time.Sleep(400 * time.Millisecond)
 	if !proc.Alive() {
-		t.Fatal("user manager died while parent held a loopback listener")
+		t.Fatalf("user manager died while parent held a loopback listener (exit=%d)", userManagerExitCode(proc))
 	}
+}
+
+func userManagerExitCode(proc UserManagerProc) uint32 {
+	p, ok := proc.(*userMgrProc)
+	if !ok || p == nil {
+		return 0
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.process == 0 {
+		return 0
+	}
+	var code uint32
+	_ = windows.GetExitCodeProcess(p.process, &code)
+	return code
 }
