@@ -110,6 +110,57 @@ RegistryChanged=HKLM\Software\Example
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "applog.service"), []byte(`
+[Service]
+Type=oneshot
+ExecStart=C:\Tools\run-once.exe
+WorkingDirectory=C:\Tools
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	evtOK := filepath.Join(dir, "applog.eventlog")
+	if err := os.WriteFile(evtOK, []byte(`
+[EventLog]
+EventLogTrigger=Application:EventID=1234
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "syslog.service"), []byte(`
+[Service]
+Type=oneshot
+ExecStart=C:\Tools\run-once.exe
+WorkingDirectory=C:\Tools
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	evtSystem := filepath.Join(dir, "syslog.eventlog")
+	if err := os.WriteFile(evtSystem, []byte(`
+[EventLog]
+EventLogTrigger=System:EventID=1
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	evtBad := filepath.Join(dir, "bad.eventlog")
+	if err := os.WriteFile(evtBad, []byte(`
+[EventLog]
+EventLogTrigger=System:
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	evtABC := filepath.Join(dir, "abc.eventlog")
+	if err := os.WriteFile(evtABC, []byte(`
+[EventLog]
+EventLogTrigger=EventID=abc
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	evtOrphan := filepath.Join(dir, "orphan.eventlog")
+	if err := os.WriteFile(evtOrphan, []byte(`
+[EventLog]
+EventLogTrigger=Application:EventID=1
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	scm := filepath.Join(dir, "mssql.service")
 	if err := os.WriteFile(scm, []byte(`
 [Service]
@@ -221,6 +272,72 @@ Type=scm
 		}
 		if !strings.Contains(out.String(), "userwatch.registry: verified") {
 			t.Fatalf("stdout=%s", out.String())
+		}
+	})
+
+	t.Run("eventlog pair", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"verify", evtOK}, &out, &errb)
+		if code != 0 {
+			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(out.String(), "applog.eventlog: verified") {
+			t.Fatalf("stdout=%s", out.String())
+		}
+	})
+
+	t.Run("eventlog missing companion", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"verify", evtOrphan}, &out, &errb)
+		if code != 1 {
+			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(errb.String(), "missing companion orphan.service") {
+			t.Fatalf("stderr=%s", errb.String())
+		}
+	})
+
+	t.Run("user System eventlog fails", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"--user", "verify", evtSystem}, &out, &errb)
+		if code != 1 {
+			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(errb.String(), "System") {
+			t.Fatalf("stderr=%s", errb.String())
+		}
+	})
+
+	t.Run("system System eventlog verifies", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"verify", evtSystem}, &out, &errb)
+		if code != 0 {
+			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(out.String(), "syslog.eventlog: verified") {
+			t.Fatalf("stdout=%s", out.String())
+		}
+	})
+
+	t.Run("eventlog System: fails", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"verify", evtBad}, &out, &errb)
+		if code != 1 {
+			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(errb.String(), "EventID") {
+			t.Fatalf("stderr=%s", errb.String())
+		}
+	})
+
+	t.Run("eventlog EventID=abc fails", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"verify", evtABC}, &out, &errb)
+		if code != 1 {
+			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(errb.String(), "EventID") {
+			t.Fatalf("stderr=%s", errb.String())
 		}
 	})
 

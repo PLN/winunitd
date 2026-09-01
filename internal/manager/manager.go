@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/eventlog"
 	"github.com/PLN/winunitd/internal/journal"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/registry"
@@ -47,6 +48,8 @@ type Manager struct {
 	scm         runtime.SCM
 	regOpen     registry.OpenFunc
 	regWatches  map[string]*registryRuntime
+	evtOpen     eventlog.OpenFunc
+	evtWatches  map[string]*eventLogRuntime
 	session     sync.Mutex // serializes graphical-session.target start/stop
 }
 
@@ -102,11 +105,17 @@ func New(cfg Config) (*Manager, error) {
 		terminated:  make(map[string]bool),
 		invocations: make(map[string]string),
 		regWatches:  make(map[string]*registryRuntime),
+		evtWatches:  make(map[string]*eventLogRuntime),
 	}
 	if cfg.RegistryOpen != nil {
 		m.regOpen = cfg.RegistryOpen
 	} else {
 		m.regOpen = registry.OpenWatch
+	}
+	if cfg.EventLogOpen != nil {
+		m.evtOpen = cfg.EventLogOpen
+	} else {
+		m.evtOpen = eventlog.OpenSubscribe
 	}
 	m.engine = timers.NewEngine(clk, store, m.onTimerElapsed)
 	return m, nil
@@ -141,6 +150,7 @@ func (m *Manager) Close() {
 		m.engine.Stop()
 	}
 	m.disarmAllRegistry()
+	m.disarmAllEventLog()
 }
 
 // Handle implements protocol.Handler.
@@ -506,7 +516,7 @@ func (m *Manager) Verify(name string) (*protocol.VerifyResult, error) {
 	m.mu.Lock()
 	userScope := m.cfg.UserScope
 	var companionMissing string
-	if ld.unit.Kind == unit.KindRegistry {
+	if ld.unit.Kind == unit.KindRegistry || ld.unit.Kind == unit.KindEventLog {
 		companion := unit.CompanionService(unitName)
 		if _, ok := m.units[companion]; !ok {
 			companionMissing = companion
@@ -515,6 +525,7 @@ func (m *Manager) Verify(name string) (*protocol.VerifyResult, error) {
 	m.mu.Unlock()
 
 	rep.Issues = append(rep.Issues, unit.RegistryScopeIssues(rep.Unit, userScope)...)
+	rep.Issues = append(rep.Issues, unit.EventLogScopeIssues(rep.Unit, userScope)...)
 	if companionMissing != "" {
 		rep.Issues = append(rep.Issues, unit.Issue{
 			Path:     path,

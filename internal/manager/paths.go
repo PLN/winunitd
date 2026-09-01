@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/PLN/winunitd/internal/eventlog"
 	"github.com/PLN/winunitd/internal/notify"
 	"github.com/PLN/winunitd/internal/registry"
 	"github.com/PLN/winunitd/internal/runtime"
@@ -55,6 +56,10 @@ type Config struct {
 	// registry.OpenWatch (Windows RegNotifyChangeKeyValue; stub on Linux).
 	// Tests inject a fake so Linux can exercise start-on-change.
 	RegistryOpen registry.OpenFunc
+	// EventLogOpen opens an Event Log push subscription. Nil uses
+	// eventlog.OpenSubscribe (Windows EvtSubscribe; stub on Linux).
+	// Tests inject a fake so Linux can exercise start-on-match.
+	EventLogOpen eventlog.OpenFunc
 }
 
 // DefaultBaseDir is C:\ProgramData\winunitd when ProgramData is set.

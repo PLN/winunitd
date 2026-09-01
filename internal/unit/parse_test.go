@@ -1005,8 +1005,8 @@ WantedBy=multi-user.target
 				if u.Kind != KindTarget {
 					t.Fatalf("kind = %s", u.Kind)
 				}
-				if u.Service != nil || u.Timer != nil || u.Registry != nil {
-					t.Fatal("target should not have service/timer/registry specs")
+				if u.Service != nil || u.Timer != nil || u.Registry != nil || u.EventLog != nil {
+					t.Fatal("target should not have service/timer/registry/eventlog specs")
 				}
 			},
 		},
@@ -1111,6 +1111,109 @@ RegistryChanged=HKLM\Software\Example
 OnCalendar=daily
 `,
 			wantErr: []string{"section [Timer] is not valid in a registry unit"},
+		},
+		{
+			name: "eventlog implicit unit",
+			file: "foo.eventlog",
+			src: `
+[EventLog]
+EventLogTrigger=System:EventID=1234
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Kind != KindEventLog {
+					t.Fatalf("kind = %s", u.Kind)
+				}
+				if u.EventLog.Unit != "foo.service" {
+					t.Fatalf("activated = %q", u.EventLog.Unit)
+				}
+				if len(u.EventLog.Triggers) != 1 || u.EventLog.Triggers[0].Channel != "System" || u.EventLog.Triggers[0].EventID != 1234 {
+					t.Fatalf("triggers = %#v", u.EventLog.Triggers)
+				}
+			},
+		},
+		{
+			name: "eventlog repeatable triggers",
+			file: "pair.eventlog",
+			src: `
+[EventLog]
+EventLogTrigger=Application:EventID=1
+EventLogTrigger=System:EventID=2
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if len(u.EventLog.Triggers) != 2 {
+					t.Fatalf("triggers = %#v", u.EventLog.Triggers)
+				}
+				if u.EventLog.Triggers[0].Channel != "Application" || u.EventLog.Triggers[1].EventID != 2 {
+					t.Fatalf("triggers = %#v", u.EventLog.Triggers)
+				}
+			},
+		},
+		{
+			name: "eventlog System: fails",
+			file: "foo.eventlog",
+			src: `
+[EventLog]
+EventLogTrigger=System:
+`,
+			wantErr: []string{"<Channel>:EventID=<uint16>"},
+		},
+		{
+			name: "eventlog EventID=abc fails",
+			file: "foo.eventlog",
+			src: `
+[EventLog]
+EventLogTrigger=EventID=abc
+`,
+			wantErr: []string{"<Channel>:EventID=<uint16>"},
+		},
+		{
+			name: "eventlog EventID=0 fails",
+			file: "foo.eventlog",
+			src: `
+[EventLog]
+EventLogTrigger=System:EventID=0
+`,
+			wantErr: []string{"EventID=0"},
+		},
+		{
+			name: "eventlog empty channel fails",
+			file: "foo.eventlog",
+			src: `
+[EventLog]
+EventLogTrigger=:EventID=1
+`,
+			wantErr: []string{"empty channel"},
+		},
+		{
+			name: "eventlog missing trigger fails",
+			file: "foo.eventlog",
+			src: `
+[EventLog]
+`,
+			wantErr: []string{"EventLogTrigger"},
+		},
+		{
+			name: "eventlog Unit= is unknown",
+			file: "foo.eventlog",
+			src: `
+[EventLog]
+EventLogTrigger=Application:EventID=1
+Unit=other.service
+`,
+			wantErr: []string{`unknown directive "Unit"`},
+		},
+		{
+			name: "eventlog cannot have registry section",
+			file: "foo.eventlog",
+			src: `
+[EventLog]
+EventLogTrigger=Application:EventID=1
+[Registry]
+RegistryChanged=HKLM\Software\Example
+`,
+			wantErr: []string{"section [Registry] is not valid in a eventlog unit"},
 		},
 	}
 

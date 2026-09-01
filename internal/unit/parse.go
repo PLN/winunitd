@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PLN/winunitd/internal/eventlog"
 	"github.com/PLN/winunitd/internal/registry"
 	"github.com/PLN/winunitd/internal/timers"
 )
@@ -49,6 +50,9 @@ var knownDirectives = map[string]map[string]bool{
 	"Registry": {
 		"RegistryChanged": true,
 	},
+	"EventLog": {
+		"EventLogTrigger": true,
+	},
 	"Install": {
 		"WantedBy": true,
 	},
@@ -59,6 +63,7 @@ var sectionsByKind = map[Kind]map[string]bool{
 	KindTimer:    {"Unit": true, "Timer": true, "Install": true},
 	KindTarget:   {"Unit": true, "Install": true},
 	KindRegistry: {"Unit": true, "Registry": true, "Install": true},
+	KindEventLog: {"Unit": true, "EventLog": true, "Install": true},
 }
 
 type serviceBuilder struct {
@@ -126,6 +131,11 @@ type registryBuilder struct {
 	lines   []int
 }
 
+type eventLogBuilder struct {
+	triggers []string
+	lines    []int
+}
+
 type parser struct {
 	path   string
 	name   string
@@ -136,6 +146,7 @@ type parser struct {
 	svc   *serviceBuilder
 	timer *timerBuilder
 	reg   *registryBuilder
+	evt   *eventLogBuilder
 
 	ris     string
 	risLine int
@@ -206,6 +217,9 @@ func Parse(path, name string, src []byte) Report {
 		if sec.name == "Registry" && p.reg == nil {
 			p.reg = &registryBuilder{}
 		}
+		if sec.name == "EventLog" && p.evt == nil {
+			p.evt = &eventLogBuilder{}
+		}
 		for _, e := range sec.entries {
 			if !known[e.key] {
 				p.errorf(e.line, "unknown directive %q in section [%s]", e.key, sec.name)
@@ -243,6 +257,11 @@ func (p *parser) apply(section string, e iniEntry) {
 			p.reg = &registryBuilder{}
 		}
 		p.applyRegistry(e)
+	case "EventLog":
+		if p.evt == nil {
+			p.evt = &eventLogBuilder{}
+		}
+		p.applyEventLog(e)
 	case "Install":
 		p.applyInstall(e)
 	}
@@ -371,6 +390,15 @@ func (p *parser) applyRegistry(e iniEntry) {
 	}
 }
 
+func (p *parser) applyEventLog(e iniEntry) {
+	ev := p.evt
+	switch e.key {
+	case "EventLogTrigger":
+		ev.triggers = append(ev.triggers, e.value)
+		ev.lines = append(ev.lines, e.line)
+	}
+}
+
 func (p *parser) applyInstall(e iniEntry) {
 	switch e.key {
 	case "WantedBy":
@@ -393,6 +421,8 @@ func (p *parser) finish() {
 		p.finishTimer()
 	case KindRegistry:
 		p.finishRegistry()
+	case KindEventLog:
+		p.finishEventLog()
 	case KindTarget:
 		// targets have no extra required fields
 	}
@@ -703,5 +733,31 @@ func (p *parser) finishRegistry() {
 	}
 	if len(r.changed) == 0 {
 		p.errorf(0, "registry must specify RegistryChanged")
+	}
+}
+
+func (p *parser) finishEventLog() {
+	spec := &EventLogSpec{Unit: CompanionService(p.name)}
+	p.unit.EventLog = spec
+	ev := p.evt
+	if ev == nil {
+		p.errorf(0, "eventlog unit requires a [EventLog] section")
+		return
+	}
+	for i, raw := range ev.triggers {
+		line := ev.lines[i]
+		if strings.TrimSpace(raw) == "" {
+			p.errorf(line, "empty EventLogTrigger")
+			continue
+		}
+		tr, err := eventlog.ParseTrigger(raw)
+		if err != nil {
+			p.errorf(line, "invalid EventLogTrigger: %s", err.Error())
+			continue
+		}
+		spec.Triggers = append(spec.Triggers, tr)
+	}
+	if len(ev.triggers) == 0 {
+		p.errorf(0, "eventlog must specify EventLogTrigger")
 	}
 }

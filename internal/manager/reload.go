@@ -63,6 +63,10 @@ func (m *Manager) Reload() (*protocol.DaemonReloadResult, error) {
 			result.Errors = append(result.Errors, iss.String())
 			scopeFail = true
 		}
+		for _, iss := range unit.EventLogScopeIssues(rep.Unit, m.cfg.UserScope) {
+			result.Errors = append(result.Errors, iss.String())
+			scopeFail = true
+		}
 		if scopeFail {
 			continue
 		}
@@ -112,4 +116,5 @@ func (m *Manager) replaceLocked(units []*unit.Unit, g *core.Graph) {
 	// units that remain. Vanished units are not stopped (DESIGN.md §33).
 	m.syncTimersLocked()
 	m.syncRegistryLocked()
+	m.syncEventLogLocked()
 }
