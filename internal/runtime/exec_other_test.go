@@ -70,6 +70,12 @@ func TestStubUnitJob(t *testing.T) {
 	if err := j.Kill(); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := j.QueryLimits(); err != nil {
+		t.Fatal(err)
+	}
+	if j.ResourceLimitC() != nil {
+		t.Fatal("stub ResourceLimitC must be nil")
+	}
 	if err := j.Close(); err != nil {
 		t.Fatal(err)
 	}

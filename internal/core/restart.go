@@ -14,7 +14,13 @@ const (
 	ExitAbnormal
 	// ExitWatchdog is a missed WatchdogSec= heartbeat.
 	ExitWatchdog
+	// ExitResourceLimit is a Job Object MemoryMax= or ProcessLimit= hit.
+	ExitResourceLimit
 )
+
+// ReasonResourceLimit is the winctl status reason for a Job Object limit
+// (DESIGN.md §44).
+const ReasonResourceLimit = "resource-limit"
 
 func (k ExitKind) String() string {
 	switch k {
@@ -26,6 +32,8 @@ func (k ExitKind) String() string {
 		return "abnormal"
 	case ExitWatchdog:
 		return "watchdog"
+	case ExitResourceLimit:
+		return "resource-limit"
 	default:
 		return "exit-kind"
 	}
@@ -35,8 +43,8 @@ func (k ExitKind) String() string {
 // main process has exited. There is no StartLimitBurst / StartLimitInterval.
 //
 //	no:          never
-//	always:      any exit, including 0 and watchdog
-//	on-failure:  non-zero exit, crash/signal-style failure, and watchdog
+//	always:      any exit, including 0, watchdog, and resource-limit
+//	on-failure:  non-zero exit, crash/signal-style failure, watchdog, and resource-limit
 //	on-watchdog: missed WatchdogSec= only
 func ShouldRestart(policy unit.RestartPolicy, kind ExitKind) bool {
 	switch policy {

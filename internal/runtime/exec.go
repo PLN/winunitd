@@ -41,6 +41,8 @@ type StartSpec struct {
 	// bounds waiting for the process to exit. Type=notify ignores this
 	// (the manager bounds READY=1 with TimeoutStartSec). Zero means no extra timeout.
 	TimeoutStart time.Duration
+	// Limits are applied to the unit Job Object (whole tree). Zero is today's job.
+	Limits JobLimits
 }
 
 // Job is a per-unit Job Object (DESIGN.md §5.1). Closing or killing it
@@ -51,6 +53,11 @@ type Job interface {
 	Kill() error
 	Close() error
 	LimitFlags() (uint32, error)
+	QueryLimits() (JobObjectLimits, error)
+	// ResourceLimitC is closed when MemoryMax= or ProcessLimit= is hit.
+	// Nil when those limits are omitted.
+	ResourceLimitC() <-chan struct{}
+	ResourceLimitHit() bool
 }
 
 // Process is one started unit invocation.

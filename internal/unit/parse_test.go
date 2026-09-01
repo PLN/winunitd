@@ -732,6 +732,147 @@ Restart=on-abnormal
 			wantErr: []string{`invalid Restart "on-abnormal"`},
 		},
 		{
+			name: "job object resource limits",
+			file: "capped.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+MemoryMax=2G
+ProcessLimit=32
+PriorityClass=below-normal
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if !u.Service.MemoryMaxSet || u.Service.MemoryMax != 2*1024*1024*1024 {
+					t.Fatalf("MemoryMax = %d set=%v", u.Service.MemoryMax, u.Service.MemoryMaxSet)
+				}
+				if !u.Service.ProcessLimitSet || u.Service.ProcessLimit != 32 {
+					t.Fatalf("ProcessLimit = %d set=%v", u.Service.ProcessLimit, u.Service.ProcessLimitSet)
+				}
+				if u.Service.PriorityClass != PriorityBelowNormal {
+					t.Fatalf("PriorityClass = %s", u.Service.PriorityClass)
+				}
+			},
+		},
+		{
+			name: "omitted job limits leave today's job",
+			file: "plain.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Service.MemoryMaxSet || u.Service.ProcessLimitSet || u.Service.PriorityClassSet {
+					t.Fatalf("limits set: mem=%v proc=%v pri=%v", u.Service.MemoryMaxSet, u.Service.ProcessLimitSet, u.Service.PriorityClassSet)
+				}
+			},
+		},
+		{
+			name: "MemoryMax abc fails",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+MemoryMax=abc
+`,
+			wantErr: []string{`invalid MemoryMax "abc"`},
+		},
+		{
+			name: "ProcessLimit negative fails",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+ProcessLimit=-1
+`,
+			wantErr: []string{`invalid ProcessLimit "-1"`},
+		},
+		{
+			name: "ProcessLimit zero fails",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+ProcessLimit=0
+`,
+			wantErr: []string{`invalid ProcessLimit "0"`},
+		},
+		{
+			name: "PriorityClass realtime fails",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+PriorityClass=realtime
+`,
+			wantErr: []string{`invalid PriorityClass "realtime"`},
+		},
+		{
+			name: "CPUWeight is not parsed in R1",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+CPUWeight=50
+`,
+			wantErr: []string{`unknown directive "CPUWeight"`},
+		},
+		{
+			name: "MemoryMax on timer is rejected",
+			file: "foo.timer",
+			src: `
+[Timer]
+OnCalendar=daily
+MemoryMax=2G
+`,
+			wantErr: []string{`unknown directive "MemoryMax"`},
+		},
+		{
+			name: "ProcessLimit on target is rejected",
+			file: "foo.target",
+			src: `
+[Unit]
+Description=group
+ProcessLimit=1
+`,
+			wantErr: []string{`unknown directive "ProcessLimit"`},
+		},
+		{
+			name: "PriorityClass on target is rejected",
+			file: "foo.target",
+			src: `
+[Unit]
+PriorityClass=below-normal
+`,
+			wantErr: []string{`unknown directive "PriorityClass"`},
+		},
+		{
+			name: "type scm ignores job limits",
+			file: "proxy.service",
+			src: `
+[Service]
+Type=scm
+ServiceName=WuP7Test
+MemoryMax=2G
+ProcessLimit=4
+PriorityClass=below-normal
+`,
+			wantWarn: []string{"MemoryMax is ignored for Type=scm", "ProcessLimit is ignored for Type=scm", "PriorityClass is ignored for Type=scm"},
+			check: func(t *testing.T, u *Unit) {
+				if u.Service.MemoryMaxSet || u.Service.ProcessLimitSet || u.Service.PriorityClassSet {
+					t.Fatal("Type=scm must not keep job limits")
+				}
+			},
+		},
+		{
 			name: "timer implicit unit",
 			file: "foo.timer",
 			src: `
