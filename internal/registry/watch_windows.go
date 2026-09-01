@@ -32,7 +32,9 @@ func OpenWatch(key Key) (Watch, error) {
 	if err != nil {
 		return nil, err
 	}
-	k, err := registry.OpenKey(root, key.Path, registry.NOTIFY)
+	// READ includes KEY_NOTIFY. NOTIFY alone misses value changes on some
+	// hives (notably HKCU) until the first RegNotifyChangeKeyValue is armed.
+	k, err := registry.OpenKey(root, key.Path, registry.READ)
 	if err != nil {
 		if isMissingKey(err) {
 			return nil, fmt.Errorf("%w: %s", ErrMissingKey, key.Raw)
@@ -48,6 +50,10 @@ func OpenWatch(key Key) (Watch, error) {
 		key:   k,
 		event: ev,
 		ch:    make(chan struct{}, 1),
+	}
+	if err := w.arm(); err != nil {
+		_ = w.Close()
+		return nil, err
 	}
 	go w.loop()
 	return w, nil
@@ -69,20 +75,20 @@ func (w *winWatch) Close() error {
 	return nil
 }
 
+func (w *winWatch) arm() error {
+	return windows.RegNotifyChangeKeyValue(
+		windows.Handle(w.key),
+		true,
+		notifyFilter,
+		w.event,
+		true,
+	)
+}
+
 func (w *winWatch) loop() {
 	defer close(w.ch)
 	for {
 		if w.isClosed() {
-			return
-		}
-		err := windows.RegNotifyChangeKeyValue(
-			windows.Handle(w.key),
-			true,
-			notifyFilter,
-			w.event,
-			true,
-		)
-		if err != nil || w.isClosed() {
 			return
 		}
 		if _, waitErr := windows.WaitForSingleObject(w.event, windows.INFINITE); waitErr != nil || w.isClosed() {
@@ -91,6 +97,9 @@ func (w *winWatch) loop() {
 		select {
 		case w.ch <- struct{}{}:
 		default:
+		}
+		if err := w.arm(); err != nil || w.isClosed() {
+			return
 		}
 	}
 }

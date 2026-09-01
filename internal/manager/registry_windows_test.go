@@ -169,14 +169,25 @@ Type=oneshot
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Reload(); err != nil {
+	rel, err := m.Reload()
+	if err != nil {
 		t.Fatal(err)
+	}
+	if len(rel.Errors) > 0 {
+		t.Fatalf("reload errors: %v", rel.Errors)
 	}
 	t.Cleanup(func() { stopAll(m) })
 	if _, err := m.Start(context.Background(), "foo.registry"); err != nil {
 		t.Fatal(err)
 	}
-	setHiveValue(t, registry.CURRENT_USER, keyPath, "v", "1")
+	assertState(t, m, "foo.registry", core.Active)
+	for i := 1; i <= 5 && helperCountLines(count) < 1; i++ {
+		setHiveValue(t, registry.CURRENT_USER, keyPath, "v", fmt.Sprintf("%d", i))
+		deadline := time.Now().Add(400 * time.Millisecond)
+		for time.Now().Before(deadline) && helperCountLines(count) < 1 {
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
 	waitWindowsCount(t, count, 1, 8*time.Second)
 }
 
