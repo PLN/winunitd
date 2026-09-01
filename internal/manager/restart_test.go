@@ -463,6 +463,41 @@ Restart=no
 	launch.releaseExits()
 	waitState(t, m, "foo.service", core.Failed)
 	assertReason(t, m, "foo.service", core.ReasonSignalEquivalent)
+	st, err := m.Status("foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Unit == nil || !strings.Contains(st.Unit.Error, "exit status 3221225477") {
+		t.Fatalf("ExitStatus must remain visible: error=%q", st.Unit.Error)
+	}
+}
+
+func TestOneshotNTSTATUSSetsSignalEquivalentReason(t *testing.T) {
+	t.Parallel()
+	code := uint32(0xC0000005)
+	launch := &scriptedLauncher{exitU32: &code}
+	m, _ := managerWithFake(t, launch, map[string]string{
+		"foo.service": `
+[Service]
+Type=oneshot
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+Restart=no
+`,
+	})
+	_, err := m.Start(context.Background(), "foo")
+	if err == nil {
+		t.Fatal("oneshot NTSTATUS must fail Start")
+	}
+	assertState(t, m, "foo.service", core.Failed)
+	assertReason(t, m, "foo.service", core.ReasonSignalEquivalent)
+	st, err := m.Status("foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Unit == nil || !strings.Contains(st.Unit.Error, "exit status 3221225477") {
+		t.Fatalf("ExitStatus must remain visible: error=%q", st.Unit.Error)
+	}
 }
 
 func managerWith(t *testing.T, launch runtime.Launcher, files map[string]string) *Manager {

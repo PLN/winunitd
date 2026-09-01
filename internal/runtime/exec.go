@@ -26,6 +26,9 @@ func (e *ExitStatus) Error() string {
 	if e == nil {
 		return "exit status 0"
 	}
+	if e.SignalEquivalent() {
+		return fmt.Sprintf("%s: exit status %d", "signal-equivalent", e.Code)
+	}
 	return fmt.Sprintf("exit status %d", e.Code)
 }
 

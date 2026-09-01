@@ -3,6 +3,7 @@ package runtime
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -30,6 +31,9 @@ func TestAssignDaemonPIDDoesNotSwallowClosed(t *testing.T) {
 	}
 	if errors.Is(err, errAlreadyInJob) {
 		t.Fatal("closed job is not nesting-denied")
+	}
+	if !strings.Contains(err.Error(), "not already-in-job/nesting") {
+		t.Fatalf("non-nesting error must be returned, not swallowed: %v", err)
 	}
 }
 

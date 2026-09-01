@@ -942,7 +942,7 @@ func TestPrintStatusSignalEquivalent(t *testing.T) {
 		LoadState:   "loaded",
 		ActiveState: "failed",
 		Reason:      "signal-equivalent",
-		Error:       "signal-equivalent",
+		Error:       "signal-equivalent: exit status 3221225477",
 	}})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
@@ -953,6 +953,9 @@ func TestPrintStatusSignalEquivalent(t *testing.T) {
 	}
 	if !strings.Contains(got, "Reason: signal-equivalent") {
 		t.Fatalf("missing reason: %s", got)
+	}
+	if !strings.Contains(got, "Error: signal-equivalent: exit status 3221225477") {
+		t.Fatalf("missing ExitStatus: %s", got)
 	}
 }
 

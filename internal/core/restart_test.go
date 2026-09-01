@@ -59,6 +59,15 @@ func TestStatusReason(t *testing.T) {
 	if StatusReason("configuration: registry key is missing") != ReasonConfiguration {
 		t.Fatal("configuration prefix")
 	}
+	if StatusReason("signal-equivalent: exit status 3221225477") != ReasonSignalEquivalent {
+		t.Fatal("signal-equivalent prefix with ExitStatus")
+	}
+	if StatusReason("exit status 3221225477") != ReasonSignalEquivalent {
+		t.Fatal("raw NTSTATUS ExitStatus string")
+	}
+	if StatusReason("exit status 2") != "" {
+		t.Fatal("ordinary exit status is not signal-equivalent")
+	}
 	if StatusReason("main process exited") != "" {
 		t.Fatal("other errors have no reason")
 	}
