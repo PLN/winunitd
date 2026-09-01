@@ -31,6 +31,7 @@ type Manager struct {
 	graph   *core.Graph
 	closed  bool
 	scm     runtime.SCM
+	tasks   runtime.TaskScheduler
 	regOpen registry.OpenFunc
 	evtOpen eventlog.OpenFunc
 	session sync.Mutex // serializes graphical-session.target start/stop
@@ -49,6 +50,10 @@ func New(cfg Config) (*Manager, error) {
 	scm := cfg.SCM
 	if scm == nil {
 		scm = runtime.DefaultSCM()
+	}
+	tasks := cfg.Tasks
+	if tasks == nil {
+		tasks = runtime.DefaultTaskScheduler()
 	}
 	js, err := journal.Open(cfg.JournalDir())
 	if err != nil {
@@ -79,6 +84,7 @@ func New(cfg Config) (*Manager, error) {
 		clk:     clk,
 		launch:  launch,
 		scm:     scm,
+		tasks:   tasks,
 		journal: js,
 		units:   make(map[string]*unitRuntime),
 	}
@@ -221,6 +227,7 @@ func (m *Manager) ListUnits() (*protocol.ListUnitsResult, error) {
 	names := m.names()
 	out := make([]protocol.UnitStatus, 0, len(names))
 	scmNames := make([]string, 0, len(names))
+	taskNames := make([]string, 0, len(names))
 	for _, name := range names {
 		out = append(out, m.unitStatusLocked(name))
 		var u *unit.Unit
@@ -228,10 +235,12 @@ func (m *Manager) ListUnits() (*protocol.ListUnitsResult, error) {
 			u = rt.unit
 		}
 		scmNames = append(scmNames, scmServiceName(u))
+		taskNames = append(taskNames, scheduledTaskName(u))
 	}
 	m.mu.Unlock()
 	for i := range out {
 		m.overlaySCM(&out[i], scmNames[i])
+		m.overlayTask(&out[i], taskNames[i])
 	}
 	return &protocol.ListUnitsResult{Units: out}, nil
 }
@@ -281,8 +290,10 @@ func (m *Manager) Status(name string) (*protocol.StatusResult, error) {
 	}
 	st := m.unitStatusLocked(rt.unit.Name)
 	svcName := scmServiceName(rt.unit)
+	taskName := scheduledTaskName(rt.unit)
 	m.mu.Unlock()
 	m.overlaySCM(&st, svcName)
+	m.overlayTask(&st, taskName)
 	return &protocol.StatusResult{Unit: &st}, nil
 }
 

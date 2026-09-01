@@ -144,6 +144,7 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 	rt.err = ""
 	kind := rt.unit.Kind
 	scmName := scmServiceName(rt.unit)
+	taskName := scheduledTaskName(rt.unit)
 	m.mu.Unlock()
 
 	if wdCancel != nil {
@@ -167,6 +168,10 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 	if scmName != "" {
 		ctx, cancel := m.clockTimeout(context.Background(), timeout)
 		stopErr = m.stopSCM(ctx, scmName, timeout)
+		cancel()
+	} else if taskName != "" {
+		ctx, cancel := m.clockTimeout(context.Background(), timeout)
+		stopErr = m.stopTask(ctx, taskName, timeout)
 		cancel()
 	} else if proc != nil {
 		_ = m.stopProcess(proc, timeout)

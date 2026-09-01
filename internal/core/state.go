@@ -189,7 +189,7 @@ func allowedStep(from State, fromSub Substate, ev Event) (State, Substate, bool)
 		switch from {
 		case Inactive, Active, Failed:
 			// Inactive: start failed before the manager stamped Failed
-			// (Type=simple / Type=scm); maybeRestart runs in startOne.
+			// (Type=simple / Type=scm / Type=scheduled-task); maybeRestart runs in startOne.
 			return Activating, SubAutoRestart, true
 		}
 	case EventRestartCancelled:

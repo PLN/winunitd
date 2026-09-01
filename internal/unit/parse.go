@@ -26,6 +26,7 @@ var knownDirectives = map[string]map[string]bool{
 	"Service": {
 		"Type":                   true,
 		"ServiceName":            true,
+		"TaskName":               true,
 		"ExecStart":              true,
 		"ExecStartArg":           true,
 		"WorkingDirectory":       true,
@@ -94,6 +95,8 @@ type serviceBuilder struct {
 
 	serviceName  string
 	serviceNameL int
+	taskName     string
+	taskNameL    int
 
 	notifyAccess  string
 	notifyAccessL int
@@ -314,6 +317,9 @@ func (p *parser) applyService(e iniEntry) {
 	case "ServiceName":
 		s.serviceName = e.value
 		s.serviceNameL = e.line
+	case "TaskName":
+		s.taskName = e.value
+		s.taskNameL = e.line
 	case "ExecStart":
 		s.execRaw = e.value
 		s.execLine = e.line
@@ -500,10 +506,10 @@ func (p *parser) finishService() {
 		typ = string(TypeSimple)
 	}
 	switch ServiceType(typ) {
-	case TypeSimple, TypeOneshot, TypeNotify, TypeSCM:
+	case TypeSimple, TypeOneshot, TypeNotify, TypeSCM, TypeScheduledTask:
 		spec.Type = ServiceType(typ)
 	default:
-		p.errorf(s.typLine, "invalid Type %q (supported: simple, oneshot, notify, scm)", s.typ)
+		p.errorf(s.typLine, "invalid Type %q (supported: simple, oneshot, notify, scm, scheduled-task)", s.typ)
 	}
 
 	if spec.Type == TypeSCM {
@@ -517,7 +523,31 @@ func (p *parser) finishService() {
 		p.warnf(s.serviceNameL, "ServiceName is only used with Type=scm")
 	}
 
-	if spec.Type != TypeSCM {
+	if spec.Type == TypeScheduledTask {
+		name := strings.TrimSpace(s.taskName)
+		if name == "" {
+			p.errorf(s.taskNameL, "TaskName is required for Type=scheduled-task")
+		} else {
+			spec.TaskName = name
+		}
+	} else if strings.TrimSpace(s.taskName) != "" {
+		p.warnf(s.taskNameL, "TaskName is only used with Type=scheduled-task")
+	}
+
+	hasExec := s.execSet && (strings.TrimSpace(s.execRaw) != "" || len(s.execArgs) > 0)
+	if len(s.execArgs) > 0 {
+		hasExec = true
+	}
+	switch spec.Type {
+	case TypeScheduledTask:
+		if s.execSet || len(s.execArgs) > 0 {
+			p.errorf(s.execLine, "ExecStart is not valid for Type=scheduled-task")
+		}
+	case TypeSCM:
+		if hasExec {
+			p.warnf(s.execLine, "ExecStart is ignored for Type=scm")
+		}
+	default:
 		if !s.execSet || (strings.TrimSpace(s.execRaw) == "" && len(s.execArgs) == 0) {
 			p.errorf(s.execLine, "ExecStart is required")
 		} else {
@@ -540,8 +570,6 @@ func (p *parser) finishService() {
 				p.errorf(s.wdLine, "WorkingDirectory must be an absolute path")
 			}
 		}
-	} else if s.execSet && (strings.TrimSpace(s.execRaw) != "" || len(s.execArgs) > 0) {
-		p.warnf(s.execLine, "ExecStart is ignored for Type=scm")
 	}
 
 	spec.Environment = s.env
@@ -588,15 +616,16 @@ func (p *parser) finishService() {
 
 	p.finishJobLimits(spec, s)
 
-	if spec.Type == TypeSCM {
+	if spec.Type.IsExternalProxy() {
+		tag := string(spec.Type)
 		if s.notifyAccess != "" {
-			p.warnf(s.notifyAccessL, "NotifyAccess is ignored for Type=scm")
+			p.warnf(s.notifyAccessL, "NotifyAccess is ignored for Type=%s", tag)
 		}
 		if s.watchdogSec != "" {
-			p.warnf(s.watchdogSecL, "WatchdogSec is ignored for Type=scm")
+			p.warnf(s.watchdogSecL, "WatchdogSec is ignored for Type=%s", tag)
 		}
 		if s.watchdogMode != "" {
-			p.warnf(s.watchdogModeL, "WatchdogMode is ignored for Type=scm")
+			p.warnf(s.watchdogModeL, "WatchdogMode is ignored for Type=%s", tag)
 		}
 		return
 	}
@@ -653,21 +682,22 @@ func (p *parser) finishJobLimits(spec *ServiceSpec, s *serviceBuilder) {
 			spec.PriorityClassSet = true
 		}
 	}
-	if spec.Type != TypeSCM {
+	if !spec.Type.IsExternalProxy() {
 		return
 	}
+	tag := string(spec.Type)
 	if spec.MemoryMaxSet {
-		p.warnf(s.memoryMaxL, "MemoryMax is ignored for Type=scm")
+		p.warnf(s.memoryMaxL, "MemoryMax is ignored for Type=%s", tag)
 		spec.MemoryMax = 0
 		spec.MemoryMaxSet = false
 	}
 	if spec.ProcessLimitSet {
-		p.warnf(s.processLimitL, "ProcessLimit is ignored for Type=scm")
+		p.warnf(s.processLimitL, "ProcessLimit is ignored for Type=%s", tag)
 		spec.ProcessLimit = 0
 		spec.ProcessLimitSet = false
 	}
 	if spec.PriorityClassSet {
-		p.warnf(s.priorityClassL, "PriorityClass is ignored for Type=scm")
+		p.warnf(s.priorityClassL, "PriorityClass is ignored for Type=%s", tag)
 		spec.PriorityClass = ""
 		spec.PriorityClassSet = false
 	}
