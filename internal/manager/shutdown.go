@@ -112,8 +112,7 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 		return nil, err
 	}
 	name = rt.unit.Name
-	proc := rt.proc
-	rt.proc = nil
+	proc := rt.takeProc()
 	rt.stopping = true
 	rt.gen++
 	rt.cancelRestart()

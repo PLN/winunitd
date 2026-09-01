@@ -19,7 +19,7 @@ type unitRuntime struct {
 	state         core.State
 	sub           core.Substate
 	gen           uint64
-	proc          runtime.Process
+	proc          runtime.Process // whoever clears this owns job.Kill+Close (#25)
 	notify        *notifyRuntime
 	watchdog      context.CancelFunc
 	restartCancel context.CancelFunc
@@ -65,6 +65,29 @@ func (rt *unitRuntime) cancelRestart() {
 	c := rt.restartCancel
 	rt.restartCancel = nil
 	c()
+}
+
+// takeProc removes the live proc. The caller owns job.Kill() and Close
+// (issue #25).
+func (rt *unitRuntime) takeProc() runtime.Process {
+	if rt == nil {
+		return nil
+	}
+	p := rt.proc
+	rt.proc = nil
+	return p
+}
+
+// teardownJob kills the unit Job Object and closes process handles.
+// Safe to call more than once; Kill/Close are idempotent.
+func teardownJob(proc runtime.Process) {
+	if proc == nil {
+		return
+	}
+	if job := proc.Job(); job != nil {
+		_ = job.Kill()
+	}
+	_ = proc.Close()
 }
 
 // unitTeardown holds async control handles taken off a unitRuntime so
