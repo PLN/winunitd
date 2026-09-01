@@ -183,3 +183,19 @@ func TestServiceSpecProbeWatchdog(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestWatchdogProbeTimeout(t *testing.T) {
+	t.Parallel()
+	if got := WatchdogProbeTimeout(30 * time.Second); got != 30*time.Second {
+		t.Fatalf("interval = %v", got)
+	}
+	if got := WatchdogProbeTimeout(500 * time.Millisecond); got != 500*time.Millisecond {
+		t.Fatalf("subsecond = %v", got)
+	}
+	if got := WatchdogProbeTimeout(0); got != time.Second {
+		t.Fatalf("zero = %v", got)
+	}
+	if got := WatchdogProbeTimeout(-time.Second); got != time.Second {
+		t.Fatalf("negative = %v", got)
+	}
+}

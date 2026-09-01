@@ -136,6 +136,7 @@ type timerBuilder struct {
 	persistentL   int
 	persistentSet bool
 	unit          string
+	unitL         int
 	unitSet       bool
 }
 
@@ -426,6 +427,7 @@ func (p *parser) applyTimer(e iniEntry) {
 		t.persistentSet = true
 	case "Unit":
 		t.unit = e.value
+		t.unitL = e.line
 		t.unitSet = true
 	}
 }
@@ -542,7 +544,6 @@ func (p *parser) finishService() {
 	s := p.svc
 	if s == nil {
 		p.errorf(0, "service unit requires a [Service] section")
-		p.warnf(0, "WorkingDirectory is omitted; winunitd will not default to System32")
 		return
 	}
 
@@ -596,6 +597,9 @@ func (p *parser) finishService() {
 		if !s.execSet || (strings.TrimSpace(s.execRaw) == "" && len(s.execArgs) == 0) {
 			p.errorf(s.execLine, "ExecStart is required")
 		} else {
+			if len(s.execArgs) > 0 && execStartHasStrayArgs(s.execRaw) {
+				p.errorf(s.execLine, "ExecStart must be an executable path when ExecStartArg is set; unquoted arguments belong in ExecStartArg")
+			}
 			argv, err := buildArgv(s.execRaw, s.execArgs)
 			if err != nil {
 				p.errorf(s.execLine, "%s", err.Error())
@@ -808,7 +812,7 @@ func (p *parser) finishTimer() {
 	if t.unitSet {
 		name := NormalizeName(t.unit)
 		if name == "" {
-			p.errorf(0, "Unit= is empty")
+			p.errorf(t.unitL, "Unit= is empty")
 		} else {
 			spec.Unit = name
 		}

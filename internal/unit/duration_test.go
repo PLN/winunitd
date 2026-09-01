@@ -1,6 +1,7 @@
 package unit
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -9,29 +10,45 @@ func TestParseDuration(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
+		name    string
 		in      string
 		want    time.Duration
-		wantErr bool
+		wantErr string
 	}{
-		{in: "5s", want: 5 * time.Second},
-		{in: "5", want: 5 * time.Second},
-		{in: "5min", want: 5 * time.Minute},
-		{in: "1h", want: time.Hour},
-		{in: "1h 30min", want: 90 * time.Minute},
-		{in: "100ms", want: 100 * time.Millisecond},
-		{in: "2d", want: 48 * time.Hour},
-		{in: "infinity", want: time.Duration(1<<63 - 1)},
-		{in: "", wantErr: true},
-		{in: "banana", wantErr: true},
-		{in: "5parsecs", wantErr: true},
+		{name: "seconds suffix", in: "5s", want: 5 * time.Second},
+		{name: "bare seconds", in: "5", want: 5 * time.Second},
+		{name: "minutes", in: "5min", want: 5 * time.Minute},
+		{name: "hours", in: "1h", want: time.Hour},
+		{name: "concatenated whitespace", in: "1h 30min", want: 90 * time.Minute},
+		{name: "milliseconds", in: "100ms", want: 100 * time.Millisecond},
+		{name: "days", in: "2d", want: 48 * time.Hour},
+		{name: "infinity", in: "infinity", want: time.Duration(1<<63 - 1)},
+		{name: "empty", in: "", wantErr: "empty duration"},
+		{name: "garbage", in: "banana", wantErr: "invalid duration"},
+		{name: "unknown unit", in: "5parsecs", wantErr: "invalid duration"},
+		{name: "fractional", in: "1.5s", want: 1500 * time.Millisecond},
+		{name: "space before unit", in: "5 s", want: 5 * time.Second},
+		{name: "micro sign us", in: "5µs", want: 5 * time.Microsecond},
+		{name: "greek mu us", in: "5μs", want: 5 * time.Microsecond},
+		{name: "micro sign with space", in: "5 µs", want: 5 * time.Microsecond},
+		{name: "greek mu concatenated", in: "5μs10ms", want: 5*time.Microsecond + 10*time.Millisecond},
+		{name: "negative", in: "-5s", wantErr: "invalid duration"},
+		{name: "overflow days", in: "99999999999d", wantErr: "overflow"},
+		{name: "overflow add", in: "106751d 1d", wantErr: "overflow"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.in, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := parseDuration(tt.in)
-			if tt.wantErr {
+			if tt.wantErr != "" {
 				if err == nil {
-					t.Fatalf("parseDuration(%q) succeeded, want error", tt.in)
+					t.Fatalf("parseDuration(%q) = %v, want error %q", tt.in, got, tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("parseDuration(%q) error %q, want substring %q", tt.in, err.Error(), tt.wantErr)
+				}
+				if got < 0 {
+					t.Fatalf("parseDuration(%q) returned negative duration %v with error", tt.in, got)
 				}
 				return
 			}
@@ -40,6 +57,9 @@ func TestParseDuration(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Fatalf("parseDuration(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+			if got < 0 {
+				t.Fatalf("parseDuration(%q) wrapped to negative %v", tt.in, got)
 			}
 		})
 	}

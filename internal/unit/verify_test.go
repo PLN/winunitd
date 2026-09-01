@@ -53,9 +53,6 @@ Conflicts=other.service
 	if !strings.Contains(errs, `unknown directive "Conflicts"`) {
 		t.Fatalf("unknown directive should fail verify: %s", errs)
 	}
-	if !strings.Contains(errs, "WorkingDirectory is omitted") {
-		// WorkingDirectory is a warning, not in Errors
-	}
 	warns := strings.Join(issueTexts(rep.Warnings()), "\n")
 	if !strings.Contains(warns, "WorkingDirectory is omitted") {
 		t.Fatalf("missing WorkingDirectory warning: %s", warns)

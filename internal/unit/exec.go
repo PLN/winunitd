@@ -22,7 +22,9 @@ func buildArgv(execRaw string, extraArgs []string) ([]string, error) {
 			return nil, err
 		}
 	case len(extraArgs) > 0:
-		// ExecStartArg is present: ExecStart is the unsplit executable path.
+		// ExecStartArg is present: ExecStart is the unsplit executable path
+		// (DESIGN.md §26). Stray compatibility-syntax arguments are rejected
+		// by the parser before this runs.
 		if execRaw == "" {
 			return nil, fmt.Errorf("ExecStart is empty")
 		}
@@ -98,4 +100,59 @@ func splitCommand(s string) ([]string, error) {
 		return nil, fmt.Errorf("ExecStart is empty")
 	}
 	return args, nil
+}
+
+// execStartHasUnquotedWhitespace reports whether s contains whitespace
+// outside of double quotes.
+func execStartHasUnquotedWhitespace(s string) bool {
+	inQuote := false
+	for _, r := range s {
+		switch {
+		case r == '"':
+			inQuote = !inQuote
+		case unicode.IsSpace(r) && !inQuote:
+			return true
+		}
+	}
+	return false
+}
+
+// execStartHasStrayArgs reports the ExecStartArg footgun: ExecStart looks
+// like a compatibility command line (executable plus extra argv) rather
+// than a single path. DESIGN.md §26 still allows unquoted spaces in the
+// path itself (C:\Program Files\Foo\foo.exe).
+func execStartHasStrayArgs(execRaw string) bool {
+	execRaw = strings.TrimSpace(execRaw)
+	if execRaw == "" || isJSONArray(execRaw) {
+		return false
+	}
+	if !execStartHasUnquotedWhitespace(execRaw) {
+		return false
+	}
+	parts, err := splitCommand(execRaw)
+	if err != nil || len(parts) < 2 {
+		return false
+	}
+	if looksLikeWindowsExecutable(parts[0]) {
+		return true
+	}
+	for _, p := range parts[1:] {
+		if strings.HasPrefix(p, "-") {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikeWindowsExecutable(p string) bool {
+	if !WindowsAbs(p) {
+		return false
+	}
+	lower := strings.ToLower(p)
+	for _, ext := range []string{".exe", ".com", ".bat", ".cmd", ".ps1"} {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	return false
 }

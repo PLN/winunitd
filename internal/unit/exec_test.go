@@ -90,3 +90,26 @@ func TestWindowsAbs(t *testing.T) {
 		})
 	}
 }
+
+func TestExecStartHasStrayArgs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{in: `C:\App\foo.exe --verbose`, want: true},
+		{in: `C:\App\foo.exe config.json`, want: true},
+		{in: `C:\Program Files\Foo\foo.exe`, want: false},
+		{in: `C:\Tools\foo.exe`, want: false},
+		{in: `["C:\\Tools\\foo.exe", "--one"]`, want: false},
+		{in: `"C:\Program Files\Foo\foo.exe"`, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			t.Parallel()
+			if got := execStartHasStrayArgs(tt.in); got != tt.want {
+				t.Fatalf("execStartHasStrayArgs(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
