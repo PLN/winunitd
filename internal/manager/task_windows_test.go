@@ -137,13 +137,10 @@ Restart=no
 
 func installManagerThrowawayTask(t *testing.T) string {
 	t.Helper()
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	exe, args := runtime.ThrowawayKeepAliveExec()
 	folder := "WinUnitdTS1"
 	name := fmt.Sprintf("wu-mgr-%d-%d", os.Getpid(), time.Now().UnixNano()%1e9)
-	full, err := runtime.RegisterThrowawayTask(folder, name, exe, winunitdHelperArgPrefix+"sleep")
+	full, err := runtime.RegisterThrowawayTask(folder, name, exe, args)
 	if err != nil {
 		t.Skipf("Task Scheduler register %s: %v", full, err)
 	}

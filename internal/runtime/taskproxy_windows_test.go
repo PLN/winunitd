@@ -69,13 +69,10 @@ func TestTaskProxyMissingTask(t *testing.T) {
 
 func installThrowawayTask(t *testing.T) string {
 	t.Helper()
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	exe, args := ThrowawayKeepAliveExec()
 	folder := "WinUnitdTS1"
 	name := fmt.Sprintf("wu-ts1-%d-%d", os.Getpid(), time.Now().UnixNano()%1e9)
-	full, err := RegisterThrowawayTask(folder, name, exe, winunitdHelperArgPrefix+"sleep")
+	full, err := RegisterThrowawayTask(folder, name, exe, args)
 	if err != nil {
 		t.Skipf("Task Scheduler register %s: %v", full, err)
 	}

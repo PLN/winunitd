@@ -5,8 +5,10 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"os"
 	goruntime "runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -21,7 +23,6 @@ const (
 
 	taskCreateOrUpdate        = 6
 	taskLogonInteractiveToken = 3
-	coinitApartmentThreaded   = 0x2
 	sFalse                    = 1
 	vtEmpty                   = 0
 	vtI4                      = 3
@@ -187,24 +188,54 @@ func taskGetPath(name string) string {
 	return strings.TrimPrefix(name, `\`)
 }
 
-func withTaskService(fn func(*iTaskService) error) error {
-	goruntime.LockOSThread()
-	defer goruntime.UnlockOSThread()
-	hr := windows.CoInitializeEx(0, coinitApartmentThreaded)
-	uninit := false
-	if hr == nil {
-		uninit = true
-	} else if errno, ok := hr.(windows.Errno); ok && (errno == sFalse || uint32(errno) == rpcEChangedMode) {
-		// already initialized on this thread
-	} else if errno, ok := hr.(syscall.Errno); ok && (errno == sFalse || uint32(errno) == rpcEChangedMode) {
-		// already initialized on this thread
-	} else {
-		return fmt.Errorf("CoInitializeEx: %w", hr)
-	}
-	if uninit {
-		defer windows.CoUninitialize()
-	}
+var (
+	taskCOMOnce sync.Once
+	taskCOMWork chan func()
+	taskCOMErr  error
+)
 
+// startTaskCOM pins a process-lifetime MTA thread for Task Scheduler COM.
+// STA (COINIT_APARTMENTTHREADED) on a Go pool thread needs a message pump
+// that Go does not run; leftover STA also hangs named-pipe Accept/Dial.
+func startTaskCOM() {
+	taskCOMOnce.Do(func() {
+		taskCOMWork = make(chan func())
+		ready := make(chan struct{})
+		go func() {
+			goruntime.LockOSThread()
+			hr := windows.CoInitializeEx(0, windows.COINIT_MULTITHREADED)
+			if hr != nil && !isCOMCode(hr, sFalse) && !isCOMCode(hr, rpcEChangedMode) {
+				taskCOMErr = fmt.Errorf("CoInitializeEx: %w", hr)
+				close(ready)
+				return
+			}
+			close(ready)
+			for fn := range taskCOMWork {
+				fn()
+			}
+		}()
+		<-ready
+	})
+}
+
+func withTaskService(fn func(*iTaskService) error) error {
+	startTaskCOM()
+	if taskCOMErr != nil {
+		return taskCOMErr
+	}
+	done := make(chan error, 1)
+	taskCOMWork <- func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				done <- fmt.Errorf("task COM panic: %v", rec)
+			}
+		}()
+		done <- invokeTaskService(fn)
+	}
+	return <-done
+}
+
+func invokeTaskService(fn func(*iTaskService) error) error {
 	var svc *iTaskService
 	r0, _, _ := procCoCreateInstance.Call(
 		uintptr(unsafe.Pointer(&clsidTaskScheduler)),
@@ -675,6 +706,18 @@ func (t *iRegisteredTask) runningInstances() (int, int, error) {
 		return int(count), 0, nil
 	}
 	return int(count), int(pid), nil
+}
+
+// ThrowawayKeepAliveExec is ping -t for RegisterThrowawayTask. Tests must not
+// re-exec the test binary: Task Scheduler sometimes puts Arguments in argv[0],
+// TestMain missed -winunitd-helper=, and the child re-ran the full suite
+// (named-pipe fights and notify Start hangs).
+func ThrowawayKeepAliveExec() (exe, args string) {
+	root := os.Getenv("SystemRoot")
+	if root == "" {
+		root = `C:\Windows`
+	}
+	return root + `\System32\ping.exe`, "-t 127.0.0.1"
 }
 
 // RegisterThrowawayTask creates an isolated on-demand task for Windows tests.
