@@ -1,22 +1,13 @@
 package core
 
 import (
-	"strings"
-
 	"github.com/PLN/winunitd/internal/unit"
 )
 
-// NormalizeName applies DESIGN.md §36: an unqualified name defaults to
-// .service. Names that already have a known suffix are left unchanged.
+// NormalizeName applies DESIGN.md §36: unit names are case-insensitive
+// and stored in lower-case; an unqualified name defaults to .service.
 func NormalizeName(name string) string {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return ""
-	}
-	if _, err := unit.KindFromName(name); err == nil {
-		return name
-	}
-	return name + ".service"
+	return unit.NormalizeName(name)
 }
 
 func uniqueStable(in []string) []string {

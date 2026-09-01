@@ -1,5 +1,6 @@
 // Package core contains the dependency graph and unit state machine.
 // Unit file parsing lives in package unit.
+// Unit names are case-insensitive and stored lower-case (DESIGN.md §36).
 //
 // Requires= and Wants= pull units into a start transaction; BindsTo=
 // pulls like Requires=. After=/Before=/PartOf= do not pull on start.

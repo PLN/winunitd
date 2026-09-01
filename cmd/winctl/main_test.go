@@ -817,6 +817,34 @@ func TestCLIVerifyUnitNameOverPipe(t *testing.T) {
 	}
 }
 
+func TestCLIStatusFOOEqualsFoo(t *testing.T) {
+	_, dial, stop := startTestDaemon(t)
+	defer stop()
+
+	var out, errb bytes.Buffer
+	code := runCLI([]string{"status", "FOO"}, &out, &errb, dial)
+	if code != 0 {
+		t.Fatalf("FOO exit %d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "foo.service") {
+		t.Fatalf("FOO stdout=%s", out.String())
+	}
+	upper := out.String()
+
+	out.Reset()
+	errb.Reset()
+	code = runCLI([]string{"status", "foo"}, &out, &errb, dial)
+	if code != 0 {
+		t.Fatalf("foo exit %d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "foo.service") {
+		t.Fatalf("foo stdout=%s", out.String())
+	}
+	if !strings.Contains(upper, "Loaded:") || !strings.Contains(out.String(), "Loaded:") {
+		t.Fatalf("status missing Loaded: upper=%s lower=%s", upper, out.String())
+	}
+}
+
 func TestPrintStatusStartLimit(t *testing.T) {
 	var out bytes.Buffer
 	c := &cli{stdout: &out}

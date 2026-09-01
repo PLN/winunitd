@@ -20,6 +20,7 @@
 // Type=scheduled-task orchestrates an existing Task Scheduler task by TaskName=
 // (IRegisteredTask.Run / Stop / State) and does not CreateProcess. Restart=
 // applies to Run failure only; once running, Task Scheduler owns the instance.
+// Unit names are case-insensitive and stored lower-case (DESIGN.md §36).
 // Enable writes files under enabled/<target>/<unit>; boot starts default.target, which Wants=
 // timers.target so enabled timers arm. stdout/stderr are stored under
 // journal/<unit>.log (each start tagged with InvocationID=) and returned
