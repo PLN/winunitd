@@ -58,6 +58,9 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 	if u.Kind == unit.KindRegistry {
 		return m.armRegistry(u)
 	}
+	if u.Kind == unit.KindEventLog {
+		return m.armEventLog(u)
+	}
 	if u.Kind != unit.KindService || u.Service == nil {
 		return nil
 	}

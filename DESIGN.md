@@ -270,6 +270,25 @@ A change **starts** `foo.service` if it is inactive or failed. If the service is
 
 Enable with `WantedBy=` like other units (usually `default.target`). There is no `registries.target`. `winctl list-units` shows `.registry` units. `verify` on the pair fails for a missing `foo.service`, a bad hive, or an empty path.
 
+### 6.7 `.eventlog` ★
+
+Windows-native companion unit. `foo.eventlog` activates `foo.service` by basename (same lock as timers and `.registry`; no `Unit=`). While the event log unit is active it is watching.
+
+```ini
+[EventLog]
+EventLogTrigger=System:EventID=1234
+```
+
+`EventLogTrigger=` is repeatable (any match fires). Grammar is `<Channel>:EventID=<uint16>` only: Channel is a literal log name (`System`, `Application`, a custom log). No XPath, no `Provider=`, no `Level=`. Subscribe with `EvtSubscribe` (push).
+
+The system manager accepts any readable channel (LocalSystem). A user manager `verify` allows `Application` and custom names; `System` / `Security` on `--user` is a verify error. Activate still fails closed if `EvtSubscribe` denies.
+
+Subscribe failure or an unknown channel at activate fails the event log unit with reason `configuration`; the daemon stays up.
+
+A matching event **starts** `foo.service` if it is inactive or failed. If the service is already `active`, do not restart it. A oneshot that exits is the repeatable pattern.
+
+Enable with `WantedBy=` like other units (usually `default.target`). There is no `eventlogs.target`. `winctl list-units` shows `.eventlog` units. `verify` on the pair fails for a missing `foo.service`, bad grammar, `EventID=0` or non-numeric, or an empty channel.
+
 ---
 
 ## 7. Unit File Locations
@@ -1434,9 +1453,12 @@ Windows-native companion (see §6.6). Implemented as `.registry`, not as a `.pat
 RegistryChanged=HKLM\Software\Example
 ```
 
-### Event Log
+### Event Log ★
+
+Windows-native companion (see §6.7). Implemented as `.eventlog`.
 
 ```ini
+[EventLog]
 EventLogTrigger=System:EventID=1234
 ```
 
@@ -2443,7 +2465,7 @@ At this point the project becomes genuinely distinctive.
 Add:
 
 - path units (file watches; later)
-- registry/event triggers — `.registry` is the Windows-native companion (★); Event Log stays later
+- registry/event triggers — `.registry` and `.eventlog` are the Windows-native companions (★)
 - templates
 - remaining resource limits (CPUWeight=, CPUQuota=, IoPriority=)
 - credentials

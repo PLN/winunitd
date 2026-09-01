@@ -204,3 +204,83 @@ RegistryChanged=HKLM\Software\Example
 		t.Fatal("system manager must accept HKLM")
 	}
 }
+
+func TestVerifyEventLogPair(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	evt := filepath.Join(dir, "foo.eventlog")
+	if err := os.WriteFile(evt, []byte(`
+[EventLog]
+EventLogTrigger=Application:EventID=1234
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep := VerifyPath(evt)
+	if !rep.HasError() {
+		t.Fatal("missing companion must fail")
+	}
+	errs := strings.Join(issueTexts(rep.Errors()), "\n")
+	if !strings.Contains(errs, "missing companion foo.service") {
+		t.Fatalf("errors = %s", errs)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "foo.service"), []byte(`
+[Service]
+Type=oneshot
+ExecStart=C:\Tools\run-once.exe
+WorkingDirectory=C:\Tools
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep = VerifyPath(evt)
+	if rep.HasError() {
+		t.Fatalf("pair should verify: %v", issueTexts(rep.Errors()))
+	}
+	if rep.Unit.EventLog.Unit != "foo.service" {
+		t.Fatalf("implicit unit = %q", rep.Unit.EventLog.Unit)
+	}
+}
+
+func TestEventLogScopeIssues(t *testing.T) {
+	t.Parallel()
+	sys := ParseUnit("sys.eventlog", `
+[EventLog]
+EventLogTrigger=System:EventID=1
+`)
+	if sys.HasError() {
+		t.Fatalf("parse: %v", issueTexts(sys.Errors()))
+	}
+	if EventLogScopeIssues(sys.Unit, false) != nil {
+		t.Fatal("system manager must accept System")
+	}
+	got := EventLogScopeIssues(sys.Unit, true)
+	if len(got) == 0 {
+		t.Fatal("user manager must reject System")
+	}
+
+	sec := ParseUnit("sec.eventlog", `
+[EventLog]
+EventLogTrigger=Security:EventID=1
+`)
+	if EventLogScopeIssues(sec.Unit, true) == nil {
+		t.Fatal("user manager must reject Security")
+	}
+	if EventLogScopeIssues(sec.Unit, false) != nil {
+		t.Fatal("system manager must accept Security")
+	}
+
+	app := ParseUnit("app.eventlog", `
+[EventLog]
+EventLogTrigger=Application:EventID=1
+`)
+	if EventLogScopeIssues(app.Unit, true) != nil || EventLogScopeIssues(app.Unit, false) != nil {
+		t.Fatal("Application is valid in both managers")
+	}
+	custom := ParseUnit("custom.eventlog", `
+[EventLog]
+EventLogTrigger=MyLog:EventID=1
+`)
+	if EventLogScopeIssues(custom.Unit, true) != nil {
+		t.Fatal("user manager must accept custom log names")
+	}
+}

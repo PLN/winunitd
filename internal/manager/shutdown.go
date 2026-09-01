@@ -145,6 +145,9 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 	if kind == unit.KindRegistry {
 		m.disarmRegistry(name)
 	}
+	if kind == unit.KindEventLog {
+		m.disarmEventLog(name)
+	}
 
 	var stopErr error
 	if scmName != "" {
