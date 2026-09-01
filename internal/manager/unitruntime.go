@@ -27,6 +27,7 @@ type unitRuntime struct {
 	terminated    bool
 	invocation    string
 	regWatch      *registryRuntime
+	evtWatch      *eventLogRuntime
 	err           string
 }
 
@@ -110,9 +111,10 @@ type unitTeardown struct {
 	notify   *notifyRuntime
 	restart  context.CancelFunc
 	reg      *registryRuntime
+	evt      *eventLogRuntime
 }
 
-// detachAsync takes watchdog, notify, restart timer, and registry watch.
+// detachAsync takes watchdog, notify, restart timer, and registry/eventlog watches.
 // It does not Stop the process (DESIGN.md §33: vanished units are not stopped).
 func (rt *unitRuntime) detachAsync() unitTeardown {
 	if rt == nil {
@@ -123,11 +125,13 @@ func (rt *unitRuntime) detachAsync() unitTeardown {
 		notify:   rt.notify,
 		restart:  rt.restartCancel,
 		reg:      rt.regWatch,
+		evt:      rt.evtWatch,
 	}
 	rt.watchdog = nil
 	rt.notify = nil
 	rt.restartCancel = nil
 	rt.regWatch = nil
+	rt.evtWatch = nil
 	return td
 }
 
@@ -141,6 +145,9 @@ func (td unitTeardown) cancelNonblocking() {
 	if td.reg != nil && td.reg.cancel != nil {
 		td.reg.cancel()
 	}
+	if td.evt != nil && td.evt.cancel != nil {
+		td.evt.cancel()
+	}
 }
 
 func (td unitTeardown) closeBlocking() {
@@ -149,6 +156,9 @@ func (td unitTeardown) closeBlocking() {
 	}
 	if td.reg != nil {
 		closeWatches(td.reg.watches)
+	}
+	if td.evt != nil {
+		closeSubs(td.evt.subs)
 	}
 }
 

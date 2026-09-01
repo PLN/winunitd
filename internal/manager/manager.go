@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/eventlog"
 	"github.com/PLN/winunitd/internal/journal"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/registry"
@@ -31,6 +32,7 @@ type Manager struct {
 	closed  bool
 	scm     runtime.SCM
 	regOpen registry.OpenFunc
+	evtOpen eventlog.OpenFunc
 	session sync.Mutex // serializes graphical-session.target start/stop
 	ops     unitOps    // per-unit start/stop/restart (issue #24)
 }
@@ -84,6 +86,11 @@ func New(cfg Config) (*Manager, error) {
 		m.regOpen = cfg.RegistryOpen
 	} else {
 		m.regOpen = registry.OpenWatch
+	}
+	if cfg.EventLogOpen != nil {
+		m.evtOpen = cfg.EventLogOpen
+	} else {
+		m.evtOpen = eventlog.OpenSubscribe
 	}
 	m.engine = timers.NewEngine(clk, store, m.onTimerElapsed)
 	return m, nil
@@ -502,7 +509,7 @@ func (m *Manager) Verify(name string) (*protocol.VerifyResult, error) {
 	m.mu.Lock()
 	userScope := m.cfg.UserScope
 	var companionMissing string
-	if kind == unit.KindRegistry {
+	if kind == unit.KindRegistry || kind == unit.KindEventLog {
 		companion := unit.CompanionService(unitName)
 		if _, ok := m.units[companion]; !ok {
 			companionMissing = companion
@@ -511,6 +518,7 @@ func (m *Manager) Verify(name string) (*protocol.VerifyResult, error) {
 	m.mu.Unlock()
 
 	rep.Issues = append(rep.Issues, unit.RegistryScopeIssues(rep.Unit, userScope)...)
+	rep.Issues = append(rep.Issues, unit.EventLogScopeIssues(rep.Unit, userScope)...)
 	if companionMissing != "" {
 		rep.Issues = append(rep.Issues, unit.Issue{
 			Path:     path,

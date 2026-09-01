@@ -66,6 +66,11 @@ A foo.registry unit watches [Registry] RegistryChanged= (HKLM\\... or HKCU\\...
 only; no PowerShell drive) and activates foo.service by basename. Path verify
 checks the companion .service next to the file. System-scope verify rejects
 HKCU (LocalSystem hive); winctl --user verify accepts HKCU and HKLM.
+
+A foo.eventlog unit watches [EventLog] EventLogTrigger= (<Channel>:EventID=<uint16>
+only) and activates foo.service by basename. Path verify checks the companion
+.service next to the file. winctl --user verify rejects System and Security;
+Application and custom log names are allowed.
 `
 
 type cli struct {

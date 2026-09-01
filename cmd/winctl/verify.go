@@ -20,6 +20,7 @@ func runVerify(paths []string, userScope bool, stdout, stderr io.Writer) int {
 		rep := unit.VerifyPath(p)
 		if !rep.HasError() {
 			rep.Issues = append(rep.Issues, unit.RegistryScopeIssues(rep.Unit, userScope)...)
+			rep.Issues = append(rep.Issues, unit.EventLogScopeIssues(rep.Unit, userScope)...)
 		}
 		for _, iss := range rep.Issues {
 			fmt.Fprintln(stderr, iss.String())
