@@ -166,6 +166,23 @@ func TestMain(m *testing.M) {
 		}
 		_ = cmd.Start()
 		select {}
+	case "spawn-exit":
+		cmd := exec.Command(os.Args[0], winunitdHelperArgPrefix+"sleep")
+		cmd.Env = append(os.Environ(), "WINUNITD_JOB_HELPER=sleep")
+		cmd.SysProcAttr = &windows.SysProcAttr{
+			HideWindow:    true,
+			CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW,
+		}
+		if err := cmd.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "spawn-exit: %v\n", err)
+			os.Exit(1)
+		}
+		if path := os.Getenv("WINUNITD_JOB_CHILD"); path != "" {
+			_ = os.WriteFile(path, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o644)
+		}
+		fmt.Printf("child %d\n", cmd.Process.Pid)
+		_ = os.Stdout.Sync()
+		os.Exit(0)
 	case "scm-proxy":
 		runManagerSCMProxyTestService()
 		os.Exit(0)
@@ -336,6 +353,167 @@ func TestManagerStartUnitJobAndKillTree(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("killing the unit job did not tear down the tree")
+}
+
+// TestWindowsStartEvictsDeadProcKillsOldChild is the issue #25 acceptance
+// test: parent exits leaving a grandchild in the unit job, watch is held
+// in Wait, and an immediate Start must kill the old child.
+func TestWindowsStartEvictsDeadProcKillsOldChild(t *testing.T) {
+	dir := t.TempDir()
+	units := filepath.Join(dir, "units")
+	if err := os.MkdirAll(units, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	exe, err := filepath.Abs(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	exeJSON, err := json.Marshal([]string{exe, winunitdHelperArgPrefix + "spawn-exit"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	childFile := filepath.Join(dir, "child.pid")
+	body := fmt.Sprintf(""+
+		"[Service]\n"+
+		"Type=simple\n"+
+		"Restart=no\n"+
+		"ExecStart=%s\n"+
+		"WorkingDirectory=%s\n"+
+		"Environment=WINUNITD_JOB_HELPER=spawn-exit\n"+
+		"Environment=\"WINUNITD_JOB_CHILD=%s\"\n",
+		exeJSON, dir, childFile)
+	if err := os.WriteFile(filepath.Join(units, "tree.service"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	hold := &firstHoldLauncher{inner: runtime.DefaultLauncher()}
+	m, err := New(Config{BaseDir: dir, Launch: hold})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		hold.release()
+		_, _ = m.Stop("tree")
+		m.Close()
+	})
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Start(context.Background(), "tree"); err != nil {
+		t.Fatal(err)
+	}
+
+	child := waitWindowsChildPID(t, childFile)
+	waitCond(t, func() bool {
+		h := hold.first()
+		return h != nil && !h.Alive() && h.waited()
+	})
+	if !windowsProcessAlive(child) {
+		t.Fatal("grandchild died before the second Start; Wait hold did not force the race")
+	}
+
+	if _, err := m.Start(context.Background(), "tree"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if !windowsProcessAlive(child) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("old child pid %d still alive after Start evicted the dead proc", child)
+}
+
+func waitWindowsChildPID(t *testing.T, path string) int {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		b, err := os.ReadFile(path)
+		if err == nil {
+			s := strings.TrimSpace(string(b))
+			if pid, err := strconv.Atoi(s); err == nil && pid > 0 {
+				return pid
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("did not observe grandchild pid file")
+	return 0
+}
+
+type firstHoldLauncher struct {
+	inner runtime.Launcher
+	mu    sync.Mutex
+	n     int
+	proc  *holdWaitProc
+}
+
+func (l *firstHoldLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
+	p, err := l.inner.Start(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.n++
+	if l.n != 1 {
+		return p, nil
+	}
+	h := &holdWaitProc{
+		Process:  p,
+		hold:     make(chan struct{}),
+		doneWait: make(chan struct{}),
+	}
+	l.proc = h
+	return h, nil
+}
+
+func (l *firstHoldLauncher) first() *holdWaitProc {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.proc
+}
+
+func (l *firstHoldLauncher) release() {
+	l.mu.Lock()
+	h := l.proc
+	l.mu.Unlock()
+	if h != nil {
+		h.release()
+	}
+}
+
+type holdWaitProc struct {
+	runtime.Process
+	hold     chan struct{}
+	doneWait chan struct{}
+	onceWait sync.Once
+	relOnce  sync.Once
+}
+
+func (p *holdWaitProc) Wait(ctx context.Context) error {
+	err := p.Process.Wait(ctx)
+	p.onceWait.Do(func() { close(p.doneWait) })
+	select {
+	case <-p.hold:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (p *holdWaitProc) waited() bool {
+	select {
+	case <-p.doneWait:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *holdWaitProc) release() {
+	p.relOnce.Do(func() { close(p.hold) })
 }
 
 func windowsProcessAlive(pid int) bool {
