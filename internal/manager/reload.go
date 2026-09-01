@@ -58,6 +58,14 @@ func (m *Manager) Reload() (*protocol.DaemonReloadResult, error) {
 			result.Errors = append(result.Errors, path+": Type=scm is only supported in the system manager")
 			continue
 		}
+		scopeFail := false
+		for _, iss := range unit.RegistryScopeIssues(rep.Unit, m.cfg.UserScope) {
+			result.Errors = append(result.Errors, iss.String())
+			scopeFail = true
+		}
+		if scopeFail {
+			continue
+		}
 		loaded = append(loaded, rep.Unit)
 	}
 
@@ -103,4 +111,5 @@ func (m *Manager) replaceLocked(units []*unit.Unit, g *core.Graph) {
 	// Running jobs (procs, gens, subs, cancels) stay on the manager for
 	// units that remain. Vanished units are not stopped (DESIGN.md §33).
 	m.syncTimersLocked()
+	m.syncRegistryLocked()
 }

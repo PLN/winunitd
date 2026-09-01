@@ -2,8 +2,10 @@ package unit
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/PLN/winunitd/internal/registry"
 	"github.com/PLN/winunitd/internal/timers"
 )
 
@@ -11,9 +13,10 @@ import (
 type Kind string
 
 const (
-	KindService Kind = "service"
-	KindTimer   Kind = "timer"
-	KindTarget  Kind = "target"
+	KindService  Kind = "service"
+	KindTimer    Kind = "timer"
+	KindTarget   Kind = "target"
+	KindRegistry Kind = "registry"
 )
 
 // ServiceType is a [Service] Type= value.
@@ -105,8 +108,9 @@ type Unit struct {
 	// implemented.
 	RequiresInteractiveSession bool
 
-	Service *ServiceSpec
-	Timer   *TimerSpec
+	Service  *ServiceSpec
+	Timer    *TimerSpec
+	Registry *RegistrySpec
 
 	WantedBy []string
 }
@@ -200,6 +204,23 @@ type TimerSpec struct {
 	OnBootSecSet       bool
 	OnStartupSecSet    bool
 	OnUnitActiveSecSet bool
+}
+
+// RegistrySpec is the [Registry] section. The activated unit is always
+// the same basename with a .service suffix (no Unit=).
+type RegistrySpec struct {
+	Changed []registry.Key
+	Unit    string
+}
+
+// CompanionService returns the basename .service for a companion unit
+// (foo.timer / foo.registry → foo.service).
+func CompanionService(name string) string {
+	base := name
+	if i := strings.LastIndex(base, "."); i >= 0 {
+		base = base[:i]
+	}
+	return base + ".service"
 }
 
 // Severity is an issue level collected during parse/verify.

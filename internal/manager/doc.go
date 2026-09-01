@@ -17,7 +17,10 @@
 // timers.target so enabled timers arm. stdout/stderr are stored under
 // journal/<unit>.log (each start tagged with InvocationID=) and returned
 // by logs. The timer scheduler lives in
-// internal/timers (not Task Scheduler). Manager shutdown stops units in
+// internal/timers (not Task Scheduler). .registry units watch
+// RegistryChanged= keys (RegNotifyChangeKeyValue on Windows; tests inject
+// a stub). A change starts the basename .service if it is not already
+// running. Manager shutdown stops units in
 // reverse After=/Before= order (shutdown.target as root) then the daemon
 // closes the daemon Job Object.
 //

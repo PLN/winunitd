@@ -8,7 +8,7 @@ import (
 	"github.com/PLN/winunitd/internal/unit"
 )
 
-func runVerify(paths []string, stdout, stderr io.Writer) int {
+func runVerify(paths []string, userScope bool, stdout, stderr io.Writer) int {
 	if len(paths) == 0 {
 		fmt.Fprintln(stderr, "winctl verify: unit file path required")
 		fmt.Fprint(stderr, verifyUsage)
@@ -18,6 +18,9 @@ func runVerify(paths []string, stdout, stderr io.Writer) int {
 	failed := false
 	for _, p := range paths {
 		rep := unit.VerifyPath(p)
+		if !rep.HasError() {
+			rep.Issues = append(rep.Issues, unit.RegistryScopeIssues(rep.Unit, userScope)...)
+		}
 		for _, iss := range rep.Issues {
 			fmt.Fprintln(stderr, iss.String())
 		}

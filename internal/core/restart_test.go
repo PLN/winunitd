@@ -41,3 +41,19 @@ func TestShouldRestart(t *testing.T) {
 		}
 	}
 }
+
+func TestStatusReason(t *testing.T) {
+	t.Parallel()
+	if StatusReason(ReasonResourceLimit) != ReasonResourceLimit {
+		t.Fatal("resource-limit")
+	}
+	if StatusReason(ReasonConfiguration) != ReasonConfiguration {
+		t.Fatal("configuration")
+	}
+	if StatusReason("configuration: registry key is missing") != ReasonConfiguration {
+		t.Fatal("configuration prefix")
+	}
+	if StatusReason("main process exited") != "" {
+		t.Fatal("other errors have no reason")
+	}
+}

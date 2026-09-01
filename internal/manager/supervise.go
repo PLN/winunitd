@@ -55,6 +55,9 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 		m.armTimer(u)
 		return nil
 	}
+	if u.Kind == unit.KindRegistry {
+		return m.armRegistry(u)
+	}
 	if u.Kind != unit.KindService || u.Service == nil {
 		return nil
 	}
