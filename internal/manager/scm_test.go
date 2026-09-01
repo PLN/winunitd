@@ -226,9 +226,8 @@ ServiceName=MSSQLSERVER
 		t.Fatal(err)
 	}
 	m.mu.Lock()
-	m.units["mssql.service"] = &loaded{unit: rep.Unit}
+	m.units["mssql.service"] = &unitRuntime{unit: rep.Unit, state: core.Inactive}
 	m.graph = g
-	m.states["mssql.service"] = core.Inactive
 	m.mu.Unlock()
 
 	_, err = m.Start(context.Background(), "mssql")

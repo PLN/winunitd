@@ -286,7 +286,7 @@ func TestManagerStartUnitJobAndKillTree(t *testing.T) {
 	})
 
 	m.mu.Lock()
-	proc := m.procs["tree.service"]
+	proc := m.procOfLocked("tree.service")
 	m.mu.Unlock()
 	if proc == nil {
 		t.Fatal("manager did not keep the started process")
@@ -326,7 +326,7 @@ func TestManagerStartUnitJobAndKillTree(t *testing.T) {
 		}
 		if !alive {
 			m.mu.Lock()
-			st := m.states["tree.service"]
+			st := m.stateOfLocked("tree.service")
 			m.mu.Unlock()
 			if st != core.Inactive {
 				t.Fatalf("state = %s", st)
@@ -411,7 +411,7 @@ RestartSec=100ms
 	for time.Now().Before(deadline) {
 		m.mu.Lock()
 		st := m.stateOfLocked("foo.service")
-		proc := m.procs["foo.service"]
+		proc := m.procOfLocked("foo.service")
 		m.mu.Unlock()
 		if st != core.Inactive || proc != nil {
 			t.Fatalf("after stop: state=%s proc=%v", st, proc != nil)
@@ -623,7 +623,7 @@ Type=simple
 	}
 	_ = waitWindowsLiveProc(t, on, "on.service")
 	on.mu.Lock()
-	offProc := on.procs["off.service"]
+	offProc := on.procOfLocked("off.service")
 	stOff := on.stateOfLocked("off.service")
 	stOn := on.stateOfLocked("on.service")
 	on.mu.Unlock()
@@ -677,7 +677,7 @@ func waitWindowsLiveProc(t *testing.T, m *Manager, name string) runtime.Process 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		m.mu.Lock()
-		proc := m.procs[name]
+		proc := m.procOfLocked(name)
 		m.mu.Unlock()
 		if proc != nil && proc.Alive() {
 			return proc
@@ -930,7 +930,7 @@ func TestWindowsTimerOneshotOnStartupSec(t *testing.T) {
 		m.mu.Lock()
 		st = m.stateOfLocked("job.service")
 		timerSt = m.stateOfLocked("job.timer")
-		stopping = m.stopping["job.service"]
+		stopping = m.stoppingOfLocked("job.service")
 		m.mu.Unlock()
 		if st == core.Active && timerSt == core.Active {
 			if stopping {
@@ -1195,7 +1195,7 @@ Environment=WINUNITD_NOTIFY_DELAY=300
 	waitUntil(t, 2*time.Second, func() bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		return m.stateOfLocked("p4ready.service") == core.Activating && m.procs["p4ready.service"] != nil
+		return m.stateOfLocked("p4ready.service") == core.Activating && m.procOfLocked("p4ready.service") != nil
 	})
 	if err := <-errc; err != nil {
 		t.Fatal(err)
@@ -1252,7 +1252,7 @@ Restart=no
 	})
 	m.mu.Lock()
 	sub := m.subOfLocked("p4miss.service")
-	err := m.errors["p4miss.service"]
+	err := m.errOfLocked("p4miss.service")
 	m.mu.Unlock()
 	if sub != core.SubWatchdog {
 		t.Fatalf("sub = %s error=%q", sub, err)

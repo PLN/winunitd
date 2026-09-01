@@ -34,7 +34,7 @@ Type=oneshot
 	waitUntil(t, 2*time.Second, func() bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		proc := m.procs["foo.service"]
+		proc := m.procOfLocked("foo.service")
 		return proc == nil || !proc.Alive()
 	})
 	if _, err := m.Stop("foo.service"); err != nil {

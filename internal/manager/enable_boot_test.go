@@ -243,7 +243,7 @@ WorkingDirectory=C:\Tools
 		t.Fatal(err)
 	}
 	m.mu.Lock()
-	before := m.procs["foo.service"]
+	before := m.procOfLocked("foo.service")
 	m.mu.Unlock()
 	if before == nil || !before.Alive() {
 		t.Fatal("expected a live job before reload")
@@ -276,8 +276,8 @@ WorkingDirectory=C:\Tools
 		t.Fatalf("foo after reload = %+v", st.Unit)
 	}
 	m.mu.Lock()
-	after := m.procs["foo.service"]
-	bar := m.procs["bar.service"]
+	after := m.procOfLocked("foo.service")
+	bar := m.procOfLocked("bar.service")
 	m.mu.Unlock()
 	if after != before {
 		t.Fatal("daemon-reload dropped the live job")
