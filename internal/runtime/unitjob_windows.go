@@ -48,25 +48,25 @@ func OpenUnitJobWith(lim JobLimits) (*UnitJob, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create unit job: %w", err)
 	}
-	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{
-		BasicLimitInformation: windows.JOBOBJECT_BASIC_LIMIT_INFORMATION{
-			// KILL_ON_JOB_CLOSE only unless R1 limits are set. Do not set
-			// BREAKAWAY_OK or SILENT_BREAKAWAY_OK — grandchildren stay in the job.
-			LimitFlags: windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-		},
-	}
+	// Empty JobLimits is today's job: KILL_ON_JOB_CLOSE only. Do not set
+	// BREAKAWAY_OK, SILENT_BREAKAWAY_OK, or PRIORITY_CLASS unless PriorityClass=
+	// was given. Windows QueryInformationJobObject still fills PriorityClass
+	// with NORMAL_PRIORITY_CLASS; QueryLimits reports 0 unless the flag is set.
+	var info windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+	flags := uint32(windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)
 	if lim.MemoryMax > 0 {
-		info.BasicLimitInformation.LimitFlags |= windows.JOB_OBJECT_LIMIT_JOB_MEMORY
+		flags |= windows.JOB_OBJECT_LIMIT_JOB_MEMORY
 		info.JobMemoryLimit = uintptr(lim.MemoryMax)
 	}
 	if lim.ProcessLimit > 0 {
-		info.BasicLimitInformation.LimitFlags |= windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+		flags |= windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS
 		info.BasicLimitInformation.ActiveProcessLimit = lim.ProcessLimit
 	}
 	if lim.PriorityClass != 0 {
-		info.BasicLimitInformation.LimitFlags |= windows.JOB_OBJECT_LIMIT_PRIORITY_CLASS
+		flags |= windows.JOB_OBJECT_LIMIT_PRIORITY_CLASS
 		info.BasicLimitInformation.PriorityClass = lim.PriorityClass
 	}
+	info.BasicLimitInformation.LimitFlags = flags
 	if _, err := windows.SetInformationJobObject(
 		h,
 		windows.JobObjectExtendedLimitInformation,
@@ -251,13 +251,23 @@ func queryJobLimits(h windows.Handle) (JobObjectLimits, error) {
 	); err != nil {
 		return JobObjectLimits{}, err
 	}
-	return JobObjectLimits{
-		LimitFlags:    info.BasicLimitInformation.LimitFlags,
-		JobMemory:     uint64(info.JobMemoryLimit),
+	flags := info.BasicLimitInformation.LimitFlags
+	got := JobObjectLimits{
+		LimitFlags:    flags,
 		PeakJobMemory: uint64(info.PeakJobMemoryUsed),
-		ProcessLimit:  info.BasicLimitInformation.ActiveProcessLimit,
-		PriorityClass: info.BasicLimitInformation.PriorityClass,
-	}, nil
+	}
+	// Unused JO fields are not extra limits. Query still returns
+	// NORMAL_PRIORITY_CLASS (32) when PRIORITY_CLASS was never set.
+	if flags&windows.JOB_OBJECT_LIMIT_JOB_MEMORY != 0 {
+		got.JobMemory = uint64(info.JobMemoryLimit)
+	}
+	if flags&windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS != 0 {
+		got.ProcessLimit = info.BasicLimitInformation.ActiveProcessLimit
+	}
+	if flags&windows.JOB_OBJECT_LIMIT_PRIORITY_CLASS != 0 {
+		got.PriorityClass = info.BasicLimitInformation.PriorityClass
+	}
+	return got, nil
 }
 
 // ResourceLimitC is closed when MemoryMax= or ProcessLimit= is hit.
