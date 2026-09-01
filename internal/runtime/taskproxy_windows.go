@@ -353,11 +353,13 @@ type iRegisteredTaskVtbl struct {
 	get_NextRunTime        uintptr
 	get_Definition         uintptr
 	get_Xml                uintptr
-	put_Xml                uintptr
-	GetSecurityDescriptor  uintptr
-	SetSecurityDescriptor  uintptr
-	Stop                   uintptr
-	GetRunTimes            uintptr
+	// put_Xml is not in the IRegisteredTask vtable (Windows SDK taskschd.h).
+	// An extra slot here made Stop invoke GetRunTimes with NULL SYSTEMTIME
+	// pointers, which returns E_POINTER ("Invalid pointer").
+	GetSecurityDescriptor uintptr
+	SetSecurityDescriptor uintptr
+	Stop                  uintptr
+	GetRunTimes           uintptr
 }
 
 type iRunningTaskCollection struct{ vtbl *iRunningTaskCollectionVtbl }
