@@ -163,19 +163,25 @@ func (r *notifyRuntime) Close() {
 
 func (m *Manager) closeNotify(name string) {
 	m.mu.Lock()
-	rt := m.notifies[name]
-	delete(m.notifies, name)
+	var nrt *notifyRuntime
+	if rt := m.units[name]; rt != nil {
+		nrt = rt.notify
+		rt.notify = nil
+	}
 	m.mu.Unlock()
-	if rt != nil {
-		rt.Close()
+	if nrt != nil {
+		nrt.Close()
 	}
 }
 
 func (m *Manager) waitReady(ctx context.Context, name string, proc runtime.Process, timeout time.Duration) error {
 	m.mu.Lock()
-	rt := m.notifies[name]
+	var nrt *notifyRuntime
+	if rt := m.units[name]; rt != nil {
+		nrt = rt.notify
+	}
 	m.mu.Unlock()
-	if rt == nil {
+	if nrt == nil {
 		return fmt.Errorf("notify listener missing for %s", name)
 	}
 	if ctx == nil {
@@ -189,15 +195,18 @@ func (m *Manager) waitReady(ctx context.Context, name string, proc runtime.Proce
 
 	for {
 		select {
-		case <-rt.ready:
+		case <-nrt.ready:
 			return nil
 		case <-ctx.Done():
 			return fmt.Errorf("TimeoutStartSec exceeded waiting for READY=1: %w", ctx.Err())
-		case <-rt.done:
+		case <-nrt.done:
 			return fmt.Errorf("notify pipe closed before READY=1")
 		case <-tick.C:
 			m.mu.Lock()
-			stopping := m.stopping[name]
+			stopping := false
+			if rt := m.units[name]; rt != nil {
+				stopping = rt.stopping
+			}
 			m.mu.Unlock()
 			if stopping {
 				return fmt.Errorf("unit stopped before READY=1")
@@ -216,8 +225,14 @@ func (m *Manager) startWatchdog(name string, svc *unit.ServiceSpec, gen uint64) 
 	m.stopWatchdog(name)
 	ctx, cancel := context.WithCancel(context.Background())
 	m.mu.Lock()
-	m.watchdogs[name] = cancel
-	m.mu.Unlock()
+	if rt := m.units[name]; rt != nil && !m.closed {
+		rt.watchdog = cancel
+		m.mu.Unlock()
+	} else {
+		m.mu.Unlock()
+		cancel()
+		return
+	}
 	switch svc.WatchdogMode {
 	case unit.WatchdogModeTCP, unit.WatchdogModeHTTP:
 		go m.probeWatchdogLoop(ctx, name, svc, gen)
@@ -228,8 +243,11 @@ func (m *Manager) startWatchdog(name string, svc *unit.ServiceSpec, gen uint64) 
 
 func (m *Manager) stopWatchdog(name string) {
 	m.mu.Lock()
-	cancel := m.watchdogs[name]
-	delete(m.watchdogs, name)
+	var cancel context.CancelFunc
+	if rt := m.units[name]; rt != nil {
+		cancel = rt.watchdog
+		rt.watchdog = nil
+	}
 	m.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -238,9 +256,12 @@ func (m *Manager) stopWatchdog(name string) {
 
 func (m *Manager) watchdogLoop(ctx context.Context, name string, interval time.Duration, gen uint64) {
 	m.mu.Lock()
-	rt := m.notifies[name]
+	var nrt *notifyRuntime
+	if rt := m.units[name]; rt != nil {
+		nrt = rt.notify
+	}
 	m.mu.Unlock()
-	if rt == nil {
+	if nrt == nil {
 		return
 	}
 	timer := m.clock().Timer(interval)
@@ -249,9 +270,9 @@ func (m *Manager) watchdogLoop(ctx context.Context, name string, interval time.D
 		select {
 		case <-ctx.Done():
 			return
-		case <-rt.done:
+		case <-nrt.done:
 			return
-		case <-rt.pulse:
+		case <-nrt.pulse:
 			if !timer.Stop() {
 				select {
 				case <-timer.C():
@@ -295,17 +316,16 @@ func (m *Manager) probeWatchdogLoop(ctx context.Context, name string, svc *unit.
 
 func (m *Manager) onWatchdogTimeout(name string, gen uint64) {
 	m.mu.Lock()
-	if m.stopping[name] || m.gens[name] != gen {
+	rt := m.units[name]
+	if rt == nil || rt.stopping || rt.gen != gen {
 		m.mu.Unlock()
 		return
 	}
-	st, sub := core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventWatchdogFailed)
-	m.states[name] = st
-	m.subs[name] = sub
-	m.errors[name] = "watchdog timed out"
-	m.terminated[name] = true
-	ld := m.units[name]
-	proc := m.procs[name]
+	rt.step(core.EventWatchdogFailed)
+	rt.err = "watchdog timed out"
+	rt.terminated = true
+	u := rt.unit
+	proc := rt.proc
 	m.mu.Unlock()
 
 	if proc != nil {
@@ -313,8 +333,8 @@ func (m *Manager) onWatchdogTimeout(name string, gen uint64) {
 	}
 
 	var svc *unit.ServiceSpec
-	if ld != nil && ld.unit != nil {
-		svc = ld.unit.Service
+	if u != nil {
+		svc = u.Service
 	}
 	if svc != nil && core.ShouldRestart(svc.Restart, core.ExitWatchdog) {
 		m.beginRestart(name, gen, restartDelay(svc))

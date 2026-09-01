@@ -355,7 +355,7 @@ func assertWatchdogActive(t *testing.T, m *Manager, name string) {
 		m.mu.Lock()
 		st := m.stateOfLocked(name)
 		sub := m.subOfLocked(name)
-		err := m.errors[name]
+		err := m.errOfLocked(name)
 		m.mu.Unlock()
 		if st == core.Failed {
 			t.Fatalf("state = %s sub=%s error=%q, want active", st, sub, err)
@@ -366,7 +366,7 @@ func assertWatchdogActive(t *testing.T, m *Manager, name string) {
 	defer m.mu.Unlock()
 	st := m.stateOfLocked(name)
 	sub := m.subOfLocked(name)
-	err := m.errors[name]
+	err := m.errOfLocked(name)
 	if st != core.Active {
 		t.Fatalf("state = %s sub=%s error=%q, want active", st, sub, err)
 	}

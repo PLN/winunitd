@@ -76,10 +76,10 @@ func (m *Manager) startSCM(ctx context.Context, name string, u *unit.Unit, autoR
 	_ = st
 	m.mu.Lock()
 	if autoRestart {
-		state, sub := core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventStartSucceeded)
-		m.states[name] = state
-		m.subs[name] = sub
-		delete(m.errors, name)
+		if rt := m.units[name]; rt != nil {
+			rt.step(core.EventStartSucceeded)
+			rt.err = ""
+		}
 	}
 	m.mu.Unlock()
 	if m.engine != nil {
