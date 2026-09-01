@@ -1,6 +1,6 @@
-//go:build !windows
+//go:build windows
 
-package runtime
+package runtimetest
 
 import (
 	"context"
@@ -10,20 +10,20 @@ import (
 	"sync"
 	"time"
 
+	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/unit"
 )
 
-// StubLauncher succeeds without CreateProcess. Production Windows uses
-// NewLauncher; this file is !windows so the stub is not linked into
-// winunitd.exe (issue #33). Tests that need a stub on Windows import
-// internal/runtime/runtimetest.
-func StubLauncher() Launcher {
-	return StubLauncherOutput("", "")
+// Launcher succeeds without CreateProcess. Production Windows uses
+// runtime.NewLauncher; tests that exercise CLI/protocol without a real
+// executable use this so they pass on Windows CI without linking the stub
+// into winunitd.exe (issue #33).
+func Launcher() runtime.Launcher {
+	return LauncherOutput("", "")
 }
 
-// StubLauncherOutput is StubLauncher with stdout/stderr that the journal
-// can persist. Empty strings yield empty streams.
-func StubLauncherOutput(stdout, stderr string) Launcher {
+// LauncherOutput is Launcher with stdout/stderr that the journal can persist.
+func LauncherOutput(stdout, stderr string) runtime.Launcher {
 	return stubLauncher{stdout: stdout, stderr: stderr}
 }
 
@@ -35,7 +35,7 @@ type stubLauncher struct {
 type stubProc struct {
 	mu       sync.Mutex
 	pid      int
-	job      *UnitJob
+	job      runtime.Job
 	dead     bool
 	closed   bool
 	exitCode uint32
@@ -45,7 +45,7 @@ type stubProc struct {
 	done     chan struct{}
 }
 
-func (l stubLauncher) Start(ctx context.Context, spec StartSpec) (Process, error) {
+func (l stubLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -57,7 +57,7 @@ func (l stubLauncher) Start(ctx context.Context, spec StartSpec) (Process, error
 	if spec.Type == unit.TypeOneshot && spec.TimeoutStart > 0 {
 		_ = spec.TimeoutStart
 	}
-	job, err := OpenUnitJobWith(spec.Limits)
+	job, err := runtime.OpenUnitJobWith(spec.Limits)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func (p *stubProc) ExitCode() (uint32, bool) {
 	return p.exitCode, true
 }
 
-func (p *stubProc) Job() Job { return p.job }
+func (p *stubProc) Job() runtime.Job { return p.job }
 
 func (p *stubProc) Stdout() io.ReadCloser { return p.stdout }
 
@@ -107,7 +107,7 @@ func (p *stubProc) Wait(ctx context.Context) error {
 		if code == 0 {
 			return nil
 		}
-		return &ExitStatus{Code: code}
+		return &runtime.ExitStatus{Code: code}
 	}
 }
 

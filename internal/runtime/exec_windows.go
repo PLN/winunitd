@@ -223,10 +223,14 @@ func (l *winLauncher) create(spec StartSpec) (*winProc, error) {
 		_ = job.Close()
 		return nil, err
 	}
-	if l != nil && l.daemon != nil {
-		// Nest under the daemon job when the child did not inherit it.
-		// Already-in-job is expected after AssignSelf and is ignored.
-		_ = l.daemon.AssignPID(int(pi.ProcessId))
+	if err := assignDaemonPID(l.daemon, int(pi.ProcessId)); err != nil {
+		_ = windows.TerminateProcess(pi.Process, 1)
+		_ = windows.CloseHandle(pi.Thread)
+		_ = windows.CloseHandle(pi.Process)
+		_ = windows.CloseHandle(stdoutR)
+		_ = windows.CloseHandle(stderrR)
+		_ = job.Close()
+		return nil, err
 	}
 
 	if _, err := windows.ResumeThread(pi.Thread); err != nil {
@@ -509,89 +513,10 @@ func (p *winProc) wait(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
-	// Manual-reset cancel event. WaitForMultipleObjects so ctx.Done()
-	// unblocks the wait goroutine without CloseHandle on a handle another
-	// thread is waiting on (undefined behavior). The wait goroutine owns
-	// dup and the duplicated cancel handle and closes both when it returns.
-	cancelEvent, err := windows.CreateEvent(nil, 1, 0, nil)
-	if err != nil {
-		_ = windows.CloseHandle(dup)
-		return err
-	}
-	var cancelWait windows.Handle
-	err = windows.DuplicateHandle(
-		windows.CurrentProcess(),
-		cancelEvent,
-		windows.CurrentProcess(),
-		&cancelWait,
-		0,
-		false,
-		windows.DUPLICATE_SAME_ACCESS,
-	)
-	if err != nil {
-		_ = windows.CloseHandle(dup)
-		_ = windows.CloseHandle(cancelEvent)
-		return err
-	}
-	defer windows.CloseHandle(cancelEvent)
-
-	done := make(chan error, 1)
-	go func() {
-		defer func() {
-			_ = windows.CloseHandle(dup)
-			_ = windows.CloseHandle(cancelWait)
-		}()
-		handles := []windows.Handle{dup, cancelWait}
-		for {
-			s, err := windows.WaitForMultipleObjects(handles, false, windows.INFINITE)
-			goruntime.KeepAlive(handles)
-			if err != nil {
-				done <- err
-				return
-			}
-			switch s {
-			case windows.WAIT_OBJECT_0:
-				var exit uint32
-				if err := windows.GetExitCodeProcess(dup, &exit); err != nil {
-					done <- err
-					return
-				}
-				if exit == stillActiveExit {
-					continue
-				}
-				p.mu.Lock()
-				p.exitCode = exit
-				p.exited = true
-				p.mu.Unlock()
-				if exit == 0 {
-					done <- nil
-					return
-				}
-				done <- &ExitStatus{Code: exit}
-				return
-			case windows.WAIT_OBJECT_0 + 1:
-				done <- errWaitCanceled
-				return
-			default:
-				done <- fmt.Errorf("WaitForMultipleObjects: %d", s)
-				return
-			}
-		}
-	}()
-
-	select {
-	case err := <-done:
-		if err == errWaitCanceled {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return err
-		}
-		return err
-	case <-ctx.Done():
-		_ = windows.SetEvent(cancelEvent)
-		<-done
-		return ctx.Err()
-	}
+	return waitProcess(ctx, dup, func(exit uint32) {
+		p.mu.Lock()
+		p.exitCode = exit
+		p.exited = true
+		p.mu.Unlock()
+	})
 }

@@ -436,8 +436,67 @@ func TestClassifyWait(t *testing.T) {
 	if classifyWait(&runtime.ExitStatus{Code: 2}) != core.ExitFailure {
 		t.Fatal("nonzero")
 	}
+	if classifyWait(&runtime.ExitStatus{Code: 0xC0000005}) != core.ExitAbnormal {
+		t.Fatal("ntstatus crash is abnormal / signal-equivalent")
+	}
 	if classifyWait(fmt.Errorf("wait failed")) != core.ExitAbnormal {
 		t.Fatal("abnormal")
+	}
+}
+
+func TestWatchSetsSignalEquivalentReason(t *testing.T) {
+	t.Parallel()
+	code := uint32(0xC0000005)
+	launch := &scriptedLauncher{exitU32: &code, holdAutoExit: true}
+	m, _ := managerWithFake(t, launch, map[string]string{
+		"foo.service": `
+[Service]
+Type=simple
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+Restart=no
+`,
+	})
+	if _, err := m.Start(context.Background(), "foo"); err != nil {
+		t.Fatal(err)
+	}
+	launch.releaseExits()
+	waitState(t, m, "foo.service", core.Failed)
+	assertReason(t, m, "foo.service", core.ReasonSignalEquivalent)
+	st, err := m.Status("foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Unit == nil || !strings.Contains(st.Unit.Error, "exit status 3221225477") {
+		t.Fatalf("ExitStatus must remain visible: error=%q", st.Unit.Error)
+	}
+}
+
+func TestOneshotNTSTATUSSetsSignalEquivalentReason(t *testing.T) {
+	t.Parallel()
+	code := uint32(0xC0000005)
+	launch := &scriptedLauncher{exitU32: &code}
+	m, _ := managerWithFake(t, launch, map[string]string{
+		"foo.service": `
+[Service]
+Type=oneshot
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+Restart=no
+`,
+	})
+	_, err := m.Start(context.Background(), "foo")
+	if err == nil {
+		t.Fatal("oneshot NTSTATUS must fail Start")
+	}
+	assertState(t, m, "foo.service", core.Failed)
+	assertReason(t, m, "foo.service", core.ReasonSignalEquivalent)
+	st, err := m.Status("foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Unit == nil || !strings.Contains(st.Unit.Error, "exit status 3221225477") {
+		t.Fatalf("ExitStatus must remain visible: error=%q", st.Unit.Error)
 	}
 }
 
@@ -474,6 +533,7 @@ type scriptedLauncher struct {
 	specs        []runtime.StartSpec
 	at           []time.Time
 	exitAll      *int
+	exitU32      *uint32
 	exitNth      map[int]int
 	holdAutoExit bool
 	pending      []*pendingExit
@@ -543,13 +603,16 @@ func (s *scriptedLauncher) releaseExits() {
 	}
 }
 
-func (s *scriptedLauncher) codeForLocked(idx int) (int, bool) {
+func (s *scriptedLauncher) codeForLocked(idx int) (uint32, bool) {
+	if s.exitU32 != nil {
+		return *s.exitU32, true
+	}
 	if s.exitAll != nil {
-		return *s.exitAll, true
+		return uint32(*s.exitAll), true
 	}
 	if s.exitNth != nil {
 		if code, ok := s.exitNth[idx]; ok {
-			return code, true
+			return uint32(code), true
 		}
 	}
 	return 0, false

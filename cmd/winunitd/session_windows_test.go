@@ -15,6 +15,7 @@ import (
 	"github.com/PLN/winunitd/internal/manager"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/runtime/runtimetest"
 )
 
 func TestWindowsGraphicalSessionTargetAfterSimulatedLogon(t *testing.T) {
@@ -170,7 +171,7 @@ WorkingDirectory=C:\Windows\System32
 	has := false
 	m, err := manager.New(manager.Config{
 		BaseDir:               dir,
-		Launch:                runtime.StubLauncher(),
+		Launch:                runtimetest.Launcher(),
 		UserScope:             true,
 		HasInteractiveSession: func() bool { return has },
 	})

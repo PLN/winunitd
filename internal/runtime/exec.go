@@ -9,9 +9,15 @@ import (
 	"github.com/PLN/winunitd/internal/unit"
 )
 
+// ntstatusErrorSeverity is the NTSTATUS severity mask. Codes with the top
+// two bits set (>= 0xC0000000) are error-severity NTSTATUS values used as
+// process exit codes on crash (STATUS_ACCESS_VIOLATION 0xC0000005, etc.).
+const ntstatusErrorSeverity = uint32(0xC0000000)
+
 // ExitStatus is a process exit. Wait returns nil for code 0 and *ExitStatus
-// for any other code. Crash/signal-style failures that do not produce an
-// exit code are returned as a different error.
+// for any other code, including NTSTATUS crash codes (>= 0xC0000000).
+// SignalEquivalent classifies those crash codes as DESIGN.md §44
+// signal-equivalent.
 type ExitStatus struct {
 	Code uint32
 }
@@ -20,12 +26,21 @@ func (e *ExitStatus) Error() string {
 	if e == nil {
 		return "exit status 0"
 	}
+	if e.SignalEquivalent() {
+		return fmt.Sprintf("%s: exit status %d", "signal-equivalent", e.Code)
+	}
 	return fmt.Sprintf("exit status %d", e.Code)
 }
 
 // Failed reports a non-zero exit.
 func (e *ExitStatus) Failed() bool {
 	return e != nil && e.Code != 0
+}
+
+// SignalEquivalent reports an NTSTATUS error-severity exit
+// (DESIGN.md §44 signal-equivalent).
+func (e *ExitStatus) SignalEquivalent() bool {
+	return e != nil && e.Code >= ntstatusErrorSeverity
 }
 
 // StartSpec is a CreateProcess request for one unit invocation.

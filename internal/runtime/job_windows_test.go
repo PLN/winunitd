@@ -3,6 +3,8 @@
 package runtime
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PLN/winunitd/internal/unit"
 	"golang.org/x/sys/windows"
 )
 
@@ -174,4 +177,55 @@ func TestKillDaemonTearsDownJob(t *testing.T) {
 	_ = holder.Wait()
 	holder.Process = nil
 	waitDone(t, sleeper, 5*time.Second)
+}
+
+func TestAssignDaemonPIDIgnoresAlreadyInJobWindows(t *testing.T) {
+	sleeper := startSleepHelper(t, nil)
+	job, err := OpenDaemonJob()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = job.Close() })
+	if err := job.AssignPID(sleeper.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
+	if err := assignDaemonPID(job, sleeper.Process.Pid); err != nil {
+		t.Fatalf("already-in-job must be ignored: %v", err)
+	}
+}
+
+func TestAssignDaemonPIDDoesNotIgnoreOpenProcessDenied(t *testing.T) {
+	job, err := OpenDaemonJob()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = job.Close() })
+	// Pid 4 is the System process; OpenProcess typically ACCESS_DENIED.
+	err = assignDaemonPID(job, 4)
+	if errors.Is(err, errAlreadyInJob) {
+		t.Fatal("OpenProcess ACCESS_DENIED must not be treated as already-in-job")
+	}
+}
+
+func TestStartFailsWhenDaemonJobClosed(t *testing.T) {
+	job, err := OpenDaemonJob()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := job.Close(); err != nil {
+		t.Fatal(err)
+	}
+	p, err := NewLauncher(job).Start(context.Background(), StartSpec{
+		Unit: "closed-daemon.service",
+		Type: unit.TypeSimple,
+		Argv: []string{testAbs(t), winunitdHelperArgPrefix + "sleep"},
+		Dir:  t.TempDir(),
+		Env:  helperEnv("WINUNITD_JOB_HELPER=sleep"),
+	})
+	if p != nil {
+		_ = p.Stop(time.Second)
+	}
+	if err == nil {
+		t.Fatal("Start must fail when daemon AssignPID is not already-in-job")
+	}
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/PLN/winunitd/internal/notify"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/runtime/runtimetest"
 	"github.com/PLN/winunitd/internal/unit"
 	"golang.org/x/sys/windows"
 )
@@ -709,7 +710,7 @@ func TestWindowsEnableFileLayout(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(units, "hermes.service"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m, err := New(Config{BaseDir: dir, Launch: runtime.StubLauncher()})
+	m, err := New(Config{BaseDir: dir, Launch: runtimetest.Launcher()})
 	if err != nil {
 		t.Fatal(err)
 	}

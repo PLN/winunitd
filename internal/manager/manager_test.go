@@ -782,6 +782,33 @@ MemoryMax=2G
 	}
 }
 
+func TestStatusSignalEquivalentReason(t *testing.T) {
+	t.Parallel()
+	m := testManager(t, map[string]string{
+		"crash.service": `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`,
+	})
+	m.mu.Lock()
+	if rt := m.units["crash.service"]; rt != nil {
+		rt.state = core.Failed
+		rt.err = core.ReasonSignalEquivalent
+	}
+	m.mu.Unlock()
+	st, err := m.Status("crash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Unit == nil || st.Unit.ActiveState != "failed" {
+		t.Fatalf("status = %+v", st.Unit)
+	}
+	if st.Unit.Reason != core.ReasonSignalEquivalent || st.Unit.Error != core.ReasonSignalEquivalent {
+		t.Fatalf("reason=%q error=%q", st.Unit.Reason, st.Unit.Error)
+	}
+}
+
 func TestStartHonorsGraphOrdering(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}

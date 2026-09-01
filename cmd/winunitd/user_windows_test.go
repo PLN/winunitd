@@ -17,6 +17,7 @@ import (
 	"github.com/PLN/winunitd/internal/manager"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/runtime/runtimetest"
 )
 
 func TestMain(m *testing.M) {
@@ -122,7 +123,7 @@ WorkingDirectory=C:\Tools
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	sys, err := manager.New(manager.Config{BaseDir: sysDir, Launch: runtime.StubLauncher()})
+	sys, err := manager.New(manager.Config{BaseDir: sysDir, Launch: runtimetest.Launcher()})
 	if err != nil {
 		t.Fatal(err)
 	}
