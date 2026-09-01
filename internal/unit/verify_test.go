@@ -284,3 +284,39 @@ EventLogTrigger=MyLog:EventID=1
 		t.Fatal("user manager must accept custom log names")
 	}
 }
+
+func TestVerifyPathPair(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	pth := filepath.Join(dir, "foo.path")
+	if err := os.WriteFile(pth, []byte(`
+[Path]
+PathChanged=C:\Data\incoming
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep := VerifyPath(pth)
+	if !rep.HasError() {
+		t.Fatal("missing companion must fail")
+	}
+	errs := strings.Join(issueTexts(rep.Errors()), "\n")
+	if !strings.Contains(errs, "missing companion foo.service") {
+		t.Fatalf("errors = %s", errs)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "foo.service"), []byte(`
+[Service]
+Type=oneshot
+ExecStart=C:\Tools\run-once.exe
+WorkingDirectory=C:\Tools
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep = VerifyPath(pth)
+	if rep.HasError() {
+		t.Fatalf("pair should verify: %v", issueTexts(rep.Errors()))
+	}
+	if rep.Unit.PathWatch.Unit != "foo.service" {
+		t.Fatalf("implicit unit = %q", rep.Unit.PathWatch.Unit)
+	}
+}

@@ -230,15 +230,22 @@ Scheduled activation.
 
 Logical grouping and synchronization point.
 
-### 6.4 `.path`
+### 6.4 `.path` ★
 
-Optional later addition. File and directory watches only (`ReadDirectoryChangesW`). Do not overload `.path` for registry; that is `.registry`.
+Windows-native companion unit. `foo.path` activates `foo.service` by basename (same lock as timers, `.registry`, and `.eventlog`; no `Unit=`). While the path unit is active it is watching. File and directory watches only (`ReadDirectoryChangesW`). Do not overload `.path` for registry; that is `.registry`.
 
-Triggers a unit when:
+```ini
+[Path]
+PathChanged=C:\Data\incoming
+```
 
-- File exists
-- File changes
-- Directory changes
+`PathChanged=` is repeatable (watch each path; any change fires — OR). Absolute Windows paths only (drive-letter `C:\…` or UNC `\\server\share\…`). A file path watches the parent directory and filters by name. A directory path watches that directory. Watches are **non-recursive** (this directory only; subdirectory changes do not fire). `PathExists=` is not implemented.
+
+The system manager and user managers both accept `.path` units. A missing or unwatchable path at activate fails the path unit with reason `configuration`; the daemon stays up.
+
+A change **starts** `foo.service` if it is inactive or failed. If the service is already `active`, do not restart it. A oneshot that exits is the repeatable pattern.
+
+Enable with `WantedBy=` like other units (usually `default.target`). There is no `paths.target`. `winctl list-units` shows `.path` units. `verify` on the pair fails for a missing `foo.service`, a non-absolute path, or an empty path.
 
 ### 6.5 `.socket`
 
@@ -1475,11 +1482,14 @@ Potential future trigger types:
 
 ### File
 
-Later. File watches stay on `.path` (see §6.4). Do not overload `.path` for registry.
+File watches stay on `.path` (see §6.4). Do not overload `.path` for registry. `PathChanged=` is implemented; `PathExists=` is later.
 
 ```ini
+[Path]
 PathChanged=C:\Data\incoming
 ```
+
+`PathChanged=` is an absolute Windows path. Repeatable values are OR. `ReadDirectoryChangesW` is non-recursive. A file path watches the parent directory and filters by name.
 
 ### Registry ★
 
@@ -2531,7 +2541,7 @@ At this point the project becomes genuinely distinctive.
 
 Add:
 
-- path units (file watches; later)
+- path units — `.path` `PathChanged=` (★; `PathExists=` later)
 - registry/event triggers — `.registry` and `.eventlog` are the Windows-native companions (★)
 - templates
 - remaining resource limits (CPUWeight=, CPUQuota=, IoPriority=)

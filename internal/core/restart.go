@@ -27,7 +27,8 @@ const (
 const ReasonResourceLimit = "resource-limit"
 
 // ReasonConfiguration is the winctl status reason for a unit that failed
-// because its configuration cannot be applied (e.g. a missing registry key).
+// because its configuration cannot be applied (e.g. a missing registry key
+// or an unwatchable PathChanged= path).
 const ReasonConfiguration = "configuration"
 
 // StatusReason maps a stored error string to a status Reason= value.

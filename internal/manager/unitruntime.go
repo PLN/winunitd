@@ -29,6 +29,7 @@ type unitRuntime struct {
 	invocation    string
 	regWatch      *registryRuntime
 	evtWatch      *eventLogRuntime
+	pathWatch     *pathRuntime
 	err           string
 	startTimes    []time.Time
 }
@@ -114,9 +115,10 @@ type unitTeardown struct {
 	restart  context.CancelFunc
 	reg      *registryRuntime
 	evt      *eventLogRuntime
+	path     *pathRuntime
 }
 
-// detachAsync takes watchdog, notify, restart timer, and registry/eventlog watches.
+// detachAsync takes watchdog, notify, restart timer, and registry/eventlog/path watches.
 // It does not Stop the process (DESIGN.md §33: vanished units are not stopped).
 func (rt *unitRuntime) detachAsync() unitTeardown {
 	if rt == nil {
@@ -128,12 +130,14 @@ func (rt *unitRuntime) detachAsync() unitTeardown {
 		restart:  rt.restartCancel,
 		reg:      rt.regWatch,
 		evt:      rt.evtWatch,
+		path:     rt.pathWatch,
 	}
 	rt.watchdog = nil
 	rt.notify = nil
 	rt.restartCancel = nil
 	rt.regWatch = nil
 	rt.evtWatch = nil
+	rt.pathWatch = nil
 	return td
 }
 
@@ -150,6 +154,9 @@ func (td unitTeardown) cancelNonblocking() {
 	if td.evt != nil && td.evt.cancel != nil {
 		td.evt.cancel()
 	}
+	if td.path != nil && td.path.cancel != nil {
+		td.path.cancel()
+	}
 }
 
 func (td unitTeardown) closeBlocking() {
@@ -161,6 +168,9 @@ func (td unitTeardown) closeBlocking() {
 	}
 	if td.evt != nil {
 		closeSubs(td.evt.subs)
+	}
+	if td.path != nil {
+		closePathWatches(td.path.watches)
 	}
 }
 
