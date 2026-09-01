@@ -17,6 +17,8 @@ func KindFromName(name string) (Kind, error) {
 		return KindTarget, nil
 	case strings.HasSuffix(n, ".registry"):
 		return KindRegistry, nil
+	case strings.HasSuffix(n, ".eventlog"):
+		return KindEventLog, nil
 	default:
 		if i := strings.LastIndex(name, "."); i >= 0 {
 			return "", fmt.Errorf("unsupported unit type %q", name[i:])

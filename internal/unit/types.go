@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PLN/winunitd/internal/eventlog"
 	"github.com/PLN/winunitd/internal/registry"
 	"github.com/PLN/winunitd/internal/timers"
 )
@@ -17,6 +18,7 @@ const (
 	KindTimer    Kind = "timer"
 	KindTarget   Kind = "target"
 	KindRegistry Kind = "registry"
+	KindEventLog Kind = "eventlog"
 )
 
 // ServiceType is a [Service] Type= value.
@@ -113,6 +115,7 @@ type Unit struct {
 	Service  *ServiceSpec
 	Timer    *TimerSpec
 	Registry *RegistrySpec
+	EventLog *EventLogSpec
 
 	WantedBy []string
 }
@@ -215,8 +218,15 @@ type RegistrySpec struct {
 	Unit    string
 }
 
+// EventLogSpec is the [EventLog] section. The activated unit is always
+// the same basename with a .service suffix (no Unit=).
+type EventLogSpec struct {
+	Triggers []eventlog.Trigger
+	Unit     string
+}
+
 // CompanionService returns the basename .service for a companion unit
-// (foo.timer / foo.registry → foo.service).
+// (foo.timer / foo.registry / foo.eventlog → foo.service).
 func CompanionService(name string) string {
 	base := name
 	if i := strings.LastIndex(base, "."); i >= 0 {
