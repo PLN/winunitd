@@ -1,6 +1,7 @@
 package core
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/PLN/winunitd/internal/unit"
@@ -41,7 +42,7 @@ func StatusReason(err string) string {
 	switch {
 	case err == ReasonResourceLimit:
 		return ReasonResourceLimit
-	case err == ReasonSignalEquivalent:
+	case err == ReasonSignalEquivalent || strings.HasPrefix(err, ReasonSignalEquivalent+":") || strings.HasPrefix(err, ReasonSignalEquivalent+" ") || signalEquivalentExitStatus(err):
 		return ReasonSignalEquivalent
 	case err == ReasonStartLimit:
 		return ReasonStartLimit
@@ -50,6 +51,15 @@ func StatusReason(err string) string {
 	default:
 		return ""
 	}
+}
+
+func signalEquivalentExitStatus(err string) bool {
+	const prefix = "exit status "
+	if !strings.HasPrefix(err, prefix) {
+		return false
+	}
+	n, convErr := strconv.ParseUint(strings.TrimSpace(err[len(prefix):]), 10, 32)
+	return convErr == nil && uint32(n) >= 0xC0000000
 }
 
 func (k ExitKind) String() string {

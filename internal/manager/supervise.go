@@ -463,17 +463,13 @@ func waitFailMessage(err error) string {
 	if err == nil {
 		return ""
 	}
-	var st *runtime.ExitStatus
-	if errors.As(err, &st) && st.SignalEquivalent() {
-		return core.ReasonSignalEquivalent
-	}
 	return err.Error()
 }
 
 func mainExitMessage(err error) string {
 	var st *runtime.ExitStatus
 	if errors.As(err, &st) && st.SignalEquivalent() {
-		return core.ReasonSignalEquivalent
+		return err.Error()
 	}
 	return "main process exited"
 }

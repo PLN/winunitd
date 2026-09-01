@@ -70,6 +70,8 @@ func (j *DaemonJob) AssignPID(pid int) error {
 		return fmt.Errorf("daemon job is closed")
 	}
 	if err := windows.AssignProcessToJobObject(j.handle, h); err != nil {
+		// ERROR_ACCESS_DENIED is already-in-job / nesting refused on
+		// Windows that do not allow nested jobs.
 		if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
 			return errAlreadyInJob
 		}

@@ -40,4 +40,8 @@ func TestExitStatusSignalEquivalent(t *testing.T) {
 	if (*ExitStatus)(nil).SignalEquivalent() {
 		t.Fatal("nil is not signal-equivalent")
 	}
+	e := &ExitStatus{Code: statusAccessViolation}
+	if got := e.Error(); got != "signal-equivalent: exit status 3221225477" {
+		t.Fatalf("Error = %q", got)
+	}
 }
