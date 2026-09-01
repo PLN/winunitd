@@ -100,6 +100,8 @@ type Unit struct {
 	Description string
 	Requires    []string
 	Wants       []string
+	BindsTo     []string
+	PartOf      []string
 	After       []string
 	Before      []string
 

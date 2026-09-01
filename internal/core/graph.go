@@ -18,6 +18,8 @@ type node struct {
 	unit     *unit.Unit
 	requires []string
 	wants    []string
+	bindsTo  []string
+	partOf   []string
 	after    []string // declared After=
 	before   []string // declared Before=
 	waitsFor []string // ordering: this unit starts after these loaded units
@@ -44,6 +46,8 @@ func Build(units []*unit.Unit) (*Graph, error) {
 			unit:     u,
 			requires: uniqueStable(u.Requires),
 			wants:    uniqueStable(u.Wants),
+			bindsTo:  uniqueStable(u.BindsTo),
+			partOf:   uniqueStable(u.PartOf),
 			after:    uniqueStable(u.After),
 			before:   uniqueStable(u.Before),
 		}
@@ -116,6 +120,24 @@ func (g *Graph) Wants(name string) []string {
 		return nil
 	}
 	return cloneNames(n.wants)
+}
+
+// BindsTo returns the BindsTo= unit names declared by name.
+func (g *Graph) BindsTo(name string) []string {
+	n := g.node(name)
+	if n == nil {
+		return nil
+	}
+	return cloneNames(n.bindsTo)
+}
+
+// PartOf returns the PartOf= unit names declared by name.
+func (g *Graph) PartOf(name string) []string {
+	n := g.node(name)
+	if n == nil {
+		return nil
+	}
+	return cloneNames(n.partOf)
 }
 
 // After returns the ordering predecessors declared by name (After=).
@@ -261,4 +283,86 @@ func reconstructCycle(parent map[string]string, u, v string) []string {
 	}
 	path = append(path, v)
 	return path
+}
+
+// startRequireNames is Requires= plus BindsTo= (hard start dependencies).
+// PartOf= is stop-only and is not included.
+func (n *node) startRequireNames() []string {
+	if n == nil {
+		return nil
+	}
+	return uniqueStable(append(append([]string{}, n.requires...), n.bindsTo...))
+}
+
+func (n *node) startRequiresName(name string) bool {
+	if n == nil {
+		return false
+	}
+	return containsName(n.requires, name) || containsName(n.bindsTo, name)
+}
+
+func (n *node) stopRequiresName(name string) bool {
+	if n == nil {
+		return false
+	}
+	return containsName(n.requires, name) || containsName(n.bindsTo, name) || containsName(n.partOf, name)
+}
+
+// stopDepNames is the forward requirement edges that reverse-propagate stop:
+// Requires=, BindsTo=, and PartOf=. Wants= and After= are not included.
+func (n *node) stopDepNames() []string {
+	if n == nil {
+		return nil
+	}
+	out := append([]string{}, n.requires...)
+	out = append(out, n.bindsTo...)
+	out = append(out, n.partOf...)
+	return uniqueStable(out)
+}
+
+func (g *Graph) reverseRequirersOf(name string) []string {
+	name = NormalizeName(name)
+	var out []string
+	for _, other := range g.Names() {
+		n := g.nodes[other]
+		if n != nil && n.stopRequiresName(name) {
+			out = append(out, other)
+		}
+	}
+	return out
+}
+
+// reverseRequirementClosure is the named roots plus every loaded unit that
+// transitively Requires=/BindsTo=/PartOf= a root (DESIGN.md §10, §42).
+func (g *Graph) reverseRequirementClosure(roots []string) []string {
+	if g == nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	var walk func(name string)
+	walk = func(name string) {
+		name = NormalizeName(name)
+		if name == "" {
+			return
+		}
+		if _, ok := seen[name]; ok {
+			return
+		}
+		if g.nodes[name] == nil {
+			return
+		}
+		seen[name] = struct{}{}
+		for _, later := range g.reverseRequirersOf(name) {
+			walk(later)
+		}
+	}
+	for _, r := range roots {
+		walk(r)
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
