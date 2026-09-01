@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -104,6 +105,39 @@ func TestEnableLingerStartsManagerWithoutSession(t *testing.T) {
 	}
 	if !h.Lingering(testSIDA) {
 		t.Fatal("linger record missing")
+	}
+}
+
+func TestEnableLingerLogsTokenPath(t *testing.T) {
+	t.Parallel()
+	h, _ := testLingerHost(t)
+	h.cfg.LingerToken = func(rec runtime.LingerRecord) (*runtime.UserToken, error) {
+		return &runtime.UserToken{
+			Info: runtime.UserInfo{
+				SID:      rec.SID,
+				Username: "alice",
+				Domain:   "TEST",
+				Profile:  `C:\Users\alice`,
+			},
+			Source: runtime.LingerTokenPathS4U,
+		}, nil
+	}
+	var logs []string
+	h.cfg.Logf = func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	}
+	if _, err := h.EnableLinger("alice"); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, line := range logs {
+		if strings.Contains(line, "s4u") && strings.Contains(line, testSIDA) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected s4u path log, got %q", logs)
 	}
 }
 

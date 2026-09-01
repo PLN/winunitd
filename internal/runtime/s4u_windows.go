@@ -12,10 +12,14 @@ import (
 )
 
 const (
-	kerbS4ULogon     = 12
-	msv1_0S4ULogon   = 12
-	logonTypeNetwork = 3
-	logonTypeBatch   = 4
+	kerbS4ULogon   = 12
+	msv1_0S4ULogon = 12
+
+	credTypeGeneric        = 1
+	credTypeDomainPassword = 2
+
+	tokenStatisticsClass = 10 // TokenStatistics
+	localSystemSID       = "S-1-5-18"
 )
 
 type unicodeString struct {
@@ -58,25 +62,33 @@ type quotaLimits struct {
 	TimeLimit             int64
 }
 
-var (
-	modSecur32                     = windows.NewLazySystemDLL("secur32.dll")
-	modAdvapi32                    = windows.NewLazySystemDLL("advapi32.dll")
-	procLsaConnectUntrusted        = modSecur32.NewProc("LsaConnectUntrusted")
-	procLsaLookupAuthenticationPkg = modSecur32.NewProc("LsaLookupAuthenticationPackage")
-	procLsaLogonUser               = modSecur32.NewProc("LsaLogonUser")
-	procLsaDeregisterLogonProcess  = modSecur32.NewProc("LsaDeregisterLogonProcess")
-	procLsaFreeReturnBuffer        = modSecur32.NewProc("LsaFreeReturnBuffer")
-	procLsaNtStatusToWinError      = modAdvapi32.NewProc("LsaNtStatusToWinError")
-	procCredReadW                  = modAdvapi32.NewProc("CredReadW")
-	procCredFree                   = modAdvapi32.NewProc("CredFree")
-	procLogonUserW                 = modAdvapi32.NewProc("LogonUserW")
-)
+type tokenStatistics struct {
+	TokenId            windows.LUID
+	AuthenticationId   windows.LUID
+	ExpirationTime     int64
+	TokenType          uint32
+	ImpersonationLevel uint32
+	DynamicCharged     uint32
+	DynamicAvailable   uint32
+	GroupCount         uint32
+	PrivilegeCount     uint32
+	ModifiedId         windows.LUID
+}
 
-const (
-	credTypeGeneric        = 1
-	logon32LogonNetwork    = 3
-	logon32ProviderDefault = 0
-)
+// securityLogonSessionData is the leading fields of
+// SECURITY_LOGON_SESSION_DATA on amd64 (MSVC layout).
+type securityLogonSessionData struct {
+	Size                  uint32
+	LogonId               windows.LUID
+	_                     uint32
+	UserName              unicodeString
+	LogonDomain           unicodeString
+	AuthenticationPackage unicodeString
+	LogonType             uint32
+	Session               uint32
+	Sid                   uintptr
+	LogonTime             int64
+}
 
 type credW struct {
 	Flags              uint32
@@ -93,10 +105,34 @@ type credW struct {
 	UserName           *uint16
 }
 
-// ObtainLingerToken tries S4U first. If the S4U token has no network
-// credentials and rec.CredentialURI is a named CredMan/LSA reference,
-// that URI is used only to obtain network creds. Passwords are never
-// read from unit files, linger records, environment, or path references.
+var (
+	modSecur32                     = windows.NewLazySystemDLL("secur32.dll")
+	modAdvapi32                    = windows.NewLazySystemDLL("advapi32.dll")
+	modKernel32                    = windows.NewLazySystemDLL("kernel32.dll")
+	procLsaRegisterLogonProcess    = modSecur32.NewProc("LsaRegisterLogonProcess")
+	procLsaLookupAuthenticationPkg = modSecur32.NewProc("LsaLookupAuthenticationPackage")
+	procLsaLogonUser               = modSecur32.NewProc("LsaLogonUser")
+	procLsaDeregisterLogonProcess  = modSecur32.NewProc("LsaDeregisterLogonProcess")
+	procLsaFreeReturnBuffer        = modSecur32.NewProc("LsaFreeReturnBuffer")
+	procLsaGetLogonSessionData     = modSecur32.NewProc("LsaGetLogonSessionData")
+	procLsaNtStatusToWinError      = modAdvapi32.NewProc("LsaNtStatusToWinError")
+	procCredReadW                  = modAdvapi32.NewProc("CredReadW")
+	procCredFree                   = modAdvapi32.NewProc("CredFree")
+	procLogonUserW                 = modAdvapi32.NewProc("LogonUserW")
+	procAllocateLocallyUniqueId    = modKernel32.NewProc("AllocateLocallyUniqueId")
+)
+
+// ObtainLingerToken tries S4U first over a trusted LSA connection
+// (LsaRegisterLogonProcess: LocalSystem has SeTcbPrivilege). An
+// untrusted connection yields an identification-level token that
+// duplicatePrimary rejects.
+//
+// A named CredMan/LSA URI on the linger record is used only when it is
+// present AND the S4U token is insufficient for outbound network
+// credentials (real logon-session probe). The URI fallback calls
+// LogonUserW with LOGON32_LOGON_BATCH so the token can carry outbound
+// network creds. Passwords are never read from unit files, linger
+// records, environment, or path references.
 func ObtainLingerToken(rec LingerRecord) (*UserToken, error) {
 	if !validAccountSID(rec.SID) && strings.TrimSpace(rec.Name) == "" {
 		return nil, failLinger(rec.SID, fmt.Errorf("SID or account name required"))
@@ -105,22 +141,20 @@ func ObtainLingerToken(rec LingerRecord) (*UserToken, error) {
 	if err != nil {
 		return nil, failLinger(rec.SID, err)
 	}
-	if !s4uTokenHasNetworkCreds(tok) && rec.CredentialURI != "" {
+	tok.Source = LingerTokenPathS4U
+	if useStoreURIFallback(rec.CredentialURI, tokenHasOutboundNetworkCreds(tok)) {
 		netTok, netErr := tokenFromCredentialURI(rec.CredentialURI)
 		if netErr == nil && netTok != nil {
 			_ = tok.Close()
+			netTok.Source = LingerTokenPathStoreURI
+			logLinger("linger token %s via store-uri (S4U insufficient for outbound network creds)", rec.SID)
 			return netTok, nil
 		}
-		// Keep the S4U token; the named URI is best-effort for network creds.
+		logLinger("linger token %s via s4u (store URI failed: %v)", rec.SID, netErr)
+		return tok, nil
 	}
+	logLinger("linger token %s via s4u", rec.SID)
 	return tok, nil
-}
-
-func s4uTokenHasNetworkCreds(_ *UserToken) bool {
-	// S4U2Self yields a local identity token without network credentials
-	// unless constrained delegation is configured. P2 does not implement
-	// S4U2Proxy; a named CredMan/LSA URI is the only network fallback.
-	return false
 }
 
 func s4uLogon(rec LingerRecord) (*UserToken, error) {
@@ -129,10 +163,9 @@ func s4uLogon(rec LingerRecord) (*UserToken, error) {
 		return nil, fmt.Errorf("no account name for S4U")
 	}
 
-	var lsaHandle windows.Handle
-	st, _, _ := procLsaConnectUntrusted.Call(uintptr(unsafe.Pointer(&lsaHandle)))
-	if err := lsaStatus(st); err != nil {
-		return nil, fmt.Errorf("LsaConnectUntrusted: %w", err)
+	lsaHandle, err := connectTrustedLSA()
+	if err != nil {
+		return nil, err
 	}
 	defer procLsaDeregisterLogonProcess.Call(uintptr(lsaHandle))
 
@@ -161,15 +194,14 @@ func s4uLogon(rec LingerRecord) (*UserToken, error) {
 			last = err
 			continue
 		}
-		var source tokenSource
-		copy(source.SourceName[:], []byte("winunitd"))
+		source := newTokenSource()
 		var profile uintptr
 		var profileLen uint32
 		var logonID windows.LUID
 		var token windows.Handle
 		var quotas quotaLimits
 		var subStatus uintptr
-		st, _, _ = procLsaLogonUser.Call(
+		st, _, _ := procLsaLogonUser.Call(
 			uintptr(lsaHandle),
 			uintptr(unsafe.Pointer(&origin)),
 			uintptr(t.logonTyp),
@@ -220,21 +252,60 @@ func s4uLogon(rec LingerRecord) (*UserToken, error) {
 	return nil, last
 }
 
-func s4uNames(rec LingerRecord) (upn, realm string) {
-	name := strings.TrimSpace(rec.Name)
-	if name == "" && rec.SID != "" {
-		info, err := LookupAccountName(rec.SID)
-		if err == nil {
-			name = FormatAccount(info)
-		}
+// connectTrustedLSA registers as a logon process. LocalSystem has
+// SeTcbPrivilege; LsaConnectUntrusted is not used (identification-level
+// tokens fail duplicatePrimary with ERROR_BAD_IMPERSONATION_LEVEL).
+func connectTrustedLSA() (windows.Handle, error) {
+	if err := enableSeTcbPrivilege(); err != nil {
+		// Privilege may already be enabled; LsaRegisterLogonProcess
+		// is the authority on whether we are trusted.
+		_ = err
 	}
-	if name == "" {
-		return "", ""
+	name := "winunitd"
+	nameBuf := append([]byte(name), 0)
+	ls := lsaString{Length: uint16(len(name)), MaximumLength: uint16(len(nameBuf)), Buffer: &nameBuf[0]}
+	var handle windows.Handle
+	var mode uint32
+	st, _, _ := procLsaRegisterLogonProcess.Call(
+		uintptr(unsafe.Pointer(&ls)),
+		uintptr(unsafe.Pointer(&handle)),
+		uintptr(unsafe.Pointer(&mode)),
+	)
+	if err := lsaStatus(st); err != nil {
+		return 0, fmt.Errorf("LsaRegisterLogonProcess: %w", err)
 	}
-	if i := strings.LastIndex(name, `\`); i >= 0 {
-		return name[i+1:], name[:i]
+	return handle, nil
+}
+
+func enableSeTcbPrivilege() error {
+	var tok windows.Token
+	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY, &tok); err != nil {
+		return err
 	}
-	return name, ""
+	defer tok.Close()
+	var luid windows.LUID
+	name, err := windows.UTF16PtrFromString("SeTcbPrivilege")
+	if err != nil {
+		return err
+	}
+	if err := windows.LookupPrivilegeValue(nil, name, &luid); err != nil {
+		return err
+	}
+	tp := windows.Tokenprivileges{
+		PrivilegeCount: 1,
+		Privileges: [1]windows.LUIDAndAttributes{{
+			Luid:       luid,
+			Attributes: windows.SE_PRIVILEGE_ENABLED,
+		}},
+	}
+	return windows.AdjustTokenPrivileges(tok, false, &tp, 0, nil, nil)
+}
+
+func newTokenSource() tokenSource {
+	var src tokenSource
+	copy(src.SourceName[:], []byte("winunitd"))
+	_, _, _ = procAllocateLocallyUniqueId.Call(uintptr(unsafe.Pointer(&src.SourceIdentifier)))
+	return src
 }
 
 func fillInfo(rec LingerRecord) (UserInfo, error) {
@@ -249,18 +320,6 @@ func fillInfo(rec LingerRecord) (UserInfo, error) {
 		return LookupAccountName(rec.Name)
 	}
 	return UserInfo{}, fmt.Errorf("cannot resolve linger identity")
-}
-
-func applyAccountName(info *UserInfo, name string) {
-	if info == nil || strings.TrimSpace(name) == "" || info.Username != "" {
-		return
-	}
-	if i := strings.LastIndex(name, `\`); i >= 0 {
-		info.Domain = name[:i]
-		info.Username = name[i+1:]
-		return
-	}
-	info.Username = name
 }
 
 func buildKerbS4U(upn, realm string) ([]byte, error) {
@@ -379,6 +438,38 @@ func duplicatePrimary(tok windows.Token) (windows.Token, error) {
 	return primary, nil
 }
 
+// tokenHasOutboundNetworkCreds inspects the token's logon session.
+// Network / unknown logon types do not cache outbound credentials.
+// Probe failure is treated as insufficient (try the URI if present).
+func tokenHasOutboundNetworkCreds(tok *UserToken) bool {
+	native, ok := nativeToken(tok)
+	if !ok {
+		return false
+	}
+	var stats tokenStatistics
+	var ret uint32
+	err := windows.GetTokenInformation(
+		native,
+		tokenStatisticsClass,
+		(*byte)(unsafe.Pointer(&stats)),
+		uint32(unsafe.Sizeof(stats)),
+		&ret,
+	)
+	if err != nil {
+		return false
+	}
+	var data *securityLogonSessionData
+	st, _, _ := procLsaGetLogonSessionData.Call(
+		uintptr(unsafe.Pointer(&stats.AuthenticationId)),
+		uintptr(unsafe.Pointer(&data)),
+	)
+	if err := lsaStatus(st); err != nil || data == nil {
+		return false
+	}
+	defer procLsaFreeReturnBuffer.Call(uintptr(unsafe.Pointer(data)))
+	return logonTypeCachesOutboundCreds(data.LogonType)
+}
+
 func tokenFromCredentialURI(raw string) (*UserToken, error) {
 	scheme, name, err := credentialURIParts(raw)
 	if err != nil {
@@ -402,8 +493,20 @@ func tokenFromCredMan(target string) (*UserToken, error) {
 	if err != nil {
 		return nil, err
 	}
+	var last error
+	for _, credType := range []uint32{credTypeGeneric, credTypeDomainPassword} {
+		tok, err := readCredAndLogon(targetp, credType, target)
+		if err == nil {
+			return tok, nil
+		}
+		last = err
+	}
+	return nil, last
+}
+
+func readCredAndLogon(targetp *uint16, credType uint32, target string) (*UserToken, error) {
 	var cred *credW
-	r1, _, e1 := procCredReadW.Call(uintptr(unsafe.Pointer(targetp)), uintptr(credTypeGeneric), 0, uintptr(unsafe.Pointer(&cred)))
+	r1, _, e1 := procCredReadW.Call(uintptr(unsafe.Pointer(targetp)), uintptr(credType), 0, uintptr(unsafe.Pointer(&cred)))
 	if r1 == 0 {
 		if e1 != syscall.Errno(0) {
 			return nil, fmt.Errorf("CredRead: %w", e1)
@@ -421,9 +524,12 @@ func tokenFromCredMan(target string) (*UserToken, error) {
 		user = windows.UTF16PtrToString(cred.UserName)
 	}
 	u, domain := splitUserDomain(user)
-	pass := blobPassword(blob)
-	defer zeroString(&pass)
-	if u == "" || pass == "" {
+	pass, err := blobPasswordUTF16(blob)
+	if err != nil {
+		return nil, fmt.Errorf("CredMan credential %q: %w", target, err)
+	}
+	defer zeroUTF16(pass)
+	if u == "" || len(pass) == 0 {
 		return nil, fmt.Errorf("CredMan credential %q is incomplete", target)
 	}
 	return logonWithSecret(u, domain, pass)
@@ -433,7 +539,7 @@ func tokenFromLSASecret(name string) (*UserToken, error) {
 	return nil, fmt.Errorf("LSA secret %q is not available", name)
 }
 
-func logonWithSecret(user, domain, pass string) (*UserToken, error) {
+func logonWithSecret(user, domain string, pass []uint16) (*UserToken, error) {
 	userp, err := windows.UTF16PtrFromString(user)
 	if err != nil {
 		return nil, err
@@ -442,16 +548,17 @@ func logonWithSecret(user, domain, pass string) (*UserToken, error) {
 	if err != nil {
 		return nil, err
 	}
-	passp, err := windows.UTF16PtrFromString(pass)
-	if err != nil {
-		return nil, err
-	}
+	// Keep the password as []uint16 through LogonUserW; zero after use.
+	// Do not copy through an immutable Go string.
+	passBuf := make([]uint16, len(pass)+1)
+	copy(passBuf, pass)
+	defer zeroUTF16(passBuf)
 	var tok windows.Handle
 	r1, _, e1 := procLogonUserW.Call(
 		uintptr(unsafe.Pointer(userp)),
 		uintptr(unsafe.Pointer(domainp)),
-		uintptr(unsafe.Pointer(passp)),
-		uintptr(logon32LogonNetwork),
+		uintptr(unsafe.Pointer(&passBuf[0])),
+		uintptr(logon32LogonBatch),
 		uintptr(logon32ProviderDefault),
 		uintptr(unsafe.Pointer(&tok)),
 	)
@@ -474,41 +581,10 @@ func logonWithSecret(user, domain, pass string) (*UserToken, error) {
 	return &UserToken{Info: info, native: winToken(primary)}, nil
 }
 
-func splitUserDomain(name string) (user, domain string) {
-	name = strings.TrimSpace(name)
-	if i := strings.LastIndex(name, `\`); i >= 0 {
-		return name[i+1:], name[:i]
+func runningAsLocalSystem() bool {
+	info, err := CurrentUserInfo()
+	if err != nil {
+		return false
 	}
-	if i := strings.Index(name, "@"); i >= 0 {
-		return name[:i], name[i+1:]
-	}
-	return name, ""
-}
-
-func blobPassword(b []byte) string {
-	if len(b) == 0 {
-		return ""
-	}
-	if len(b)%2 == 0 {
-		u := unsafe.Slice((*uint16)(unsafe.Pointer(&b[0])), len(b)/2)
-		if len(u) > 0 && u[len(u)-1] == 0 {
-			u = u[:len(u)-1]
-		}
-		return windows.UTF16ToString(u)
-	}
-	return string(b)
-}
-
-func zeroBytes(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
-}
-
-func zeroString(s *string) {
-	if s == nil {
-		return
-	}
-	*s = strings.Repeat("\x00", len(*s))
-	*s = ""
+	return strings.EqualFold(info.SID, localSystemSID)
 }

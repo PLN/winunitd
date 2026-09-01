@@ -39,13 +39,15 @@ func serve(ctx context.Context, baseDir string, stderr io.Writer, sessions chan 
 	if err != nil {
 		exe = os.Args[0]
 	}
+	logf := func(format string, args ...any) {
+		fmt.Fprintf(stderr, "winunitd: "+format+"\n", args...)
+	}
+	runtime.SetLingerLogf(logf)
 	host := manager.NewUserHost(manager.UserHostConfig{
 		Exe:       exe,
 		Daemon:    job,
 		LingerDir: filepath.Join(baseDir, "linger"),
-		Logf: func(format string, args ...any) {
-			fmt.Fprintf(stderr, "winunitd: "+format+"\n", args...)
-		},
+		Logf:      logf,
 	})
 	defer finish(m, job, host, stderr)
 
