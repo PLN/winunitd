@@ -27,6 +27,7 @@ type loaded struct {
 // Manager holds loaded units and serves the control protocol.
 type Manager struct {
 	cfg         Config
+	clk         timers.Clock
 	launch      runtime.Launcher
 	journal     *journal.Store
 	engine      *timers.Engine
@@ -72,7 +73,7 @@ func New(cfg Config) (*Manager, error) {
 		return nil, err
 	}
 	clk := cfg.Clock
-	if clk.Now == nil || clk.SinceBoot == nil || clk.Startup.IsZero() {
+	if clk.Now == nil || clk.SinceBoot == nil || clk.Startup.IsZero() || clk.NewTimer == nil {
 		def := timers.DefaultClock()
 		if clk.Now == nil {
 			clk.Now = def.Now
@@ -83,9 +84,13 @@ func New(cfg Config) (*Manager, error) {
 		if clk.Startup.IsZero() {
 			clk.Startup = def.Startup
 		}
+		if clk.NewTimer == nil {
+			clk.NewTimer = def.NewTimer
+		}
 	}
 	m := &Manager{
 		cfg:         cfg,
+		clk:         clk,
 		launch:      launch,
 		scm:         scm,
 		journal:     js,

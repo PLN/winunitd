@@ -148,9 +148,11 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 
 	var stopErr error
 	if scmName != "" {
-		stopErr = m.stopSCM(context.Background(), scmName, timeout)
+		ctx, cancel := m.clockTimeout(context.Background(), timeout)
+		stopErr = m.stopSCM(ctx, scmName, timeout)
+		cancel()
 	} else if proc != nil {
-		_ = proc.Stop(timeout)
+		_ = m.stopProcess(proc, timeout)
 	}
 
 	m.mu.Lock()
