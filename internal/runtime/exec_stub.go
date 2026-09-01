@@ -132,19 +132,25 @@ func (p *stubProc) finish() {
 func (p *stubProc) Close() error {
 	p.finish()
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.closed {
+		p.mu.Unlock()
 		return nil
 	}
 	p.closed = true
-	if p.job != nil {
-		_ = p.job.Close()
+	job := p.job
+	stdout := p.stdout
+	stderr := p.stderr
+	p.stdout = nil
+	p.stderr = nil
+	p.mu.Unlock()
+	if job != nil {
+		_ = job.Close()
 	}
-	if p.stdout != nil {
-		_ = p.stdout.Close()
+	if stdout != nil {
+		_ = stdout.Close()
 	}
-	if p.stderr != nil {
-		_ = p.stderr.Close()
+	if stderr != nil {
+		_ = stderr.Close()
 	}
 	return nil
 }

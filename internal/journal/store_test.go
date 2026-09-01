@@ -163,6 +163,28 @@ func TestAttachUsesCallerInvocationID(t *testing.T) {
 	}
 }
 
+func TestWaitAfterCloseFlushesCapture(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	inv := NewInvocationID()
+	r, w := io.Pipe()
+	s.Attach("foo.service", 1, inv, r, nil)
+	if _, err := io.WriteString(w, "late line\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s.Wait("foo.service")
+	got, err := s.Read("foo.service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Message != "late line" || got[0].InvocationID != inv {
+		t.Fatalf("got = %+v", got)
+	}
+}
+
 func TestOpenRequiresDir(t *testing.T) {
 	t.Parallel()
 	if _, err := Open(""); err == nil {
