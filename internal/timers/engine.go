@@ -28,6 +28,7 @@ type Engine struct {
 	stop    chan struct{}
 	stopped chan struct{}
 	running bool
+	fires   sync.WaitGroup
 }
 
 type armed struct {
@@ -78,7 +79,8 @@ func (e *Engine) Clock() Clock {
 	return e.clk
 }
 
-// Stop ends the scheduler goroutine. It is idempotent.
+// Stop ends the scheduler goroutine and waits for in-flight fire
+// callbacks. It is idempotent.
 func (e *Engine) Stop() {
 	if e == nil {
 		return
@@ -92,6 +94,26 @@ func (e *Engine) Stop() {
 	e.mu.Unlock()
 	close(e.stop)
 	<-e.stopped
+	e.fires.Wait()
+}
+
+// ClockChanged recomputes wall-clock (OnCalendar / OnUnitActiveSec)
+// deadlines and wakes the loop so missed calendar events fire promptly
+// (DESIGN.md §18). Monotonic OnBootSec / OnStartupSec heap entries are
+// not rewritten. The 30s poll remains as a fallback.
+func (e *Engine) ClockChanged() {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	if !e.running {
+		e.mu.Unlock()
+		return
+	}
+	e.mu.Unlock()
+	e.fireDue()
+	e.recalcWall()
+	e.kick()
 }
 
 func (e *Engine) loop() {
@@ -124,8 +146,7 @@ func (e *Engine) loop() {
 		case <-e.wakeup:
 			continue
 		case <-e.clk.changed():
-			e.fireDue()
-			e.recalcAll()
+			e.ClockChanged()
 			continue
 		case <-timerC:
 			timer = nil
@@ -139,16 +160,27 @@ func (e *Engine) waitDuration() (time.Duration, bool) {
 	defer e.mu.Unlock()
 	now := e.clk.now()
 	e.dropStaleLocked()
-	if e.pq.Len() == 0 {
+	found := false
+	d := maxWait
+	for _, it := range e.pq {
+		a := e.armed[it.name]
+		if a == nil || it.gen != a.gen {
+			continue
+		}
+		w := e.itemWaitLocked(a, it, now)
+		if w < 0 {
+			w = 0
+		}
+		if !found || w < d {
+			d = w
+			found = true
+		}
+	}
+	if !found {
 		if e.clk.Changed == nil {
 			return maxWait, true
 		}
 		return 0, false
-	}
-	when := e.pq[0].when
-	d := when.Sub(now)
-	if d < 0 {
-		d = 0
 	}
 	if e.clk.Changed == nil && d > maxWait {
 		d = maxWait
@@ -167,11 +199,13 @@ func (e *Engine) fireDue() {
 	}
 }
 
-func (e *Engine) recalcAll() {
+func (e *Engine) recalcWall() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	for _, a := range e.armed {
-		e.rescheduleLocked(a)
+		if wallSensitive(a.spec) {
+			e.rescheduleLocked(a)
+		}
 	}
 }
 
@@ -179,24 +213,32 @@ func (e *Engine) popDue(now time.Time) (name string, scheduled time.Time, ok boo
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.dropStaleLocked()
-	if e.pq.Len() == 0 {
+	best := -1
+	for i, it := range e.pq {
+		a := e.armed[it.name]
+		if a == nil || it.gen != a.gen {
+			continue
+		}
+		if !e.itemDueLocked(a, it, now) {
+			continue
+		}
+		if best < 0 || e.pq.Less(i, best) {
+			best = i
+		}
+	}
+	if best < 0 {
 		return "", time.Time{}, false
 	}
-	it := e.pq[0]
-	a := e.armed[it.name]
-	if a == nil || it.gen != a.gen {
-		heap.Pop(&e.pq)
-		return "", time.Time{}, false
-	}
-	if it.when.After(now) {
-		return "", time.Time{}, false
-	}
-	heap.Pop(&e.pq)
+	it := heap.Remove(&e.pq, best).(*pqItem)
 	return it.name, it.when, true
 }
 
 func (e *Engine) consume(name string, scheduled, actual time.Time) {
 	e.mu.Lock()
+	if !e.running {
+		e.mu.Unlock()
+		return
+	}
 	a := e.armed[name]
 	if a == nil {
 		e.mu.Unlock()
@@ -205,10 +247,16 @@ func (e *Engine) consume(name string, scheduled, actual time.Time) {
 	MarkFired(a.spec, &a.rt, e.clk, scheduled, actual)
 	_ = e.store.Save(name, a.rt)
 	fire := e.fire
+	if fire != nil {
+		e.fires.Add(1)
+	}
 	e.mu.Unlock()
 
 	if fire != nil {
-		go fire(name)
+		go func() {
+			defer e.fires.Done()
+			fire(name)
+		}()
 	}
 
 	e.mu.Lock()
@@ -228,6 +276,58 @@ func (e *Engine) dropStaleLocked() {
 		}
 		heap.Pop(&e.pq)
 	}
+}
+
+func wallSensitive(spec Spec) bool {
+	return len(spec.OnCalendar) > 0 || spec.OnUnitActiveSecSet
+}
+
+func (e *Engine) itemWaitLocked(a *armed, it *pqItem, now time.Time) time.Duration {
+	if wallSensitive(a.spec) {
+		return it.when.Sub(now)
+	}
+	return e.monotonicWaitLocked(a.spec, a.rt)
+}
+
+func (e *Engine) itemDueLocked(a *armed, it *pqItem, now time.Time) bool {
+	if wallSensitive(a.spec) {
+		return !it.when.After(now)
+	}
+	return e.monotonicDueLocked(a.spec, a.rt)
+}
+
+func (e *Engine) monotonicDueLocked(spec Spec, rt Runtime) bool {
+	if spec.OnBootSecSet && !rt.FiredBoot && e.clk.sinceBoot() >= spec.OnBootSec {
+		return true
+	}
+	if spec.OnStartupSecSet && !rt.FiredStartup && e.clk.sinceStart() >= spec.OnStartupSec {
+		return true
+	}
+	return false
+}
+
+func (e *Engine) monotonicWaitLocked(spec Spec, rt Runtime) time.Duration {
+	var d time.Duration
+	found := false
+	consider := func(rem time.Duration) {
+		if rem < 0 {
+			rem = 0
+		}
+		if !found || rem < d {
+			d = rem
+			found = true
+		}
+	}
+	if spec.OnBootSecSet && !rt.FiredBoot {
+		consider(spec.OnBootSec - e.clk.sinceBoot())
+	}
+	if spec.OnStartupSecSet && !rt.FiredStartup {
+		consider(spec.OnStartupSec - e.clk.sinceStart())
+	}
+	if !found {
+		return 0
+	}
+	return d
 }
 
 func (e *Engine) rescheduleLocked(a *armed) {
@@ -340,6 +440,8 @@ type Snapshot struct {
 }
 
 // Status returns next and last actual elapse for an armed timer.
+// Next is recomputed from the current clock so list-timers is not stale
+// across a wall jump (DESIGN.md §18).
 func (e *Engine) Status(name string) Snapshot {
 	if e == nil {
 		return Snapshot{}
@@ -351,8 +453,8 @@ func (e *Engine) Status(name string) Snapshot {
 		return Snapshot{}
 	}
 	out := Snapshot{Last: a.rt.LastActual}
-	if a.ok {
-		out.Next = a.next
+	if next, ok := NextDeadline(a.spec, a.rt, e.clk); ok {
+		out.Next = next
 	}
 	return out
 }

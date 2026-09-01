@@ -168,3 +168,97 @@ func TestEngineOnUnitActiveSecAcrossSuspend(t *testing.T) {
 		t.Fatalf("fired %q", name)
 	}
 }
+
+func TestEngineClockChangedFiresCalendarWithoutPoll(t *testing.T) {
+	t.Parallel()
+	fired := make(chan string, 4)
+	fk := NewFake(time.Time{})
+	clk := fk.Clock()
+	clk.Changed = nil
+	e := NewEngine(clk, nil, func(name string) { fired <- name })
+	t.Cleanup(e.Stop)
+	cal, err := ParseCalendar("*-*-* 15:00:00")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.Arm(Spec{Name: "cal.timer", OnCalendar: []Calendar{cal}})
+	today := time.Date(2026, 9, 1, 15, 0, 0, 0, time.UTC)
+	waitNext(t, e, "cal.timer", today)
+	waitQuiet(t, fired)
+	fk.JumpWall(fk.Now().Add(4 * time.Hour))
+	waitQuiet(t, fired)
+	if got := e.Status("cal.timer").Next; !got.Equal(time.Date(2026, 9, 2, 15, 0, 0, 0, time.UTC)) {
+		t.Fatalf("Next stayed stale after wall jump: %v", got)
+	}
+	e.ClockChanged()
+	if name := waitFired(t, fired); name != "cal.timer" {
+		t.Fatalf("fired %q", name)
+	}
+}
+
+func TestEngineClockChangedLeavesOnBootSecHeap(t *testing.T) {
+	t.Parallel()
+	fired := make(chan string, 4)
+	e, fk := testEngine(t, func(name string) { fired <- name })
+	e.Arm(Spec{Name: "boot.timer", OnBootSec: 2 * time.Hour, OnBootSecSet: true})
+	wantNext := fk.Now().Add(time.Hour) // Fake starts with 1h since boot
+	waitNext(t, e, "boot.timer", wantNext)
+	gen, when := armedHeap(t, e, "boot.timer")
+	waitQuiet(t, fired)
+	fk.JumpWall(fk.Now().Add(4 * time.Hour))
+	e.ClockChanged()
+	waitQuiet(t, fired)
+	gen2, when2 := armedHeap(t, e, "boot.timer")
+	if gen2 != gen || !when2.Equal(when) {
+		t.Fatalf("OnBootSec heap rewritten: gen %d->%d when %v->%v", gen, gen2, when, when2)
+	}
+	fk.Advance(time.Hour)
+	if name := waitFired(t, fired); name != "boot.timer" {
+		t.Fatalf("fired %q", name)
+	}
+}
+
+func TestEngineStopWaitsForFire(t *testing.T) {
+	t.Parallel()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	fk := NewFake(time.Time{})
+	e := NewEngine(fk.Clock(), nil, func(string) {
+		close(started)
+		<-release
+	})
+	e.Arm(Spec{Name: "foo.timer", OnStartupSec: time.Second, OnStartupSecSet: true})
+	fk.Advance(time.Second)
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("fire did not start")
+	}
+	done := make(chan struct{})
+	go func() {
+		e.Stop()
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("Stop returned before the fire goroutine finished")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop did not return after the fire goroutine finished")
+	}
+}
+
+func armedHeap(t *testing.T, e *Engine, name string) (gen uint64, when time.Time) {
+	t.Helper()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	a := e.armed[name]
+	if a == nil {
+		t.Fatalf("not armed: %s", name)
+	}
+	return a.gen, a.next
+}

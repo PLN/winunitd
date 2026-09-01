@@ -18,7 +18,7 @@ import (
 // winunitd.exe (DESIGN.md §42, §66).
 var daemonJob *runtime.DaemonJob
 
-func serve(ctx context.Context, baseDir string, stderr io.Writer, sessions chan runtime.SessionChange) error {
+func serve(ctx context.Context, baseDir string, stderr io.Writer, sessions chan runtime.SessionChange, clock <-chan struct{}) error {
 	job, err := runtime.OpenDaemonJob()
 	if err != nil {
 		return err
@@ -74,6 +74,7 @@ func serve(ctx context.Context, baseDir string, stderr io.Writer, sessions chan 
 	}
 	go runtime.WatchSessions(ctx, sessions)
 	go host.Listen(ctx, sessions)
+	go watchClock(ctx, m, clock)
 
 	lis, err := protocol.ListenControl()
 	if err != nil {
@@ -100,4 +101,21 @@ func finish(m *manager.Manager, job *runtime.DaemonJob, host *manager.UserHost, 
 		}
 	}
 	daemonJob = nil
+}
+
+func watchClock(ctx context.Context, m *manager.Manager, clock <-chan struct{}) {
+	if m == nil || clock == nil {
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case _, ok := <-clock:
+			if !ok {
+				return
+			}
+			m.ClockChanged()
+		}
+	}
 }

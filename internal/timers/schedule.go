@@ -84,11 +84,11 @@ func bootDue(spec Spec, clk Clock, now time.Time) time.Time {
 }
 
 func startupDue(spec Spec, clk Clock, now time.Time) time.Time {
-	due := clk.startup().Add(spec.OnStartupSec)
-	if due.Before(now) {
+	elapsed := clk.sinceStart()
+	if elapsed >= spec.OnStartupSec {
 		return now
 	}
-	return due
+	return now.Add(spec.OnStartupSec - elapsed)
 }
 
 func persistentCatchup(cal Calendar, rt Runtime, now time.Time) (time.Time, bool) {

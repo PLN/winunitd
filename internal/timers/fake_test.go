@@ -89,6 +89,22 @@ func TestFakeSuspendLeavesSinceBoot(t *testing.T) {
 	}
 }
 
+func TestFakeSinceStartIgnoresJumpWall(t *testing.T) {
+	t.Parallel()
+	fk := NewFake(time.Time{})
+	if fk.SinceStart() != 0 {
+		t.Fatalf("SinceStart = %s, want 0", fk.SinceStart())
+	}
+	fk.Advance(5 * time.Second)
+	if fk.SinceStart() != 5*time.Second {
+		t.Fatalf("SinceStart after Advance = %s", fk.SinceStart())
+	}
+	fk.JumpWall(fk.Now().Add(time.Hour))
+	if fk.SinceStart() != 5*time.Second {
+		t.Fatalf("JumpWall moved SinceStart: %s", fk.SinceStart())
+	}
+}
+
 func waitFired(t *testing.T, ch <-chan string) string {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
