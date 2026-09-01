@@ -28,7 +28,8 @@ Commands:
   disable <unit>      Disable a unit
   list-units          List loaded units
   list-timers         List timers
-  logs <unit>         Show unit logs
+  logs <unit> [--follow] [--since <when>]
+                      Show unit logs (poll --follow; --since RFC3339 / 1h / "1 hour ago")
   daemon-reload       Reload unit files
   verify <path|unit>  Verify a unit file path (no daemon) or a loaded unit
   enable-linger <user>
@@ -84,11 +85,12 @@ Path verify checks the companion .service next to the file.
 `
 
 type cli struct {
-	stdout   io.Writer
-	stderr   io.Writer
-	dial     func(context.Context) (net.Conn, error)
-	userDial func(context.Context) (net.Conn, error)
-	user     bool
+	stdout     io.Writer
+	stderr     io.Writer
+	dial       func(context.Context) (net.Conn, error)
+	userDial   func(context.Context) (net.Conn, error)
+	user       bool
+	followStop <-chan struct{} // tests: close to end --follow after a poll
 }
 
 func main() {
@@ -403,20 +405,110 @@ func (c *cli) listTimers() int {
 }
 
 func (c *cli) logs(args []string) int {
-	name, code := c.needUnit(args, "logs")
-	if code != 0 {
-		return code
+	la, errMsg := parseLogsArgs(args)
+	if errMsg != "" {
+		if errMsg == "help" {
+			fmt.Fprint(c.stdout, usage)
+			return 0
+		}
+		fmt.Fprintf(c.stderr, "winctl logs: %s\n", errMsg)
+		return 2
 	}
-	var got *protocol.LogsResult
-	err := c.call(func(ctx context.Context, cl *protocol.Client) error {
-		var err error
-		got, err = cl.Logs(ctx, protocol.LogsParams{Unit: name})
-		return err
-	})
-	if err != nil {
-		return c.rpcError(err)
+	cursor := ""
+	printed := false
+	for {
+		var got *protocol.LogsResult
+		err := c.call(func(ctx context.Context, cl *protocol.Client) error {
+			var err error
+			got, err = cl.Logs(ctx, protocol.LogsParams{
+				Unit:   la.unit,
+				Follow: la.follow,
+				Since:  la.since,
+				Cursor: cursor,
+			})
+			return err
+		})
+		if err != nil {
+			return c.rpcError(err)
+		}
+		if len(got.Entries) > 0 {
+			c.printLogsEntries(got)
+			printed = true
+		} else if !la.follow && !printed {
+			return c.printLogs(got)
+		}
+		if got.Cursor != "" {
+			cursor = got.Cursor
+		}
+		if !la.follow {
+			return 0
+		}
+		if c.followStop != nil {
+			select {
+			case <-c.followStop:
+				return 0
+			default:
+			}
+		}
+		if c.followStop != nil {
+			select {
+			case <-c.followStop:
+				return 0
+			case <-time.After(journalFollowPoll):
+			}
+		} else {
+			time.Sleep(journalFollowPoll)
+		}
 	}
-	return c.printLogs(got)
+}
+
+const journalFollowPoll = 200 * time.Millisecond
+
+type logsArgs struct {
+	unit   string
+	follow bool
+	since  string
+}
+
+func parseLogsArgs(args []string) (logsArgs, string) {
+	var la logsArgs
+	for i := 0; i < len(args); {
+		a := args[i]
+		switch {
+		case a == "-h" || a == "-help" || a == "--help" || a == "help":
+			return la, "help"
+		case a == "--follow":
+			la.follow = true
+			i++
+		case a == "--since":
+			if i+1 >= len(args) {
+				return la, "--since requires a value"
+			}
+			la.since = args[i+1]
+			if strings.TrimSpace(la.since) == "" {
+				return la, "--since requires a value"
+			}
+			i += 2
+		case strings.HasPrefix(a, "--since="):
+			la.since = strings.TrimPrefix(a, "--since=")
+			if strings.TrimSpace(la.since) == "" {
+				return la, "--since requires a value"
+			}
+			i++
+		case strings.HasPrefix(a, "-"):
+			return la, fmt.Sprintf("unknown flag %q", a)
+		default:
+			if la.unit != "" {
+				return la, fmt.Sprintf("unexpected argument %q", a)
+			}
+			la.unit = unit.NormalizeName(a)
+			i++
+		}
+	}
+	if strings.TrimSpace(la.unit) == "" {
+		return la, "unit name required"
+	}
+	return la, ""
 }
 
 func (c *cli) lingerCmd(args []string, method string) int {
@@ -605,10 +697,14 @@ func (c *cli) printLogs(got *protocol.LogsResult) int {
 		fmt.Fprintf(c.stdout, "No journal entries for %s.\n", got.Unit)
 		return 0
 	}
+	c.printLogsEntries(got)
+	return 0
+}
+
+func (c *cli) printLogsEntries(got *protocol.LogsResult) {
 	for _, e := range got.Entries {
 		fmt.Fprintln(c.stdout, formatLogEntry(e))
 	}
-	return 0
 }
 
 func formatLogEntry(e protocol.LogEntry) string {

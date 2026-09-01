@@ -39,6 +39,9 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(out.String(), `\\.\pipe\winunitd\user\`) {
 		t.Fatalf("help missing user pipe: %s", out.String())
 	}
+	if !strings.Contains(out.String(), "--follow") || !strings.Contains(out.String(), "--since") {
+		t.Fatalf("help missing logs flags: %s", out.String())
+	}
 }
 
 func TestRunVerify(t *testing.T) {
@@ -775,6 +778,77 @@ WorkingDirectory=C:\Tools
 	}
 	if !strings.Contains(list, "1") {
 		t.Fatalf("list missing pid: %s", list)
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = runCLI([]string{"logs", "foo", "--since", "1 hour ago"}, &out, &errb, dial)
+	if code != 0 {
+		t.Fatalf("logs --since exit %d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "hello from unit") {
+		t.Fatalf("logs --since dropped live lines: %s", out.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	future := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
+	code = runCLI([]string{"logs", "foo", "--since", future}, &out, &errb, dial)
+	if code != 0 {
+		t.Fatalf("logs --since future exit %d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "No journal entries") {
+		t.Fatalf("logs --since future = %s", out.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = runCLI([]string{"logs", "foo", "--since", "not-a-time"}, &out, &errb, dial)
+	if code == 0 {
+		t.Fatal("invalid --since must fail")
+	}
+	if !strings.Contains(errb.String(), "invalid-params") && !strings.Contains(errb.String(), "cannot parse since") {
+		t.Fatalf("invalid --since stderr=%s", errb.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = runCLI([]string{"logs", "foo", "--boot"}, &out, &errb, dial)
+	if code != 2 {
+		t.Fatalf("unknown flag exit %d", code)
+	}
+
+	stopFollow := make(chan struct{})
+	close(stopFollow)
+	out.Reset()
+	errb.Reset()
+	c := &cli{stdout: &out, stderr: &errb, dial: dial, followStop: stopFollow}
+	code = c.run([]string{"logs", "foo", "--follow"})
+	if code != 0 {
+		t.Fatalf("logs --follow exit %d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "hello from unit") {
+		t.Fatalf("logs --follow = %s", out.String())
+	}
+}
+
+func TestParseLogsArgs(t *testing.T) {
+	t.Parallel()
+	got, errMsg := parseLogsArgs([]string{"foo", "--follow", "--since", "1 hour ago"})
+	if errMsg != "" || got.unit != "foo.service" || !got.follow || got.since != "1 hour ago" {
+		t.Fatalf("got %+v err %q", got, errMsg)
+	}
+	got, errMsg = parseLogsArgs([]string{"--follow", "FOO", "--since=1h"})
+	if errMsg != "" || got.unit != "foo.service" || !got.follow || got.since != "1h" {
+		t.Fatalf("flag order %+v err %q", got, errMsg)
+	}
+	_, errMsg = parseLogsArgs([]string{"--follow"})
+	if errMsg != "unit name required" {
+		t.Fatalf("missing unit: %q", errMsg)
+	}
+	_, errMsg = parseLogsArgs([]string{"foo", "--since"})
+	if errMsg == "" {
+		t.Fatal("missing --since value")
 	}
 }
 

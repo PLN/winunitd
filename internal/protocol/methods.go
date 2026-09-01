@@ -143,17 +143,22 @@ type EnableResult struct {
 }
 
 // LogsParams is the body for logs.
+// Since is a lower bound (RFC3339, Go duration, or "N unit ago").
+// Follow requests a short server wait for new lines after Cursor.
+// Cursor is an opaque value from a previous LogsResult (poll --follow).
 type LogsParams struct {
 	Unit   string `json:"unit"`
 	Follow bool   `json:"follow,omitempty"`
 	Since  string `json:"since,omitempty"`
+	Cursor string `json:"cursor,omitempty"`
 }
 
-// LogsResult is a snapshot of stored journal entries. Follow is ignored
-// (no streaming RPC); Since is reserved.
+// LogsResult is a snapshot of stored journal entries. Cursor is passed
+// back on the next poll when following (DESIGN.md §22).
 type LogsResult struct {
 	Unit    string     `json:"unit"`
 	Entries []LogEntry `json:"entries"`
+	Cursor  string     `json:"cursor,omitempty"`
 }
 
 // LogEntry is one journal line (DESIGN.md §22).
