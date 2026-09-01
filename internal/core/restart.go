@@ -1,6 +1,10 @@
 package core
 
-import "github.com/PLN/winunitd/internal/unit"
+import (
+	"strings"
+
+	"github.com/PLN/winunitd/internal/unit"
+)
 
 // ExitKind classifies a main-process wait result for Restart=.
 type ExitKind int
@@ -21,6 +25,22 @@ const (
 // ReasonResourceLimit is the winctl status reason for a Job Object limit
 // (DESIGN.md §44).
 const ReasonResourceLimit = "resource-limit"
+
+// ReasonConfiguration is the winctl status reason for a unit that failed
+// because its configuration cannot be applied (e.g. a missing registry key).
+const ReasonConfiguration = "configuration"
+
+// StatusReason maps a stored error string to a status Reason= value.
+func StatusReason(err string) string {
+	switch {
+	case err == ReasonResourceLimit:
+		return ReasonResourceLimit
+	case err == ReasonConfiguration || strings.HasPrefix(err, ReasonConfiguration+":") || strings.HasPrefix(err, ReasonConfiguration+" "):
+		return ReasonConfiguration
+	default:
+		return ""
+	}
+}
 
 func (k ExitKind) String() string {
 	switch k {

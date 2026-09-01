@@ -1005,8 +1005,8 @@ WantedBy=multi-user.target
 				if u.Kind != KindTarget {
 					t.Fatalf("kind = %s", u.Kind)
 				}
-				if u.Service != nil || u.Timer != nil {
-					t.Fatal("target should not have service/timer specs")
+				if u.Service != nil || u.Timer != nil || u.Registry != nil {
+					t.Fatal("target should not have service/timer/registry specs")
 				}
 			},
 		},
@@ -1026,6 +1026,91 @@ ExecStart=C:\Tools\foo.exe
 			file:    "foo.socket",
 			src:     `[Unit]\nDescription=nope\n`,
 			wantErr: []string{"unsupported unit type"},
+		},
+		{
+			name: "registry implicit unit",
+			file: "foo.registry",
+			src: `
+[Registry]
+RegistryChanged=HKLM\Software\Example
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Kind != KindRegistry {
+					t.Fatalf("kind = %s", u.Kind)
+				}
+				if u.Registry.Unit != "foo.service" {
+					t.Fatalf("activated = %q", u.Registry.Unit)
+				}
+				if len(u.Registry.Changed) != 1 || u.Registry.Changed[0].Path != `Software\Example` {
+					t.Fatalf("changed = %#v", u.Registry.Changed)
+				}
+			},
+		},
+		{
+			name: "registry repeatable keys",
+			file: "pair.registry",
+			src: `
+[Registry]
+RegistryChanged=HKLM\Software\A
+RegistryChanged=HKCU\Software\B
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if len(u.Registry.Changed) != 2 {
+					t.Fatalf("changed = %#v", u.Registry.Changed)
+				}
+				if u.Registry.Changed[0].Hive.String() != "HKLM" || u.Registry.Changed[1].Hive.String() != "HKCU" {
+					t.Fatalf("hives = %#v", u.Registry.Changed)
+				}
+			},
+		},
+		{
+			name: "registry powershell drive fails",
+			file: "foo.registry",
+			src: `
+[Registry]
+RegistryChanged=HKLM:\Software\Example
+`,
+			wantErr: []string{"PowerShell"},
+		},
+		{
+			name: "registry empty path fails",
+			file: "foo.registry",
+			src: `
+[Registry]
+RegistryChanged=HKLM\
+`,
+			wantErr: []string{"empty registry path"},
+		},
+		{
+			name: "registry missing trigger fails",
+			file: "foo.registry",
+			src: `
+[Registry]
+`,
+			wantErr: []string{"RegistryChanged"},
+		},
+		{
+			name: "registry Unit= is unknown",
+			file: "foo.registry",
+			src: `
+[Registry]
+RegistryChanged=HKLM\Software\Example
+Unit=other.service
+`,
+			wantErr: []string{`unknown directive "Unit"`},
+		},
+		{
+			name: "registry cannot have timer section",
+			file: "foo.registry",
+			src: `
+[Registry]
+RegistryChanged=HKLM\Software\Example
+[Timer]
+OnCalendar=daily
+`,
+			wantErr: []string{"section [Timer] is not valid in a registry unit"},
 		},
 	}
 

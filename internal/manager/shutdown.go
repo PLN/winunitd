@@ -142,6 +142,9 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 	if kind == unit.KindTimer && m.engine != nil {
 		m.engine.Disarm(name)
 	}
+	if kind == unit.KindRegistry {
+		m.disarmRegistry(name)
+	}
 
 	var stopErr error
 	if scmName != "" {
