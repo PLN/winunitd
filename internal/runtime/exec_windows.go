@@ -388,25 +388,34 @@ func (p *winProc) Close() error {
 		return nil
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.closed {
+		p.mu.Unlock()
 		return nil
 	}
 	p.closed = true
-	if p.job != nil {
-		_ = p.job.Close()
+	job := p.job
+	h := p.process
+	p.process = 0
+	stdout := p.stdout
+	stderr := p.stderr
+	p.stdout = nil
+	p.stderr = nil
+	p.mu.Unlock()
+
+	// Do not hold p.mu while closing the job or pipes. watch's Wait
+	// records exit under p.mu, and journal capture reads these pipes.
+	// C2 teardown (launchUnit eviction) runs Close concurrently with Wait.
+	if job != nil {
+		_ = job.Close()
 	}
-	if p.process != 0 {
-		_ = windows.CloseHandle(p.process)
-		p.process = 0
+	if h != 0 {
+		_ = windows.CloseHandle(h)
 	}
-	if p.stdout != nil {
-		_ = p.stdout.Close()
-		p.stdout = nil
+	if stdout != nil {
+		_ = stdout.Close()
 	}
-	if p.stderr != nil {
-		_ = p.stderr.Close()
-		p.stderr = nil
+	if stderr != nil {
+		_ = stderr.Close()
 	}
 	return nil
 }

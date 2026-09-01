@@ -934,6 +934,9 @@ Type=simple
 	}
 	id1 := st1.Unit.InvocationID
 	waitWindowsJournalMessage(t, m, "inv", id1)
+	if _, err := m.Stop("inv"); err != nil {
+		t.Fatal(err)
+	}
 	logs1, err := m.Logs(protocol.LogsParams{Unit: "inv"})
 	if err != nil {
 		t.Fatal(err)
@@ -948,9 +951,6 @@ Type=simple
 		}
 	}
 
-	if _, err := m.Stop("inv"); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := m.Start(context.Background(), "inv"); err != nil {
 		t.Fatal(err)
 	}
