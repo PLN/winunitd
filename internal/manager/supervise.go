@@ -182,7 +182,7 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 	}
 
 	if m.engine != nil {
-		m.engine.UnitActive(name, time.Now())
+		m.engine.UnitActive(name, m.now())
 	}
 
 	if svc.WatchdogEnabled() {
@@ -346,12 +346,12 @@ func (m *Manager) beginRestart(name string, gen uint64, delay time.Duration) {
 	m.mu.Unlock()
 
 	if delay > 0 {
-		timer := time.NewTimer(delay)
+		timer := m.clock().Timer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return
-		case <-timer.C:
+		case <-timer.C():
 		}
 	} else if ctx.Err() != nil {
 		return
@@ -423,6 +423,27 @@ func stopTimeout(u *unit.Unit) time.Duration {
 		return u.Service.TimeoutStopSec
 	}
 	return defaultStopTimeout
+}
+
+func (m *Manager) stopProcess(proc runtime.Process, timeout time.Duration) error {
+	if proc == nil {
+		return nil
+	}
+	if timeout <= 0 {
+		return proc.Stop(timeout)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- proc.Stop(timeout)
+	}()
+	t := m.clock().Timer(timeout)
+	defer t.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-t.C():
+		return fmt.Errorf("TimeoutStopSec exceeded")
+	}
 }
 
 func mergeEnv(extra []unit.EnvVar) []string {

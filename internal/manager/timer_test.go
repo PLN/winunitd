@@ -28,7 +28,7 @@ func TestBuiltinDefaultTargetWantsTimers(t *testing.T) {
 func TestOnStartupSecActivatesMatchingService(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}
-	m := managerWith(t, launch, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"job.service": `
 [Service]
 Type=oneshot
@@ -37,15 +37,16 @@ WorkingDirectory=C:\Tools
 `,
 		"job.timer": `
 [Timer]
-OnStartupSec=50ms
+OnStartupSec=5s
 `,
 	})
 	if _, err := m.Start(context.Background(), "job.timer"); err != nil {
 		t.Fatal(err)
 	}
 	assertState(t, m, "job.timer", core.Active)
-	waitLauncherUnit(t, launch, "job.service", 2*time.Second)
-	assertState(t, m, "job.service", core.Active)
+	advanceWait(t, fk, 5*time.Second)
+	waitLauncherUnit(t, launch, "job.service")
+	waitState(t, m, "job.service", core.Active)
 
 	st, err := m.Status("job.timer")
 	if err != nil || st.Unit == nil || st.Unit.Last == "" {
@@ -60,12 +61,8 @@ OnStartupSec=50ms
 func TestOnBootSecVsOnStartupSec(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}
-	now := time.Now()
-	m := managerWithClock(t, launch, timers.Clock{
-		Now:       time.Now,
-		SinceBoot: func() time.Duration { return time.Hour },
-		Startup:   now,
-	}, map[string]string{
+	fk := timers.NewFake(time.Time{})
+	m := managerWithClock(t, launch, fk.Clock(), map[string]string{
 		"boot.service": `
 [Service]
 Type=oneshot
@@ -93,20 +90,17 @@ OnStartupSec=10s
 	if _, err := m.Start(context.Background(), "start.timer"); err != nil {
 		t.Fatal(err)
 	}
-	waitLauncherUnit(t, launch, "boot.service", 2*time.Second)
-	deadline := time.Now().Add(400 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		if containsString(launch.units(), "start.service") {
-			t.Fatal("OnStartupSec must not fire as early as OnBootSec after a long machine uptime")
-		}
-		time.Sleep(10 * time.Millisecond)
+	waitLauncherUnit(t, launch, "boot.service")
+	advanceWait(t, fk, 400*time.Millisecond)
+	if containsString(launch.units(), "start.service") {
+		t.Fatal("OnStartupSec must not fire as early as OnBootSec after a long machine uptime")
 	}
 }
 
 func TestBootStartsEnabledTimer(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}
-	m := managerWith(t, launch, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"backup.service": `
 [Service]
 Type=oneshot
@@ -115,7 +109,7 @@ WorkingDirectory=C:\Tools
 `,
 		"backup.timer": `
 [Timer]
-OnStartupSec=40ms
+OnStartupSec=5s
 [Install]
 WantedBy=timers.target
 `,
@@ -127,7 +121,7 @@ WorkingDirectory=C:\Tools
 `,
 		"idle.timer": `
 [Timer]
-OnStartupSec=40ms
+OnStartupSec=5s
 [Install]
 WantedBy=timers.target
 `,
@@ -142,7 +136,8 @@ WantedBy=timers.target
 	assertState(t, m, TimersTarget, core.Active)
 	assertState(t, m, "backup.timer", core.Active)
 	assertState(t, m, "idle.timer", core.Inactive)
-	waitLauncherUnit(t, launch, "backup.service", 2*time.Second)
+	advanceWait(t, fk, 5*time.Second)
+	waitLauncherUnit(t, launch, "backup.service")
 	if containsString(launch.units(), "idle.service") {
 		t.Fatal("disabled timer must not activate its service")
 	}
@@ -151,7 +146,7 @@ WantedBy=timers.target
 func TestStopTimerDoesNotFire(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}
-	m := managerWith(t, launch, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"foo.service": `
 [Service]
 Type=oneshot
@@ -160,7 +155,7 @@ WorkingDirectory=C:\Tools
 `,
 		"foo.timer": `
 [Timer]
-OnStartupSec=80ms
+OnStartupSec=5s
 `,
 	})
 	if _, err := m.Start(context.Background(), "foo.timer"); err != nil {
@@ -169,7 +164,11 @@ OnStartupSec=80ms
 	if _, err := m.Stop("foo.timer"); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(250 * time.Millisecond)
+	if fk.Waiting() {
+		advanceWait(t, fk, 5*time.Second)
+	} else {
+		fk.Advance(5 * time.Second)
+	}
 	if containsString(launch.units(), "foo.service") {
 		t.Fatal("stopped timer must not activate the service")
 	}
@@ -202,10 +201,11 @@ Persistent=yes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Save("backup.timer", timers.Runtime{LastActual: time.Now().Add(-48 * time.Hour)}); err != nil {
+	fk := timers.NewFake(time.Time{})
+	if err := store.Save("backup.timer", timers.Runtime{LastActual: fk.Now().Add(-48 * time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	m, err := New(Config{BaseDir: dir, Launch: launch})
+	m, err := New(Config{BaseDir: dir, Launch: launch, Clock: fk.Clock()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,13 +216,13 @@ Persistent=yes
 	if _, err := m.Start(context.Background(), "backup.timer"); err != nil {
 		t.Fatal(err)
 	}
-	waitLauncherUnit(t, launch, "backup.service", 2*time.Second)
+	waitLauncherUnit(t, launch, "backup.service")
 }
 
 func TestListTimersNextLastOverPipe(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}
-	m := managerWith(t, launch, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"foo.service": `
 [Service]
 Type=oneshot
@@ -231,7 +231,7 @@ WorkingDirectory=C:\Tools
 `,
 		"foo.timer": `
 [Timer]
-OnStartupSec=40ms
+OnStartupSec=5s
 `,
 	})
 	client, stop := serveManager(t, m, protocol.AllowAdmin)
@@ -239,7 +239,8 @@ OnStartupSec=40ms
 	if _, err := client.Start(context.Background(), "foo.timer"); err != nil {
 		t.Fatal(err)
 	}
-	waitLauncherUnit(t, launch, "foo.service", 2*time.Second)
+	advanceWait(t, fk, 5*time.Second)
+	waitLauncherUnit(t, launch, "foo.service")
 	got, err := client.ListTimers(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -249,31 +250,10 @@ OnStartupSec=40ms
 	}
 }
 
-func managerWithClock(t *testing.T, launch *fakeLauncher, clk timers.Clock, files map[string]string) *Manager {
-	t.Helper()
-	dir := t.TempDir()
-	units := filepath.Join(dir, "units")
-	if err := os.MkdirAll(units, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for name, body := range files {
-		writeUnit(t, units, name, body)
-	}
-	m, err := New(Config{BaseDir: dir, Launch: launch, Clock: clk})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.Reload(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { stopAll(m) })
-	return m
-}
-
 func TestOnUnitActiveSecRepeatsAfterActivation(t *testing.T) {
 	t.Parallel()
 	launch := &scriptedLauncher{exitAll: intPtr(0)}
-	m := managerWith(t, launch, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"foo.service": `
 [Service]
 Type=oneshot
@@ -282,7 +262,7 @@ WorkingDirectory=C:\Tools
 `,
 		"foo.timer": `
 [Timer]
-OnUnitActiveSec=80ms
+OnUnitActiveSec=5s
 `,
 	})
 	if _, err := m.Start(context.Background(), "foo.timer"); err != nil {
@@ -294,29 +274,18 @@ OnUnitActiveSec=80ms
 	if _, err := m.Start(context.Background(), "foo.service"); err != nil {
 		t.Fatal(err)
 	}
-	const interval = 80 * time.Millisecond
-	waitUntil(t, 2*time.Second, func() bool { return launch.nstarts() >= 2 })
+	advanceWait(t, fk, 5*time.Second)
+	waitCond(t, func() bool { return launch.nstarts() >= 2 })
 	if n := launch.nstarts(); n != 2 {
 		t.Fatalf("starts = %d, want 2", n)
 	}
-	at := launch.startTimes()
-	if gap := at[1].Sub(at[0]); gap < interval {
-		t.Fatalf("gap = %s, want >= OnUnitActiveSec (%s)", gap, interval)
-	}
-	time.Sleep(interval / 2)
+	fk.Advance(2 * time.Second)
 	if n := launch.nstarts(); n != 2 {
 		t.Fatalf("starts = %d after half interval, want 2", n)
 	}
 }
 
-func waitLauncherUnit(t *testing.T, launch *fakeLauncher, name string, timeout time.Duration) {
+func waitLauncherUnit(t *testing.T, launch *fakeLauncher, name string) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if containsString(launch.units(), name) {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("launcher never started %s; started %v", name, launch.units())
+	waitCond(t, func() bool { return containsString(launch.units(), name) })
 }

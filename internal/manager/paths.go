@@ -28,7 +28,10 @@ type Config struct {
 	Launch runtime.Launcher
 	// Daemon is the M4 daemon Job Object. Unit processes nest under it.
 	Daemon *runtime.DaemonJob
-	// Clock drives the timer scheduler. Zero uses timers.DefaultClock().
+	// Clock drives the timer scheduler and manager waits for RestartSec,
+	// WatchdogSec, TimeoutStartSec, and TimeoutStopSec. Zero uses
+	// timers.DefaultClock(). Tests inject timers.Fake so Advance fires
+	// those waits without sleeping on the real clock (issue #28).
 	Clock timers.Clock
 	// HasInteractiveSession reports whether a suitable interactive
 	// session exists for this manager. Nil means yes (system manager

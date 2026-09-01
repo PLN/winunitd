@@ -12,6 +12,7 @@ import (
 
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/timers"
 	"github.com/PLN/winunitd/internal/unit"
 )
 
@@ -247,19 +248,22 @@ func TestTypeSCMRestartOnStartFailure(t *testing.T) {
 	launch := &fakeLauncher{}
 	scm := newFakeSCM("MSSQLSERVER")
 	scm.failStarts = 1
-	m := managerWithSCM(t, launch, scm, map[string]string{
+	fk := timers.NewFake(time.Time{})
+	m := managerWithSCMClock(t, launch, scm, fk.Clock(), map[string]string{
 		"mssql.service": `
 [Service]
 Type=scm
 ServiceName=MSSQLSERVER
 Restart=on-failure
-RestartSec=10ms
+RestartSec=5s
 `,
 	})
 	if _, err := m.Start(context.Background(), "mssql"); err == nil {
 		t.Fatal("first start should fail")
 	}
-	waitUntil(t, 2*time.Second, func() bool {
+	waitSub(t, m, "mssql.service", core.SubAutoRestart)
+	advanceWait(t, fk, 5*time.Second)
+	waitCond(t, func() bool {
 		st, err := m.Status("mssql")
 		return err == nil && st.Unit != nil && st.Unit.ActiveState == "active"
 	})
@@ -276,22 +280,28 @@ func TestTypeSCMStartTimeoutFails(t *testing.T) {
 	launch := &fakeLauncher{}
 	scm := newFakeSCM("MSSQLSERVER")
 	scm.hangStart = true
-	m := managerWithSCM(t, launch, scm, map[string]string{
+	fk := timers.NewFake(time.Time{})
+	m := managerWithSCMClock(t, launch, scm, fk.Clock(), map[string]string{
 		"mssql.service": `
 [Service]
 Type=scm
 ServiceName=MSSQLSERVER
-TimeoutStartSec=50ms
+TimeoutStartSec=5s
 Restart=no
 `,
 	})
-	st, err := m.Start(context.Background(), "mssql")
+	errc := make(chan error, 1)
+	go func() {
+		_, err := m.Start(context.Background(), "mssql")
+		errc <- err
+	}()
+	waitCond(t, fk.Waiting)
+	advanceWait(t, fk, 5*time.Second)
+	err := waitErr(t, errc)
 	if err == nil {
 		t.Fatal("timeout start must fail")
 	}
-	if st == nil || st.ActiveState != "failed" {
-		t.Fatalf("start = %+v", st)
-	}
+	assertState(t, m, "mssql.service", core.Failed)
 	if specs := launch.specs(); len(specs) != 0 {
 		t.Fatalf("must not CreateProcess: %+v", specs)
 	}
@@ -317,6 +327,11 @@ ServiceName=winunitd-p7-no-such-service
 
 func managerWithSCM(t *testing.T, launch runtime.Launcher, scm runtime.SCM, files map[string]string) *Manager {
 	t.Helper()
+	return managerWithSCMClock(t, launch, scm, timers.Clock{}, files)
+}
+
+func managerWithSCMClock(t *testing.T, launch runtime.Launcher, scm runtime.SCM, clk timers.Clock, files map[string]string) *Manager {
+	t.Helper()
 	dir := t.TempDir()
 	units := filepath.Join(dir, "units")
 	if err := os.MkdirAll(units, 0o755); err != nil {
@@ -325,7 +340,7 @@ func managerWithSCM(t *testing.T, launch runtime.Launcher, scm runtime.SCM, file
 	for name, body := range files {
 		writeUnit(t, units, name, body)
 	}
-	m, err := New(Config{BaseDir: dir, Launch: launch, SCM: scm})
+	m, err := New(Config{BaseDir: dir, Launch: launch, SCM: scm, Clock: clk})
 	if err != nil {
 		t.Fatal(err)
 	}

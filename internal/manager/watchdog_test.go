@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ import (
 func TestTCPWatchdogConnectKeepsActive(t *testing.T) {
 	_, addr := listenLoopbackTCP(t)
 	launch := &fakeLauncher{}
-	m := managerWith(t, launch, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"tcp.service": fmt.Sprintf(`
 [Service]
 Type=simple
@@ -26,14 +27,14 @@ ExecStart=C:\App\tcp.exe
 WorkingDirectory=C:\App
 WatchdogMode=tcp
 WatchdogEndpoint=%s
-WatchdogSec=120ms
+WatchdogSec=1s
 Restart=no
 `, addr),
 	})
 	if _, err := m.Start(context.Background(), "tcp"); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(400 * time.Millisecond)
+	advanceWait(t, fk, time.Second)
 	assertWatchdogActive(t, m, "tcp.service")
 	if _, ok := notify.LookupEnv(launch.specs()[0].Env, notify.EnvNotifyPipe); ok {
 		t.Fatal("tcp watchdog must not inject WINUNIT_NOTIFY_PIPE")
@@ -43,7 +44,7 @@ Restart=no
 func TestTCPWatchdogRefusedFails(t *testing.T) {
 	addr := closedLoopbackTCP(t)
 	launch := &fakeLauncher{}
-	m := managerWith(t, launch, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"refused.service": fmt.Sprintf(`
 [Service]
 Type=simple
@@ -51,13 +52,14 @@ ExecStart=C:\App\refused.exe
 WorkingDirectory=C:\App
 WatchdogMode=tcp
 WatchdogEndpoint=%s
-WatchdogSec=80ms
+WatchdogSec=1s
 Restart=no
 `, addr),
 	})
 	if _, err := m.Start(context.Background(), "refused"); err != nil {
 		t.Fatal(err)
 	}
+	advanceWait(t, fk, time.Second)
 	waitWatchdogFailed(t, m, "refused.service")
 }
 
@@ -87,7 +89,7 @@ WatchdogSec=1s
 func TestHTTPWatchdog200KeepsActive(t *testing.T) {
 	ep := serveWatchdogHTTP(t, 200)
 	launch := &fakeLauncher{}
-	m := managerWith(t, launch, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"http.service": fmt.Sprintf(`
 [Service]
 Type=simple
@@ -95,21 +97,21 @@ ExecStart=C:\App\http.exe
 WorkingDirectory=C:\App
 WatchdogMode=http
 WatchdogEndpoint=%s
-WatchdogSec=120ms
+WatchdogSec=1s
 Restart=no
 `, ep),
 	})
 	if _, err := m.Start(context.Background(), "http"); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(400 * time.Millisecond)
+	advanceWait(t, fk, time.Second)
 	assertWatchdogActive(t, m, "http.service")
 }
 
 func TestHTTPWatchdogWrongStatusFails(t *testing.T) {
 	ep := serveWatchdogHTTP(t, 503)
 	launch := &fakeLauncher{}
-	m := managerWith(t, launch, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"httpbad.service": fmt.Sprintf(`
 [Service]
 Type=simple
@@ -118,13 +120,14 @@ WorkingDirectory=C:\App
 WatchdogMode=http
 WatchdogEndpoint=%s
 WatchdogExpectedStatus=200
-WatchdogSec=80ms
+WatchdogSec=1s
 Restart=no
 `, ep),
 	})
 	if _, err := m.Start(context.Background(), "httpbad"); err != nil {
 		t.Fatal(err)
 	}
+	advanceWait(t, fk, time.Second)
 	waitWatchdogFailed(t, m, "httpbad.service")
 }
 
@@ -154,7 +157,7 @@ WatchdogSec=1s
 func TestNotifyReadyWithTCPWatchdog(t *testing.T) {
 	_, addr := listenLoopbackTCP(t)
 	launch := fakeNotifyLaunch()
-	m := managerWith(t, launch, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"both.service": fmt.Sprintf(`
 [Service]
 Type=notify
@@ -163,7 +166,7 @@ WorkingDirectory=C:\App
 TimeoutStartSec=5s
 WatchdogMode=tcp
 WatchdogEndpoint=%s
-WatchdogSec=120ms
+WatchdogSec=1s
 Restart=no
 `, addr),
 	})
@@ -172,26 +175,26 @@ Restart=no
 		_, err := m.Start(context.Background(), "both")
 		errc <- err
 	}()
-	pipe := waitNotifyPipe(t, launch, "both.service", 2*time.Second)
+	pipe := waitNotifyPipe(t, launch, "both.service")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := notify.SendRetry(ctx, pipe, notify.Message{Ready: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-errc; err != nil {
+	if err := waitErr(t, errc); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := notify.LookupEnv(launch.specs()[0].Env, notify.EnvWatchdogUsec); ok {
 		t.Fatal("tcp watchdog must not inject WINUNIT_WATCHDOG_USEC")
 	}
-	time.Sleep(400 * time.Millisecond)
+	advanceWait(t, fk, time.Second)
 	assertWatchdogActive(t, m, "both.service")
 }
 
 func TestTCPWatchdogRestartOnWatchdog(t *testing.T) {
 	addr := closedLoopbackTCP(t)
 	launch := &fakeLauncher{}
-	m := managerWith(t, launch, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"wd.service": fmt.Sprintf(`
 [Service]
 Type=simple
@@ -199,15 +202,18 @@ ExecStart=C:\App\wd.exe
 WorkingDirectory=C:\App
 WatchdogMode=tcp
 WatchdogEndpoint=%s
-WatchdogSec=80ms
+WatchdogSec=1s
 Restart=on-watchdog
-RestartSec=20ms
+RestartSec=2s
 `, addr),
 	})
 	if _, err := m.Start(context.Background(), "wd"); err != nil {
 		t.Fatal(err)
 	}
-	waitUntil(t, 3*time.Second, func() bool { return len(launch.specs()) >= 2 })
+	advanceWait(t, fk, time.Second)
+	waitCond(t, func() bool { return len(launch.specs()) >= 1 })
+	advanceWait(t, fk, 2*time.Second)
+	waitCond(t, func() bool { return len(launch.specs()) >= 2 })
 }
 
 func TestTCPWatchdogIPv6Loopback(t *testing.T) {
@@ -217,7 +223,7 @@ func TestTCPWatchdogIPv6Loopback(t *testing.T) {
 	}
 	acceptLoopback(t, ln)
 	launch := &fakeLauncher{}
-	m := managerWith(t, launch, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"v6.service": fmt.Sprintf(`
 [Service]
 Type=simple
@@ -225,14 +231,14 @@ ExecStart=C:\App\v6.exe
 WorkingDirectory=C:\App
 WatchdogMode=tcp
 WatchdogEndpoint=%s
-WatchdogSec=120ms
+WatchdogSec=1s
 Restart=no
 `, ln.Addr().String()),
 	})
 	if _, err := m.Start(context.Background(), "v6"); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(400 * time.Millisecond)
+	advanceWait(t, fk, time.Second)
 	assertWatchdogActive(t, m, "v6.service")
 }
 
@@ -337,7 +343,7 @@ func serveWatchdogHTTP(t *testing.T, status int) string {
 	ep := "http://" + ln.Addr().String() + "/health"
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	waitUntil(t, 2*time.Second, func() bool {
+	waitCond(t, func() bool {
 		return unit.ProbeHTTP(ctx, ep, status) == nil
 	})
 	return ep
@@ -345,6 +351,17 @@ func serveWatchdogHTTP(t *testing.T, status int) string {
 
 func assertWatchdogActive(t *testing.T, m *Manager, name string) {
 	t.Helper()
+	for i := 0; i < 100_000; i++ {
+		m.mu.Lock()
+		st := m.stateOfLocked(name)
+		sub := m.subOfLocked(name)
+		err := m.errors[name]
+		m.mu.Unlock()
+		if st == core.Failed {
+			t.Fatalf("state = %s sub=%s error=%q, want active", st, sub, err)
+		}
+		runtime.Gosched()
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	st := m.stateOfLocked(name)
@@ -357,24 +374,10 @@ func assertWatchdogActive(t *testing.T, m *Manager, name string) {
 
 func waitWatchdogFailed(t *testing.T, m *Manager, name string) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
+	waitCond(t, func() bool {
 		m.mu.Lock()
 		ok := m.stateOfLocked(name) == core.Failed && m.subOfLocked(name) == core.SubWatchdog
 		m.mu.Unlock()
-		if ok {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	m.mu.Lock()
-	st := m.stateOfLocked(name)
-	sub := m.subOfLocked(name)
-	err := m.errors[name]
-	alive := false
-	if p := m.procs[name]; p != nil {
-		alive = p.Alive()
-	}
-	m.mu.Unlock()
-	t.Fatalf("timeout state=%s sub=%s error=%q alive=%v, want failed/watchdog", st, sub, err, alive)
+		return ok
+	})
 }
