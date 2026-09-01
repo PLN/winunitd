@@ -298,6 +298,10 @@ OnStartupSec=1s
 	if _, err := m.Start(context.Background(), "wd.service"); err != nil {
 		t.Fatal(err)
 	}
+	// probeWatchdogLoop arms WatchdogSec=2s on a goroutine. Wait until
+	// that NewTimer is pending so later 1s Advances keep the original 2s
+	// window (H0: do not Advance before the wait is armed).
+	waitCond(t, func() bool { return fk.WaitingAt(2 * time.Second) })
 	if _, err := m.Start(context.Background(), "wd.timer"); err != nil {
 		t.Fatal(err)
 	}

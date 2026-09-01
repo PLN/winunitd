@@ -54,9 +54,12 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 		rt.gen++
 		rt.cancelRestart()
 	}
-	rt.proc = nil
+	// Dead-but-unreaped: we are removing the proc, so we own job.Kill
+	// and Close. Do not rely on watch's early return (issue #25).
+	evicted := rt.takeProc()
 	u := rt.unit
 	m.mu.Unlock()
+	teardownJob(evicted)
 
 	if u == nil {
 		return fmt.Errorf("unit %q is not loaded", name)
@@ -139,6 +142,7 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 	if nrt != nil {
 		nrt.SetMain(proc.PID(), proc.Job())
 	}
+	m.journal.Wait(name)
 	m.journal.Attach(name, proc.PID(), inv, proc.Stdout(), proc.Stderr())
 
 	m.mu.Lock()
@@ -174,7 +178,7 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 			rt = m.units[name]
 			if rt != nil && rt.proc == proc {
 				rt.terminated = true
-				rt.proc = nil
+				_ = rt.takeProc()
 			}
 			stopping := rt != nil && rt.stopping
 			if rt != nil && !rt.stopping {
@@ -224,9 +228,12 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 	rt := m.units[name]
 	if rt == nil || rt.proc != proc {
 		m.mu.Unlock()
+		// No longer the live proc: still close what we were given if
+		// launchUnit (or another owner) has not already (issue #25).
+		teardownJob(proc)
 		return
 	}
-	rt.proc = nil
+	_ = rt.takeProc()
 	stopping := rt.stopping
 	terminated := rt.terminated
 	rt.terminated = false
@@ -245,10 +252,7 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 		nrt.Close()
 	}
 
-	if job := proc.Job(); job != nil {
-		_ = job.Kill()
-	}
-	_ = proc.Close()
+	teardownJob(proc)
 
 	if stopping || terminated {
 		return
@@ -400,8 +404,7 @@ func (m *Manager) reapFailedLocked() {
 		if rt == nil || rt.state != core.Failed || rt.proc == nil {
 			continue
 		}
-		proc := rt.proc
-		rt.proc = nil
+		proc := rt.takeProc()
 		go func(p runtime.Process) {
 			_ = p.Stop(defaultStopTimeout)
 		}(proc)
