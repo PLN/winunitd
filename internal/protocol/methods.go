@@ -142,21 +142,33 @@ type EnableResult struct {
 	Targets []string `json:"targets,omitempty"`
 }
 
-// LogsParams is the body for logs.
+// LogsParams is the body for logs (DESIGN.md §22).
+//
+// Since is a lower bound: RFC3339 (nano or second), YYYY-MM-DD (UTC
+// midnight), a Go duration subtracted from now ("1h"), or "N <unit> ago".
+// Empty means no lower bound. A non-empty value that does not parse is
+// invalid-params (not ignored).
+//
+// Follow requests a short server wait for new lines after Cursor. There
+// is no streaming RPC; winctl --follow polls. Cursor is opaque and comes
+// from a previous LogsResult.
 type LogsParams struct {
 	Unit   string `json:"unit"`
 	Follow bool   `json:"follow,omitempty"`
 	Since  string `json:"since,omitempty"`
+	Cursor string `json:"cursor,omitempty"`
 }
 
-// LogsResult is a snapshot of stored journal entries. Follow is ignored
-// (no streaming RPC); Since is reserved.
+// LogsResult is a snapshot of stored journal entries (DESIGN.md §22).
+// Cursor is passed back on the next poll when following. LogEntry does
+// not yet include severity, session, or user SID (J2 schema bump).
 type LogsResult struct {
 	Unit    string     `json:"unit"`
 	Entries []LogEntry `json:"entries"`
+	Cursor  string     `json:"cursor,omitempty"`
 }
 
-// LogEntry is one journal line (DESIGN.md §22).
+// LogEntry is one journal line (DESIGN.md §22). v=1 fields only.
 type LogEntry struct {
 	Timestamp    string `json:"timestamp,omitempty"`
 	Unit         string `json:"unit,omitempty"`

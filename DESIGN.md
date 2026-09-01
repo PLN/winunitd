@@ -1019,27 +1019,34 @@ StandardOutput=null
 
 ### Log storage
 
-Potential implementation:
+System journal root:
 
 ```text
 C:\ProgramData\winunitd\journal\
 ```
 
-Could use a structured append-only format.
+User managers use `%LOCALAPPDATA%\winunitd\journal\`. Tests inject a temp `BaseDir`.
 
-Fields:
+On-disk format is JSON lines with a `v` field (currently `v=1`, DESIGN.md §53). Each unit has one **current** file plus rotated generations.
+
+File name: reversible percent-encoding of the lower-case unit name so Windows-forbidden characters cannot collide (`foo:bar` → `foo%3Abar.log`, `foo*bar` → `foo%2Abar.log`). Map keys and files use the normalized name (DESIGN.md §36). `logs` / `Read` also filter by the record `unit` field so a mixed or colliding file cannot bleed lines across units.
+
+Fields stored in `v=1`:
 
 ```text
 timestamp
 unit
 pid
 stream
-severity
 message
-session
-user SID
 invocation ID
 ```
+
+`severity`, `session`, and `user SID` are reserved for a later additive schema bump. The `v` field exists so that bump does not rewrite old lines.
+
+The writer **keeps the current file open**. Lines are buffered and flushed on a short timer (and whenever logs are read). `Sync` (fsync) runs on unit capture end, daemon shutdown, and rotate — **not** per line.
+
+Per-unit rotation: the current file is capped at **10 MiB**. On rotate it becomes `.log.1`; older generations shift up to `.log.3` (**keep 3** rotated files). `.log.3` is dropped on the next rotate. `logs` reads oldest-to-newest across those files.
 
 ### CLI
 
@@ -1047,8 +1054,13 @@ invocation ID
 winctl logs foo
 winctl logs foo --follow
 winctl logs foo --since "1 hour ago"
-winctl logs foo --boot
 ```
+
+`--since` is honored on the daemon (`LogsParams.Since`). Accepted values: RFC3339 (nano or second), a `YYYY-MM-DD` date (UTC midnight), a Go duration subtracted from now (`1h`, `30m`), and `N <unit> ago` (`1 hour ago`, `30 minutes ago`). Invalid values are `invalid-params`, not a silent ignore.
+
+`--follow` is client polling with an opaque cursor (`LogsParams.Cursor` / `LogsResult.Cursor`). Each poll may wait briefly for new lines. There is no streaming RPC.
+
+`--boot` is not implemented.
 
 Avoid using the name `journalctl` unless intentional compatibility is desired.
 
