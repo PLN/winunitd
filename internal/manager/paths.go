@@ -75,6 +75,14 @@ type Config struct {
 	// pathwatch.OpenWatch (Windows ReadDirectoryChangesW; stub on Linux).
 	// Tests inject a fake so Linux can exercise start-on-change.
 	PathOpen pathwatch.OpenFunc
+	// PathExists reports whether a PathExists= path exists. Nil uses
+	// pathwatch.Exists. Tests inject a stub so Linux can exercise
+	// create-to-satisfy without Windows paths on disk.
+	PathExists pathwatch.ExistsFunc
+	// PathExistsOpen opens a PathExists= creation/deletion watch. Nil uses
+	// pathwatch.OpenExistsWatch (Windows ReadDirectoryChangesW on the
+	// nearest existing ancestor; stub on Linux). A missing target is OK.
+	PathExistsOpen pathwatch.OpenFunc
 }
 
 // DefaultBaseDir is C:\ProgramData\winunitd when ProgramData is set.

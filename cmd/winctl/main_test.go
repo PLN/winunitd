@@ -176,6 +176,21 @@ PathChanged=C:\Data\incoming
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	pathExistsOK := filepath.Join(dir, "ready.path")
+	if err := os.WriteFile(pathExistsOK, []byte(`
+[Path]
+PathExists=C:\Data\ready.flag
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ready.service"), []byte(`
+[Service]
+Type=oneshot
+ExecStart=C:\Tools\run-once.exe
+WorkingDirectory=C:\Tools
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	pathOrphan := filepath.Join(dir, "orphan.path")
 	if err := os.WriteFile(pathOrphan, []byte(`
 [Path]
@@ -187,6 +202,13 @@ PathChanged=C:\Data\incoming
 	if err := os.WriteFile(pathBad, []byte(`
 [Path]
 PathChanged=incoming
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pathExistsBad := filepath.Join(dir, "rel-exists.path")
+	if err := os.WriteFile(pathExistsBad, []byte(`
+[Path]
+PathExists=ready.flag
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -419,6 +441,28 @@ ExecStart=C:\Tools\foo.exe
 	t.Run("path relative fails", func(t *testing.T) {
 		var out, errb bytes.Buffer
 		code := run([]string{"verify", pathBad}, &out, &errb)
+		if code != 1 {
+			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(errb.String(), "absolute Windows path") {
+			t.Fatalf("stderr=%s", errb.String())
+		}
+	})
+
+	t.Run("path PathExists pair", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"verify", pathExistsOK}, &out, &errb)
+		if code != 0 {
+			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(out.String(), "ready.path: verified") {
+			t.Fatalf("stdout=%s", out.String())
+		}
+	})
+
+	t.Run("path PathExists relative fails", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"verify", pathExistsBad}, &out, &errb)
 		if code != 1 {
 			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
 		}
