@@ -121,3 +121,14 @@ func advanceArmed(t *testing.T, fk *timers.Fake, d time.Duration) {
 	})
 	fk.Advance(d)
 }
+
+func genOf(t *testing.T, m *Manager, name string) uint64 {
+	t.Helper()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rt := m.units[name]
+	if rt == nil {
+		t.Fatalf("no runtime for %s", name)
+	}
+	return rt.gen
+}
