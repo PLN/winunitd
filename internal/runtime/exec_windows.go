@@ -299,9 +299,16 @@ func inheritHandleList(handles ...windows.Handle) (*windows.ProcThreadAttributeL
 	}
 	inherit := make([]windows.Handle, 0, len(handles))
 	for _, h := range handles {
-		if h != 0 {
-			inherit = append(inherit, h)
+		if h == 0 || h == windows.InvalidHandle {
+			continue
 		}
+		// HANDLE_LIST is ignored for non-inheritable handles; CreateFile
+		// SECURITY_ATTRIBUTES is not always enough (see x/sys exec tests).
+		if err := windows.SetHandleInformation(h, windows.HANDLE_FLAG_INHERIT, windows.HANDLE_FLAG_INHERIT); err != nil {
+			attrList.Delete()
+			return nil, nil, fmt.Errorf("HANDLE_FLAG_INHERIT: %w", err)
+		}
+		inherit = append(inherit, h)
 	}
 	if len(inherit) > 0 {
 		if err := attrList.Update(
@@ -512,32 +519,40 @@ func (p *winProc) wait(ctx context.Context) error {
 			_ = windows.CloseHandle(cancelWait)
 		}()
 		handles := []windows.Handle{dup, cancelWait}
-		s, err := windows.WaitForMultipleObjects(handles, false, windows.INFINITE)
-		goruntime.KeepAlive(handles)
-		if err != nil {
-			done <- err
-			return
-		}
-		switch s {
-		case windows.WAIT_OBJECT_0:
-			var exit uint32
-			if err := windows.GetExitCodeProcess(dup, &exit); err != nil {
+		for {
+			s, err := windows.WaitForMultipleObjects(handles, false, windows.INFINITE)
+			goruntime.KeepAlive(handles)
+			if err != nil {
 				done <- err
 				return
 			}
-			p.mu.Lock()
-			p.exitCode = exit
-			p.exited = true
-			p.mu.Unlock()
-			if exit == 0 {
-				done <- nil
+			switch s {
+			case windows.WAIT_OBJECT_0:
+				var exit uint32
+				if err := windows.GetExitCodeProcess(dup, &exit); err != nil {
+					done <- err
+					return
+				}
+				if exit == stillActiveExit {
+					continue
+				}
+				p.mu.Lock()
+				p.exitCode = exit
+				p.exited = true
+				p.mu.Unlock()
+				if exit == 0 {
+					done <- nil
+					return
+				}
+				done <- &ExitStatus{Code: exit}
+				return
+			case windows.WAIT_OBJECT_0 + 1:
+				done <- errWaitCanceled
+				return
+			default:
+				done <- fmt.Errorf("WaitForMultipleObjects: %d", s)
 				return
 			}
-			done <- &ExitStatus{Code: exit}
-		case windows.WAIT_OBJECT_0 + 1:
-			done <- errWaitCanceled
-		default:
-			done <- fmt.Errorf("WaitForMultipleObjects: %d", s)
 		}
 	}()
 
@@ -552,10 +567,7 @@ func (p *winProc) wait(ctx context.Context) error {
 		return err
 	case <-ctx.Done():
 		_ = windows.SetEvent(cancelEvent)
-		err := <-done
-		if err != nil && err != errWaitCanceled {
-			return err
-		}
+		<-done
 		return ctx.Err()
 	}
 }
