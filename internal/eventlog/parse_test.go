@@ -99,6 +99,24 @@ func TestTriggerRestrictedInUserScope(t *testing.T) {
 	}
 }
 
+func TestEventIDFromXML(t *testing.T) {
+	t.Parallel()
+	id, ok := eventIDFromXML(`<Event><System><EventID>1234</EventID></System></Event>`)
+	if !ok || id != 1234 {
+		t.Fatalf("got %d %v", id, ok)
+	}
+	classic, ok := eventIDFromXML(`<Event><System><EventID Qualifiers="16384">40001</EventID></System></Event>`)
+	if !ok || classic != 40001 {
+		t.Fatalf("classic = %d %v", classic, ok)
+	}
+	if _, ok := eventIDFromXML(`<Event><System></System></Event>`); ok {
+		t.Fatal("missing EventID must fail")
+	}
+	if _, ok := eventIDFromXML(`<Event><System><EventID>0</EventID></System></Event>`); ok {
+		t.Fatal("EventID=0 must fail")
+	}
+}
+
 func TestTriggerQuery(t *testing.T) {
 	t.Parallel()
 	tr, err := ParseTrigger("Application:EventID=4242")
