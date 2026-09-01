@@ -10,6 +10,7 @@ import (
 	"github.com/PLN/winunitd/internal/registry"
 	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/timers"
+	"github.com/PLN/winunitd/internal/unit"
 )
 
 const (
@@ -103,8 +104,8 @@ func (c Config) EnabledDir() string {
 	return filepath.Join(c.BaseDir, enabledDirName)
 }
 
-func (c Config) EnabledPath(target, unit string) string {
-	return filepath.Join(c.EnabledDir(), target, unit)
+func (c Config) EnabledPath(target, unitName string) string {
+	return filepath.Join(c.EnabledDir(), unit.NormalizeName(target), unit.NormalizeName(unitName))
 }
 
 func (c Config) JournalDir() string {

@@ -20,7 +20,7 @@ func (m *Manager) Enable(name string) (*protocol.EnableResult, error) {
 		m.mu.Unlock()
 		return nil, err
 	}
-	name = rt.unit.Name
+	name = core.NormalizeName(rt.unit.Name)
 	targets := append([]string(nil), rt.unit.WantedBy...)
 	m.mu.Unlock()
 
@@ -61,14 +61,14 @@ func (m *Manager) Disable(name string) (*protocol.EnableResult, error) {
 		m.mu.Unlock()
 		return nil, err
 	}
-	name = rt.unit.Name
+	name = core.NormalizeName(rt.unit.Name)
 	m.mu.Unlock()
 
 	_ = filepath.WalkDir(m.cfg.EnabledDir(), func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
-		if d.Name() == name {
+		if core.NormalizeName(d.Name()) == name {
 			_ = os.Remove(path)
 		}
 		return nil

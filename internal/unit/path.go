@@ -5,6 +5,19 @@ import (
 	"strings"
 )
 
+// NormalizeName applies DESIGN.md §36: unit names are case-insensitive
+// and stored in lower-case; an unqualified name defaults to .service.
+func NormalizeName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return ""
+	}
+	if _, err := KindFromName(name); err == nil {
+		return name
+	}
+	return name + ".service"
+}
+
 // KindFromName returns the unit kind implied by a file name.
 func KindFromName(name string) (Kind, error) {
 	n := strings.ToLower(name)

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/protocol"
+	"github.com/PLN/winunitd/internal/unit"
 )
 
 const usage = `winctl — control interface for winunitd
@@ -231,7 +232,7 @@ func (c *cli) needUnit(args []string, cmd string) (string, int) {
 		fmt.Fprintf(c.stderr, "winctl %s: unit name required\n", cmd)
 		return "", 2
 	}
-	return args[0], 0
+	return unit.NormalizeName(args[0]), 0
 }
 
 func (c *cli) unitCmd(args []string, method string, print func(any) int) int {
@@ -291,6 +292,7 @@ func (c *cli) verify(args []string) int {
 	}
 	failed := false
 	for _, name := range args {
+		name = unit.NormalizeName(name)
 		var ver *protocol.VerifyResult
 		err := c.call(func(ctx context.Context, cl *protocol.Client) error {
 			var err error
@@ -355,14 +357,14 @@ func (c *cli) status(args []string) int {
 		fmt.Fprintf(c.stderr, "winctl status: unexpected argument %q\n", args[1])
 		return 2
 	}
-	unit := ""
+	name := ""
 	if len(args) == 1 {
-		unit = args[0]
+		name = unit.NormalizeName(args[0])
 	}
 	var st *protocol.StatusResult
 	err := c.call(func(ctx context.Context, cl *protocol.Client) error {
 		var err error
-		st, err = cl.Status(ctx, unit)
+		st, err = cl.Status(ctx, name)
 		return err
 	})
 	if err != nil {

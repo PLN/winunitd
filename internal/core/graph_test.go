@@ -22,6 +22,11 @@ func TestNormalizeName(t *testing.T) {
 		{"foo.path", "foo.path"},
 		{"  bar  ", "bar.service"},
 		{"", ""},
+		{"FOO", "foo.service"},
+		{"Foo.service", "foo.service"},
+		{"FOO.SERVICE", "foo.service"},
+		{"Foo.TIMER", "foo.timer"},
+		{"WEB.Target", "web.target"},
 	}
 	for _, tt := range tests {
 		if got := NormalizeName(tt.in); got != tt.want {
@@ -38,6 +43,35 @@ func TestBuildDuplicate(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "duplicate") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestBuildCaseVariantDuplicate(t *testing.T) {
+	t.Parallel()
+	_, err := Build([]*unit.Unit{
+		{Name: "Foo.service"},
+		{Name: "foo.service"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRequiresMixedCaseResolves(t *testing.T) {
+	t.Parallel()
+	g := mustBuild(t,
+		&unit.Unit{Name: "web.service", Requires: []string{"Foo.service"}},
+		&unit.Unit{Name: "foo.service"},
+	)
+	tx, err := g.PlanStart("WEB")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equalNames(tx.Units(), "foo.service", "web.service") {
+		t.Fatalf("units = %v", tx.Units())
+	}
+	if g.Unit("FOO") == nil || g.Unit("foo.service") == nil {
+		t.Fatal("lookup must be case-insensitive")
 	}
 }
 

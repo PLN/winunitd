@@ -75,6 +75,61 @@ WantedBy=default.target
 			},
 		},
 		{
+			name: "unit name is lower-cased from the file name",
+			file: "FOO.SERVICE",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Name != "foo.service" {
+					t.Fatalf("name = %q", u.Name)
+				}
+				if u.Kind != KindService {
+					t.Fatalf("kind = %s", u.Kind)
+				}
+			},
+		},
+		{
+			name: "Requires Wants After Before WantedBy are lower-cased",
+			file: "Web.service",
+			src: `
+[Unit]
+Requires=Foo.service
+Wants=Cache.service
+After=Foo.service
+Before=App.target
+[Service]
+ExecStart=C:\Tools\web.exe
+WorkingDirectory=C:\Tools
+[Install]
+WantedBy=Default.target
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Name != "web.service" {
+					t.Fatalf("name = %q", u.Name)
+				}
+				if len(u.Requires) != 1 || u.Requires[0] != "foo.service" {
+					t.Fatalf("requires = %#v", u.Requires)
+				}
+				if len(u.Wants) != 1 || u.Wants[0] != "cache.service" {
+					t.Fatalf("wants = %#v", u.Wants)
+				}
+				if len(u.After) != 1 || u.After[0] != "foo.service" {
+					t.Fatalf("after = %#v", u.After)
+				}
+				if len(u.Before) != 1 || u.Before[0] != "app.target" {
+					t.Fatalf("before = %#v", u.Before)
+				}
+				if len(u.WantedBy) != 1 || u.WantedBy[0] != "default.target" {
+					t.Fatalf("wantedby = %#v", u.WantedBy)
+				}
+			},
+		},
+		{
 			name: "oneshot type is valid",
 			file: "setup.service",
 			src: `
@@ -1207,6 +1262,38 @@ Unit=other.service
 			noWarn: true,
 			check: func(t *testing.T, u *Unit) {
 				if u.Timer.Unit != "other.service" {
+					t.Fatalf("activated = %q", u.Timer.Unit)
+				}
+			},
+		},
+		{
+			name: "timer Unit= is lower-cased",
+			file: "FOO.TIMER",
+			src: `
+[Timer]
+OnCalendar=daily
+Unit=Other.service
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Name != "foo.timer" {
+					t.Fatalf("name = %q", u.Name)
+				}
+				if u.Timer.Unit != "other.service" {
+					t.Fatalf("activated = %q", u.Timer.Unit)
+				}
+			},
+		},
+		{
+			name: "timer implicit companion is lower-cased",
+			file: "Nightly.timer",
+			src: `
+[Timer]
+OnCalendar=daily
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if u.Timer.Unit != "nightly.service" {
 					t.Fatalf("activated = %q", u.Timer.Unit)
 				}
 			},
