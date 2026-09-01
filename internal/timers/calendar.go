@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata" // IANA names (America/New_York, Europe/Berlin) on Windows
 	"unicode"
 )
 
@@ -251,8 +252,8 @@ func (c Calendar) search(from time.Time, backward bool) time.Time {
 		loc = time.Local
 	}
 	if c.Year >= 0 && c.Month >= 0 && c.Day >= 0 {
-		cand := time.Date(c.Year, time.Month(c.Month), c.Day, c.Hour, c.Minute, c.Second, 0, loc)
-		if !c.wallOK(cand) || !c.AllowsWeekday(cand.Weekday()) {
+		cand := c.wallTimeOn(c.Year, time.Month(c.Month), c.Day, loc)
+		if cand.IsZero() || !c.AllowsWeekday(cand.Weekday()) {
 			return time.Time{}
 		}
 		if backward && cand.Before(from) {
@@ -265,6 +266,22 @@ func (c Calendar) search(from time.Time, backward bool) time.Time {
 	}
 
 	start := time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, loc)
+	if backward {
+		if latest := c.boundDay(loc, true); !latest.IsZero() && latest.Before(start) {
+			start = latest
+		}
+		if c.Year >= 0 && start.Year() < c.Year {
+			return time.Time{}
+		}
+	} else {
+		if earliest := c.boundDay(loc, false); !earliest.IsZero() && earliest.After(start) {
+			start = earliest
+		}
+		if c.Year >= 0 && start.Year() > c.Year {
+			return time.Time{}
+		}
+	}
+
 	const maxDays = 366*8 + 2
 	for i := 0; i < maxDays; i++ {
 		var day time.Time
@@ -273,7 +290,18 @@ func (c Calendar) search(from time.Time, backward bool) time.Time {
 		} else {
 			day = start.AddDate(0, 0, i)
 		}
-		cand := c.atDate(day)
+		if c.Year >= 0 {
+			if !backward && day.Year() > c.Year {
+				return time.Time{}
+			}
+			if backward && day.Year() < c.Year {
+				return time.Time{}
+			}
+		}
+		if !c.dateMatches(day) {
+			continue
+		}
+		cand := c.wallTimeOn(day.Year(), day.Month(), day.Day(), loc)
 		if cand.IsZero() || !c.AllowsWeekday(cand.Weekday()) {
 			continue
 		}
@@ -290,22 +318,66 @@ func (c Calendar) search(from time.Time, backward bool) time.Time {
 	return time.Time{}
 }
 
-func (c Calendar) atDate(day time.Time) time.Time {
-	y, m, d := day.Year(), day.Month(), day.Day()
+// dateMatches reports whether day's civil Y/M/D satisfy the expression.
+// Wildcards (-1) match any value. The civil date is taken as-is; callers
+// must not substitute fixed fields into an unrelated day.
+func (c Calendar) dateMatches(day time.Time) bool {
+	if c.Year >= 0 && day.Year() != c.Year {
+		return false
+	}
+	if c.Month >= 0 && int(day.Month()) != c.Month {
+		return false
+	}
+	if c.Day >= 0 && day.Day() != c.Day {
+		return false
+	}
+	return true
+}
+
+// boundDay is the earliest (end=false) or latest (end=true) midnight whose
+// civil date could match the fixed fields. Zero means no useful bound
+// (every field is a wildcard, or the constructed date is not itself a match,
+// for example 2027-02-31).
+func (c Calendar) boundDay(loc *time.Location, end bool) time.Time {
+	if c.Year < 0 && c.Month < 0 && c.Day < 0 {
+		return time.Time{}
+	}
+	y, m, d := 1, 1, 1
+	if end {
+		y, m, d = 9999, 12, 31
+	}
 	if c.Year >= 0 {
 		y = c.Year
 	}
 	if c.Month >= 0 {
-		m = time.Month(c.Month)
+		m = c.Month
 	}
 	if c.Day >= 0 {
 		d = c.Day
 	}
-	cand := time.Date(y, m, d, c.Hour, c.Minute, c.Second, 0, day.Location())
-	if !c.wallOK(cand) {
+	day := time.Date(y, time.Month(m), d, 0, 0, 0, 0, loc)
+	if !c.dateMatches(day) {
 		return time.Time{}
 	}
-	return cand
+	return day
+}
+
+// wallTimeOn maps the expression's wall clock onto a civil date.
+//
+// A candidate whose year/month/day after construction is not the intended
+// civil date is rejected (time.Date overflow: Feb 31 → Mar 3).
+// If the wall time does not exist (DST spring-forward gap), the result is
+// the first valid instant after the gap. If it exists twice (fall-back),
+// the result is the first occurrence (DESIGN.md §18).
+func (c Calendar) wallTimeOn(year int, month time.Month, day int, loc *time.Location) time.Time {
+	cand := time.Date(year, month, day, c.Hour, c.Minute, c.Second, 0, loc)
+	if cand.Year() != year || cand.Month() != month || cand.Day() != day {
+		return time.Time{}
+	}
+	if c.wallOK(cand) {
+		return firstOccurrence(cand)
+	}
+	return firstValidAfterGap(year, month, day, c.Hour, c.Minute, c.Second, loc)
 }
 
 func (c Calendar) wallOK(t time.Time) bool {
@@ -313,6 +385,43 @@ func (c Calendar) wallOK(t time.Time) bool {
 		return false
 	}
 	return t.Hour() == c.Hour && t.Minute() == c.Minute && t.Second() == c.Second
+}
+
+// firstOccurrence returns the earliest instant with the same civil date and
+// wall clock as t. During a DST fall-back fold, time.Date may pick either
+// copy depending on the zone; this pins the first (systemd: first occurrence).
+func firstOccurrence(t time.Time) time.Time {
+	y, m, d := t.Date()
+	h, min, s := t.Clock()
+	for {
+		earlier := t.Add(-time.Hour)
+		if earlier.Year() != y || earlier.Month() != m || earlier.Day() != d {
+			return t
+		}
+		if earlier.Hour() != h || earlier.Minute() != min || earlier.Second() != s {
+			return t
+		}
+		t = earlier
+	}
+}
+
+// firstValidAfterGap returns the first existing wall-clock instant at or
+// after hour:min:sec on the given civil date. Used when the requested wall
+// time falls in a DST spring-forward gap (time.Date does not round-trip;
+// in America/New_York it can land before the gap, in Europe/Berlin after).
+func firstValidAfterGap(year int, month time.Month, day, hour, min, sec int, loc *time.Location) time.Time {
+	start := hour*3600 + min*60 + sec
+	for sod := start; sod < 24*3600; sod++ {
+		h := sod / 3600
+		mi := (sod / 60) % 60
+		s := sod % 60
+		t := time.Date(year, month, day, h, mi, s, 0, loc)
+		if t.Year() == year && t.Month() == month && t.Day() == day &&
+			t.Hour() == h && t.Minute() == mi && t.Second() == s {
+			return firstOccurrence(t)
+		}
+	}
+	return time.Time{}
 }
 
 func weekdayName(s string) (time.Weekday, bool) {
