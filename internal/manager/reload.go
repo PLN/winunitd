@@ -84,6 +84,10 @@ func (m *Manager) parseUnitDir() ([]*unit.Unit, *protocol.DaemonReloadResult, er
 			result.Errors = append(result.Errors, path+": Type=scm is only supported in the system manager")
 			continue
 		}
+		if m.cfg.UserScope && scheduledTaskName(rep.Unit) != "" {
+			result.Errors = append(result.Errors, path+": Type=scheduled-task is only supported in the system manager")
+			continue
+		}
 		scopeFail := false
 		for _, iss := range unit.RegistryScopeIssues(rep.Unit, m.cfg.UserScope) {
 			result.Errors = append(result.Errors, iss.String())
