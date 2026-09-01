@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -340,5 +341,57 @@ func TestCreateProcessWithLoopbackListenerKeepsHelperAlive(t *testing.T) {
 	time.Sleep(400 * time.Millisecond)
 	if !p.Alive() {
 		t.Fatal("ping helper died while parent held a loopback listener")
+	}
+}
+
+func TestWaitCancelDoesNotCloseWaitedHandle(t *testing.T) {
+	p := startHelper(t, "sleep", unit.TypeSimple, 0)
+	time.Sleep(50 * time.Millisecond)
+	goruntime.GC()
+	baseline := goruntime.NumGoroutine()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	err := p.Wait(ctx)
+	cancel()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Wait = %v, want context.DeadlineExceeded", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var n int
+	for time.Now().Before(deadline) {
+		n = goruntime.NumGoroutine()
+		if n <= baseline+1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n > baseline+2 {
+		t.Fatalf("goroutines after cancel: %d (baseline %d)", n, baseline)
+	}
+
+	if _, exited := p.ExitCode(); exited {
+		t.Fatal("ExitCode recorded after cancelled Wait")
+	}
+	wp := p.(*winProc)
+	wp.mu.Lock()
+	exited := wp.exited
+	wp.mu.Unlock()
+	if exited {
+		t.Fatal("p.exited is true after cancelled Wait")
+	}
+	if !p.Alive() {
+		t.Fatal("helper exited during cancelled Wait")
+	}
+
+	if err := p.Stop(5 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+	code, ok := p.ExitCode()
+	if !ok {
+		t.Fatal("Stop did not record an exit code")
+	}
+	if code == stillActiveExit {
+		t.Fatalf("exit code still STILL_ACTIVE (%d)", code)
 	}
 }
