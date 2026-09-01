@@ -339,6 +339,8 @@ func TestRestartOnWatchdogRelaunches(t *testing.T) {
 	launch := fakeNotifyLaunch()
 	m, fk := managerWithFake(t, launch, map[string]string{
 		"wd.service": `
+[Unit]
+StartLimitBurst=0
 [Service]
 Type=notify
 ExecStart=C:\App\wd.exe
