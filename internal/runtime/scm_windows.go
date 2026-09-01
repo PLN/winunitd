@@ -170,7 +170,7 @@ func stopService(s *mgr.Service) error {
 	return fmt.Errorf("service %s did not stop within %s", ServiceName, PreshutdownTimeout)
 }
 
-const acceptedControls = svc.AcceptStop | svc.AcceptShutdown | svc.AcceptPreShutdown | svc.AcceptSessionChange
+const acceptedControls = svc.AcceptStop | svc.AcceptShutdown | svc.AcceptPreShutdown | svc.AcceptSessionChange | svc.AcceptPowerEvent | svc.Accepted(ServiceAcceptTimeChange)
 
 func isStopCmd(cmd svc.Cmd) bool {
 	switch cmd {
@@ -184,6 +184,7 @@ func isStopCmd(cmd svc.Cmd) bool {
 type host struct {
 	run       func(ctx context.Context) error
 	onSession func(SessionChange)
+	onClock   func()
 }
 
 func (h *host) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
@@ -198,6 +199,7 @@ func (h *host) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<-
 	}()
 
 	changes <- svc.Status{State: svc.Running, Accepts: acceptedControls}
+	go overlayTimeChangeAccept(svc.Status{State: svc.Running, Accepts: acceptedControls})
 
 	for {
 		select {
@@ -210,11 +212,18 @@ func (h *host) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<-
 			switch c.Cmd {
 			case svc.Interrogate:
 				changes <- c.CurrentStatus
+				go overlayTimeChangeAccept(c.CurrentStatus)
 			case svc.SessionChange:
 				if sc, ok := ParseSessionChange(c.Cmd, c.EventType, c.EventData); ok && h.onSession != nil {
 					h.onSession(sc)
 				}
 			default:
+				if IsClockChangeControl(uint32(c.Cmd), c.EventType) {
+					if h.onClock != nil {
+						h.onClock()
+					}
+					continue
+				}
 				if isStopCmd(c.Cmd) {
 					// Cancel the host. serve() then runs ordered unit stop
 					// and closes the daemon Job Object (DESIGN.md §42).
@@ -231,14 +240,33 @@ func (h *host) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<-
 // RunHost runs run as the winunitd Windows Service. ctx is cancelled on
 // SERVICE_CONTROL_STOP, SHUTDOWN, and PRESHUTDOWN.
 func RunHost(run func(ctx context.Context) error) error {
-	return RunHostNotify(run, nil)
+	return RunHostNotify(run, nil, nil)
 }
 
 // RunHostNotify is RunHost plus SESSIONCHANGE callbacks (user manager
-// auto-start on first logon).
-func RunHostNotify(run func(ctx context.Context) error, onSession func(SessionChange)) error {
+// auto-start on first logon) and TIMECHANGE / POWEREVENT (resume)
+// callbacks so calendar timers recompute (DESIGN.md §18).
+func RunHostNotify(run func(ctx context.Context) error, onSession func(SessionChange), onClock func()) error {
 	if run == nil {
 		return fmt.Errorf("nil service run function")
 	}
-	return svc.Run(ServiceName, &host{run: run, onSession: onSession})
+	return svc.Run(ServiceName, &host{run: run, onSession: onSession, onClock: onClock})
+}
+
+func overlayTimeChangeAccept(st svc.Status) {
+	// golang.org/x/sys/windows/svc updateStatus does not map
+	// SERVICE_ACCEPT_TIMECHANGE (0x200). Re-apply it on the status
+	// handle after each SetServiceStatus so SCM will deliver TIMECHANGE.
+	h := svc.StatusHandle()
+	if h == 0 {
+		return
+	}
+	time.Sleep(5 * time.Millisecond)
+	var ss windows.SERVICE_STATUS
+	ss.ServiceType = windows.SERVICE_WIN32_OWN_PROCESS
+	ss.CurrentState = uint32(st.State)
+	ss.ControlsAccepted = uint32(st.Accepts) | ServiceAcceptTimeChange
+	ss.CheckPoint = st.CheckPoint
+	ss.WaitHint = st.WaitHint
+	_ = windows.SetServiceStatus(h, &ss)
 }

@@ -25,7 +25,8 @@ func RunHost(run func(ctx context.Context) error) error {
 }
 
 // RunHostNotify is only available on Windows.
-func RunHostNotify(run func(ctx context.Context) error, onSession func(SessionChange)) error {
+func RunHostNotify(run func(ctx context.Context) error, onSession func(SessionChange), onClock func()) error {
 	_ = onSession
+	_ = onClock
 	return errNotWindows
 }

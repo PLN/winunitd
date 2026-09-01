@@ -10,12 +10,13 @@ import (
 // and signal Clock.Changed so calendar and OnUnitActiveSec deadlines
 // are recomputed (DESIGN.md §18).
 type Fake struct {
-	mu      sync.Mutex
-	now     time.Time
-	boot    time.Duration
-	startup time.Time
-	timers  map[*fakeTimer]struct{}
-	changed chan struct{}
+	mu         sync.Mutex
+	now        time.Time
+	boot       time.Duration
+	originBoot time.Duration
+	startup    time.Time
+	timers     map[*fakeTimer]struct{}
+	changed    chan struct{}
 }
 
 // NewFake starts at now. A zero now uses 2026-09-01 12:00 UTC.
@@ -24,11 +25,12 @@ func NewFake(now time.Time) *Fake {
 		now = time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	}
 	return &Fake{
-		now:     now,
-		boot:    time.Hour,
-		startup: now,
-		timers:  make(map[*fakeTimer]struct{}),
-		changed: make(chan struct{}, 1),
+		now:        now,
+		boot:       time.Hour,
+		originBoot: time.Hour,
+		startup:    now,
+		timers:     make(map[*fakeTimer]struct{}),
+		changed:    make(chan struct{}, 1),
 	}
 }
 
@@ -39,11 +41,12 @@ func (f *Fake) Clock() Clock {
 		return Clock{}
 	}
 	return Clock{
-		Now:       f.Now,
-		SinceBoot: f.SinceBoot,
-		Startup:   f.startup,
-		NewTimer:  f.newTimer,
-		Changed:   f.changed,
+		Now:        f.Now,
+		SinceBoot:  f.SinceBoot,
+		SinceStart: f.SinceStart,
+		Startup:    f.startup,
+		NewTimer:   f.newTimer,
+		Changed:    f.changed,
 	}
 }
 
@@ -59,6 +62,18 @@ func (f *Fake) SinceBoot() time.Duration {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.boot
+}
+
+// SinceStart is monotonic time since this Fake was created. JumpWall
+// and Suspend do not move it; Advance does.
+func (f *Fake) SinceStart() time.Duration {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d := f.boot - f.originBoot
+	if d < 0 {
+		return 0
+	}
+	return d
 }
 
 // Advance moves wall time and SinceBoot forward by d and fires every

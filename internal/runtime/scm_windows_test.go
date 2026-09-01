@@ -54,6 +54,12 @@ func TestAcceptedControlsIncludePreshutdown(t *testing.T) {
 	if acceptedControls&svc.AcceptSessionChange == 0 {
 		t.Fatal("missing AcceptSessionChange")
 	}
+	if acceptedControls&svc.AcceptPowerEvent == 0 {
+		t.Fatal("missing AcceptPowerEvent")
+	}
+	if acceptedControls&svc.Accepted(ServiceAcceptTimeChange) == 0 {
+		t.Fatal("missing SERVICE_ACCEPT_TIMECHANGE")
+	}
 	if !isStopCmd(svc.Stop) || !isStopCmd(svc.Shutdown) || !isStopCmd(svc.PreShutdown) {
 		t.Fatal("stop/shutdown/preshutdown must cancel the host")
 	}
@@ -128,5 +134,86 @@ func cmdName(cmd svc.Cmd) string {
 		return "preshutdown"
 	default:
 		return "other"
+	}
+}
+
+func TestHostClockChangeCommandsCallOnClock(t *testing.T) {
+	cases := []struct {
+		name      string
+		cmd       svc.Cmd
+		eventType uint32
+		want      bool
+	}{
+		{name: "timechange", cmd: svc.Cmd(ServiceControlTimeChange), want: true},
+		{name: "resume-automatic", cmd: svc.PowerEvent, eventType: PBTAPMResumeAutomatic, want: true},
+		{name: "resume-suspend", cmd: svc.PowerEvent, eventType: PBTAPMResumeSuspend, want: true},
+		{name: "power-suspend", cmd: svc.PowerEvent, eventType: 0x0004, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			n := 0
+			h := &host{
+				run: func(ctx context.Context) error {
+					<-ctx.Done()
+					return nil
+				},
+				onClock: func() {
+					mu.Lock()
+					n++
+					mu.Unlock()
+				},
+			}
+			reqs := make(chan svc.ChangeRequest, 2)
+			changes := make(chan svc.Status, 8)
+			done := make(chan struct{})
+			go func() {
+				h.Execute(nil, reqs, changes)
+				close(done)
+			}()
+
+			deadline := time.Now().Add(3 * time.Second)
+			running := false
+			for time.Now().Before(deadline) && !running {
+				select {
+				case st := <-changes:
+					if st.State == svc.Running {
+						running = true
+					}
+				case <-time.After(20 * time.Millisecond):
+				}
+			}
+			if !running {
+				t.Fatal("host never reported Running")
+			}
+
+			reqs <- svc.ChangeRequest{Cmd: tc.cmd, EventType: tc.eventType}
+			deadline = time.Now().Add(time.Second)
+			for time.Now().Before(deadline) {
+				mu.Lock()
+				got := n
+				mu.Unlock()
+				if got > 0 {
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			mu.Lock()
+			got := n
+			mu.Unlock()
+			if tc.want && got != 1 {
+				t.Fatalf("onClock = %d, want 1", got)
+			}
+			if !tc.want && got != 0 {
+				t.Fatalf("onClock = %d, want 0", got)
+			}
+
+			reqs <- svc.ChangeRequest{Cmd: svc.Stop}
+			select {
+			case <-done:
+			case <-time.After(3 * time.Second):
+				t.Fatal("Execute did not return after stop")
+			}
+		})
 	}
 }
