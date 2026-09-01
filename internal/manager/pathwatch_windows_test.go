@@ -193,6 +193,16 @@ func windowsPathFileManager(t *testing.T, dir, watchPath, serviceBody, helper st
 
 func windowsPathManagerAt(t *testing.T, dir, watchPath, serviceBody, helper string, exit int, countPath string) *Manager {
 	t.Helper()
+	return windowsPathManagerKeyed(t, dir, watchPath, "PathChanged", serviceBody, helper, exit, countPath)
+}
+
+func windowsPathExistsManager(t *testing.T, dir, watchPath, serviceBody, helper string, exit int, countPath string) *Manager {
+	t.Helper()
+	return windowsPathManagerKeyed(t, dir, watchPath, "PathExists", serviceBody, helper, exit, countPath)
+}
+
+func windowsPathManagerKeyed(t *testing.T, dir, watchPath, pathKey, serviceBody, helper string, exit int, countPath string) *Manager {
+	t.Helper()
 	units := filepath.Join(dir, "units")
 	if err := os.MkdirAll(units, 0o755); err != nil {
 		t.Fatal(err)
@@ -201,7 +211,7 @@ func windowsPathManagerAt(t *testing.T, dir, watchPath, serviceBody, helper stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeWindowsPathPair(t, units, dir, exe, watchPath, serviceBody, helper, exit, countPath)
+	writeWindowsPathPair(t, units, dir, exe, pathKey, watchPath, serviceBody, helper, exit, countPath)
 	m, err := New(Config{BaseDir: dir})
 	if err != nil {
 		t.Fatal(err)
@@ -213,7 +223,7 @@ func windowsPathManagerAt(t *testing.T, dir, watchPath, serviceBody, helper stri
 	return m
 }
 
-func writeWindowsPathPair(t *testing.T, units, wd, exe, watchPath, serviceBody, helper string, exit int, countPath string) {
+func writeWindowsPathPair(t *testing.T, units, wd, exe, pathKey, watchPath, serviceBody, helper string, exit int, countPath string) {
 	t.Helper()
 	if _, err := pathwatch.Parse(watchPath); err != nil {
 		t.Fatalf("watch path %q: %v", watchPath, err)
@@ -244,11 +254,78 @@ func writeWindowsPathPair(t *testing.T, units, wd, exe, watchPath, serviceBody, 
 	}
 	pth := fmt.Sprintf(""+
 		"[Path]\n"+
-		"PathChanged=%s\n"+
+		"%s=%s\n"+
 		"[Install]\n"+
 		"WantedBy=default.target\n",
-		watchPath)
+		pathKey, watchPath)
 	if err := os.WriteFile(filepath.Join(units, "foo.path"), []byte(pth), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWindowsPathExistsCreateSatisfies(t *testing.T) {
+	watchDir := t.TempDir()
+	target := filepath.Join(watchDir, "ready.flag")
+	dir := t.TempDir()
+	count := filepath.Join(dir, "count.txt")
+	m := windowsPathExistsManager(t, dir, target, `
+Type=oneshot
+`, "exit", 0, count)
+	if _, err := m.Start(context.Background(), "foo.path"); err != nil {
+		t.Fatal(err)
+	}
+	assertState(t, m, "foo.path", core.Active)
+	if helperCountLines(count) != 0 {
+		t.Fatal("missing PathExists must not start the oneshot")
+	}
+	if err := os.WriteFile(target, []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitWindowsCount(t, count, 1, 8*time.Second)
+}
+
+func TestWindowsPathExistsAlreadyPresentStartsOnce(t *testing.T) {
+	watchDir := t.TempDir()
+	target := filepath.Join(watchDir, "ready.flag")
+	if err := os.WriteFile(target, []byte("0"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	count := filepath.Join(dir, "count.txt")
+	m := windowsPathExistsManager(t, dir, target, `
+Type=oneshot
+`, "exit", 0, count)
+	if _, err := m.Start(context.Background(), "foo.path"); err != nil {
+		t.Fatal(err)
+	}
+	waitWindowsCount(t, count, 1, 8*time.Second)
+}
+
+func TestWindowsPathExistsDeletionDoesNotStopSimple(t *testing.T) {
+	watchDir := t.TempDir()
+	target := filepath.Join(watchDir, "ready.flag")
+	if err := os.WriteFile(target, []byte("0"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	m := windowsPathExistsManager(t, dir, target, `
+Type=simple
+`, "sleep", 0, "")
+	if _, err := m.Start(context.Background(), "foo.path"); err != nil {
+		t.Fatal(err)
+	}
+	proc := waitWindowsLiveProc(t, m, "foo.service")
+	pid := proc.PID()
+	gen := genOf(t, m, "foo.service")
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(800 * time.Millisecond)
+	got := waitWindowsLiveProc(t, m, "foo.service")
+	if got.PID() != pid {
+		t.Fatalf("deletion must not stop the counterpart; pid %d -> %d", pid, got.PID())
+	}
+	if gotGen := genOf(t, m, "foo.service"); gotGen != gen {
+		t.Fatalf("gen = %d after PathExists delete, want %d", gotGen, gen)
 	}
 }

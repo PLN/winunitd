@@ -237,15 +237,18 @@ Windows-native companion unit. `foo.path` activates `foo.service` by basename (s
 ```ini
 [Path]
 PathChanged=C:\Data\incoming
+PathExists=C:\Data\incoming\ready.flag
 ```
 
-`PathChanged=` is repeatable (watch each path; any change fires — OR). Absolute Windows paths only (drive-letter `C:\…` or UNC `\\server\share\…`). A file path watches the parent directory and filters by name. A directory path watches that directory. Watches are **non-recursive** (this directory only; subdirectory changes do not fire). `PathExists=` is not implemented.
+`PathChanged=` is repeatable (watch each path; any change fires — OR). `PathExists=` is repeatable and is **AND**: the counterpart starts only when every `PathExists=` path exists. This is a lock versus systemd, where repeatable `PathExists=` is OR. Absolute Windows paths only (drive-letter `C:\…` or UNC `\\server\share\…`). A `PathChanged=` file path watches the parent directory and filters by name. A `PathChanged=` directory path watches that directory. Watches are **non-recursive** (this directory only; subdirectory changes do not fire). `PathExistsIsDirectory=` and directory-empty triggers are not implemented.
 
-The system manager and user managers both accept `.path` units. A missing or unwatchable path at activate fails the path unit with reason `configuration`; the daemon stays up.
+On activate, if every `PathExists=` path already exists, start the counterpart once (a still-running `Type=simple` is not restarted). While the path unit is active, watch so a later creation can satisfy AND and start; deleting a `PathExists=` path does not stop a running counterpart. Mixing `PathChanged=` and `PathExists=` on the same unit: **either** may start the counterpart (any `PathChanged=` fire, or the `PathExists=` AND becoming satisfied).
 
-A change **starts** `foo.service` if it is inactive or failed. If the service is already `active`, do not restart it. A oneshot that exits is the repeatable pattern.
+The system manager and user managers both accept `.path` units. A missing or unwatchable `PathChanged=` path at activate fails the path unit with reason `configuration`; the daemon stays up. A missing `PathExists=` path does not fail the unit (it waits for creation). An unwatchable `PathExists=` path (no existing ancestor directory to watch) fails with reason `configuration`.
 
-Enable with `WantedBy=` like other units (usually `default.target`). There is no `paths.target`. `winctl list-units` shows `.path` units. `verify` on the pair fails for a missing `foo.service`, a non-absolute path, or an empty path.
+A change or a satisfied `PathExists=` **starts** `foo.service` if it is inactive or failed. If the service is already `active`, do not restart it. A oneshot that exits is the repeatable pattern.
+
+Enable with `WantedBy=` like other units (usually `default.target`). There is no `paths.target`. `winctl list-units` shows `.path` units. `verify` on the pair fails for a missing `foo.service`, a non-absolute path, or an empty path. A path unit must specify `PathChanged=` or `PathExists=` (or both).
 
 ### 6.5 `.socket`
 
@@ -1496,14 +1499,15 @@ Potential future trigger types:
 
 ### File
 
-File watches stay on `.path` (see §6.4). Do not overload `.path` for registry. `PathChanged=` is implemented; `PathExists=` is later.
+File watches stay on `.path` (see §6.4). Do not overload `.path` for registry. `PathChanged=` (OR) and `PathExists=` (AND) are implemented. `PathExistsIsDirectory=` is later.
 
 ```ini
 [Path]
 PathChanged=C:\Data\incoming
+PathExists=C:\Data\incoming\ready.flag
 ```
 
-`PathChanged=` is an absolute Windows path. Repeatable values are OR. `ReadDirectoryChangesW` is non-recursive. A file path watches the parent directory and filters by name.
+`PathChanged=` is an absolute Windows path. Repeatable values are OR. `PathExists=` is an absolute Windows path. Repeatable values are AND (every listed path must exist; this is a lock versus systemd OR). Mixing both on one unit: either may start the counterpart. `ReadDirectoryChangesW` is non-recursive. A file path watches the parent directory and filters by name.
 
 ### Registry ★
 
@@ -2555,7 +2559,7 @@ At this point the project becomes genuinely distinctive.
 
 Add:
 
-- path units — `.path` `PathChanged=` (★; `PathExists=` later)
+- path units — `.path` `PathChanged=` (OR) and `PathExists=` (AND) (★; `PathExistsIsDirectory=` later)
 - registry/event triggers — `.registry` and `.eventlog` are the Windows-native companions (★)
 - templates
 - remaining resource limits (CPUWeight=, CPUQuota=, IoPriority=)
