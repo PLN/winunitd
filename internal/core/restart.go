@@ -35,6 +35,8 @@ func StatusReason(err string) string {
 	switch {
 	case err == ReasonResourceLimit:
 		return ReasonResourceLimit
+	case err == ReasonStartLimit:
+		return ReasonStartLimit
 	case err == ReasonConfiguration || strings.HasPrefix(err, ReasonConfiguration+":") || strings.HasPrefix(err, ReasonConfiguration+" "):
 		return ReasonConfiguration
 	default:
@@ -60,7 +62,8 @@ func (k ExitKind) String() string {
 }
 
 // ShouldRestart reports whether Restart= launches the unit again after the
-// main process has exited. There is no StartLimitBurst / StartLimitInterval.
+// main process has exited. StartLimitBurst / StartLimitIntervalSec are
+// applied by the manager before scheduling that relaunch.
 //
 //	no:          never
 //	always:      any exit, including 0, watchdog, and resource-limit

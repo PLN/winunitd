@@ -9,7 +9,8 @@
 // After= neighbors. Shutdown (PlanShutdown, root shutdown.target) stops
 // every pulled unit in reverse After=/Before= order (DESIGN.md §10, §42).
 // See DESIGN.md §35, §69, §70.
-// Lifecycle states and Restart= decisions live here (DESIGN.md §20, §68).
+// Lifecycle states, Restart=, and StartLimitBurst / StartLimitIntervalSec
+// decisions live here (DESIGN.md §20, §44, §68).
 // core.Step is a closed allowlist: illegal (from, fromSub, event) triples
 // return ErrIllegalTransition and do not invent a destination state.
 // Requires= start-failure propagates only to not-yet-started jobs
