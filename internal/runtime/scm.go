@@ -32,6 +32,16 @@ const RecoveryResetPeriodNever = ^uint32(0)
 // notification (DESIGN.md §42). Ordered unit stop uses this window.
 const PreshutdownTimeout = 3 * time.Minute
 
+// StopPendingWaitHint is the SCM WaitHint during ordered unit stop.
+// It matches PreshutdownTimeout so a plain `sc stop` does not flag the
+// service hung while units drain (issue #33). Aggregate TimeoutStopSec
+// for a running graph is bounded by this window.
+const StopPendingWaitHint = PreshutdownTimeout
+
+// stopPendingTick is how often the SCM host increments CheckPoint while
+// waiting for ordered stop. Tests on Windows shorten this.
+var stopPendingTick = 2 * time.Second
+
 // DataDirNames are created under the install base directory (DESIGN.md §7, §48).
 // units, enabled, journal, runtime. PATH and Event Log provider are not touched.
 var DataDirNames = []string{"units", "enabled", "journal", "runtime", "linger"}

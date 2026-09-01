@@ -25,6 +25,9 @@ func TestServiceIdentity(t *testing.T) {
 	if PreshutdownTimeout <= 0 {
 		t.Fatal("PreshutdownTimeout unset")
 	}
+	if StopPendingWaitHint < PreshutdownTimeout {
+		t.Fatalf("StopPendingWaitHint %s < PreshutdownTimeout %s", StopPendingWaitHint, PreshutdownTimeout)
+	}
 }
 
 func TestEnsureDataDirs(t *testing.T) {

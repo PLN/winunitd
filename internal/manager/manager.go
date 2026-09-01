@@ -411,12 +411,12 @@ func (m *Manager) Start(ctx context.Context, name string) (*protocol.UnitResult,
 	m.applyRunLocked(run)
 	m.reapFailedLocked()
 	if err != nil {
-		m.setErrLocked(name, err.Error())
+		m.setErrLocked(name, waitFailMessage(err))
 		return &protocol.UnitResult{
 			Unit:        name,
 			ActiveState: m.stateOfLocked(name).String(),
-			Error:       err.Error(),
-		}, protocol.ErrFailed(err.Error())
+			Error:       waitFailMessage(err),
+		}, protocol.ErrFailed(waitFailMessage(err))
 	}
 	m.clearErrLocked(name)
 	return &protocol.UnitResult{Unit: name, ActiveState: m.stateOfLocked(name).String()}, nil
@@ -460,7 +460,7 @@ func (m *Manager) applyRunLocked(run *core.Run) {
 		if rt.state == core.Active {
 			continue
 		}
-		rt.err = err.Error()
+		rt.err = waitFailMessage(err)
 	}
 }
 

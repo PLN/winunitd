@@ -15,6 +15,7 @@ import (
 	"github.com/PLN/winunitd/internal/manager"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/runtime/runtimetest"
 )
 
 func TestRunHelp(t *testing.T) {
@@ -616,7 +617,7 @@ Description=SystemFoo
 [Service]
 ExecStart=C:\Tools\foo.exe
 WorkingDirectory=C:\Tools
-`, runtime.StubLauncher())
+`, runtimetest.Launcher())
 	defer sysStop()
 
 	userDir := t.TempDir()
@@ -638,7 +639,7 @@ WantedBy=default.target
 	}
 	um, err := manager.New(manager.Config{
 		BaseDir:               userDir,
-		Launch:                runtime.StubLauncher(),
+		Launch:                runtimetest.Launcher(),
 		UserScope:             true,
 		HasInteractiveSession: func() bool { return false },
 	})
@@ -731,7 +732,7 @@ Description=Foo
 [Service]
 ExecStart=C:\Tools\foo.exe
 WorkingDirectory=C:\Tools
-`, runtime.StubLauncherOutput("hello from unit\n", "warn from unit\n"))
+`, runtimetest.LauncherOutput("hello from unit\n", "warn from unit\n"))
 	defer stop()
 
 	var out, errb bytes.Buffer
@@ -933,6 +934,31 @@ func TestPrintStatusResourceLimit(t *testing.T) {
 	}
 }
 
+func TestPrintStatusSignalEquivalent(t *testing.T) {
+	var out bytes.Buffer
+	c := &cli{stdout: &out}
+	code := c.printStatus(&protocol.StatusResult{Unit: &protocol.UnitStatus{
+		Name:        "crash.service",
+		LoadState:   "loaded",
+		ActiveState: "failed",
+		Reason:      "signal-equivalent",
+		Error:       "signal-equivalent: exit status 3221225477",
+	}})
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	got := out.String()
+	if !strings.Contains(got, "Active: failed") {
+		t.Fatalf("missing failed: %s", got)
+	}
+	if !strings.Contains(got, "Reason: signal-equivalent") {
+		t.Fatalf("missing reason: %s", got)
+	}
+	if !strings.Contains(got, "Error: signal-equivalent: exit status 3221225477") {
+		t.Fatalf("missing ExitStatus: %s", got)
+	}
+}
+
 func TestCLIDoesNotParseCLIAsAPI(t *testing.T) {
 	// The CLI is a client of the versioned RPC. A raw protocol call must
 	// succeed without involving winctl output.
@@ -974,7 +1000,7 @@ Description=Foo
 [Service]
 ExecStart=C:\Tools\foo.exe
 WorkingDirectory=C:\Tools
-`, runtime.StubLauncher())
+`, runtimetest.Launcher())
 }
 
 func startTestDaemonUnit(t *testing.T, unitBody string, launch runtime.Launcher) (*manager.Manager, func(context.Context) (net.Conn, error), func()) {

@@ -217,3 +217,79 @@ func TestHostClockChangeCommandsCallOnClock(t *testing.T) {
 		})
 	}
 }
+
+func TestHostStopPendingWaitHintAndCheckPoint(t *testing.T) {
+	orig := stopPendingTick
+	stopPendingTick = 15 * time.Millisecond
+	t.Cleanup(func() { stopPendingTick = orig })
+
+	h := &host{run: func(ctx context.Context) error {
+		<-ctx.Done()
+		time.Sleep(60 * time.Millisecond)
+		return nil
+	}}
+	reqs := make(chan svc.ChangeRequest, 2)
+	changes := make(chan svc.Status, 64)
+	done := make(chan struct{})
+	go func() {
+		h.Execute(nil, reqs, changes)
+		close(done)
+	}()
+
+	deadline := time.Now().Add(3 * time.Second)
+	running := false
+	for time.Now().Before(deadline) && !running {
+		select {
+		case st := <-changes:
+			if st.State == svc.Running {
+				running = true
+			}
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	if !running {
+		t.Fatal("host never reported Running")
+	}
+
+	reqs <- svc.ChangeRequest{Cmd: svc.Stop}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Execute did not return after stop")
+	}
+
+	wantHint := uint32(StopPendingWaitHint / time.Millisecond)
+	var pending []svc.Status
+	drain := true
+	for drain {
+		select {
+		case st := <-changes:
+			if st.State == svc.StopPending {
+				pending = append(pending, st)
+			}
+		default:
+			drain = false
+		}
+	}
+	if len(pending) == 0 {
+		t.Fatal("StopPending was not reported")
+	}
+	if pending[0].WaitHint != wantHint {
+		t.Fatalf("WaitHint = %d, want %d", pending[0].WaitHint, wantHint)
+	}
+	if pending[0].CheckPoint == 0 {
+		t.Fatal("first StopPending must set CheckPoint")
+	}
+	sawBump := false
+	for _, st := range pending[1:] {
+		if st.WaitHint != wantHint {
+			t.Fatalf("WaitHint = %d, want %d", st.WaitHint, wantHint)
+		}
+		if st.CheckPoint > pending[0].CheckPoint {
+			sawBump = true
+		}
+	}
+	if !sawBump {
+		t.Fatal("CheckPoint must increment during ordered stop")
+	}
+}
