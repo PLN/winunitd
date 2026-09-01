@@ -89,6 +89,10 @@ func (m *Manager) parseUnitDir() ([]*unit.Unit, *protocol.DaemonReloadResult, er
 			result.Errors = append(result.Errors, iss.String())
 			scopeFail = true
 		}
+		for _, iss := range unit.EventLogScopeIssues(rep.Unit, m.cfg.UserScope) {
+			result.Errors = append(result.Errors, iss.String())
+			scopeFail = true
+		}
 		if scopeFail {
 			continue
 		}
@@ -129,5 +133,6 @@ func (m *Manager) replaceLocked(units []*unit.Unit, g *core.Graph, links map[str
 	// so a mid-delay drop cannot relaunch or leave SubAutoRestart.
 	m.syncTimersLocked()
 	m.syncRegistryLocked()
+	m.syncEventLogLocked()
 	return dropped
 }
