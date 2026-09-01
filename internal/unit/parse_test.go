@@ -1,6 +1,7 @@
 package unit
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ func TestParseUnits(t *testing.T) {
 		name      string
 		file      string
 		src       string
+		existExec []string
 		wantErr   []string
 		forbidErr []string
 		wantWarn  []string
@@ -335,13 +337,25 @@ ExecStartArg=--listen
 ExecStartArg=127.0.0.1:8080
 WorkingDirectory=C:\Program Files\Foo
 `,
-			noWarn: true,
+			existExec: []string{`C:\Program Files\Foo\foo.exe`},
+			noWarn:    true,
 			check: func(t *testing.T, u *Unit) {
 				want := []string{`C:\Program Files\Foo\foo.exe`, "--listen", "127.0.0.1:8080"}
 				if strings.Join(u.Service.ExecStart, "\x00") != strings.Join(want, "\x00") {
 					t.Fatalf("argv = %#v", u.Service.ExecStart)
 				}
 			},
+		},
+		{
+			name: "execstartarg spaced path that does not stat is an error",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Program Files\Foo\foo.exe
+ExecStartArg=--listen
+WorkingDirectory=C:\Program Files\Foo
+`,
+			wantErr: []string{"ExecStart must be an executable path when ExecStartArg is set"},
 		},
 		{
 			name: "execstartarg with leftover flags is an error",
@@ -1826,7 +1840,20 @@ RegistryChanged=HKLM\Software\Example
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			rep := ParseUnit(tt.file, tt.src)
+			var stat func(string) (os.FileInfo, error)
+			if len(tt.existExec) > 0 {
+				ok := make(map[string]bool, len(tt.existExec))
+				for _, p := range tt.existExec {
+					ok[p] = true
+				}
+				stat = func(name string) (os.FileInfo, error) {
+					if ok[name] {
+						return regularFileInfo(name), nil
+					}
+					return nil, os.ErrNotExist
+				}
+			}
+			rep := parseReport(tt.file, tt.file, []byte(tt.src), stat)
 			errs := issueTexts(rep.Errors())
 			warns := issueTexts(rep.Warnings())
 			for _, sub := range tt.wantErr {
@@ -1936,5 +1963,17 @@ func TestTimerEmptyUnitReportsLine(t *testing.T) {
 	}
 	if empty.Line != 3 {
 		t.Fatalf("Unit= is empty reported on line %d, want 3", empty.Line)
+	}
+}
+
+func TestParseCRLFUnitFile(t *testing.T) {
+	t.Parallel()
+	src := "[Service]\r\nExecStart=C:\\Tools\\foo.exe\r\nWorkingDirectory=C:\\Tools\r\n"
+	rep := ParseUnit("foo.service", src)
+	if rep.HasError() {
+		t.Fatalf("CRLF unit file: %v", issueTexts(rep.Errors()))
+	}
+	if got := rep.Unit.Service.ExecStart; len(got) != 1 || got[0] != `C:\Tools\foo.exe` {
+		t.Fatalf("argv = %#v", got)
 	}
 }

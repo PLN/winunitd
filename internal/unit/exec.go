@@ -3,6 +3,7 @@ package unit
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"unicode"
 )
@@ -23,8 +24,8 @@ func buildArgv(execRaw string, extraArgs []string) ([]string, error) {
 		}
 	case len(extraArgs) > 0:
 		// ExecStartArg is present: ExecStart is the unsplit executable path
-		// (DESIGN.md §26). Stray compatibility-syntax arguments are rejected
-		// by the parser before this runs.
+		// (DESIGN.md §26). The parser rejects unquoted leftover argv when
+		// that raw string does not Stat as a single file.
 		if execRaw == "" {
 			return nil, fmt.Errorf("ExecStart is empty")
 		}
@@ -117,11 +118,10 @@ func execStartHasUnquotedWhitespace(s string) bool {
 	return false
 }
 
-// execStartHasStrayArgs reports the ExecStartArg footgun: ExecStart looks
-// like a compatibility command line (executable plus extra argv) rather
-// than a single path. DESIGN.md §26 still allows unquoted spaces in the
-// path itself (C:\Program Files\Foo\foo.exe).
-func execStartHasStrayArgs(execRaw string) bool {
+// execStartArgFootgun reports the ExecStartArg mix-up: ExecStartArg is in
+// use, raw ExecStart has unquoted whitespace, and the raw string does not
+// Stat as a single file (DESIGN.md §26 still allows a real path with spaces).
+func execStartArgFootgun(execRaw string, stat func(string) (os.FileInfo, error)) bool {
 	execRaw = strings.TrimSpace(execRaw)
 	if execRaw == "" || isJSONArray(execRaw) {
 		return false
@@ -129,30 +129,12 @@ func execStartHasStrayArgs(execRaw string) bool {
 	if !execStartHasUnquotedWhitespace(execRaw) {
 		return false
 	}
-	parts, err := splitCommand(execRaw)
-	if err != nil || len(parts) < 2 {
+	if stat == nil {
+		stat = os.Stat
+	}
+	fi, err := stat(execRaw)
+	if err == nil && fi != nil && !fi.IsDir() {
 		return false
 	}
-	if looksLikeWindowsExecutable(parts[0]) {
-		return true
-	}
-	for _, p := range parts[1:] {
-		if strings.HasPrefix(p, "-") {
-			return true
-		}
-	}
-	return false
-}
-
-func looksLikeWindowsExecutable(p string) bool {
-	if !WindowsAbs(p) {
-		return false
-	}
-	lower := strings.ToLower(p)
-	for _, ext := range []string{".exe", ".com", ".bat", ".cmd", ".ps1"} {
-		if strings.HasSuffix(lower, ext) {
-			return true
-		}
-	}
-	return false
+	return true
 }
