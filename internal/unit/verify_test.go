@@ -319,4 +319,43 @@ WorkingDirectory=C:\Tools
 	if rep.Unit.PathWatch.Unit != "foo.service" {
 		t.Fatalf("implicit unit = %q", rep.Unit.PathWatch.Unit)
 	}
+
+	exists := filepath.Join(dir, "bar.path")
+	if err := os.WriteFile(exists, []byte(`
+[Path]
+PathExists=C:\Data\ready.flag
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bar.service"), []byte(`
+[Service]
+Type=oneshot
+ExecStart=C:\Tools\run-once.exe
+WorkingDirectory=C:\Tools
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep = VerifyPath(exists)
+	if rep.HasError() {
+		t.Fatalf("PathExists pair should verify: %v", issueTexts(rep.Errors()))
+	}
+	if len(rep.Unit.PathWatch.Exists) != 1 || rep.Unit.PathWatch.Exists[0].Raw != `C:\Data\ready.flag` {
+		t.Fatalf("exists = %#v", rep.Unit.PathWatch.Exists)
+	}
+
+	rel := filepath.Join(dir, "rel.path")
+	if err := os.WriteFile(rel, []byte(`
+[Path]
+PathExists=ready.flag
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep = VerifyPath(rel)
+	if !rep.HasError() {
+		t.Fatal("relative PathExists must fail")
+	}
+	errs = strings.Join(issueTexts(rep.Errors()), "\n")
+	if !strings.Contains(errs, "absolute Windows path") {
+		t.Fatalf("errors = %s", errs)
+	}
 }

@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// Spec is one PathChanged= value.
+// Spec is one PathChanged= or PathExists= value.
 type Spec struct {
 	Raw string
 }
@@ -14,12 +14,21 @@ type Spec struct {
 // POSIX-rooted paths such as /tmp/foo are rejected: the first-class
 // target is Windows (same rule as ExecStart=).
 func Parse(raw string) (Spec, error) {
+	return parseAbs(raw, "PathChanged")
+}
+
+// ParseExists validates a PathExists= value (same absolute-path rule).
+func ParseExists(raw string) (Spec, error) {
+	return parseAbs(raw, "PathExists")
+}
+
+func parseAbs(raw, directive string) (Spec, error) {
 	s := strings.TrimSpace(raw)
 	if s == "" {
 		return Spec{}, fmt.Errorf("empty path")
 	}
 	if !windowsAbs(s) {
-		return Spec{}, fmt.Errorf("PathChanged must be an absolute Windows path")
+		return Spec{}, fmt.Errorf("%s must be an absolute Windows path", directive)
 	}
 	return Spec{Raw: s}, nil
 }

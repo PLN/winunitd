@@ -32,10 +32,11 @@
 // a stub). .eventlog units watch EventLogTrigger= channels (EvtSubscribe
 // on Windows; tests inject a stub). .path units watch PathChanged= files
 // and directories (ReadDirectoryChangesW on Windows, non-recursive; tests
-// inject a stub). A change or matching event starts the
-// basename .service if it is not already running. Manager shutdown stops units in
-// reverse After=/Before= order (shutdown.target as root) then the daemon
-// closes the daemon Job Object.
+// inject a stub) and PathExists= paths (AND of all listed paths; missing
+// is OK and waits for creation). A change, or PathExists= becoming
+// satisfied, starts the basename .service if it is not already running.
+// Manager shutdown stops units in reverse After=/Before= order
+// (shutdown.target as root) then the daemon closes the daemon Job Object.
 //
 // The system manager also hosts per-user managers (same binary,
 // --user-manager <SID>) started on first interactive logon or at boot

@@ -257,6 +257,7 @@ type EventLogSpec struct {
 // the same basename with a .service suffix (no Unit=).
 type PathSpec struct {
 	Changed []pathwatch.Spec
+	Exists  []pathwatch.Spec
 	Unit    string
 }
 
