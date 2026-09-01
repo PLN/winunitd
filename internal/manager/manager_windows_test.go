@@ -31,12 +31,7 @@ import (
 const winunitdHelperArgPrefix = "-winunitd-helper="
 
 func helperMode() string {
-	for _, a := range os.Args[1:] {
-		if strings.HasPrefix(a, winunitdHelperArgPrefix) {
-			return strings.TrimPrefix(a, winunitdHelperArgPrefix)
-		}
-	}
-	return strings.TrimSpace(os.Getenv("WINUNITD_JOB_HELPER"))
+	return runtime.HelperModeFrom(os.Args, os.Getenv("WINUNITD_JOB_HELPER"))
 }
 
 func TestMain(m *testing.M) {
