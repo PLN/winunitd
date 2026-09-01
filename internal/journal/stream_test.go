@@ -8,21 +8,35 @@ import (
 )
 
 func TestAttachDrainsWithoutStore(t *testing.T) {
-	r, w := io.Pipe()
+	t.Parallel()
+	done := make(chan struct{})
+	r := &eofNotify{r: strings.NewReader("hello\n"), done: done}
 	(*Store)(nil).Attach("foo.service", 0, "", r, nil)
-	if _, err := io.WriteString(w, "hello\n"); err != nil {
-		t.Fatal(err)
-	}
-	if err := w.Close(); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-		return
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("nil Store Attach did not drain the pipe")
 	}
 }
 
 func TestAttachNilWithoutStore(t *testing.T) {
+	t.Parallel()
 	(*Store)(nil).Attach("foo.service", 0, "", nil, strings.NewReader(""))
+}
+
+type eofNotify struct {
+	r    io.Reader
+	done chan struct{}
+}
+
+func (n *eofNotify) Read(p []byte) (int, error) {
+	nr, err := n.r.Read(p)
+	if err == io.EOF {
+		select {
+		case <-n.done:
+		default:
+			close(n.done)
+		}
+	}
+	return nr, err
 }

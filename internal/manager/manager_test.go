@@ -361,6 +361,85 @@ WorkingDirectory=C:\Tools
 	if len(again.Entries) < 2 {
 		t.Fatalf("journal must survive daemon-reload: %+v", again)
 	}
+
+	future := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
+	none, err := client.Logs(ctx, protocol.LogsParams{Unit: "foo", Since: future})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(none.Entries) != 0 {
+		t.Fatalf("since future = %+v", none)
+	}
+	past, err := client.Logs(ctx, protocol.LogsParams{Unit: "foo", Since: "1 hour ago"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(past.Entries) < 2 {
+		t.Fatalf("since 1 hour ago dropped live lines: %+v", past)
+	}
+	_, err = client.Logs(ctx, protocol.LogsParams{Unit: "foo", Since: "not-a-time"})
+	if err == nil {
+		t.Fatal("invalid since must not be ignored")
+	}
+	pe, ok := err.(*protocol.Error)
+	if !ok || pe.Code != protocol.CodeInvalidParams {
+		t.Fatalf("invalid since err = %v", err)
+	}
+	if logs.Cursor == "" {
+		t.Fatal("logs result missing cursor")
+	}
+	replay, err := client.Logs(ctx, protocol.LogsParams{Unit: "foo", Cursor: logs.Cursor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replay.Entries) != 0 {
+		t.Fatalf("cursor replay = %+v", replay)
+	}
+}
+
+func TestLogsFollowWaitsForNewLine(t *testing.T) {
+	t.Parallel()
+	launch := &fakeLauncher{stdout: "hello from unit\n"}
+	m := managerWith(t, launch, map[string]string{
+		"foo.service": `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`,
+	})
+	type result struct {
+		got *protocol.LogsResult
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		got, err := m.Logs(protocol.LogsParams{Unit: "foo", Follow: true})
+		ch <- result{got, err}
+	}()
+	time.Sleep(80 * time.Millisecond)
+	if _, err := m.Start(context.Background(), "foo"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			t.Fatal(r.err)
+		}
+		if r.got == nil || len(r.got.Entries) == 0 {
+			t.Fatalf("follow = %+v", r.got)
+		}
+		found := false
+		for _, e := range r.got.Entries {
+			if e.Message == "hello from unit" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("follow missing line: %+v", r.got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Follow did not return a new line")
+	}
 }
 
 func TestStatusAndListShowActiveEnabledPID(t *testing.T) {
