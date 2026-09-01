@@ -23,6 +23,23 @@ func TestFakeAdvanceFiresTimer(t *testing.T) {
 	}
 }
 
+func TestFakeWaitingAtSeesLaterDeadline(t *testing.T) {
+	t.Parallel()
+	fk := NewFake(time.Time{})
+	_ = fk.Clock().Timer(time.Second)
+	if fk.WaitingAt(2 * time.Second) {
+		t.Fatal("2s wait is not armed")
+	}
+	_ = fk.Clock().Timer(2 * time.Second)
+	if !fk.WaitingAt(2 * time.Second) {
+		t.Fatal("2s wait must be visible while a 1s wait is also pending")
+	}
+	when, ok := fk.NextWhen()
+	if !ok || !when.Equal(fk.Now().Add(time.Second)) {
+		t.Fatalf("NextWhen = %v ok=%v, want the 1s wait", when, ok)
+	}
+}
+
 func TestFakeAdvanceDoesNotFireEarly(t *testing.T) {
 	t.Parallel()
 	fk := NewFake(time.Time{})
