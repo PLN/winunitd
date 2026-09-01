@@ -7,9 +7,10 @@ import (
 )
 
 // ErrNoUserToken is returned when a user token cannot be obtained.
-// Interactive logon uses WTSQueryUserToken only. Linger uses S4U (and
-// an optional named CredMan/LSA URI for network creds). There is no
-// password-in-file or password-in-env fallback.
+// Interactive logon uses WTSQueryUserToken only. Linger uses trusted-LSA
+// S4U (and an optional named CredMan/LSA URI for network creds, via
+// LOGON32_LOGON_BATCH). There is no password-in-file or password-in-env
+// fallback.
 var ErrNoUserToken = errors.New("no user token (fail closed)")
 
 // UserToken is a logon token for one interactive session plus the
@@ -17,6 +18,9 @@ var ErrNoUserToken = errors.New("no user token (fail closed)")
 // it only via WTSQueryUserToken.
 type UserToken struct {
 	Info UserInfo
+	// Source is how a linger token was obtained: "s4u" or "store-uri".
+	// Empty for WTS interactive tokens and test fakes.
+	Source string
 	// native is the OS token (Windows HANDLE). Callers outside this
 	// package must not use it; StartUserManager consumes it.
 	native io.Closer

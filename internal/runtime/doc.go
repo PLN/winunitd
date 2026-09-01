@@ -11,7 +11,9 @@
 // reverse After=/Before= order and closes the daemon Job Object. Session
 // change notifications start per-user managers (same binary,
 // --user-manager <SID>) using WTSQueryUserToken. Lingering user managers
-// start at boot with no session via S4U. Each user manager watches WTS
+// start at boot with no session via trusted-LSA S4U (optional named
+// CredMan/LSA URI on the linger record if S4U lacks outbound network
+// creds). Each user manager watches WTS
 // for its own SID and drives graphical-session.target from
 // SIDHasInteractiveSession.
 package runtime
