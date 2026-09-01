@@ -67,17 +67,6 @@ func TestFailurePropagation(t *testing.T) {
 			wantRootErr: false,
 		},
 		{
-			name: "Requires without After still fails the depender",
-			units: []*unit.Unit{
-				{Name: "web.service", Requires: []string{"db.service"}},
-				{Name: "db.service"},
-			},
-			start:       "web.service",
-			fail:        []string{"db.service"},
-			wantFailed:  []string{"db.service", "web.service"},
-			wantRootErr: true,
-		},
-		{
 			name: "Requires failure propagates through a chain",
 			units: []*unit.Unit{
 				{Name: "web.service", Requires: []string{"app.service"}, After: []string{"app.service"}},
@@ -152,6 +141,142 @@ func TestFailurePropagation(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestRequiresFailureFailsNotYetStartedWithoutAfter pins systemd-style
+// job failure: Requires= without After= still fails a depender that has
+// not reached Active (queued or still Activating). web.Start is held
+// until db has failed (canary After=db starts only after that), so web
+// is Activating, not Active, when failure propagates.
+func TestRequiresFailureFailsNotYetStartedWithoutAfter(t *testing.T) {
+	t.Parallel()
+	g := mustBuild(t,
+		&unit.Unit{Name: "web.service", Requires: []string{"db.service"}},
+		&unit.Unit{Name: "db.service"},
+		&unit.Unit{Name: "canary.service", After: []string{"db.service"}},
+	)
+	releaseWeb := make(chan struct{})
+	canaryStarted := make(chan struct{})
+	st := StartFunc(func(ctx context.Context, name string) error {
+		switch name {
+		case "db.service":
+			return errors.New("start failed")
+		case "web.service":
+			select {
+			case <-releaseWeb:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			return nil
+		case "canary.service":
+			close(canaryStarted)
+			return nil
+		}
+		return nil
+	})
+	done := make(chan resultAndErr, 1)
+	go func() {
+		run, err := g.Start(context.Background(), st, "web.service", "canary.service")
+		done <- resultAndErr{run, err}
+	}()
+	select {
+	case <-canaryStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for db failure to unblock canary")
+	}
+	close(releaseWeb)
+	var got resultAndErr
+	select {
+	case got = <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("execute timed out")
+	}
+	if got.err == nil {
+		t.Fatal("expected root error")
+	}
+	run := got.run
+	if run.StateOf("db.service") != Failed {
+		t.Fatalf("db state = %s", run.StateOf("db.service"))
+	}
+	if run.StateOf("web.service") != Failed {
+		t.Fatalf("web state = %s, want failed (not yet Active)", run.StateOf("web.service"))
+	}
+	var dep *DependencyError
+	if !errors.As(run.Err("web.service"), &dep) {
+		t.Fatalf("web error = %v, want DependencyError", run.Err("web.service"))
+	}
+}
+
+// TestRequiresFailureLeavesAlreadyActiveDependent is the gap versus the
+// old "Requires without After still fails the depender" row: if the
+// depender has already reached Active, a later Requires= failure must
+// not flip it to Failed while it keeps running. A queued requirer in
+// the same transaction still goes Failed (issue #35).
+func TestRequiresFailureLeavesAlreadyActiveDependent(t *testing.T) {
+	t.Parallel()
+	g := mustBuild(t,
+		&unit.Unit{
+			Name:     "app.target",
+			Requires: []string{"web.service", "late.service"},
+			After:    []string{"web.service", "late.service"},
+		},
+		&unit.Unit{Name: "web.service", Requires: []string{"db.service"}},
+		&unit.Unit{Name: "late.service", Requires: []string{"db.service"}, After: []string{"db.service"}},
+		&unit.Unit{Name: "db.service"},
+		&unit.Unit{Name: "probe.service", After: []string{"web.service"}},
+	)
+	probeStarted := make(chan struct{})
+	var mu sync.Mutex
+	var started []string
+	st := StartFunc(func(ctx context.Context, name string) error {
+		switch name {
+		case "probe.service":
+			close(probeStarted)
+		case "db.service":
+			select {
+			case <-probeStarted:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			return errors.New("start failed")
+		case "late.service":
+			t.Errorf("late.service must not start after db failed")
+			return nil
+		}
+		mu.Lock()
+		started = append(started, name)
+		mu.Unlock()
+		return nil
+	})
+	run, err := g.Start(context.Background(), st, "app.target", "probe.service")
+	if err == nil {
+		t.Fatal("expected root error (app.target not yet started)")
+	}
+	if run.StateOf("web.service") != Active {
+		t.Fatalf("web state = %s, want active (already started)", run.StateOf("web.service"))
+	}
+	if run.Err("web.service") != nil {
+		t.Fatalf("web must not record an error: %v", run.Err("web.service"))
+	}
+	if run.StateOf("db.service") != Failed {
+		t.Fatalf("db state = %s, want failed", run.StateOf("db.service"))
+	}
+	if run.StateOf("late.service") != Failed {
+		t.Fatalf("late state = %s, want failed (not yet started)", run.StateOf("late.service"))
+	}
+	var dep *DependencyError
+	if !errors.As(run.Err("late.service"), &dep) {
+		t.Fatalf("late error = %v, want DependencyError", run.Err("late.service"))
+	}
+	if run.StateOf("app.target") != Failed {
+		t.Fatalf("app state = %s, want failed (queued behind After=)", run.StateOf("app.target"))
+	}
+	if containsName(run.Started, "late.service") {
+		t.Fatal("late.service Starter must not be invoked")
+	}
+	if !containsName(run.Started, "web.service") {
+		t.Fatal("web.service must have started (running)")
 	}
 }
 

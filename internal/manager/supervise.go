@@ -158,8 +158,9 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 		rt.step(core.EventStartRequested)
 	} else if autoRestart {
 		if proc.Alive() {
-			rt.step(core.EventStartSucceeded)
-			rt.err = ""
+			if rt.step(core.EventStartSucceeded) {
+				rt.err = ""
+			}
 		}
 	}
 	gen := rt.gen
@@ -175,8 +176,9 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 			}
 			stopping := rt != nil && rt.stopping
 			if rt != nil && !rt.stopping {
-				rt.step(core.EventStartFailed)
-				rt.err = err.Error()
+				if rt.step(core.EventStartFailed) {
+					rt.err = err.Error()
+				}
 			}
 			m.mu.Unlock()
 			_ = proc.Stop(0)
@@ -188,8 +190,9 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 		}
 		m.mu.Lock()
 		if rt := m.units[name]; rt != nil && !rt.stopping {
-			rt.step(core.EventStartSucceeded)
-			rt.err = ""
+			if rt.step(core.EventStartSucceeded) {
+				rt.err = ""
+			}
 		}
 		m.mu.Unlock()
 	}
@@ -275,11 +278,12 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 	if oneshot && kind == core.ExitSuccess {
 		return
 	}
-	rt.step(core.EventMainExited)
-	if limitHit {
-		rt.err = core.ReasonResourceLimit
-	} else {
-		rt.err = "main process exited"
+	if rt.step(core.EventMainExited) {
+		if limitHit {
+			rt.err = core.ReasonResourceLimit
+		} else {
+			rt.err = "main process exited"
+		}
 	}
 }
 
@@ -351,8 +355,9 @@ func (m *Manager) beginRestart(name string, gen uint64, delay time.Duration) {
 		m.mu.Unlock()
 		return
 	}
-	rt.step(core.EventAutoRestart)
-	rt.err = ""
+	if rt.step(core.EventAutoRestart) {
+		rt.err = ""
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	rt.cancelRestart()
 	rt.restartCancel = cancel
