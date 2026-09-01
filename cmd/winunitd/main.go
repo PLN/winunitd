@@ -32,7 +32,9 @@ unit gets its own nested Job Object; winctl start CreateProcess's ExecStart
 into that job. On start (SCM or console) the daemon starts default.target,
 which Wants=timers.target (enabled timers arm) and pulls in enabled
 Wants=/Requires= only. Timers are scheduled internally (OnBootSec since
-machine boot, OnStartupSec since this process).
+machine boot, OnStartupSec since this process). Calendar timers recompute
+on SCM SERVICE_CONTROL_TIMECHANGE and POWEREVENT (PBT_APMRESUMEAUTOMATIC).
+Console mode has no message window; a 30s poll is the fallback.
 
 On first interactive logon the system manager launches
 winunitd --user-manager <SID> (same binary, not an SCM service) using
@@ -159,11 +161,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if asService {
 		ch := make(chan runtime.SessionChange, 32)
+		clockCh := make(chan struct{}, 1)
 		err := runtime.RunHostNotify(func(ctx context.Context) error {
-			return serve(ctx, *baseDir, stderr, ch)
+			return serve(ctx, *baseDir, stderr, ch, clockCh)
 		}, func(sc runtime.SessionChange) {
 			select {
 			case ch <- sc:
+			default:
+			}
+		}, func() {
+			select {
+			case clockCh <- struct{}{}:
 			default:
 			}
 		})
@@ -177,7 +185,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	ch := make(chan runtime.SessionChange, 32)
-	if err := serve(ctx, *baseDir, stderr, ch); err != nil && ctx.Err() == nil {
+	if err := serve(ctx, *baseDir, stderr, ch, nil); err != nil && ctx.Err() == nil {
 		fmt.Fprintf(stderr, "winunitd: %v\n", err)
 		return 1
 	}

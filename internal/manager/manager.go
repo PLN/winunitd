@@ -66,7 +66,7 @@ func New(cfg Config) (*Manager, error) {
 		return nil, err
 	}
 	clk := cfg.Clock
-	if clk.Now == nil || clk.SinceBoot == nil || clk.Startup.IsZero() || clk.NewTimer == nil {
+	if clk.Now == nil || clk.SinceBoot == nil || clk.Startup.IsZero() || clk.NewTimer == nil || clk.SinceStart == nil {
 		def := timers.DefaultClock()
 		if clk.Now == nil {
 			clk.Now = def.Now
@@ -79,6 +79,9 @@ func New(cfg Config) (*Manager, error) {
 		}
 		if clk.NewTimer == nil {
 			clk.NewTimer = def.NewTimer
+		}
+		if clk.SinceStart == nil {
+			clk.SinceStart = def.SinceStart
 		}
 	}
 	m := &Manager{

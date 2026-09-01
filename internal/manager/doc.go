@@ -24,7 +24,9 @@
 // timers.target so enabled timers arm. stdout/stderr are stored under
 // journal/<unit>.log (each start tagged with InvocationID=) and returned
 // by logs. The timer scheduler lives in
-// internal/timers (not Task Scheduler). .registry units watch
+// internal/timers (not Task Scheduler). Engine.ClockChanged (SCM
+// TIMECHANGE / POWEREVENT, or a 30s poll) recomputes calendar Next so
+// list-timers is not stale across a wall jump. .registry units watch
 // RegistryChanged= keys (RegNotifyChangeKeyValue on Windows; tests inject
 // a stub). .eventlog units watch EventLogTrigger= channels (EvtSubscribe
 // on Windows; tests inject a stub). .path units watch PathChanged= files

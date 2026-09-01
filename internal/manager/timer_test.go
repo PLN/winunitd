@@ -285,3 +285,38 @@ func waitLauncherUnit(t *testing.T, launch *fakeLauncher, name string) {
 	t.Helper()
 	waitCond(t, func() bool { return containsString(launch.units(), name) })
 }
+
+func TestListTimersNextAfterCalendarJump(t *testing.T) {
+	t.Parallel()
+	launch := &fakeLauncher{}
+	m, fk := managerWithFake(t, launch, map[string]string{
+		"job.service": `
+[Service]
+Type=oneshot
+ExecStart=C:\Tools\job.exe
+WorkingDirectory=C:\Tools
+`,
+		"job.timer": `
+[Timer]
+OnCalendar=*-*-* 15:00:00
+`,
+	})
+	if _, err := m.Start(context.Background(), "job.timer"); err != nil {
+		t.Fatal(err)
+	}
+	waitCond(t, func() bool {
+		st, err := m.Status("job.timer")
+		return err == nil && st.Unit != nil && st.Unit.Next == "2026-09-01T15:00:00Z"
+	})
+	fk.JumpWall(fk.Now().Add(4 * time.Hour))
+	m.ClockChanged()
+	waitLauncherUnit(t, launch, "job.service")
+	st, err := m.Status("job.timer")
+	if err != nil || st.Unit == nil || st.Unit.Next != "2026-09-02T15:00:00Z" {
+		t.Fatalf("status next after jump = %+v err=%v", st, err)
+	}
+	list, err := m.ListTimers()
+	if err != nil || len(list.Timers) != 1 || list.Timers[0].Next != "2026-09-02T15:00:00Z" {
+		t.Fatalf("list-timers next after jump = %+v err=%v", list, err)
+	}
+}
