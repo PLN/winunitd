@@ -106,29 +106,43 @@ func createUserManager(tok windows.Token, spec UserManagerSpec, job *DaemonJob) 
 		envp = &block[0]
 	}
 
-	var si windows.StartupInfo
+	// Same inherit list as the unit launcher: only stdin/stdout/stderr.
+	// Blanket bInheritHandles=true would leak the system manager's
+	// control-pipe listener, IOCPs, and other units' pipes into a
+	// lower-privileged user process.
+	attrList, inherit, err := inheritHandleList(stdin, stdout, stderr)
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+	defer attrList.Delete()
+
+	var si windows.StartupInfoEx
 	si.Cb = uint32(unsafe.Sizeof(si))
 	si.Flags = windows.STARTF_USESTDHANDLES
 	si.StdInput = stdin
 	si.StdOutput = stdout
 	si.StdErr = stderr
+	si.ProcThreadAttributeList = attrList.List()
 
 	var pi windows.ProcessInformation
-	flags := uint32(windows.CREATE_SUSPENDED | windows.CREATE_UNICODE_ENVIRONMENT | windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW)
+	flags := uint32(windows.CREATE_SUSPENDED | windows.CREATE_UNICODE_ENVIRONMENT | windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW | windows.EXTENDED_STARTUPINFO_PRESENT)
 	err = windows.CreateProcessAsUser(
 		tok,
 		app,
 		cmdLine,
 		nil,
 		nil,
-		true,
+		len(inherit) > 0,
 		flags,
 		envp,
 		dirp,
-		&si,
+		&si.StartupInfo,
 		&pi,
 	)
 	goruntime.KeepAlive(block)
+	goruntime.KeepAlive(inherit)
+	goruntime.KeepAlive(attrList)
 	cleanup()
 	if err != nil {
 		return nil, fmt.Errorf("CreateProcessAsUser %s: %w", spec.Exe, err)
