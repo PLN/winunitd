@@ -21,6 +21,7 @@ type Store struct {
 	dir    string
 	mu     sync.Mutex
 	unitMu map[string]*sync.Mutex
+	capWG  map[string]*sync.WaitGroup
 }
 
 // Entry is one journal line (DESIGN.md §22).
@@ -51,7 +52,11 @@ func Open(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	return &Store{dir: dir, unitMu: make(map[string]*sync.Mutex)}, nil
+	return &Store{
+		dir:    dir,
+		unitMu: make(map[string]*sync.Mutex),
+		capWG:  make(map[string]*sync.WaitGroup),
+	}, nil
 }
 
 // Dir is the journal root (<base-dir>\journal).
@@ -76,8 +81,45 @@ func (s *Store) Attach(unit string, pid int, invocationID string, stdout, stderr
 	if invocationID == "" {
 		invocationID = NewInvocationID()
 	}
-	go s.capture(unit, pid, invocationID, "stdout", stdout)
-	go s.capture(unit, pid, invocationID, "stderr", stderr)
+	done := s.beginCapture(unit)
+	go func() {
+		defer done()
+		s.capture(unit, pid, invocationID, "stdout", stdout)
+	}()
+	go func() {
+		defer done()
+		s.capture(unit, pid, invocationID, "stderr", stderr)
+	}()
+}
+
+// Wait blocks until in-flight captures for unit have observed EOF.
+// Call after closing that invocation's pipes so the next Attach cannot
+// interleave old InvocationID= lines (C2 teardown vs relaunch).
+func (s *Store) Wait(unit string) {
+	if s == nil {
+		return
+	}
+	mu := s.lockUnit(unit)
+	mu.Lock()
+	wg := s.capWG[unit]
+	mu.Unlock()
+	if wg != nil {
+		wg.Wait()
+	}
+}
+
+func (s *Store) beginCapture(unit string) func() {
+	mu := s.lockUnit(unit)
+	mu.Lock()
+	prev := s.capWG[unit]
+	wg := new(sync.WaitGroup)
+	wg.Add(2)
+	s.capWG[unit] = wg
+	mu.Unlock()
+	if prev != nil {
+		prev.Wait()
+	}
+	return wg.Done
 }
 
 func (s *Store) capture(unit string, pid int, inv, stream string, r io.Reader) {

@@ -149,6 +149,9 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 	} else if proc != nil {
 		_ = m.stopProcess(proc, timeout)
 	}
+	if m.journal != nil {
+		m.journal.Wait(name)
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()

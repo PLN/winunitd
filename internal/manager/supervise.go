@@ -142,6 +142,7 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 	if nrt != nil {
 		nrt.SetMain(proc.PID(), proc.Job())
 	}
+	m.journal.Wait(name)
 	m.journal.Attach(name, proc.PID(), inv, proc.Stdout(), proc.Stderr())
 
 	m.mu.Lock()
