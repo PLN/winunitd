@@ -99,23 +99,21 @@ func (s *Store) Wait(unit string) {
 	if s == nil {
 		return
 	}
-	mu := s.lockUnit(unit)
-	mu.Lock()
+	s.mu.Lock()
 	wg := s.capWG[unit]
-	mu.Unlock()
+	s.mu.Unlock()
 	if wg != nil {
 		wg.Wait()
 	}
 }
 
 func (s *Store) beginCapture(unit string) func() {
-	mu := s.lockUnit(unit)
-	mu.Lock()
+	s.mu.Lock()
 	prev := s.capWG[unit]
 	wg := new(sync.WaitGroup)
 	wg.Add(2)
 	s.capWG[unit] = wg
-	mu.Unlock()
+	s.mu.Unlock()
 	if prev != nil {
 		prev.Wait()
 	}

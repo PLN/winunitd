@@ -115,6 +115,27 @@ func (f *Fake) Waiting() bool {
 	return len(f.timers) > 0
 }
 
+// WaitingAt reports whether a pending NewTimer deadline is exactly now+d.
+// NextWhen is the earliest deadline, so a shorter wait hides WatchdogSec
+// or RestartSec from advanceArmed; tests wait for this interval to arm.
+func (f *Fake) WaitingAt(d time.Duration) bool {
+	if f == nil {
+		return false
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	want := f.now.Add(d)
+	for tm := range f.timers {
+		if tm.stopped || tm.fired {
+			continue
+		}
+		if tm.when.Equal(want) {
+			return true
+		}
+	}
+	return false
+}
+
 // NextWhen is the earliest pending NewTimer deadline, if any.
 func (f *Fake) NextWhen() (time.Time, bool) {
 	if f == nil {
