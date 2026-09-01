@@ -35,7 +35,7 @@ type JobObjectLimits struct {
 }
 
 // JobLimitsFromSpec copies parsed [Service] resource directives onto a
-// CreateProcess StartSpec. Type=scm never reaches CreateProcess.
+// CreateProcess StartSpec. Type=scm and Type=scheduled-task never reach CreateProcess.
 func JobLimitsFromSpec(svc *unit.ServiceSpec) JobLimits {
 	if svc == nil {
 		return JobLimits{}

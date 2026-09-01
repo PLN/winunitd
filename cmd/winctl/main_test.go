@@ -176,6 +176,30 @@ Type=scm
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	task := filepath.Join(dir, "legacy-backup.service")
+	if err := os.WriteFile(task, []byte(`
+[Service]
+Type=scheduled-task
+TaskName=\Backups\LegacyBackup
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	taskBad := filepath.Join(dir, "bad-task.service")
+	if err := os.WriteFile(taskBad, []byte(`
+[Service]
+Type=scheduled-task
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	taskExec := filepath.Join(dir, "task-exec.service")
+	if err := os.WriteFile(taskExec, []byte(`
+[Service]
+Type=scheduled-task
+TaskName=\Backups\LegacyBackup
+ExecStart=C:\Tools\foo.exe
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	t.Run("ok", func(t *testing.T) {
 		var out, errb bytes.Buffer
@@ -378,6 +402,39 @@ Type=scm
 			t.Fatalf("exit %d, want 1; stdout=%s stderr=%s", code, out.String(), errb.String())
 		}
 		if !strings.Contains(errb.String(), "ServiceName is required for Type=scm") {
+			t.Fatalf("stderr=%s", errb.String())
+		}
+	})
+
+	t.Run("type scheduled-task", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"verify", task}, &out, &errb)
+		if code != 0 {
+			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(out.String(), "legacy-backup.service: verified") {
+			t.Fatalf("stdout=%s", out.String())
+		}
+	})
+
+	t.Run("type scheduled-task missing TaskName", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"verify", taskBad}, &out, &errb)
+		if code != 1 {
+			t.Fatalf("exit %d, want 1; stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(errb.String(), "TaskName is required for Type=scheduled-task") {
+			t.Fatalf("stderr=%s", errb.String())
+		}
+	})
+
+	t.Run("type scheduled-task rejects ExecStart", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"verify", taskExec}, &out, &errb)
+		if code != 1 {
+			t.Fatalf("exit %d, want 1; stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(errb.String(), "ExecStart is not valid for Type=scheduled-task") {
 			t.Fatalf("stderr=%s", errb.String())
 		}
 	})

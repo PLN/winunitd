@@ -49,12 +49,18 @@ type Config struct {
 	// UserScope is true for a per-user manager (winunitd --user-manager).
 	// It loads graphical-session.target and starts/stops it from session
 	// tracking. The system manager stays false (identity vs session stay
-	// separate; one manager per SID already). Type=scm is rejected here.
+	// separate; one manager per SID already). Type=scm and
+	// Type=scheduled-task are rejected here.
 	UserScope bool
 	// SCM orchestrates Type=scm proxy units (DESIGN.md §51). Nil uses
 	// runtime.DefaultSCM(). It never creates, changes, or deletes SCM
 	// configuration. Tests inject a fake so Linux does not call a real SCM.
 	SCM runtime.SCM
+	// Tasks orchestrates Type=scheduled-task proxy units (DESIGN.md §52).
+	// Nil uses runtime.DefaultTaskScheduler(). It never creates, changes,
+	// or deletes task definitions. Tests inject a fake so Linux does not
+	// call a real Task Scheduler.
+	Tasks runtime.TaskScheduler
 	// RegistryOpen opens a registry key+subtree watch. Nil uses
 	// registry.OpenWatch (Windows RegNotifyChangeKeyValue; stub on Linux).
 	// Tests inject a fake so Linux can exercise start-on-change.

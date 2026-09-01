@@ -410,6 +410,10 @@ Useful for:
 
 Orchestrates an existing named SCM service (see §51). `winctl start` calls StartService; `winctl stop` calls StopService; status is QueryServiceStatusEx mapped to ActiveState. This does not register, change, or delete SCM configuration.
 
+### `Type=scheduled-task`
+
+Orchestrates an existing registered Task Scheduler task (see §52). `winctl start` calls IRegisteredTask.Run; `winctl stop` ends running instance(s); status is task/instance state mapped to ActiveState. This does not create, edit, delete, or enable/disable the task definition.
+
 ### `Type=forking`
 
 Probably omit.
@@ -1835,9 +1839,7 @@ This lets `winunitd` orchestrate both native WinUnit workloads and existing SCM 
 
 ## 52. Task Scheduler Interop
 
-Task Scheduler should be treated as an external integration, not the core scheduler.
-
-Possible proxy unit:
+Task Scheduler is an external integration, not the core scheduler. Native `.timer` units remain the recommended path for new schedules. `Type=scheduled-task` is interop for an already-registered legacy task only.
 
 ```ini
 [Service]
@@ -1845,9 +1847,34 @@ Type=scheduled-task
 TaskName=\Backups\LegacyBackup
 ```
 
-Useful for migration.
+`Type=scheduled-task` orchestrates an existing registered task. `winctl start` calls ITaskService / IRegisteredTask.Run (run the task now). `winctl stop` ends running instance(s) for that task (IRegisteredTask.Stop). Status is IRegisteredTask.State plus running instances, mapped to ActiveState. Already running is a successful start; already stopped is a successful stop. This does not create, edit, delete, enable, or disable the task definition (`import-task` is a separate helper and is not this unit type). There is no `ExecStart=` / `ExecStartArg=` (present with this Type is a verify error).
 
-Not recommended for newly-created timers.
+System manager only: `Type=scheduled-task` in a user unit is a load/start error.
+
+`TimeoutStartSec` and `TimeoutStopSec` wait for the corresponding Task Scheduler state, then fail. Start waits until the task is running (TASK_STATE_RUNNING or a running instance exists). Stop waits until there are no running instances (READY or DISABLED).
+
+`Restart=` applies to start failure (failed Run) the same way as a process start failure. After the task reports running, winunitd does not supervise or restart it (Task Scheduler owns the instance).
+
+A missing registered task is a start failure (and `winctl status` overlays `failed`). Parse/verify only requires `TaskName=`; it does not check that the task exists.
+
+ActiveState mapping:
+
+| Task Scheduler | ActiveState |
+| --- | --- |
+| TASK_STATE_RUNNING, or GetInstances count > 0 | active |
+| TASK_STATE_QUEUED | activating |
+| TASK_STATE_READY | inactive |
+| TASK_STATE_DISABLED | inactive |
+| TASK_STATE_UNKNOWN / other, or Query/open failure | failed |
+
+Then dependencies can target the proxy:
+
+```ini
+Requires=legacy-backup.service
+After=legacy-backup.service
+```
+
+This lets `winunitd` orchestrate both native WinUnit workloads and existing Task Scheduler tasks without making Task Scheduler the core timer engine.
 
 ---
 

@@ -58,6 +58,7 @@ through winunitd.
 Unknown directives are errors. ExecStart must be an absolute Windows path
 (SearchPath=no). An omitted WorkingDirectory is a warning; System32 is not
 used as a default. Type=scm requires ServiceName= and does not use ExecStart=.
+Type=scheduled-task requires TaskName= and rejects ExecStart= / ExecStartArg=.
 MemoryMax= accepts K/M/G (e.g. 2G). ProcessLimit= must be a positive integer.
 PriorityClass= is idle, below-normal, normal, above-normal, or high (not realtime).
 Those three keys are [Service] only.

@@ -25,11 +25,17 @@ const (
 type ServiceType string
 
 const (
-	TypeSimple  ServiceType = "simple"
-	TypeOneshot ServiceType = "oneshot"
-	TypeNotify  ServiceType = "notify"
-	TypeSCM     ServiceType = "scm"
+	TypeSimple        ServiceType = "simple"
+	TypeOneshot       ServiceType = "oneshot"
+	TypeNotify        ServiceType = "notify"
+	TypeSCM           ServiceType = "scm"
+	TypeScheduledTask ServiceType = "scheduled-task"
 )
+
+// IsExternalProxy reports Type=scm or Type=scheduled-task.
+func (t ServiceType) IsExternalProxy() bool {
+	return t == TypeSCM || t == TypeScheduledTask
+}
 
 // RestartPolicy is a [Service] Restart= value.
 type RestartPolicy string
@@ -130,6 +136,7 @@ type Unit struct {
 type ServiceSpec struct {
 	Type                   ServiceType
 	ServiceName            string   // Type=scm: existing SCM service (DESIGN.md §51)
+	TaskName               string   // Type=scheduled-task: existing task path (DESIGN.md §52)
 	ExecStart              []string // argv: executable then arguments
 	WorkingDirectory       string
 	Environment            []EnvVar
@@ -173,7 +180,7 @@ func (s *ServiceSpec) HasJobResourceLimits() bool {
 // NeedsNotifyPipe reports whether the unit process should receive
 // WINUNIT_NOTIFY_PIPE (Type=notify or WatchdogMode=notify).
 func (s *ServiceSpec) NeedsNotifyPipe() bool {
-	if s == nil || s.Type == TypeSCM {
+	if s == nil || s.IsExternalProxy() {
 		return false
 	}
 	if s.Type == TypeNotify {
@@ -182,9 +189,10 @@ func (s *ServiceSpec) NeedsNotifyPipe() bool {
 	return s.WatchdogEnabled() && s.WatchdogMode == WatchdogModeNotify
 }
 
-// WatchdogEnabled reports a positive WatchdogSec=. Type=scm has no watchdog.
+// WatchdogEnabled reports a positive WatchdogSec=. External proxy types
+// (Type=scm, Type=scheduled-task) have no watchdog.
 func (s *ServiceSpec) WatchdogEnabled() bool {
-	if s == nil || s.Type == TypeSCM {
+	if s == nil || s.IsExternalProxy() {
 		return false
 	}
 	return s.WatchdogSecSet && s.WatchdogSec > 0
@@ -193,6 +201,17 @@ func (s *ServiceSpec) WatchdogEnabled() bool {
 // IsSCM reports Type=scm (DESIGN.md §51).
 func (s *ServiceSpec) IsSCM() bool {
 	return s != nil && s.Type == TypeSCM
+}
+
+// IsScheduledTask reports Type=scheduled-task (DESIGN.md §52).
+func (s *ServiceSpec) IsScheduledTask() bool {
+	return s != nil && s.Type == TypeScheduledTask
+}
+
+// IsExternalProxy reports Type=scm or Type=scheduled-task: no CreateProcess,
+// ExecStart, notify pipe, or WatchdogMode.
+func (s *ServiceSpec) IsExternalProxy() bool {
+	return s.IsSCM() || s.IsScheduledTask()
 }
 
 // WatchdogProbeMode reports WatchdogMode=tcp or http.
