@@ -13,18 +13,19 @@ import (
 )
 
 type notifyRuntime struct {
-	name     string
-	lis      notify.Listener
-	cancel   context.CancelFunc
-	ready    chan struct{}
-	pulse    chan struct{}
-	done     chan struct{}
-	mu       sync.Mutex
-	status   string
-	mainPID  int
-	job      runtime.Job
-	readySet bool
-	closed   bool
+	name      string
+	lis       notify.Listener
+	cancel    context.CancelFunc
+	ready     chan struct{}
+	pulse     chan struct{}
+	done      chan struct{}
+	serveDone chan struct{}
+	mu        sync.Mutex
+	status    string
+	mainPID   int
+	job       runtime.Job
+	readySet  bool
+	closed    bool
 }
 
 func (m *Manager) openNotify(name string) (*notifyRuntime, error) {
@@ -41,14 +42,16 @@ func (m *Manager) openNotify(name string) (*notifyRuntime, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	rt := &notifyRuntime{
-		name:   name,
-		lis:    lis,
-		cancel: cancel,
-		ready:  make(chan struct{}),
-		pulse:  make(chan struct{}, 8),
-		done:   make(chan struct{}),
+		name:      name,
+		lis:       lis,
+		cancel:    cancel,
+		ready:     make(chan struct{}),
+		pulse:     make(chan struct{}, 8),
+		done:      make(chan struct{}),
+		serveDone: make(chan struct{}),
 	}
 	go func() {
+		defer close(rt.serveDone)
 		notify.ServeAccept(ctx, lis, rt.allowed, func(msg notify.Message) {
 			rt.onMessage(msg)
 		})
@@ -150,6 +153,11 @@ func (r *notifyRuntime) Close() {
 	case <-r.done:
 	default:
 		close(r.done)
+	}
+	// Wait for ServeAccept to leave Accept so Windows can re-Listen
+	// the same \\.\pipe\winunitd\notify\<unit> name on restart.
+	if r.serveDone != nil {
+		<-r.serveDone
 	}
 }
 

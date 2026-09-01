@@ -211,8 +211,8 @@ RestartSec=2s
 		t.Fatal(err)
 	}
 	advanceWait(t, fk, time.Second)
-	waitCond(t, func() bool { return len(launch.specs()) >= 1 })
-	advanceWait(t, fk, 2*time.Second)
+	waitSub(t, m, "wd.service", core.SubAutoRestart)
+	advanceArmed(t, fk, 2*time.Second)
 	waitCond(t, func() bool { return len(launch.specs()) >= 2 })
 }
 

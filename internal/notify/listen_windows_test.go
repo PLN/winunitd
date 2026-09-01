@@ -34,6 +34,27 @@ func TestNotifyPipeSDDLParses(t *testing.T) {
 	}
 }
 
+func TestListenReopensSamePipeAfterClose(t *testing.T) {
+	sid, err := protocol.CurrentUserSID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lis, err := Listen("reopen.service", sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lis.Close(); err != nil {
+		t.Fatal(err)
+	}
+	lis2, err := Listen("reopen.service", sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lis2.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestListenNamedPipeAcceptsOwner(t *testing.T) {
 	sid, err := protocol.CurrentUserSID()
 	if err != nil {
