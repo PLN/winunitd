@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/eventlog"
+	"github.com/PLN/winunitd/internal/pathwatch"
 	"github.com/PLN/winunitd/internal/registry"
 	"github.com/PLN/winunitd/internal/timers"
 )
@@ -58,6 +59,9 @@ var knownDirectives = map[string]map[string]bool{
 	"EventLog": {
 		"EventLogTrigger": true,
 	},
+	"Path": {
+		"PathChanged": true,
+	},
 	"Install": {
 		"WantedBy": true,
 	},
@@ -69,6 +73,7 @@ var sectionsByKind = map[Kind]map[string]bool{
 	KindTarget:   {"Unit": true, "Install": true},
 	KindRegistry: {"Unit": true, "Registry": true, "Install": true},
 	KindEventLog: {"Unit": true, "EventLog": true, "Install": true},
+	KindPath:     {"Unit": true, "Path": true, "Install": true},
 }
 
 type serviceBuilder struct {
@@ -143,6 +148,11 @@ type eventLogBuilder struct {
 	lines    []int
 }
 
+type pathBuilder struct {
+	changed []string
+	lines   []int
+}
+
 type parser struct {
 	path   string
 	name   string
@@ -154,6 +164,7 @@ type parser struct {
 	timer *timerBuilder
 	reg   *registryBuilder
 	evt   *eventLogBuilder
+	pth   *pathBuilder
 
 	ris     string
 	risLine int
@@ -232,6 +243,9 @@ func Parse(path, name string, src []byte) Report {
 		if sec.name == "EventLog" && p.evt == nil {
 			p.evt = &eventLogBuilder{}
 		}
+		if sec.name == "Path" && p.pth == nil {
+			p.pth = &pathBuilder{}
+		}
 		for _, e := range sec.entries {
 			if !known[e.key] {
 				p.errorf(e.line, "unknown directive %q in section [%s]", e.key, sec.name)
@@ -274,6 +288,11 @@ func (p *parser) apply(section string, e iniEntry) {
 			p.evt = &eventLogBuilder{}
 		}
 		p.applyEventLog(e)
+	case "Path":
+		if p.pth == nil {
+			p.pth = &pathBuilder{}
+		}
+		p.applyPath(e)
 	case "Install":
 		p.applyInstall(e)
 	}
@@ -424,6 +443,15 @@ func (p *parser) applyEventLog(e iniEntry) {
 	}
 }
 
+func (p *parser) applyPath(e iniEntry) {
+	ph := p.pth
+	switch e.key {
+	case "PathChanged":
+		ph.changed = append(ph.changed, e.value)
+		ph.lines = append(ph.lines, e.line)
+	}
+}
+
 func (p *parser) applyInstall(e iniEntry) {
 	switch e.key {
 	case "WantedBy":
@@ -448,6 +476,8 @@ func (p *parser) finish() {
 		p.finishRegistry()
 	case KindEventLog:
 		p.finishEventLog()
+	case KindPath:
+		p.finishPath()
 	case KindTarget:
 		// targets have no extra required fields
 	}
@@ -830,5 +860,31 @@ func (p *parser) finishEventLog() {
 	}
 	if len(ev.triggers) == 0 {
 		p.errorf(0, "eventlog must specify EventLogTrigger")
+	}
+}
+
+func (p *parser) finishPath() {
+	spec := &PathSpec{Unit: CompanionService(p.name)}
+	p.unit.PathWatch = spec
+	ph := p.pth
+	if ph == nil {
+		p.errorf(0, "path unit requires a [Path] section")
+		return
+	}
+	for i, raw := range ph.changed {
+		line := ph.lines[i]
+		if strings.TrimSpace(raw) == "" {
+			p.errorf(line, "empty path")
+			continue
+		}
+		sp, err := pathwatch.Parse(raw)
+		if err != nil {
+			p.errorf(line, "invalid PathChanged: %s", err.Error())
+			continue
+		}
+		spec.Changed = append(spec.Changed, sp)
+	}
+	if len(ph.changed) == 0 {
+		p.errorf(0, "path must specify PathChanged")
 	}
 }

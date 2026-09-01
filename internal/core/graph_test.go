@@ -19,6 +19,7 @@ func TestNormalizeName(t *testing.T) {
 		{"foo.target", "foo.target"},
 		{"foo.registry", "foo.registry"},
 		{"foo.eventlog", "foo.eventlog"},
+		{"foo.path", "foo.path"},
 		{"  bar  ", "bar.service"},
 		{"", ""},
 	}

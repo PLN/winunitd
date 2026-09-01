@@ -72,6 +72,11 @@ A foo.eventlog unit watches [EventLog] EventLogTrigger= (<Channel>:EventID=<uint
 only) and activates foo.service by basename. Path verify checks the companion
 .service next to the file. winctl --user verify rejects System and Security;
 Application and custom log names are allowed.
+
+A foo.path unit watches [Path] PathChanged= (absolute Windows paths only;
+repeatable is OR) and activates foo.service by basename. Watches are
+non-recursive (this directory only). A file path watches the parent directory
+and filters by name. Path verify checks the companion .service next to the file.
 `
 
 type cli struct {
