@@ -12,6 +12,9 @@ import (
 )
 
 func TestWindowsOpenWatchFiresOnHKCUSet(t *testing.T) {
+	if err := UserHiveWatchOK(); err != nil {
+		t.Skip(err.Error())
+	}
 	path := fmt.Sprintf(`Software\winunitd\t1-registry\watch-%d-%d`, os.Getpid(), time.Now().UnixNano())
 	k, _, err := registry.CreateKey(registry.CURRENT_USER, path, registry.ALL_ACCESS)
 	if err != nil {

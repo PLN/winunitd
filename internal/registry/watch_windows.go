@@ -128,3 +128,22 @@ func isMissingKey(err error) bool {
 	return errors.Is(err, windows.ERROR_FILE_NOT_FOUND) ||
 		errors.Is(err, windows.ERROR_PATH_NOT_FOUND)
 }
+
+// UserHiveWatchOK reports whether this process can watch HKCU for the
+// current user. Session 0 (LocalSystem / windows-latest Actions) is not
+// a real user session; CreateKey succeeding is not enough.
+func UserHiveWatchOK() error {
+	var session uint32
+	if err := windows.ProcessIdToSessionId(windows.GetCurrentProcessId(), &session); err != nil {
+		return fmt.Errorf("cannot open HKCU: %w", err)
+	}
+	if session == 0 {
+		return fmt.Errorf("cannot open HKCU: process is in session 0 (not a user session)")
+	}
+	k, _, err := registry.CreateKey(registry.CURRENT_USER, `Software\winunitd\t1-registry\.probe`, registry.ALL_ACCESS)
+	if err != nil {
+		return fmt.Errorf("cannot open HKCU: %w", err)
+	}
+	_ = k.Close()
+	return nil
+}
