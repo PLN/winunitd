@@ -67,6 +67,21 @@ func (j *DaemonJob) AssignPID(pid int) error {
 	return nil
 }
 
+// Assign attaches an already-open process handle to the daemon job.
+// Same as UnitJob.Assign: use the CreateProcess handle, do not reopen by PID.
+func (j *DaemonJob) Assign(process windows.Handle) error {
+	if j == nil || j.handle == 0 {
+		return fmt.Errorf("daemon job is closed")
+	}
+	if process == 0 {
+		return fmt.Errorf("process handle is closed")
+	}
+	if err := windows.AssignProcessToJobObject(j.handle, process); err != nil {
+		return fmt.Errorf("assign process to daemon job: %w", err)
+	}
+	return nil
+}
+
 // AssignSelf assigns the current process so future children inherit the job
 // unless they break away (breakaway is not enabled). Nested per-unit jobs
 // in M5 remain possible on modern Windows.
