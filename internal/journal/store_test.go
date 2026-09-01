@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -260,22 +261,36 @@ func TestNoCrossUnitBleed(t *testing.T) {
 	s := testStore(t)
 	colon := "foo:bar.service"
 	star := "foo*bar.service"
+	qmark := "foo?bar.service"
+	pipe := "foo|bar.service"
 	appendLine(t, s, colon, "from colon")
 	appendLine(t, s, star, "from star")
+	appendLine(t, s, qmark, "from qmark")
+	appendLine(t, s, pipe, "from pipe")
 
-	gotColon, err := s.Read(colon)
-	if err != nil {
-		t.Fatal(err)
+	names := map[string]string{
+		colon: "from colon",
+		star:  "from star",
+		qmark: "from qmark",
+		pipe:  "from pipe",
 	}
-	gotStar, err := s.Read(star)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(gotColon) != 1 || gotColon[0].Message != "from colon" || gotColon[0].Unit != canonicalUnit(colon) {
-		t.Fatalf("colon = %+v", gotColon)
-	}
-	if len(gotStar) != 1 || gotStar[0].Message != "from star" || gotStar[0].Unit != canonicalUnit(star) {
-		t.Fatalf("star = %+v", gotStar)
+	files := map[string]bool{}
+	for unit, msg := range names {
+		got, err := s.Read(unit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || got[0].Message != msg || got[0].Unit != canonicalUnit(unit) {
+			t.Fatalf("%s = %+v", unit, got)
+		}
+		fn := unitFileName(unit)
+		if files[fn] {
+			t.Fatalf("filename collision %q", fn)
+		}
+		files[fn] = true
+		if _, err := os.Stat(filepath.Join(s.Dir(), fn)); err != nil {
+			t.Fatalf("%s file: %v", fn, err)
+		}
 	}
 
 	// Defense in depth: mixed records in one file are filtered on read.
@@ -325,6 +340,18 @@ func TestRotateKeepsGenerations(t *testing.T) {
 	if st.Size() > s.maxSize {
 		t.Fatalf("current size %d exceeds cap %d", st.Size(), s.maxSize)
 	}
+	for _, suf := range []string{".1", ".2", ".3"} {
+		st, err := os.Stat(base + suf)
+		if err != nil {
+			t.Fatalf("rotated %s: %v", suf, err)
+		}
+		if st.Size() > s.maxSize {
+			t.Fatalf("%s size %d exceeds cap %d", suf, st.Size(), s.maxSize)
+		}
+	}
+	if _, err := os.Stat(base + ".4"); !os.IsNotExist(err) {
+		t.Fatalf("keep 3 must drop .4: %v", err)
+	}
 
 	got, err := s.Read("rot.service")
 	if err != nil {
@@ -333,8 +360,15 @@ func TestRotateKeepsGenerations(t *testing.T) {
 	if len(got) < 2 {
 		t.Fatalf("rotated read = %d lines", len(got))
 	}
+	if len(got) >= 40 {
+		t.Fatalf("rotation did not drop old lines: %d", len(got))
+	}
+	last := got[len(got)-1].Message
+	if !strings.HasSuffix(last, "39") {
+		t.Fatalf("newest line lost: %q", last)
+	}
 	for i := 1; i < len(got); i++ {
-		if got[i].Message == got[i-1].Message && got[i].Timestamp.Before(got[i-1].Timestamp) {
+		if got[i].Timestamp.Before(got[i-1].Timestamp) {
 			t.Fatalf("out of order: %+v then %+v", got[i-1], got[i])
 		}
 	}
@@ -398,6 +432,58 @@ func TestQuerySinceAndCursor(t *testing.T) {
 	}
 	if len(afterDup) != 0 {
 		t.Fatalf("duplicate cursor replay = %+v", afterDup)
+	}
+}
+
+func TestOpenReuseNoFsyncPerLine(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	s.flushEvery = time.Hour
+	var opens, syncs atomic.Int32
+	s.onOpen = func() { opens.Add(1) }
+	s.onSync = func() { syncs.Add(1) }
+
+	const n = 25
+	for i := 0; i < n; i++ {
+		s.append(Entry{
+			Timestamp: time.Now().UTC(),
+			Unit:      "hook.service",
+			Message:   "line " + strconv.Itoa(i),
+		})
+	}
+	if g := opens.Load(); g != 1 {
+		t.Fatalf("opens after %d lines = %d, want 1 (reuse)", n, g)
+	}
+	if g := syncs.Load(); g != 0 {
+		t.Fatalf("Sync after %d lines = %d, want 0 (no fsync-per-line)", n, g)
+	}
+
+	s.Wait("hook.service")
+	if g := syncs.Load(); g != 1 {
+		t.Fatalf("Wait Sync = %d, want 1", g)
+	}
+
+	s.maxSize = 200
+	for i := 0; i < 20; i++ {
+		s.append(Entry{
+			Timestamp: time.Now().UTC(),
+			Unit:      "hook.service",
+			Message:   strings.Repeat("y", 80) + strconv.Itoa(i),
+		})
+	}
+	if g := opens.Load(); g < 2 {
+		t.Fatalf("rotate should reopen, opens = %d", g)
+	}
+	if g := syncs.Load(); g < 2 {
+		t.Fatalf("rotate should Sync, syncs = %d", g)
+	}
+
+	beforeClose := syncs.Load()
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if g := syncs.Load(); g != beforeClose+1 {
+		t.Fatalf("Close Sync = %d, want %d", g, beforeClose+1)
 	}
 }
 

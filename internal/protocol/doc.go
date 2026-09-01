@@ -17,4 +17,14 @@
 // Transport is newline-delimited compact JSON over a byte stream, so the
 // same codec and handler can run on a Windows named pipe or on a fake
 // net.Listener in tests (no Windows service required).
+//
+// logs (DESIGN.md §22) is a snapshot RPC, not a stream:
+//
+//	LogsParams:  unit, since, follow, cursor
+//	LogsResult:  unit, entries, cursor
+//
+// since is a lower bound (RFC3339, YYYY-MM-DD, Go duration, or
+// "N <unit> ago"). Invalid since is invalid-params — never a silent
+// ignore. follow waits briefly for new lines after cursor; winctl
+// --follow polls with the opaque cursor from the previous result.
 package protocol

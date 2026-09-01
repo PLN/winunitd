@@ -43,6 +43,11 @@ type Store struct {
 	closed bool
 	files  map[string]*unitFile
 	capWG  map[string]*sync.WaitGroup
+
+	// onOpen / onSync are test hooks (nil in production). onOpen fires
+	// after a successful OpenFile; onSync fires immediately before Sync.
+	onOpen func()
+	onSync func()
 }
 
 // Entry is one journal line (DESIGN.md §22).
@@ -303,6 +308,9 @@ func (u *unitFile) openLocked() error {
 	u.f = f
 	u.w = bufio.NewWriter(f)
 	u.size = size
+	if u.store.onOpen != nil {
+		u.store.onOpen()
+	}
 	return nil
 }
 
@@ -338,6 +346,9 @@ func (u *unitFile) syncLocked() error {
 	}
 	if u.f == nil {
 		return nil
+	}
+	if u.store.onSync != nil {
+		u.store.onSync()
 	}
 	return u.f.Sync()
 }
