@@ -49,6 +49,9 @@ func NewEngine(clk Clock, store *Store, fire FireFunc) *Engine {
 	if clk.Startup.IsZero() {
 		clk.Startup = clk.Now()
 	}
+	if clk.NewTimer == nil {
+		clk.NewTimer = stdNewTimer
+	}
 	if store == nil {
 		store, _ = OpenStore("")
 	}
@@ -93,45 +96,64 @@ func (e *Engine) Stop() {
 
 func (e *Engine) loop() {
 	defer close(e.stopped)
-	timer := time.NewTimer(maxWait)
-	defer timer.Stop()
-	for {
-		wait := e.waitDuration()
+	var timer Timer
+	stopTimer := func() {
+		if timer == nil {
+			return
+		}
 		if !timer.Stop() {
 			select {
-			case <-timer.C:
+			case <-timer.C():
 			default:
 			}
 		}
-		timer.Reset(wait)
+		timer = nil
+	}
+	defer stopTimer()
+	for {
+		wait, useTimer := e.waitDuration()
+		stopTimer()
+		var timerC <-chan time.Time
+		if useTimer {
+			timer = e.clk.Timer(wait)
+			timerC = timer.C()
+		}
 		select {
 		case <-e.stop:
 			return
 		case <-e.wakeup:
 			continue
-		case <-timer.C:
+		case <-e.clk.changed():
+			e.fireDue()
+			e.recalcAll()
+			continue
+		case <-timerC:
+			timer = nil
 			e.fireDue()
 		}
 	}
 }
 
-func (e *Engine) waitDuration() time.Duration {
+func (e *Engine) waitDuration() (time.Duration, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	now := e.clk.now()
 	e.dropStaleLocked()
 	if e.pq.Len() == 0 {
-		return maxWait
+		if e.clk.Changed == nil {
+			return maxWait, true
+		}
+		return 0, false
 	}
 	when := e.pq[0].when
 	d := when.Sub(now)
 	if d < 0 {
-		return 0
+		d = 0
 	}
-	if d > maxWait {
-		return maxWait
+	if e.clk.Changed == nil && d > maxWait {
+		d = maxWait
 	}
-	return d
+	return d, true
 }
 
 func (e *Engine) fireDue() {
@@ -142,6 +164,14 @@ func (e *Engine) fireDue() {
 			return
 		}
 		e.consume(name, scheduled, now)
+	}
+}
+
+func (e *Engine) recalcAll() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, a := range e.armed {
+		e.rescheduleLocked(a)
 	}
 }
 

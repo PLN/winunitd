@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
-	"github.com/PLN/winunitd/internal/timers"
 )
 
 func TestShutdownStopsAfterOrderedServices(t *testing.T) {
@@ -116,11 +115,7 @@ WorkingDirectory=C:\Tools
 func TestShutdownDisarmsTimers(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}
-	m := managerWithClock(t, launch, timers.Clock{
-		Now:       time.Now,
-		SinceBoot: func() time.Duration { return time.Hour },
-		Startup:   time.Now(),
-	}, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"job.service": `
 [Service]
 Type=oneshot
@@ -141,7 +136,7 @@ OnStartupSec=5s
 	if m.engine.Armed("job.timer") {
 		t.Fatal("timer still armed after shutdown")
 	}
-	time.Sleep(80 * time.Millisecond)
+	fk.Advance(5 * time.Second)
 	if containsString(launch.units(), "job.service") {
 		t.Fatal("disarmed timer must not activate the service")
 	}
@@ -149,8 +144,8 @@ OnStartupSec=5s
 
 func TestShutdownCancelsPendingRestart(t *testing.T) {
 	t.Parallel()
-	launch := &scriptedLauncher{exitAll: intPtr(2)}
-	m := managerWith(t, launch, map[string]string{
+	launch := &scriptedLauncher{exitAll: intPtr(2), holdAutoExit: true}
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"foo.service": `
 [Service]
 Type=simple
@@ -163,12 +158,13 @@ RestartSec=1s
 	if _, err := m.Start(context.Background(), "foo"); err != nil {
 		t.Fatal(err)
 	}
-	waitStarts(t, launch, 1, 2*time.Second)
+	launch.releaseExits()
+	waitSub(t, m, "foo.service", core.SubAutoRestart)
 	if err := m.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	n := launch.nstarts()
-	time.Sleep(200 * time.Millisecond)
+	fk.Advance(time.Second)
 	if got := launch.nstarts(); got != n {
 		t.Fatalf("restart after shutdown: starts %d -> %d", n, got)
 	}

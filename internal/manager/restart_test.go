@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -13,91 +11,118 @@ import (
 
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/timers"
 	"github.com/PLN/winunitd/internal/unit"
 )
 
 func TestRestartAlwaysRelaunchesAfterExit0(t *testing.T) {
 	t.Parallel()
-	launch := &scriptedLauncher{exitAll: intPtr(0)}
-	m := managerWith(t, launch, map[string]string{
+	launch := &scriptedLauncher{exitAll: intPtr(0), holdAutoExit: true}
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"foo.service": `
 [Service]
 Type=simple
 ExecStart=C:\Tools\foo.exe
 WorkingDirectory=C:\Tools
 Restart=always
-RestartSec=10ms
+RestartSec=5s
 `,
 	})
 	if _, err := m.Start(context.Background(), "foo"); err != nil {
 		t.Fatal(err)
 	}
-	waitStarts(t, launch, 2, 2*time.Second)
+	launch.releaseExits()
+	waitSub(t, m, "foo.service", core.SubAutoRestart)
+	advanceWait(t, fk, 5*time.Second)
+	waitCond(t, func() bool { return launch.nstarts() >= 2 })
 }
 
 func TestRestartOnFailureDoesNotRelaunchAfter0(t *testing.T) {
 	t.Parallel()
-	launch := &scriptedLauncher{exitAll: intPtr(0)}
-	m := managerWith(t, launch, map[string]string{
+	launch := &scriptedLauncher{exitAll: intPtr(0), holdAutoExit: true}
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"foo.service": `
 [Service]
 Type=simple
 ExecStart=C:\Tools\foo.exe
 WorkingDirectory=C:\Tools
 Restart=on-failure
-RestartSec=10ms
+RestartSec=5s
 `,
 	})
 	if _, err := m.Start(context.Background(), "foo"); err != nil {
 		t.Fatal(err)
 	}
-	waitStableStarts(t, launch, 1)
+	launch.releaseExits()
+	waitState(t, m, "foo.service", core.Failed)
+	fk.Advance(5 * time.Second)
+	if got := launch.nstarts(); got != 1 {
+		t.Fatalf("starts = %d, want 1", got)
+	}
 	assertState(t, m, "foo.service", core.Failed)
 }
 
 func TestRestartOnFailureRelaunchesAfterNonZero(t *testing.T) {
 	t.Parallel()
-	launch := &scriptedLauncher{exitAll: intPtr(2)}
-	m := managerWith(t, launch, map[string]string{
+	launch := &scriptedLauncher{exitAll: intPtr(2), holdAutoExit: true}
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"foo.service": `
 [Service]
 Type=simple
 ExecStart=C:\Tools\foo.exe
 WorkingDirectory=C:\Tools
 Restart=on-failure
-RestartSec=10ms
+RestartSec=5s
 `,
 	})
 	if _, err := m.Start(context.Background(), "foo"); err != nil {
 		t.Fatal(err)
 	}
-	waitStarts(t, launch, 2, 2*time.Second)
+	launch.releaseExits()
+	waitSub(t, m, "foo.service", core.SubAutoRestart)
+	advanceWait(t, fk, 5*time.Second)
+	waitCond(t, func() bool { return launch.nstarts() >= 2 })
 }
 
 func TestRestartNoNeverRelaunches(t *testing.T) {
 	t.Parallel()
-	launch := &scriptedLauncher{exitAll: intPtr(2)}
-	m := managerWith(t, launch, map[string]string{
+	launch := &scriptedLauncher{exitAll: intPtr(2), holdAutoExit: true}
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"foo.service": `
 [Service]
 Type=simple
 ExecStart=C:\Tools\foo.exe
 WorkingDirectory=C:\Tools
 Restart=no
-RestartSec=10ms
+RestartSec=5s
 `,
 	})
 	if _, err := m.Start(context.Background(), "foo"); err != nil {
 		t.Fatal(err)
 	}
-	waitStableStarts(t, launch, 1)
+	launch.releaseExits()
+	waitState(t, m, "foo.service", core.Failed)
+	fk.Advance(5 * time.Second)
+	if got := launch.nstarts(); got != 1 {
+		t.Fatalf("starts = %d, want 1", got)
+	}
 	assertState(t, m, "foo.service", core.Failed)
 }
 
 func TestExplicitStopCancelsRestart(t *testing.T) {
 	t.Parallel()
-	launch := &scriptedLauncher{exitAll: intPtr(0)}
-	m := managerWith(t, launch, map[string]string{
+	testRestartDelayCancelledAtEpsilon(t, false)
+}
+
+func TestRestartDelayCancelledAtEpsilon(t *testing.T) {
+	t.Parallel()
+	testRestartDelayCancelledAtEpsilon(t, true)
+}
+
+func testRestartDelayCancelledAtEpsilon(t *testing.T, atEpsilon bool) {
+	t.Helper()
+	launch := &scriptedLauncher{exitAll: intPtr(0), holdAutoExit: true}
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"foo.service": `
 [Service]
 Type=simple
@@ -110,16 +135,17 @@ RestartSec=1s
 	if _, err := m.Start(context.Background(), "foo"); err != nil {
 		t.Fatal(err)
 	}
-	waitUntil(t, 2*time.Second, func() bool {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		return m.subOfLocked("foo.service") == core.SubAutoRestart
-	})
+	launch.releaseExits()
+	waitSub(t, m, "foo.service", core.SubAutoRestart)
+	waitCond(t, fk.Waiting)
+	if atEpsilon {
+		fk.Advance(time.Millisecond)
+	}
 	if _, err := m.Stop("foo"); err != nil {
 		t.Fatal(err)
 	}
 	n := launch.nstarts()
-	time.Sleep(200 * time.Millisecond)
+	fk.Advance(time.Second)
 	if got := launch.nstarts(); got != n {
 		t.Fatalf("relaunched after stop: starts %d -> %d", n, got)
 	}
@@ -129,14 +155,14 @@ RestartSec=1s
 func TestStopLiveAlwaysStaysDown(t *testing.T) {
 	t.Parallel()
 	launch := &scriptedLauncher{}
-	m := managerWith(t, launch, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"foo.service": `
 [Service]
 Type=simple
 ExecStart=C:\Tools\foo.exe
 WorkingDirectory=C:\Tools
 Restart=always
-RestartSec=10ms
+RestartSec=5s
 `,
 	})
 	if _, err := m.Start(context.Background(), "foo"); err != nil {
@@ -148,14 +174,17 @@ RestartSec=10ms
 	if _, err := m.Stop("foo"); err != nil {
 		t.Fatal(err)
 	}
-	waitStableStarts(t, launch, 1)
+	fk.Advance(5 * time.Second)
+	if got := launch.nstarts(); got != 1 {
+		t.Fatalf("starts = %d, want 1", got)
+	}
 	assertState(t, m, "foo.service", core.Inactive)
 }
 
 func TestRestartDoesNotRerunGraph(t *testing.T) {
 	t.Parallel()
-	launch := &scriptedLauncher{exitNth: map[int]int{1: 0}}
-	m := managerWith(t, launch, map[string]string{
+	launch := &scriptedLauncher{exitNth: map[int]int{1: 0}, holdAutoExit: true}
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"web.service": `
 [Unit]
 Requires=db.service
@@ -165,7 +194,7 @@ Type=simple
 ExecStart=C:\Tools\web.exe
 WorkingDirectory=C:\Tools
 Restart=always
-RestartSec=10ms
+RestartSec=5s
 `,
 		"db.service": `
 [Service]
@@ -178,7 +207,10 @@ Restart=no
 	if _, err := m.Start(context.Background(), "web"); err != nil {
 		t.Fatal(err)
 	}
-	waitUntil(t, 2*time.Second, func() bool {
+	launch.releaseExits()
+	waitSub(t, m, "web.service", core.SubAutoRestart)
+	advanceWait(t, fk, 5*time.Second)
+	waitCond(t, func() bool {
 		nweb := 0
 		for _, name := range launch.units() {
 			if name == "web.service" {
@@ -205,63 +237,71 @@ Restart=no
 func TestOneshotRestartAlwaysRelaunchesAfter0(t *testing.T) {
 	t.Parallel()
 	launch := &scriptedLauncher{exitAll: intPtr(0)}
-	m := managerWith(t, launch, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"init.service": `
 [Service]
 Type=oneshot
 ExecStart=C:\Tools\init.exe
 WorkingDirectory=C:\Tools
 Restart=always
-RestartSec=10ms
+RestartSec=5s
 `,
 	})
 	if _, err := m.Start(context.Background(), "init"); err != nil {
 		t.Fatal(err)
 	}
-	waitStarts(t, launch, 2, 2*time.Second)
+	waitSub(t, m, "init.service", core.SubAutoRestart)
+	advanceWait(t, fk, 5*time.Second)
+	waitCond(t, func() bool { return launch.nstarts() >= 2 })
 }
 
 func TestOneshotRestartOnFailureDoesNotTreatExit0AsCrash(t *testing.T) {
 	t.Parallel()
 	launch := &scriptedLauncher{exitAll: intPtr(0)}
-	m := managerWith(t, launch, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"init.service": `
 [Service]
 Type=oneshot
 ExecStart=C:\Tools\init.exe
 WorkingDirectory=C:\Tools
 Restart=on-failure
-RestartSec=10ms
+RestartSec=5s
 `,
 	})
 	if _, err := m.Start(context.Background(), "init"); err != nil {
 		t.Fatal(err)
 	}
-	waitStableStarts(t, launch, 1)
+	waitState(t, m, "init.service", core.Active)
+	fk.Advance(5 * time.Second)
+	if got := launch.nstarts(); got != 1 {
+		t.Fatalf("starts = %d, want 1", got)
+	}
 	assertState(t, m, "init.service", core.Active)
 }
 
 func TestOneshotRestartOnFailureRelaunchesAfterNonZero(t *testing.T) {
 	t.Parallel()
 	launch := &scriptedLauncher{exitAll: intPtr(3)}
-	m := managerWith(t, launch, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"init.service": `
 [Service]
 Type=oneshot
 ExecStart=C:\Tools\init.exe
 WorkingDirectory=C:\Tools
 Restart=on-failure
-RestartSec=10ms
+RestartSec=5s
 `,
 	})
 	_, _ = m.Start(context.Background(), "init")
-	waitStarts(t, launch, 2, 2*time.Second)
+	waitSub(t, m, "init.service", core.SubAutoRestart)
+	advanceWait(t, fk, 5*time.Second)
+	waitCond(t, func() bool { return launch.nstarts() >= 2 })
 }
 
 func TestDefaultRestartIsNo(t *testing.T) {
 	t.Parallel()
-	launch := &scriptedLauncher{exitAll: intPtr(0)}
-	m := managerWith(t, launch, map[string]string{
+	launch := &scriptedLauncher{exitAll: intPtr(0), holdAutoExit: true}
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"foo.service": `
 [Service]
 Type=simple
@@ -272,7 +312,12 @@ WorkingDirectory=C:\Tools
 	if _, err := m.Start(context.Background(), "foo"); err != nil {
 		t.Fatal(err)
 	}
-	waitStableStarts(t, launch, 1)
+	launch.releaseExits()
+	waitState(t, m, "foo.service", core.Failed)
+	fk.Advance(5 * time.Second)
+	if got := launch.nstarts(); got != 1 {
+		t.Fatalf("starts = %d, want 1", got)
+	}
 }
 
 func TestClassifyWait(t *testing.T) {
@@ -293,37 +338,7 @@ func TestClassifyWait(t *testing.T) {
 
 func managerWith(t *testing.T, launch runtime.Launcher, files map[string]string) *Manager {
 	t.Helper()
-	dir := t.TempDir()
-	units := filepath.Join(dir, "units")
-	if err := os.MkdirAll(units, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for name, body := range files {
-		writeUnit(t, units, name, body)
-	}
-	m, err := New(Config{BaseDir: dir, Launch: launch})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.Reload(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { stopAll(m) })
-	return m
-}
-
-func waitStarts(t *testing.T, launch *scriptedLauncher, n int, timeout time.Duration) {
-	t.Helper()
-	waitUntil(t, timeout, func() bool { return launch.nstarts() >= n })
-}
-
-func waitStableStarts(t *testing.T, launch *scriptedLauncher, n int) {
-	t.Helper()
-	waitUntil(t, time.Second, func() bool { return launch.nstarts() >= n })
-	time.Sleep(80 * time.Millisecond)
-	if got := launch.nstarts(); got != n {
-		t.Fatalf("starts = %d, want %d", got, n)
-	}
+	return managerWithClock(t, launch, timers.Clock{}, files)
 }
 
 func waitUntil(t *testing.T, timeout time.Duration, ok func() bool) {
@@ -350,11 +365,18 @@ func assertState(t *testing.T, m *Manager, name string, want core.State) {
 func intPtr(n int) *int { return &n }
 
 type scriptedLauncher struct {
-	mu      sync.Mutex
-	specs   []runtime.StartSpec
-	at      []time.Time
-	exitAll *int
-	exitNth map[int]int
+	mu           sync.Mutex
+	specs        []runtime.StartSpec
+	at           []time.Time
+	exitAll      *int
+	exitNth      map[int]int
+	holdAutoExit bool
+	pending      []*pendingExit
+}
+
+type pendingExit struct {
+	p    *fakeProc
+	code uint32
 }
 
 func (s *scriptedLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
@@ -391,12 +413,29 @@ func (s *scriptedLauncher) Start(ctx context.Context, spec runtime.StartSpec) (r
 		}
 		return p, nil
 	}
+	if s.holdAutoExit {
+		s.mu.Lock()
+		s.pending = append(s.pending, &pendingExit{p: p, code: uint32(code)})
+		s.mu.Unlock()
+		return p, nil
+	}
 	// Exit after Start returns so graph applyRunLocked does not race watch.
+	// Unconverted tests still use a short real delay (see ## Unverified).
 	go func() {
 		time.Sleep(15 * time.Millisecond)
 		p.die(uint32(code))
 	}()
 	return p, nil
+}
+
+func (s *scriptedLauncher) releaseExits() {
+	s.mu.Lock()
+	pending := s.pending
+	s.pending = nil
+	s.mu.Unlock()
+	for _, pe := range pending {
+		pe.p.die(pe.code)
+	}
 }
 
 func (s *scriptedLauncher) codeForLocked(idx int) (int, bool) {

@@ -65,7 +65,10 @@ func (m *Manager) startSCM(ctx context.Context, name string, u *unit.Unit, autoR
 	if m.scm == nil {
 		return fmt.Errorf("SCM client is not configured")
 	}
-	st, err := m.scm.Start(ctx, svc.ServiceName, scmStartTimeout(svc))
+	timeout := scmStartTimeout(svc)
+	ctx, cancel := m.clockTimeout(ctx, timeout)
+	defer cancel()
+	st, err := m.scm.Start(ctx, svc.ServiceName, timeout)
 	if err != nil {
 		m.maybeRestart(name, core.ExitFailure, svc)
 		return err
@@ -80,7 +83,7 @@ func (m *Manager) startSCM(ctx context.Context, name string, u *unit.Unit, autoR
 	}
 	m.mu.Unlock()
 	if m.engine != nil {
-		m.engine.UnitActive(name, time.Now())
+		m.engine.UnitActive(name, m.now())
 	}
 	return nil
 }

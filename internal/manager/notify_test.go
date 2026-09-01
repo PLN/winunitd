@@ -46,7 +46,7 @@ TimeoutStartSec=5s
 		errc <- err
 	}()
 
-	pipe := waitNotifyPipe(t, launch, "worker.service", 2*time.Second)
+	pipe := waitNotifyPipe(t, launch, "worker.service")
 	waitUntil(t, 2*time.Second, func() bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -67,16 +67,23 @@ TimeoutStartSec=5s
 func TestNotifyTimeoutStartWithoutReadyFails(t *testing.T) {
 	t.Parallel()
 	launch := fakeNotifyLaunch()
-	m := managerWith(t, launch, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"late.service": `
 [Service]
 Type=notify
 ExecStart=C:\App\late.exe
 WorkingDirectory=C:\App
-TimeoutStartSec=200ms
+TimeoutStartSec=5s
 `,
 	})
-	_, err := m.Start(context.Background(), "late")
+	errc := make(chan error, 1)
+	go func() {
+		_, err := m.Start(context.Background(), "late")
+		errc <- err
+	}()
+	waitCond(t, func() bool { return len(launch.specs()) >= 1 })
+	advanceWait(t, fk, 5*time.Second)
+	err := waitErr(t, errc)
 	if err == nil {
 		t.Fatal("expected TimeoutStartSec failure")
 	}
@@ -89,14 +96,14 @@ TimeoutStartSec=200ms
 func TestWatchdogPulseRefreshesTimer(t *testing.T) {
 	t.Parallel()
 	launch := fakeNotifyLaunch()
-	m := managerWith(t, launch, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"hb.service": `
 [Service]
 Type=notify
 ExecStart=C:\App\hb.exe
 WorkingDirectory=C:\App
 TimeoutStartSec=5s
-WatchdogSec=250ms
+WatchdogSec=1s
 `,
 	})
 	errc := make(chan error, 1)
@@ -104,46 +111,78 @@ WatchdogSec=250ms
 		_, err := m.Start(context.Background(), "hb")
 		errc <- err
 	}()
-	pipe := waitNotifyPipe(t, launch, "hb.service", 2*time.Second)
+	pipe := waitNotifyPipe(t, launch, "hb.service")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := notify.SendRetry(ctx, pipe, notify.Message{Ready: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-errc; err != nil {
+	if err := waitErr(t, errc); err != nil {
 		t.Fatal(err)
 	}
 
-	pulseDone := make(chan struct{})
-	go func() {
-		defer close(pulseDone)
-		deadline := time.Now().Add(600 * time.Millisecond)
-		for time.Now().Before(deadline) {
-			_ = notify.Send(ctx, pipe, notify.Message{Watchdog: true})
-			time.Sleep(50 * time.Millisecond)
-		}
-	}()
-	<-pulseDone
+	advanceWait(t, fk, 400*time.Millisecond)
 	assertState(t, m, "hb.service", core.Active)
-
-	waitUntil(t, 2*time.Second, func() bool {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		return m.stateOfLocked("hb.service") == core.Failed
+	if err := notify.Send(ctx, pipe, notify.Message{Watchdog: true}); err != nil {
+		t.Fatal(err)
+	}
+	waitCond(t, func() bool {
+		when, ok := fk.NextWhen()
+		return ok && !when.Before(fk.Now().Add(900*time.Millisecond))
 	})
+	advanceWait(t, fk, time.Second)
+	waitState(t, m, "hb.service", core.Failed)
+}
+
+func TestNotifyReadyLeavesOnlyWatchdogTimer(t *testing.T) {
+	t.Parallel()
+	launch := fakeNotifyLaunch()
+	m, fk := managerWithFake(t, launch, map[string]string{
+		"onlywd.service": `
+[Service]
+Type=notify
+ExecStart=C:\App\onlywd.exe
+WorkingDirectory=C:\App
+TimeoutStartSec=5s
+WatchdogSec=1s
+Restart=no
+`,
+	})
+	errc := make(chan error, 1)
+	go func() {
+		_, err := m.Start(context.Background(), "onlywd")
+		errc <- err
+	}()
+	pipe := waitNotifyPipe(t, launch, "onlywd.service")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := notify.SendRetry(ctx, pipe, notify.Message{Ready: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitErr(t, errc); err != nil {
+		t.Fatal(err)
+	}
+	waitCond(t, func() bool {
+		_, ok := fk.NextWhen()
+		return ok
+	})
+	when, _ := fk.NextWhen()
+	if remain := when.Sub(fk.Now()); remain > time.Second+time.Millisecond {
+		t.Fatalf("pending wait %v, want WatchdogSec=1s", remain)
+	}
 }
 
 func TestMissedWatchdogSecFailsUnit(t *testing.T) {
 	t.Parallel()
 	launch := fakeNotifyLaunch()
-	m := managerWith(t, launch, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"miss.service": `
 [Service]
 Type=notify
 ExecStart=C:\App\miss.exe
 WorkingDirectory=C:\App
 TimeoutStartSec=5s
-WatchdogSec=150ms
+WatchdogSec=1s
 Restart=no
 `,
 	})
@@ -152,42 +191,90 @@ Restart=no
 		_, err := m.Start(context.Background(), "miss")
 		errc <- err
 	}()
-	pipe := waitNotifyPipe(t, launch, "miss.service", 2*time.Second)
+	pipe := waitNotifyPipe(t, launch, "miss.service")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := notify.SendRetry(ctx, pipe, notify.Message{Ready: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-errc; err != nil {
+	if err := waitErr(t, errc); err != nil {
 		t.Fatal(err)
 	}
-	waitUntil(t, 2*time.Second, func() bool {
+	advanceWait(t, fk, time.Second)
+	waitCond(t, func() bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		return m.stateOfLocked("miss.service") == core.Failed && m.subOfLocked("miss.service") == core.SubWatchdog
 	})
 }
 
+func TestWatchdogExactlyAtBoundary(t *testing.T) {
+	t.Parallel()
+	launch := fakeNotifyLaunch()
+	m, fk := managerWithFake(t, launch, map[string]string{
+		"edge.service": `
+[Service]
+Type=notify
+ExecStart=C:\App\edge.exe
+WorkingDirectory=C:\App
+TimeoutStartSec=5s
+WatchdogSec=1s
+Restart=no
+`,
+	})
+	errc := make(chan error, 1)
+	go func() {
+		_, err := m.Start(context.Background(), "edge")
+		errc <- err
+	}()
+	pipe := waitNotifyPipe(t, launch, "edge.service")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := notify.SendRetry(ctx, pipe, notify.Message{Ready: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitErr(t, errc); err != nil {
+		t.Fatal(err)
+	}
+	advanceWait(t, fk, time.Second-time.Nanosecond)
+	assertState(t, m, "edge.service", core.Active)
+	advanceWait(t, fk, time.Nanosecond)
+	waitCond(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.stateOfLocked("edge.service") == core.Failed && m.subOfLocked("edge.service") == core.SubWatchdog
+	})
+}
+
 func TestRestartOnWatchdogRelaunches(t *testing.T) {
 	t.Parallel()
 	launch := fakeNotifyLaunch()
-	m := managerWith(t, launch, map[string]string{
+	m, fk := managerWithFake(t, launch, map[string]string{
 		"wd.service": `
 [Service]
 Type=notify
 ExecStart=C:\App\wd.exe
 WorkingDirectory=C:\App
 TimeoutStartSec=5s
-WatchdogSec=120ms
+WatchdogSec=1s
 Restart=on-watchdog
-RestartSec=20ms
+RestartSec=2s
 `,
 	})
 	go keepReady(t, launch, "wd.service")
-	if _, err := m.Start(context.Background(), "wd"); err != nil {
+	errc := make(chan error, 1)
+	go func() {
+		_, err := m.Start(context.Background(), "wd")
+		errc <- err
+	}()
+	waitNotifyPipe(t, launch, "wd.service")
+	if err := waitErr(t, errc); err != nil {
 		t.Fatal(err)
 	}
-	waitUntil(t, 3*time.Second, func() bool { return len(launch.specs()) >= 2 })
+	advanceWait(t, fk, time.Second)
+	waitSub(t, m, "wd.service", core.SubAutoRestart)
+	advanceArmed(t, fk, 2*time.Second)
+	waitCond(t, func() bool { return len(launch.specs()) >= 2 })
 }
 
 func TestNotifyInjectsEnv(t *testing.T) {
@@ -208,7 +295,7 @@ WatchdogSec=30s
 		_, err := m.Start(context.Background(), "env")
 		errc <- err
 	}()
-	pipe := waitNotifyPipe(t, launch, "env.service", 2*time.Second)
+	pipe := waitNotifyPipe(t, launch, "env.service")
 	if pipe == "" {
 		t.Fatal("WINUNIT_NOTIFY_PIPE missing")
 	}
@@ -278,7 +365,7 @@ WatchdogSec=2s
 		_, err := m.Start(context.Background(), "cli")
 		errc <- err
 	}()
-	pipe := waitNotifyPipe(t, launch, "cli.service", 2*time.Second)
+	pipe := waitNotifyPipe(t, launch, "cli.service")
 
 	getenv := func(k string) string {
 		if k == notify.EnvNotifyPipe {
@@ -301,10 +388,10 @@ WatchdogSec=2s
 	assertState(t, m, "cli.service", core.Active)
 }
 
-func waitNotifyPipe(t *testing.T, launch *fakeLauncher, unit string, timeout time.Duration) string {
+func waitNotifyPipe(t *testing.T, launch *fakeLauncher, unit string) string {
 	t.Helper()
 	var pipe string
-	waitUntil(t, timeout, func() bool {
+	waitCond(t, func() bool {
 		for _, spec := range launch.specs() {
 			if spec.Unit != unit {
 				continue
@@ -322,25 +409,30 @@ func waitNotifyPipe(t *testing.T, launch *fakeLauncher, unit string, timeout tim
 
 func keepReady(t *testing.T, launch *fakeLauncher, unit string) {
 	t.Helper()
-	seen := map[string]bool{}
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		for _, spec := range launch.specs() {
-			if spec.Unit != unit {
-				continue
-			}
-			pipe, ok := notify.LookupEnv(spec.Env, notify.EnvNotifyPipe)
-			if !ok || pipe == "" || seen[pipe] {
-				continue
-			}
-			seen[pipe] = true
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			_ = notify.SendRetry(ctx, pipe, notify.Message{Ready: true})
-			cancel()
+	// Windows named-pipe addresses are the unit name, so two launches share
+	// the same WINUNIT_NOTIFY_PIPE string. Send READY once per Start, not
+	// once per distinct address.
+	sent := 0
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) && sent < 2 {
+		specs := launch.specs()
+		if sent >= len(specs) {
+			goruntime.Gosched()
+			continue
 		}
-		if len(seen) >= 2 {
-			return
+		spec := specs[sent]
+		if spec.Unit != unit {
+			goruntime.Gosched()
+			continue
 		}
-		time.Sleep(15 * time.Millisecond)
+		pipe, ok := notify.LookupEnv(spec.Env, notify.EnvNotifyPipe)
+		if !ok || pipe == "" {
+			goruntime.Gosched()
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = notify.SendRetry(ctx, pipe, notify.Message{Ready: true})
+		cancel()
+		sent++
 	}
 }
