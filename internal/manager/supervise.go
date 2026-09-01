@@ -314,7 +314,7 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 		if limitHit {
 			rt.err = core.ReasonResourceLimit
 		} else {
-			rt.err = "main process exited"
+			rt.err = mainExitMessage(err)
 		}
 	}
 }
@@ -448,12 +448,34 @@ func classifyWait(err error) core.ExitKind {
 	}
 	var st *runtime.ExitStatus
 	if errors.As(err, &st) {
+		if st.SignalEquivalent() {
+			return core.ExitAbnormal
+		}
 		if st.Failed() {
 			return core.ExitFailure
 		}
 		return core.ExitSuccess
 	}
 	return core.ExitAbnormal
+}
+
+func waitFailMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	var st *runtime.ExitStatus
+	if errors.As(err, &st) && st.SignalEquivalent() {
+		return core.ReasonSignalEquivalent
+	}
+	return err.Error()
+}
+
+func mainExitMessage(err error) string {
+	var st *runtime.ExitStatus
+	if errors.As(err, &st) && st.SignalEquivalent() {
+		return core.ReasonSignalEquivalent
+	}
+	return "main process exited"
 }
 
 func restartDelay(svc *unit.ServiceSpec) time.Duration {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/runtime/runtimetest"
 )
 
 const (
@@ -200,7 +201,7 @@ WantedBy=default.target
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	user, err := New(Config{BaseDir: userDir, Launch: runtime.StubLauncher()})
+	user, err := New(Config{BaseDir: userDir, Launch: runtimetest.Launcher()})
 	if err != nil {
 		t.Fatal(err)
 	}

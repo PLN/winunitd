@@ -46,7 +46,10 @@ func StartUserManager(spec UserManagerSpec) (UserManagerProc, error) {
 		return nil, err
 	}
 	if spec.Daemon != nil {
-		_ = spec.Daemon.AssignPID(p.pid)
+		if err := assignDaemonPID(spec.Daemon, p.pid); err != nil {
+			_ = p.Kill()
+			return nil, err
+		}
 	}
 	return p, nil
 }
@@ -231,12 +234,40 @@ func (p *userMgrProc) Kill() error {
 	if p.Alive() && p.pid > 0 {
 		_ = terminatePIDHandle(p.pid)
 	}
-	_ = p.Wait(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = p.Wait(ctx)
 	return p.closeHandles()
 }
 
 func (p *userMgrProc) Wait(ctx context.Context) error {
-	return waitPID(ctx, p.Alive, 5*time.Second)
+	if p == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	p.mu.Lock()
+	h := p.process
+	if p.closed || h == 0 {
+		p.mu.Unlock()
+		return fmt.Errorf("process handle is closed")
+	}
+	var dup windows.Handle
+	err := windows.DuplicateHandle(
+		windows.CurrentProcess(),
+		h,
+		windows.CurrentProcess(),
+		&dup,
+		0,
+		false,
+		windows.DUPLICATE_SAME_ACCESS,
+	)
+	p.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return waitProcess(ctx, dup, nil)
 }
 
 func (p *userMgrProc) closeHandles() error {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/PLN/winunitd/internal/protocol"
 )
@@ -62,27 +61,4 @@ func userManagerEnv(spec UserManagerSpec) []string {
 		return MergeDeterministicUserEnv(os.Environ(), spec.Token.Info)
 	}
 	return nil
-}
-
-func waitPID(ctx context.Context, alive func() bool, timeout time.Duration) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
-	ticker := time.NewTicker(20 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		if !alive() {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
 }
