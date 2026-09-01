@@ -30,6 +30,11 @@ func testAbs(t *testing.T) string {
 
 func startHelper(t *testing.T, mode string, typ unit.ServiceType, timeout time.Duration) Process {
 	t.Helper()
+	return startHelperLimits(t, mode, typ, timeout, JobLimits{})
+}
+
+func startHelperLimits(t *testing.T, mode string, typ unit.ServiceType, timeout time.Duration, lim JobLimits) Process {
+	t.Helper()
 	env := helperEnv("WINUNITD_JOB_HELPER=" + mode)
 	p, err := DefaultLauncher().Start(context.Background(), StartSpec{
 		Unit:         "test.service",
@@ -38,6 +43,7 @@ func startHelper(t *testing.T, mode string, typ unit.ServiceType, timeout time.D
 		Dir:          t.TempDir(),
 		Env:          env,
 		TimeoutStart: timeout,
+		Limits:       lim,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -121,6 +127,19 @@ func TestUnitJobNoBreakawayFlags(t *testing.T) {
 	}
 	if flags&windows.JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK != 0 {
 		t.Fatal("SILENT_BREAKAWAY_OK must not be set")
+	}
+	got, err := job.QueryLimits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LimitFlags&windows.JOB_OBJECT_LIMIT_JOB_MEMORY != 0 {
+		t.Fatal("no MemoryMax: JOB_OBJECT_LIMIT_JOB_MEMORY must not be set")
+	}
+	if got.LimitFlags&windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS != 0 {
+		t.Fatal("no ProcessLimit: JOB_OBJECT_LIMIT_ACTIVE_PROCESS must not be set")
+	}
+	if got.LimitFlags&windows.JOB_OBJECT_LIMIT_PRIORITY_CLASS != 0 {
+		t.Fatal("no PriorityClass: JOB_OBJECT_LIMIT_PRIORITY_CLASS must not be set")
 	}
 }
 

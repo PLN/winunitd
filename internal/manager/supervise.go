@@ -96,6 +96,7 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 		Dir:          svc.WorkingDirectory,
 		Env:          env,
 		TimeoutStart: svc.TimeoutStartSec,
+		Limits:       runtime.JobLimitsFromSpec(svc),
 	}
 	if svc.Type == unit.TypeNotify {
 		// TimeoutStartSec bounds READY=1, not CreateProcess.
@@ -194,9 +195,10 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 }
 
 func (m *Manager) watch(name string, proc runtime.Process) {
-	// Wait for the main process; then tear down the unit job so leftover
-	// children die. Restart CreateProcess into a new per-unit job.
-	err := proc.Wait(context.Background())
+	// Wait for the main process or a Job Object MemoryMax=/ProcessLimit=
+	// hit; then tear down the unit job so leftover children die. Restart
+	// CreateProcess into a new per-unit job.
+	err, limitHit := waitProcOrLimit(proc)
 	m.mu.Lock()
 	if m.procs[name] != proc {
 		m.mu.Unlock()
@@ -235,6 +237,9 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 		svc = ld.unit.Service
 	}
 	kind := classifyWait(err)
+	if limitHit {
+		kind = core.ExitResourceLimit
+	}
 	if svc != nil && core.ShouldRestart(svc.Restart, kind) {
 		m.beginRestart(name, gen, restartDelay(svc))
 		return
@@ -255,7 +260,57 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 	st, sub := core.Step(m.stateOfLocked(name), m.subOfLocked(name), core.EventMainExited)
 	m.states[name] = st
 	m.subs[name] = sub
-	m.errors[name] = "main process exited"
+	if limitHit {
+		m.errors[name] = core.ReasonResourceLimit
+	} else {
+		m.errors[name] = "main process exited"
+	}
+}
+
+func waitProcOrLimit(proc runtime.Process) (error, bool) {
+	if proc == nil {
+		return nil, false
+	}
+	errCh := make(chan error, 1)
+	go func() { errCh <- proc.Wait(context.Background()) }()
+	var limitC <-chan struct{}
+	if job := proc.Job(); job != nil {
+		limitC = job.ResourceLimitC()
+	}
+	if limitC == nil {
+		err := <-errCh
+		return err, jobLimitHit(proc)
+	}
+	select {
+	case err := <-errCh:
+		if jobLimitHit(proc) {
+			return err, true
+		}
+		select {
+		case <-limitC:
+			return err, true
+		case <-time.After(150 * time.Millisecond):
+			return err, jobLimitHit(proc)
+		}
+	case <-limitC:
+		if job := proc.Job(); job != nil {
+			_ = job.Kill()
+		}
+		select {
+		case err := <-errCh:
+			return err, true
+		case <-time.After(2 * time.Second):
+			return fmt.Errorf("resource-limit"), true
+		}
+	}
+}
+
+func jobLimitHit(proc runtime.Process) bool {
+	if proc == nil {
+		return false
+	}
+	job := proc.Job()
+	return job != nil && job.ResourceLimitHit()
 }
 
 func (m *Manager) maybeRestart(name string, kind core.ExitKind, svc *unit.ServiceSpec) {

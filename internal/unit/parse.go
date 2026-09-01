@@ -33,6 +33,9 @@ var knownDirectives = map[string]map[string]bool{
 		"WatchdogMode":           true,
 		"WatchdogEndpoint":       true,
 		"WatchdogExpectedStatus": true,
+		"MemoryMax":              true,
+		"ProcessLimit":           true,
+		"PriorityClass":          true,
 	},
 	"Timer": {
 		"OnBootSec":       true,
@@ -88,6 +91,13 @@ type serviceBuilder struct {
 	watchdogEPL   int
 	watchdogStat  string
 	watchdogStatL int
+
+	memoryMax      string
+	memoryMaxL     int
+	processLimit   string
+	processLimitL  int
+	priorityClass  string
+	priorityClassL int
 }
 
 type timerBuilder struct {
@@ -296,6 +306,15 @@ func (p *parser) applyService(e iniEntry) {
 	case "WatchdogExpectedStatus":
 		s.watchdogStat = e.value
 		s.watchdogStatL = e.line
+	case "MemoryMax":
+		s.memoryMax = e.value
+		s.memoryMaxL = e.line
+	case "ProcessLimit":
+		s.processLimit = e.value
+		s.processLimitL = e.line
+	case "PriorityClass":
+		s.priorityClass = e.value
+		s.priorityClassL = e.line
 	}
 }
 
@@ -466,6 +485,8 @@ func (p *parser) finishService() {
 		}
 	}
 
+	p.finishJobLimits(spec, s)
+
 	if spec.Type == TypeSCM {
 		if s.notifyAccess != "" {
 			p.warnf(s.notifyAccessL, "NotifyAccess is ignored for Type=scm")
@@ -501,6 +522,54 @@ func (p *parser) finishService() {
 	}
 
 	p.finishWatchdog(spec, s)
+}
+
+func (p *parser) finishJobLimits(spec *ServiceSpec, s *serviceBuilder) {
+	if s.memoryMax != "" {
+		n, err := parseMemoryMax(s.memoryMax)
+		if err != nil {
+			p.errorf(s.memoryMaxL, "%s", err.Error())
+		} else {
+			spec.MemoryMax = n
+			spec.MemoryMaxSet = true
+		}
+	}
+	if s.processLimit != "" {
+		n, err := parseProcessLimit(s.processLimit)
+		if err != nil {
+			p.errorf(s.processLimitL, "%s", err.Error())
+		} else {
+			spec.ProcessLimit = n
+			spec.ProcessLimitSet = true
+		}
+	}
+	if s.priorityClass != "" {
+		pc, err := parsePriorityClass(s.priorityClass)
+		if err != nil {
+			p.errorf(s.priorityClassL, "%s", err.Error())
+		} else {
+			spec.PriorityClass = pc
+			spec.PriorityClassSet = true
+		}
+	}
+	if spec.Type != TypeSCM {
+		return
+	}
+	if spec.MemoryMaxSet {
+		p.warnf(s.memoryMaxL, "MemoryMax is ignored for Type=scm")
+		spec.MemoryMax = 0
+		spec.MemoryMaxSet = false
+	}
+	if spec.ProcessLimitSet {
+		p.warnf(s.processLimitL, "ProcessLimit is ignored for Type=scm")
+		spec.ProcessLimit = 0
+		spec.ProcessLimitSet = false
+	}
+	if spec.PriorityClassSet {
+		p.warnf(s.priorityClassL, "PriorityClass is ignored for Type=scm")
+		spec.PriorityClass = ""
+		spec.PriorityClassSet = false
+	}
 }
 
 func (p *parser) finishTimer() {

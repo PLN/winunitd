@@ -1,5 +1,6 @@
 // Package runtime contains the Windows Service host, the daemon-level Job
-// Object used for strict ownership, per-unit Job Objects, CreateProcess
+// Object used for strict ownership, per-unit Job Objects (including R1
+// MemoryMax=/ProcessLimit=/PriorityClass=), CreateProcess
 // supervision, WTS tokens, S4U linger tokens, user-manager process launch,
 // and the Type=scm SCM proxy client (StartService / StopService /
 // QueryServiceStatusEx; never CreateService / ChangeServiceConfig / Delete).

@@ -147,6 +147,25 @@ func TestMain(m *testing.M) {
 			}()
 		}
 		select {}
+	case "alloc":
+		var held [][]byte
+		for {
+			b := make([]byte, 1<<20)
+			for i := 0; i < len(b); i += 4096 {
+				b[i] = 1
+			}
+			held = append(held, b)
+		}
+	case "spawn-hold":
+		recordHelperCount()
+		cmd := exec.Command(os.Args[0], winunitdHelperArgPrefix+"sleep")
+		cmd.Env = append(os.Environ(), "WINUNITD_JOB_HELPER=sleep")
+		cmd.SysProcAttr = &windows.SysProcAttr{
+			HideWindow:    true,
+			CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW,
+		}
+		_ = cmd.Start()
+		select {}
 	case "scm-proxy":
 		runManagerSCMProxyTestService()
 		os.Exit(0)
@@ -163,7 +182,7 @@ func recordHelperCount() {
 	if err != nil {
 		return
 	}
-	fmt.Fprintf(f, "%d\n", os.Getpid())
+	fmt.Fprintf(f, "%d %d\n", time.Now().UnixMilli(), os.Getpid())
 	_ = f.Close()
 }
 
@@ -174,6 +193,30 @@ func helperExitCode() int {
 	}
 	n, _ := strconv.Atoi(v)
 	return n
+}
+
+func helperCountTimestamps(t *testing.T, path string) []time.Time {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	var out []time.Time
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		msStr, _, _ := strings.Cut(line, " ")
+		ms, err := strconv.ParseInt(msStr, 10, 64)
+		if err != nil {
+			continue
+		}
+		out = append(out, time.UnixMilli(ms))
+	}
+	return out
 }
 
 func helperCountLines(path string) int {
