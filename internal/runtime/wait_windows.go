@@ -10,11 +10,13 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// waitProcess waits for owned handle h using WaitForMultipleObjects plus
-// a cancel event (issue #30 / H3). The wait goroutine owns h and the
-// duplicated cancel handle and closes both when it returns. Callers must
-// DuplicateHandle first so Close of the original process handle is safe.
-// record, if non-nil, is called with the exit code when the process exits.
+// waitProcess waits for owned handle h. It is WaitForSingleObject on the
+// process plus the H3 cancel-event pattern (issue #30): a manual-reset
+// event and WaitForMultipleObjects so ctx.Done() does not CloseHandle a
+// handle another thread is waiting on. The wait goroutine owns h and the
+// duplicated cancel handle. Callers must DuplicateHandle first so Close
+// of the original process handle is safe. record, if non-nil, is called
+// with the exit code when the process exits.
 func waitProcess(ctx context.Context, h windows.Handle, record func(uint32)) error {
 	if ctx == nil {
 		ctx = context.Background()
