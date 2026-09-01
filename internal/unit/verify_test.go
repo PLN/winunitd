@@ -143,3 +143,64 @@ Persistent=true
 		t.Fatalf("implicit unit = %q", rep.Unit.Timer.Unit)
 	}
 }
+
+func TestVerifyRegistryPair(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	reg := filepath.Join(dir, "foo.registry")
+	if err := os.WriteFile(reg, []byte(`
+[Registry]
+RegistryChanged=HKLM\Software\Example
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep := VerifyPath(reg)
+	if !rep.HasError() {
+		t.Fatal("missing companion must fail")
+	}
+	errs := strings.Join(issueTexts(rep.Errors()), "\n")
+	if !strings.Contains(errs, "missing companion foo.service") {
+		t.Fatalf("errors = %s", errs)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "foo.service"), []byte(`
+[Service]
+Type=oneshot
+ExecStart=C:\Tools\run-once.exe
+WorkingDirectory=C:\Tools
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep = VerifyPath(reg)
+	if rep.HasError() {
+		t.Fatalf("pair should verify: %v", issueTexts(rep.Errors()))
+	}
+	if rep.Unit.Registry.Unit != "foo.service" {
+		t.Fatalf("implicit unit = %q", rep.Unit.Registry.Unit)
+	}
+}
+
+func TestRegistryScopeIssues(t *testing.T) {
+	t.Parallel()
+	rep := ParseUnit("sys.registry", `
+[Registry]
+RegistryChanged=HKCU\Software\Example
+`)
+	if rep.HasError() {
+		t.Fatalf("parse: %v", issueTexts(rep.Errors()))
+	}
+	got := RegistryScopeIssues(rep.Unit, false)
+	if len(got) == 0 {
+		t.Fatal("system manager must reject HKCU")
+	}
+	if RegistryScopeIssues(rep.Unit, true) != nil {
+		t.Fatal("user manager must accept HKCU")
+	}
+	hlm := ParseUnit("sys.registry", `
+[Registry]
+RegistryChanged=HKLM\Software\Example
+`)
+	if RegistryScopeIssues(hlm.Unit, false) != nil {
+		t.Fatal("system manager must accept HKLM")
+	}
+}

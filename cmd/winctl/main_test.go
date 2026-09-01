@@ -73,6 +73,43 @@ OnCalendar=daily
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "watch.service"), []byte(`
+[Service]
+Type=oneshot
+ExecStart=C:\Tools\run-once.exe
+WorkingDirectory=C:\Tools
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	regOK := filepath.Join(dir, "watch.registry")
+	if err := os.WriteFile(regOK, []byte(`
+[Registry]
+RegistryChanged=HKLM\Software\Example
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	regHKCU := filepath.Join(dir, "userwatch.registry")
+	if err := os.WriteFile(filepath.Join(dir, "userwatch.service"), []byte(`
+[Service]
+Type=oneshot
+ExecStart=C:\Tools\run-once.exe
+WorkingDirectory=C:\Tools
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(regHKCU, []byte(`
+[Registry]
+RegistryChanged=HKCU\Software\Example
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	regOrphan := filepath.Join(dir, "orphan.registry")
+	if err := os.WriteFile(regOrphan, []byte(`
+[Registry]
+RegistryChanged=HKLM\Software\Example
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	scm := filepath.Join(dir, "mssql.service")
 	if err := os.WriteFile(scm, []byte(`
 [Service]
@@ -139,6 +176,50 @@ Type=scm
 			t.Fatalf("exit %d stdout=%s", code, out.String())
 		}
 		if !strings.Contains(out.String(), "foo.timer: verified") {
+			t.Fatalf("stdout=%s", out.String())
+		}
+	})
+
+	t.Run("registry pair", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"verify", regOK}, &out, &errb)
+		if code != 0 {
+			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(out.String(), "watch.registry: verified") {
+			t.Fatalf("stdout=%s", out.String())
+		}
+	})
+
+	t.Run("registry missing companion", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"verify", regOrphan}, &out, &errb)
+		if code != 1 {
+			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(errb.String(), "missing companion orphan.service") {
+			t.Fatalf("stderr=%s", errb.String())
+		}
+	})
+
+	t.Run("system HKCU registry fails", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"verify", regHKCU}, &out, &errb)
+		if code != 1 {
+			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(errb.String(), "HKCU") {
+			t.Fatalf("stderr=%s", errb.String())
+		}
+	})
+
+	t.Run("user HKCU registry verifies", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"--user", "verify", regHKCU}, &out, &errb)
+		if code != 0 {
+			t.Fatalf("exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+		if !strings.Contains(out.String(), "userwatch.registry: verified") {
 			t.Fatalf("stdout=%s", out.String())
 		}
 	})

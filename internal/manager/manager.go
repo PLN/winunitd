@@ -12,6 +12,7 @@ import (
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/journal"
 	"github.com/PLN/winunitd/internal/protocol"
+	"github.com/PLN/winunitd/internal/registry"
 	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/timers"
 	"github.com/PLN/winunitd/internal/unit"
@@ -44,6 +45,8 @@ type Manager struct {
 	terminated  map[string]bool // start-timeout or watchdog killed the process
 	invocations map[string]string
 	scm         runtime.SCM
+	regOpen     registry.OpenFunc
+	regWatches  map[string]*registryRuntime
 	session     sync.Mutex // serializes graphical-session.target start/stop
 }
 
@@ -98,6 +101,12 @@ func New(cfg Config) (*Manager, error) {
 		watchdogs:   make(map[string]context.CancelFunc),
 		terminated:  make(map[string]bool),
 		invocations: make(map[string]string),
+		regWatches:  make(map[string]*registryRuntime),
+	}
+	if cfg.RegistryOpen != nil {
+		m.regOpen = cfg.RegistryOpen
+	} else {
+		m.regOpen = registry.OpenWatch
 	}
 	m.engine = timers.NewEngine(clk, store, m.onTimerElapsed)
 	return m, nil
@@ -131,6 +140,7 @@ func (m *Manager) Close() {
 	if m.engine != nil {
 		m.engine.Stop()
 	}
+	m.disarmAllRegistry()
 }
 
 // Handle implements protocol.Handler.
@@ -336,8 +346,8 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 	}
 	if err := m.errors[name]; err != "" {
 		st.Error = err
-		if err == core.ReasonResourceLimit {
-			st.Reason = core.ReasonResourceLimit
+		if r := core.StatusReason(err); r != "" {
+			st.Reason = r
 		}
 	}
 	if ld.unit != nil && ld.unit.Kind == unit.KindTimer && m.engine != nil {
@@ -493,6 +503,25 @@ func (m *Manager) Verify(name string) (*protocol.VerifyResult, error) {
 	m.mu.Unlock()
 
 	rep := unit.VerifyPath(path)
+	m.mu.Lock()
+	userScope := m.cfg.UserScope
+	var companionMissing string
+	if ld.unit.Kind == unit.KindRegistry {
+		companion := unit.CompanionService(unitName)
+		if _, ok := m.units[companion]; !ok {
+			companionMissing = companion
+		}
+	}
+	m.mu.Unlock()
+
+	rep.Issues = append(rep.Issues, unit.RegistryScopeIssues(rep.Unit, userScope)...)
+	if companionMissing != "" {
+		rep.Issues = append(rep.Issues, unit.Issue{
+			Path:     path,
+			Severity: unit.SeverityError,
+			Message:  "missing companion " + companionMissing,
+		})
+	}
 	out := &protocol.VerifyResult{Name: unitName, OK: !rep.HasError()}
 	for _, iss := range rep.Issues {
 		out.Issues = append(out.Issues, protocol.Issue{
