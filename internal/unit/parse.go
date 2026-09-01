@@ -2,6 +2,7 @@ package unit
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -178,6 +179,8 @@ type parser struct {
 	startLimitIntervalL int
 	startLimitBurst     string
 	startLimitBurstL    int
+
+	stat func(string) (os.FileInfo, error)
 }
 
 func (p *parser) errorf(line int, format string, args ...any) {
@@ -202,6 +205,10 @@ func (p *parser) warnf(line int, format string, args ...any) {
 // name is the unit file name (foo.service); it is stored lower-case
 // (DESIGN.md §36). path is used in diagnostics and may keep on-disk case.
 func Parse(path, name string, src []byte) Report {
+	return parseReport(path, name, src, nil)
+}
+
+func parseReport(path, name string, src []byte, stat func(string) (os.FileInfo, error)) Report {
 	kind, err := KindFromName(name)
 	if err != nil {
 		return Report{Issues: []Issue{{
@@ -221,6 +228,7 @@ func Parse(path, name string, src []byte) Report {
 			Path: path,
 			Kind: kind,
 		},
+		stat: stat,
 	}
 
 	doc, iniIssues := parseINI(src, path)
@@ -597,7 +605,7 @@ func (p *parser) finishService() {
 		if !s.execSet || (strings.TrimSpace(s.execRaw) == "" && len(s.execArgs) == 0) {
 			p.errorf(s.execLine, "ExecStart is required")
 		} else {
-			if len(s.execArgs) > 0 && execStartHasStrayArgs(s.execRaw) {
+			if len(s.execArgs) > 0 && execStartArgFootgun(s.execRaw, p.stat) {
 				p.errorf(s.execLine, "ExecStart must be an executable path when ExecStartArg is set; unquoted arguments belong in ExecStartArg")
 			}
 			argv, err := buildArgv(s.execRaw, s.execArgs)
