@@ -105,6 +105,9 @@ func (m *Manager) stopUnitCtx(ctx context.Context, name string) error {
 }
 
 func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
+	unlock := m.ops.lock(name)
+	defer unlock()
+
 	m.mu.Lock()
 	rt, err := m.lookup(name)
 	if err != nil {
@@ -115,6 +118,7 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 	proc := rt.takeProc()
 	rt.stopping = true
 	rt.gen++
+	stopGen := rt.gen
 	rt.cancelRestart()
 	nrt := rt.notify
 	rt.notify = nil
@@ -156,6 +160,11 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rt = m.units[name]
+	if rt != nil && !rt.sameOp(stopGen, proc) {
+		// A later lifecycle op owns this unit; do not stamp Inactive/Failed
+		// over its process (issue #24).
+		return &protocol.UnitResult{Unit: name, ActiveState: rt.state.String()}, nil
+	}
 	if stopErr != nil {
 		if rt != nil {
 			if rt.step(core.EventStartFailed) {

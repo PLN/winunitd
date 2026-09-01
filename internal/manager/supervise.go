@@ -26,6 +26,12 @@ func (m *Manager) startOne(ctx context.Context, name string) error {
 }
 
 func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool) error {
+	unlock := m.ops.lock(name)
+	defer unlock()
+	return m.launchUnitOp(ctx, name, autoRestart)
+}
+
+func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart bool) error {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -54,6 +60,7 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 		rt.gen++
 		rt.cancelRestart()
 	}
+	startGen := rt.gen
 	// Dead-but-unreaped: we are removing the proc, so we own job.Kill
 	// and Close. Do not rely on watch's early return (issue #25).
 	evicted := rt.takeProc()
@@ -147,7 +154,7 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 
 	m.mu.Lock()
 	rt = m.units[name]
-	if rt == nil || m.closed || rt.stopping {
+	if rt == nil || m.closed || rt.stopping || rt.gen != startGen {
 		m.mu.Unlock()
 		_ = proc.Stop(0)
 		m.closeNotify(name)
@@ -181,7 +188,7 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 				_ = rt.takeProc()
 			}
 			stopping := rt != nil && rt.stopping
-			if rt != nil && !rt.stopping {
+			if rt != nil && !rt.stopping && rt.gen == startGen {
 				if rt.step(core.EventStartFailed) {
 					rt.err = err.Error()
 				}
@@ -195,7 +202,7 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 			return err
 		}
 		m.mu.Lock()
-		if rt := m.units[name]; rt != nil && !rt.stopping {
+		if rt := m.units[name]; rt != nil && !rt.stopping && rt.gen == startGen && rt.proc == proc {
 			if rt.step(core.EventStartSucceeded) {
 				rt.err = ""
 			}
