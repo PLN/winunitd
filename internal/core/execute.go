@@ -331,11 +331,28 @@ func (e *executor) onFinish(res startResult) {
 	e.run.States[res.name] = Active
 }
 
+// jobNotYetStarted reports whether a transaction job has not reached
+// Active (queued Inactive, or Activating and not yet active). systemd
+// fails not-yet-started jobs on Requires= failure; already-Active
+// requirers are left running (issue #35, DESIGN.md §10).
+func (e *executor) jobNotYetStarted(name string) bool {
+	switch e.run.States[name] {
+	case Inactive, Activating:
+		return true
+	default:
+		return false
+	}
+}
+
 func (e *executor) markFailed(name string, err error) {
+	if !e.jobNotYetStarted(name) && e.run.States[name] != Failed {
+		// Already Active (or Deactivating): do not record Failed while
+		// the process is still running. Auto-stop of live requirers is
+		// a separate product call, not DESIGN.md §10 start-failure.
+		return
+	}
 	if _, ok := e.run.Errors[name]; ok {
-		if e.run.States[name] != Failed {
-			e.run.States[name] = Failed
-		}
+		e.run.States[name] = Failed
 		return
 	}
 	e.run.Errors[name] = err
@@ -351,9 +368,13 @@ func (e *executor) markFailed(name string, err error) {
 		if on == nil {
 			continue
 		}
-		if containsName(on.requires, name) {
-			e.markFailed(other, &DependencyError{Unit: other, Required: name, Err: err})
+		if !containsName(on.requires, name) {
+			continue
 		}
+		if !e.jobNotYetStarted(other) {
+			continue
+		}
+		e.markFailed(other, &DependencyError{Unit: other, Required: name, Err: err})
 	}
 }
 

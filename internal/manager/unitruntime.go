@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"log"
 
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/runtime"
@@ -29,11 +30,32 @@ type unitRuntime struct {
 	err           string
 }
 
-func (rt *unitRuntime) step(ev core.Event) {
+// step applies a lifecycle event. Illegal transitions are logged and
+// not applied (issue #35): the live proc is not rewritten as Active or
+// Failed just because an event arrived from the wrong from-state.
+func (rt *unitRuntime) step(ev core.Event) bool {
 	if rt == nil {
-		return
+		return false
 	}
-	rt.state, rt.sub = core.Step(rt.state, rt.sub, ev)
+	st, sub, err := core.Step(rt.state, rt.sub, ev)
+	if err != nil {
+		name := ""
+		if rt.unit != nil {
+			name = rt.unit.Name
+		}
+		logIllegalTransition(name, err)
+		return false
+	}
+	rt.state = st
+	rt.sub = sub
+	return true
+}
+
+func logIllegalTransition(name string, err error) {
+	if name == "" {
+		name = "?"
+	}
+	log.Printf("winunitd: %s: %v (not applied)", name, err)
 }
 
 func (rt *unitRuntime) cancelRestart() {

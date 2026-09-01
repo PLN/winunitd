@@ -1,6 +1,9 @@
 package core
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // State is a unit lifecycle state (DESIGN.md §68).
 type State int
@@ -111,29 +114,93 @@ func (e Event) String() string {
 	}
 }
 
-// Step applies a lifecycle event. This is not a collection of booleans:
-// each event maps to one (state, substate) pair.
-func Step(from State, fromSub Substate, ev Event) (State, Substate) {
+// ErrIllegalTransition is returned by Step when (from, fromSub, event)
+// is not in the explicit allowlist (DESIGN.md §68).
+var ErrIllegalTransition = errors.New("illegal lifecycle transition")
+
+// TransitionError names a rejected Step.
+type TransitionError struct {
+	From    State
+	FromSub Substate
+	Event   Event
+}
+
+func (e *TransitionError) Error() string {
+	if e == nil {
+		return ErrIllegalTransition.Error()
+	}
+	if sub := e.FromSub.String(); sub != "" {
+		return fmt.Sprintf("illegal transition: %s/%s + %s", e.From, sub, e.Event)
+	}
+	return fmt.Sprintf("illegal transition: %s + %s", e.From, e.Event)
+}
+
+func (e *TransitionError) Unwrap() error {
+	return ErrIllegalTransition
+}
+
+// Step applies a lifecycle event. from and fromSub are real: transitions
+// not in the allowlist return ErrIllegalTransition and leave the caller
+// with the input state. This is not a collection of booleans (DESIGN.md §68).
+func Step(from State, fromSub Substate, ev Event) (State, Substate, error) {
+	to, toSub, ok := allowedStep(from, fromSub, ev)
+	if !ok {
+		return from, fromSub, &TransitionError{From: from, FromSub: fromSub, Event: ev}
+	}
+	return to, toSub, nil
+}
+
+// allowedStep is the closed allowlist. Unknown events and unlisted
+// (from, event) pairs fail closed — they must not map to a destination
+// the way the old event-only switch did.
+func allowedStep(from State, fromSub Substate, ev Event) (State, Substate, bool) {
 	switch ev {
 	case EventStartRequested:
-		return Activating, SubStart
+		switch from {
+		case Inactive, Failed, Activating, Active:
+			return Activating, SubStart, true
+		}
 	case EventStartSucceeded:
-		return Active, SubRunning
+		if from == Activating {
+			return Active, SubRunning, true
+		}
 	case EventStartFailed:
-		return Failed, SubNone
+		switch from {
+		case Activating, Active, Deactivating:
+			return Failed, SubNone, true
+		}
 	case EventStopRequested:
-		return Deactivating, SubStop
+		switch from {
+		case Inactive, Active, Activating, Failed, Deactivating:
+			return Deactivating, SubStop, true
+		}
 	case EventStopFinished:
-		return Inactive, SubNone
+		if from == Deactivating {
+			return Inactive, SubNone, true
+		}
 	case EventMainExited:
-		return Failed, SubNone
+		switch from {
+		case Active, Activating, Inactive:
+			// Inactive covers the watch vs applyRunLocked race: a reaped
+			// process is Failed, which matches the live proc.
+			return Failed, SubNone, true
+		}
 	case EventAutoRestart:
-		return Activating, SubAutoRestart
+		switch from {
+		case Inactive, Active, Failed:
+			// Inactive: start failed before the manager stamped Failed
+			// (Type=simple / Type=scm); maybeRestart runs in startOne.
+			return Activating, SubAutoRestart, true
+		}
 	case EventRestartCancelled:
-		return Inactive, SubNone
+		if from == Activating && fromSub == SubAutoRestart {
+			return Inactive, SubNone, true
+		}
 	case EventWatchdogFailed:
-		return Failed, SubWatchdog
-	default:
-		return from, fromSub
+		switch from {
+		case Active, Activating:
+			return Failed, SubWatchdog, true
+		}
 	}
+	return from, fromSub, false
 }

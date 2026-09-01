@@ -156,8 +156,14 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 	rt = m.units[name]
 	if stopErr != nil {
 		if rt != nil {
-			rt.step(core.EventStartFailed)
-			rt.err = stopErr.Error()
+			if rt.step(core.EventStartFailed) {
+				rt.err = stopErr.Error()
+			}
+			return &protocol.UnitResult{
+				Unit:        name,
+				ActiveState: rt.state.String(),
+				Error:       stopErr.Error(),
+			}, protocol.ErrFailed(stopErr.Error())
 		}
 		return &protocol.UnitResult{
 			Unit:        name,
@@ -165,8 +171,10 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 			Error:       stopErr.Error(),
 		}, protocol.ErrFailed(stopErr.Error())
 	}
+	active := core.Inactive.String()
 	if rt != nil {
 		rt.step(core.EventStopFinished)
+		active = rt.state.String()
 	}
-	return &protocol.UnitResult{Unit: name, ActiveState: core.Inactive.String()}, nil
+	return &protocol.UnitResult{Unit: name, ActiveState: active}, nil
 }

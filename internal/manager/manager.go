@@ -390,11 +390,19 @@ func (m *Manager) applyRunLocked(run *core.Run) {
 		if rt == nil || rt.sub == core.SubAutoRestart {
 			continue
 		}
+		// Do not stamp Failed over an already-Active unit (Requires=
+		// failure of a dependency after this unit started). Issue #35.
+		if st == core.Failed && rt.state == core.Active {
+			continue
+		}
 		rt.state = st
 	}
 	for name, err := range run.Errors {
 		rt := m.units[name]
 		if rt == nil || err == nil {
+			continue
+		}
+		if rt.state == core.Active {
 			continue
 		}
 		rt.err = err.Error()
