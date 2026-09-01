@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	winreg "github.com/PLN/winunitd/internal/registry"
 	"github.com/PLN/winunitd/internal/unit"
 	"golang.org/x/sys/windows/registry"
 )
@@ -142,6 +143,9 @@ Type=oneshot
 }
 
 func TestWindowsUserHKCUWatch(t *testing.T) {
+	if err := winreg.UserHiveWatchOK(); err != nil {
+		t.Skip(err.Error())
+	}
 	keyPath := `Software\winunitd\t1-registry\` + uniqueRegName(t)
 	k, _, err := registry.CreateKey(registry.CURRENT_USER, keyPath, registry.ALL_ACCESS)
 	if err != nil {
@@ -181,13 +185,7 @@ Type=oneshot
 		t.Fatal(err)
 	}
 	assertState(t, m, "foo.registry", core.Active)
-	for i := 1; i <= 5 && helperCountLines(count) < 1; i++ {
-		setHiveValue(t, registry.CURRENT_USER, keyPath, "v", fmt.Sprintf("%d", i))
-		deadline := time.Now().Add(400 * time.Millisecond)
-		for time.Now().Before(deadline) && helperCountLines(count) < 1 {
-			time.Sleep(20 * time.Millisecond)
-		}
-	}
+	setHiveValue(t, registry.CURRENT_USER, keyPath, "v", "1")
 	waitWindowsCount(t, count, 1, 8*time.Second)
 }
 
