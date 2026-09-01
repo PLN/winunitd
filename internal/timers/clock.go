@@ -2,15 +2,30 @@ package timers
 
 import "time"
 
+// Timer is a one-shot wait that Clock can drive. A fake implementation
+// fires due timers from Advance (issue #28, DESIGN.md §18).
+type Timer interface {
+	C() <-chan time.Time
+	Stop() bool
+	Reset(d time.Duration) bool
+}
+
 // Clock is the scheduler's view of wall time, machine boot, and this
 // winunitd instance start (DESIGN.md §17–§18).
 //
 // OnBootSec is measured from machine boot. OnStartupSec is measured from
 // Startup. They differ after an SCM restart of winunitd.
+//
+// NewTimer, if set, is used instead of time.NewTimer so a fake can
+// Advance time. Changed, if set, is signaled on a discontinuous wall
+// jump (manual clock, DST, resume) so the engine recalculates calendar
+// deadlines instead of sleeping until a stale monotonic wait.
 type Clock struct {
 	Now       func() time.Time
 	SinceBoot func() time.Duration
 	Startup   time.Time
+	NewTimer  func(d time.Duration) Timer
+	Changed   <-chan struct{}
 }
 
 // DefaultClock uses the wall clock, platform boot time, and "now" as the
@@ -21,6 +36,7 @@ func DefaultClock() Clock {
 		Now:       time.Now,
 		SinceBoot: platformSinceBoot,
 		Startup:   now,
+		NewTimer:  stdNewTimer,
 	}
 }
 
@@ -44,3 +60,29 @@ func (c Clock) startup() time.Time {
 	}
 	return c.now()
 }
+
+// Timer returns a one-shot wait of d. Tests drive a fake with Advance.
+func (c Clock) Timer(d time.Duration) Timer {
+	if c.NewTimer != nil {
+		return c.NewTimer(d)
+	}
+	return stdNewTimer(d)
+}
+
+func (c Clock) changed() <-chan struct{} {
+	return c.Changed
+}
+
+type stdTimer struct {
+	t *time.Timer
+}
+
+func stdNewTimer(d time.Duration) Timer {
+	return stdTimer{t: time.NewTimer(d)}
+}
+
+func (s stdTimer) C() <-chan time.Time { return s.t.C }
+
+func (s stdTimer) Stop() bool { return s.t.Stop() }
+
+func (s stdTimer) Reset(d time.Duration) bool { return s.t.Reset(d) }
