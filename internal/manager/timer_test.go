@@ -314,11 +314,16 @@ OnStartupSec=5s
 	stop := make(chan struct{})
 	var statusErr atomic.Value
 	go func() {
+		// Do not busy-spin: a tight Status loop starves other Parallel
+		// tests on Windows CI (same class as the Gosched wait in
+		// waitErr / issue #92).
+		tick := time.NewTicker(5 * time.Millisecond)
+		defer tick.Stop()
 		for {
 			select {
 			case <-stop:
 				return
-			default:
+			case <-tick.C:
 			}
 			st, err := m.Status("job.timer")
 			if err != nil {
