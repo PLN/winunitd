@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -445,9 +446,20 @@ func TestQueryFlushesThenUnlocksBeforeScan(t *testing.T) {
 
 	started := make(chan struct{})
 	release := make(chan struct{})
+	var lockHeld atomic.Bool
+	var once sync.Once
 	s.onScan = func() {
-		close(started)
-		<-release
+		once.Do(func() {
+			if f := s.fileExisting("foo.service"); f != nil {
+				if !f.mu.TryLock() {
+					lockHeld.Store(true)
+				} else {
+					f.mu.Unlock()
+				}
+			}
+			close(started)
+			<-release
+		})
 	}
 
 	errc := make(chan error, 1)
@@ -487,6 +499,9 @@ func TestQueryFlushesThenUnlocksBeforeScan(t *testing.T) {
 	close(release)
 	if err := <-errc; err != nil {
 		t.Fatal(err)
+	}
+	if lockHeld.Load() {
+		t.Fatal("Query held unitFile.mu during scan/decode")
 	}
 	if elapsed > 100*time.Millisecond {
 		t.Fatalf("append held lock during scan: %v", elapsed)
@@ -631,6 +646,40 @@ func TestQuerySkipsArchivesAndIDsBeforeCursor(t *testing.T) {
 	}
 	if len(after) != 0 {
 		t.Fatalf("duplicate cursor across archive replay = %+v", after)
+	}
+}
+
+func TestQueryMidJournalCursorSkipsPriorEntryIDs(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	const n = 200
+	const mid = 80
+	for i := 0; i < n; i++ {
+		s.append(Entry{
+			Timestamp: t0.Add(time.Duration(i) * time.Millisecond),
+			Unit:      "foo.service",
+			Message:   "line" + strconv.Itoa(i),
+		})
+	}
+	s.syncUnit("foo.service")
+	cur := formatCursor(entryID(Entry{
+		Timestamp: t0.Add(time.Duration(mid) * time.Millisecond),
+		Unit:      "foo.service",
+		Message:   "line" + strconv.Itoa(mid),
+	}), 1)
+
+	var ids atomic.Int32
+	s.onEntryID = func() { ids.Add(1) }
+	got, _, err := s.Query("foo.service", time.Time{}, cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != n-mid-1 || got[0].Message != "line"+strconv.Itoa(mid+1) {
+		t.Fatalf("mid-journal rest = %d first=%v", len(got), got)
+	}
+	if g := ids.Load(); g != int32(len(got)+1) {
+		t.Fatalf("entryID calls = %d, want %d (cursor + rest; not all %d prior lines)", g, len(got)+1, n)
 	}
 }
 
