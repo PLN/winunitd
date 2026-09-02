@@ -101,6 +101,51 @@ PriorityClass=realtime
 `,
 			wantErr: `invalid PriorityClass "realtime"`,
 		},
+		{
+			name: "CPUWeight=0",
+			file: "bad-weight.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+CPUWeight=0
+`,
+			wantErr: `invalid CPUWeight "0"`,
+		},
+		{
+			name: "CPUQuota=25",
+			file: "bad-quota.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+CPUQuota=25
+`,
+			wantErr: `invalid CPUQuota "25"`,
+		},
+		{
+			name: "CPUWeight+CPUQuota",
+			file: "bad-both.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+CPUWeight=50
+CPUQuota=25%
+`,
+			wantErr: "CPUWeight and CPUQuota cannot both be set",
+		},
+		{
+			name: "IoPriority=critical",
+			file: "bad-io.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+IoPriority=critical
+`,
+			wantErr: `invalid IoPriority "critical"`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

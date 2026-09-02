@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/unit"
 	"golang.org/x/sys/windows"
 )
 
@@ -33,6 +35,9 @@ Type=simple
 	if got.LimitFlags&windows.JOB_OBJECT_LIMIT_PRIORITY_CLASS != 0 {
 		t.Fatal("JOB_OBJECT_LIMIT_PRIORITY_CLASS set without PriorityClass=")
 	}
+	if got.CPUControlFlags&runtime.JobCPURateEnable != 0 {
+		t.Fatal("CPU rate control set without CPUWeight=/CPUQuota=")
+	}
 }
 
 func TestWindowsPriorityClassBelowNormal(t *testing.T) {
@@ -51,6 +56,52 @@ PriorityClass=below-normal
 	}
 	if got.PriorityClass != windows.BELOW_NORMAL_PRIORITY_CLASS {
 		t.Fatalf("PriorityClass = %#x, want %#x", got.PriorityClass, windows.BELOW_NORMAL_PRIORITY_CLASS)
+	}
+}
+
+func TestWindowsCPUWeightSetsJobRate(t *testing.T) {
+	dir := t.TempDir()
+	m := startWindowsHelperUnit(t, dir, "cpu.service", `
+Type=simple
+CPUWeight=5000
+`, "sleep", 0, "")
+	if _, err := m.Start(context.Background(), "cpu"); err != nil {
+		t.Fatal(err)
+	}
+	proc := waitWindowsLiveProc(t, m, "cpu.service")
+	got, err := proc.Job().QueryLimits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := unit.WindowsCPUWeight(5000)
+	if got.CPUWeight != want {
+		t.Fatalf("CPUWeight = %d, want %d flags=%#x", got.CPUWeight, want, got.CPUControlFlags)
+	}
+	if got.CPUControlFlags&runtime.JobCPURateWeightBased == 0 {
+		t.Fatal("JOB_OBJECT_CPU_RATE_CONTROL_WEIGHT_BASED not set")
+	}
+}
+
+func TestWindowsCPUQuotaSetsJobRate(t *testing.T) {
+	dir := t.TempDir()
+	m := startWindowsHelperUnit(t, dir, "quota.service", `
+Type=simple
+CPUQuota=25%
+`, "sleep", 0, "")
+	if _, err := m.Start(context.Background(), "quota"); err != nil {
+		t.Fatal(err)
+	}
+	proc := waitWindowsLiveProc(t, m, "quota.service")
+	got, err := proc.Job().QueryLimits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := unit.WindowsCPURate(25)
+	if got.CPURate != want {
+		t.Fatalf("CPURate = %d, want %d flags=%#x", got.CPURate, want, got.CPUControlFlags)
+	}
+	if got.CPUControlFlags&runtime.JobCPURateHardCap == 0 {
+		t.Fatal("JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP not set")
 	}
 }
 

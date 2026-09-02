@@ -1126,6 +1126,57 @@ PriorityClass=below-normal
 			},
 		},
 		{
+			name: "job object CPUWeight",
+			file: "weight.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+CPUWeight=50
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if !u.Service.CPUWeightSet || u.Service.CPUWeight != 50 {
+					t.Fatalf("CPUWeight = %d set=%v", u.Service.CPUWeight, u.Service.CPUWeightSet)
+				}
+				if u.Service.CPUQuotaSet {
+					t.Fatal("CPUQuota must be omitted")
+				}
+			},
+		},
+		{
+			name: "job object CPUQuota",
+			file: "quota.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+CPUQuota=25%
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if !u.Service.CPUQuotaSet || u.Service.CPUQuota != 25 {
+					t.Fatalf("CPUQuota = %d set=%v", u.Service.CPUQuota, u.Service.CPUQuotaSet)
+				}
+			},
+		},
+		{
+			name: "job object IoPriority",
+			file: "io.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+IoPriority=low
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if !u.Service.IoPrioritySet || u.Service.IoPriority != IoLow {
+					t.Fatalf("IoPriority = %s set=%v", u.Service.IoPriority, u.Service.IoPrioritySet)
+				}
+			},
+		},
+		{
 			name: "omitted job limits leave today's job",
 			file: "plain.service",
 			src: `
@@ -1135,8 +1186,11 @@ WorkingDirectory=C:\Tools
 `,
 			noWarn: true,
 			check: func(t *testing.T, u *Unit) {
-				if u.Service.MemoryMaxSet || u.Service.ProcessLimitSet || u.Service.PriorityClassSet {
-					t.Fatalf("limits set: mem=%v proc=%v pri=%v", u.Service.MemoryMaxSet, u.Service.ProcessLimitSet, u.Service.PriorityClassSet)
+				if u.Service.MemoryMaxSet || u.Service.ProcessLimitSet || u.Service.PriorityClassSet ||
+					u.Service.CPUWeightSet || u.Service.CPUQuotaSet || u.Service.IoPrioritySet {
+					t.Fatalf("limits set: mem=%v proc=%v pri=%v cpuw=%v cpuq=%v io=%v",
+						u.Service.MemoryMaxSet, u.Service.ProcessLimitSet, u.Service.PriorityClassSet,
+						u.Service.CPUWeightSet, u.Service.CPUQuotaSet, u.Service.IoPrioritySet)
 				}
 			},
 		},
@@ -1185,15 +1239,71 @@ PriorityClass=realtime
 			wantErr: []string{`invalid PriorityClass "realtime"`},
 		},
 		{
-			name: "CPUWeight is not parsed in R1",
+			name: "CPUWeight out of range fails",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+CPUWeight=0
+`,
+			wantErr: []string{`invalid CPUWeight "0"`},
+		},
+		{
+			name: "CPUWeight above 10000 fails",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+CPUWeight=10001
+`,
+			wantErr: []string{`invalid CPUWeight "10001"`},
+		},
+		{
+			name: "CPUQuota missing percent fails",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+CPUQuota=25
+`,
+			wantErr: []string{`invalid CPUQuota "25"`},
+		},
+		{
+			name: "CPUQuota zero percent fails",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+CPUQuota=0%
+`,
+			wantErr: []string{`invalid CPUQuota "0%"`},
+		},
+		{
+			name: "CPUWeight and CPUQuota together fail",
 			file: "foo.service",
 			src: `
 [Service]
 ExecStart=C:\Tools\foo.exe
 WorkingDirectory=C:\Tools
 CPUWeight=50
+CPUQuota=25%
 `,
-			wantErr: []string{`unknown directive "CPUWeight"`},
+			wantErr: []string{"CPUWeight and CPUQuota cannot both be set"},
+		},
+		{
+			name: "IoPriority critical fails",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+IoPriority=critical
+`,
+			wantErr: []string{`invalid IoPriority "critical"`},
 		},
 		{
 			name: "MemoryMax on timer is rejected",
@@ -1204,6 +1314,35 @@ OnCalendar=daily
 MemoryMax=2G
 `,
 			wantErr: []string{`unknown directive "MemoryMax"`},
+		},
+		{
+			name: "CPUWeight on timer is rejected",
+			file: "foo.timer",
+			src: `
+[Timer]
+OnCalendar=daily
+CPUWeight=50
+`,
+			wantErr: []string{`unknown directive "CPUWeight"`},
+		},
+		{
+			name: "CPUQuota on target is rejected",
+			file: "foo.target",
+			src: `
+[Unit]
+Description=group
+CPUQuota=25%
+`,
+			wantErr: []string{`unknown directive "CPUQuota"`},
+		},
+		{
+			name: "IoPriority on target is rejected",
+			file: "foo.target",
+			src: `
+[Unit]
+IoPriority=low
+`,
+			wantErr: []string{`unknown directive "IoPriority"`},
 		},
 		{
 			name: "ProcessLimit on target is rejected",
@@ -1234,11 +1373,36 @@ ServiceName=WuP7Test
 MemoryMax=2G
 ProcessLimit=4
 PriorityClass=below-normal
+CPUWeight=50
+IoPriority=low
 `,
-			wantWarn: []string{"MemoryMax is ignored for Type=scm", "ProcessLimit is ignored for Type=scm", "PriorityClass is ignored for Type=scm"},
+			wantWarn: []string{
+				"MemoryMax is ignored for Type=scm",
+				"ProcessLimit is ignored for Type=scm",
+				"PriorityClass is ignored for Type=scm",
+				"CPUWeight is ignored for Type=scm",
+				"IoPriority is ignored for Type=scm",
+			},
 			check: func(t *testing.T, u *Unit) {
-				if u.Service.MemoryMaxSet || u.Service.ProcessLimitSet || u.Service.PriorityClassSet {
+				if u.Service.MemoryMaxSet || u.Service.ProcessLimitSet || u.Service.PriorityClassSet ||
+					u.Service.CPUWeightSet || u.Service.CPUQuotaSet || u.Service.IoPrioritySet {
 					t.Fatal("Type=scm must not keep job limits")
+				}
+			},
+		},
+		{
+			name: "type scm ignores CPUQuota",
+			file: "proxy.service",
+			src: `
+[Service]
+Type=scm
+ServiceName=WuP7Test
+CPUQuota=25%
+`,
+			wantWarn: []string{"CPUQuota is ignored for Type=scm"},
+			check: func(t *testing.T, u *Unit) {
+				if u.Service.CPUQuotaSet {
+					t.Fatal("Type=scm must not keep CPUQuota")
 				}
 			},
 		},
@@ -1252,10 +1416,19 @@ TaskName=\Backups\LegacyBackup
 MemoryMax=2G
 ProcessLimit=4
 PriorityClass=below-normal
+CPUQuota=25%
+IoPriority=high
 `,
-			wantWarn: []string{"MemoryMax is ignored for Type=scheduled-task", "ProcessLimit is ignored for Type=scheduled-task", "PriorityClass is ignored for Type=scheduled-task"},
+			wantWarn: []string{
+				"MemoryMax is ignored for Type=scheduled-task",
+				"ProcessLimit is ignored for Type=scheduled-task",
+				"PriorityClass is ignored for Type=scheduled-task",
+				"CPUQuota is ignored for Type=scheduled-task",
+				"IoPriority is ignored for Type=scheduled-task",
+			},
 			check: func(t *testing.T, u *Unit) {
-				if u.Service.MemoryMaxSet || u.Service.ProcessLimitSet || u.Service.PriorityClassSet {
+				if u.Service.MemoryMaxSet || u.Service.ProcessLimitSet || u.Service.PriorityClassSet ||
+					u.Service.CPUQuotaSet || u.Service.IoPrioritySet {
 					t.Fatal("Type=scheduled-task must not keep job limits")
 				}
 			},
