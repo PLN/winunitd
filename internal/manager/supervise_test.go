@@ -2,13 +2,16 @@ package manager
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/notify"
 	"github.com/PLN/winunitd/internal/runtime"
 )
 
@@ -76,11 +79,161 @@ Restart=no
 	assertState(t, m, "tree.service", core.Active)
 }
 
+// TestTCPWatchdogRelaunchClearsTerminated so a delayed Wait on the killed
+// proc cannot leave terminated set after Restart= installs the next one
+// (issue #62). Type=simple + WatchdogMode=tcp never takes the notify-pipe
+// clearer.
+func TestTCPWatchdogRelaunchClearsTerminated(t *testing.T) {
+	addr := closedLoopbackTCP(t)
+	launch := newHoldExitLauncher()
+	launch.holdAll = true
+	m, fk := managerWithFake(t, launch, map[string]string{
+		"tcp.service": fmt.Sprintf(`
+[Unit]
+StartLimitBurst=0
+[Service]
+Type=simple
+ExecStart=C:\App\tcp.exe
+WorkingDirectory=C:\App
+WatchdogMode=tcp
+WatchdogEndpoint=%s
+WatchdogSec=1s
+Restart=always
+RestartSec=0
+`, addr),
+	})
+	t.Cleanup(launch.releaseAll)
+
+	if _, err := m.Start(context.Background(), "tcp"); err != nil {
+		t.Fatal(err)
+	}
+	advanceWait(t, fk, time.Second)
+	waitCond(t, func() bool { return launch.nstarts() >= 2 })
+	assertRelaunchSupervisesExit(t, m, launch, "tcp.service")
+}
+
+// TestNotifyWaitReadyRelaunchClearsTerminated is the Type=notify waitReady
+// timeout shape of issue #62: terminated is set on READY=1 failure, then
+// Restart= relaunches while the old Wait is still held.
+func TestNotifyWaitReadyRelaunchClearsTerminated(t *testing.T) {
+	launch := newHoldExitLauncher()
+	launch.holdAll = true
+	launch.pid = os.Getpid()
+	m, fk := managerWithFake(t, launch, map[string]string{
+		"late.service": `
+[Unit]
+StartLimitBurst=0
+[Service]
+Type=notify
+ExecStart=C:\App\late.exe
+WorkingDirectory=C:\App
+TimeoutStartSec=5s
+Restart=always
+RestartSec=1s
+`,
+	})
+	t.Cleanup(launch.releaseAll)
+
+	errc := make(chan error, 1)
+	go func() {
+		_, err := m.Start(context.Background(), "late")
+		errc <- err
+	}()
+	waitCond(t, func() bool { return launch.nstarts() >= 1 })
+	advanceWait(t, fk, 5*time.Second)
+	if err := waitErr(t, errc); err == nil {
+		t.Fatal("expected TimeoutStartSec failure")
+	}
+	// RestartSec>0 so beginRestart sits in SubAutoRestart until Start's
+	// applyRunLocked returns. RestartSec=0 can install the new proc while
+	// applyRunLocked still stamps the failed Start (Failed over
+	// Activating/start; reapFailed then kills it).
+	waitSub(t, m, "late.service", core.SubAutoRestart)
+	advanceArmed(t, fk, time.Second)
+	waitCond(t, func() bool { return launch.nstarts() >= 2 })
+	pipe := notifyPipeOf(t, launch, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := notify.SendRetry(ctx, pipe, notify.Message{Ready: true}); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, m, "late.service", core.Active)
+	assertRelaunchSupervisesExit(t, m, launch, "late.service")
+}
+
+func assertRelaunchSupervisesExit(t *testing.T, m *Manager, launch *holdExitLauncher, name string) {
+	t.Helper()
+	first := launch.first()
+	second := launch.nth(1)
+	if first == nil || second == nil {
+		t.Fatal("need two procs (timeout then relaunch)")
+	}
+	waitCond(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		rt := m.units[name]
+		return rt != nil && rt.proc == second
+	})
+	m.mu.Lock()
+	stuck := m.units[name] != nil && m.units[name].terminated
+	m.mu.Unlock()
+	if stuck {
+		t.Fatal("terminated must be false after relaunch installs the new proc (issue #62)")
+	}
+	// Old Wait returns after the new proc is installed, the same window as
+	// the 150 ms Job Object limit-check on Windows.
+	first.releaseWait()
+	second.die()
+	second.releaseWait()
+	waitCond(t, func() bool {
+		if launch.nstarts() >= 3 {
+			return true
+		}
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		rt := m.units[name]
+		if rt == nil {
+			return false
+		}
+		return rt.state == core.Failed || rt.sub == core.SubAutoRestart
+	})
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rt := m.units[name]
+	if rt == nil {
+		t.Fatal("runtime missing")
+	}
+	if rt.state == core.Active && rt.proc == nil {
+		t.Fatal("issue #62: Active with nil proc; terminated stuck across relaunch")
+	}
+}
+
+func notifyPipeOf(t *testing.T, launch *holdExitLauncher, idx int) string {
+	t.Helper()
+	var pipe string
+	waitCond(t, func() bool {
+		specs := launch.specs()
+		if idx < 0 || idx >= len(specs) {
+			return false
+		}
+		v, ok := notify.LookupEnv(specs[idx].Env, notify.EnvNotifyPipe)
+		if !ok || v == "" {
+			return false
+		}
+		pipe = v
+		return true
+	})
+	return pipe
+}
+
 type holdExitLauncher struct {
-	mu     sync.Mutex
-	n      int
-	held   []*holdProc
-	firstP *holdProc
+	mu      sync.Mutex
+	n       int
+	held    []*holdProc
+	firstP  *holdProc
+	holdAll bool
+	pid     int
+	starts  []runtime.StartSpec
 }
 
 func newHoldExitLauncher() *holdExitLauncher {
@@ -99,10 +252,16 @@ func (l *holdExitLauncher) Start(ctx context.Context, spec runtime.StartSpec) (r
 	}
 	job := newRecJob(inner)
 	p := newHoldProc(job)
+	if l.pid != 0 {
+		p.pid = l.pid
+	}
 	l.mu.Lock()
 	l.n++
-	if l.n == 1 {
+	l.starts = append(l.starts, spec)
+	if l.n == 1 || l.holdAll {
 		p.holdAfterExit = true
+	}
+	if l.n == 1 {
 		l.firstP = p
 	}
 	l.held = append(l.held, p)
@@ -120,6 +279,23 @@ func (l *holdExitLauncher) first() *holdProc {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.firstP
+}
+
+func (l *holdExitLauncher) nth(i int) *holdProc {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if i < 0 || i >= len(l.held) {
+		return nil
+	}
+	return l.held[i]
+}
+
+func (l *holdExitLauncher) specs() []runtime.StartSpec {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]runtime.StartSpec, len(l.starts))
+	copy(out, l.starts)
+	return out
 }
 
 func (l *holdExitLauncher) releaseAll() {
@@ -236,7 +412,9 @@ func (p *holdProc) Wait(ctx context.Context) error {
 func (p *holdProc) Stop(timeout time.Duration) error {
 	_ = timeout
 	p.die()
-	p.releaseWait()
+	if !p.holdAfterExit {
+		p.releaseWait()
+	}
 	if p.job != nil {
 		_ = p.job.Kill()
 	}

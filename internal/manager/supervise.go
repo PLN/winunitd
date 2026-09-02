@@ -128,7 +128,6 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 		m.mu.Lock()
 		if rt := m.units[name]; rt != nil && !m.closed {
 			rt.notify = nrt
-			rt.terminated = false
 			m.mu.Unlock()
 		} else {
 			m.mu.Unlock()
@@ -186,6 +185,7 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 		return nil
 	}
 	rt.proc = proc
+	rt.terminated = false
 	if svc.Type == unit.TypeNotify {
 		rt.step(core.EventStartRequested)
 	} else if autoRestart {
