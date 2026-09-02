@@ -6,7 +6,7 @@ import "fmt"
 
 // OpenSubscribe is a Linux/non-Windows stub. Event Log subscribe is Windows-only.
 func OpenSubscribe(t Trigger) (Subscription, error) {
-	if _, err := ParseTrigger(t.Raw); err != nil && t.Raw != "" {
+	if _, _, err := subscribeQuery(t); err != nil {
 		return nil, err
 	}
 	return nil, fmt.Errorf("event log subscribe is not supported on this platform")

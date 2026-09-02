@@ -7,6 +7,7 @@ import (
 
 // eventIDFromXML reads the EventID element from EvtRender XML.
 // Classic events may be <EventID Qualifiers="...">1234</EventID>.
+// Subscribe matching does not use this; EvtSubscribe applies Query.
 func eventIDFromXML(xml string) (uint16, bool) {
 	i := strings.Index(xml, "<EventID")
 	if i < 0 {

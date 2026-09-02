@@ -289,7 +289,7 @@ Windows-native companion unit. `foo.eventlog` activates `foo.service` by basenam
 EventLogTrigger=System:EventID=1234
 ```
 
-`EventLogTrigger=` is repeatable (any match fires). Grammar is `<Channel>:EventID=<uint16>` only: Channel is a literal log name (`System`, `Application`, a custom log). No XPath, no `Provider=`, no `Level=`. Subscribe with `EvtSubscribe` (push).
+`EventLogTrigger=` is repeatable (any match fires). Grammar is `<Channel>:EventID=<uint16>` only: Channel is a literal log name (`System`, `Application`, a custom log). No XPath, no `Provider=`, no `Level=` in the unit file. Subscribe with `EvtSubscribe` (push). The subscribe query is `*[System[(EventID=N)]]` derived from `EventLogTrigger=` (not a unit-file query language). A null or empty query is a subscribe error; it does not match every event on the channel. EventID filtering is done by `EvtSubscribe`; the callback does not `EvtRender` every candidate to XML.
 
 The system manager accepts any readable channel (LocalSystem). A user manager `verify` allows `Application` and custom names; `System` / `Security` on `--user` is a verify error. Activate still fails closed if `EvtSubscribe` denies.
 

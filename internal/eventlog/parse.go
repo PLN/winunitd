@@ -58,6 +58,10 @@ func (t Trigger) RestrictedInUserScope() bool {
 
 // Query is the EvtSubscribe XPath for this EventID. It is not accepted
 // in the unit file; it is only used to implement EventID= on the wire.
+// EventID=0 returns "" (OpenSubscribe must not pass Query=NULL).
 func (t Trigger) Query() string {
+	if t.EventID == 0 {
+		return ""
+	}
 	return fmt.Sprintf("*[System[(EventID=%d)]]", t.EventID)
 }
