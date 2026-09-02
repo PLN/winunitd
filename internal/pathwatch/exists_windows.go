@@ -10,6 +10,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// testStatHook, if set, is called on every GetFileAttributes used by Exists
+// and resolveExistsWatch. Tests use it to assert ≤1 Stat per filtered wakeup.
+var testStatHook func()
+
 // Exists reports whether spec exists on disk.
 func Exists(s Spec) (bool, error) {
 	if _, err := ParseExists(s.Raw); err != nil {
@@ -33,23 +37,26 @@ type existsWatch struct {
 	closed   bool
 	inner    Watch
 	watchDir string
+	filter   string
 }
 
 // OpenExistsWatch watches for spec's existence to change. A missing target
 // is OK: the nearest existing ancestor directory is watched (non-recursive)
-// so creation of the next component can satisfy PathExists=. Notifications
-// are any change in that ancestor (no basename filter): the caller re-checks
-// Exists. After each notification the watch re-arms closer to the target
-// when an intermediate directory has appeared.
+// so creation of the next component can satisfy PathExists=. Wakeups use
+// FILE_NOTIFY_CHANGE_FILE_NAME|DIR_NAME and are filtered to that component's
+// basename (sibling noise under the ancestor is ignored). At most one Stat
+// runs per filtered wakeup; the caller re-checks Exists to decide AND.
+// After each notification the watch re-arms closer to the target when an
+// intermediate directory has appeared.
 func OpenExistsWatch(s Spec) (Watch, error) {
 	if _, err := ParseExists(s.Raw); err != nil {
 		return nil, err
 	}
-	dir, _, err := resolveExistsWatch(s.Raw)
+	dir, filter, err := resolveExistsWatch(s.Raw)
 	if err != nil {
 		return nil, err
 	}
-	inner, err := openDirWatch(dir, "")
+	inner, err := openExistsDirWatch(dir, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -58,9 +65,17 @@ func OpenExistsWatch(s Spec) (Watch, error) {
 		ch:       make(chan struct{}, 1),
 		inner:    inner,
 		watchDir: dir,
+		filter:   filter,
 	}
 	go w.loop()
 	return w, nil
+}
+
+func openExistsDirWatch(dir, filter string) (Watch, error) {
+	if filter == "" {
+		return nil, fmt.Errorf("%w: %s", ErrUnwatchable, dir)
+	}
+	return openDirWatchNotify(dir, filter, existsNotifyFilter)
 }
 
 func (w *existsWatch) C() <-chan struct{} { return w.ch }
@@ -93,36 +108,42 @@ func (w *existsWatch) loop() {
 			return
 		}
 		if !ok {
-			if !w.rearm("") {
+			if !w.rearm("", "") {
 				return
 			}
 			continue
 		}
-		w.signal()
-		dir, _, err := resolveExistsWatch(w.target)
-		if err != nil {
-			return
-		}
-		if dir != w.currentDir() {
-			if !w.rearm(dir) {
+		dir, filter := w.watchSnapshot()
+		leaf := isTargetLeafWatch(w.target, dir, filter)
+		if leaf {
+			// Leaf create/delete/rename: signal once, no Stat here.
+			w.signal()
+		} else {
+			// Ancestor wakeup: one Stat to see whether the full target
+			// appeared (e.g. a tree drop). Sibling names never reach here.
+			exists, err := Exists(Spec{Raw: w.target})
+			if err != nil {
 				return
 			}
+			if exists {
+				w.signal()
+			}
 		}
-		if exists, err := Exists(Spec{Raw: w.target}); err == nil && exists {
-			w.signal()
+		if !w.rearmCloser() {
+			return
 		}
 	}
 }
 
-func (w *existsWatch) rearm(dir string) bool {
+func (w *existsWatch) rearm(dir, filter string) bool {
 	if dir == "" {
 		var err error
-		dir, _, err = resolveExistsWatch(w.target)
+		dir, filter, err = resolveExistsWatch(w.target)
 		if err != nil {
 			return false
 		}
 	}
-	next, err := openDirWatch(dir, "")
+	next, err := openExistsDirWatch(dir, filter)
 	if err != nil {
 		return false
 	}
@@ -130,11 +151,40 @@ func (w *existsWatch) rearm(dir string) bool {
 		_ = next.Close()
 		return false
 	}
-	old := w.swapInner(next, dir)
+	old := w.swapInner(next, dir, filter)
 	if old != nil {
 		_ = old.Close()
 	}
 	return true
+}
+
+// rearmCloser opens the next existing intermediate directory toward the
+// target without walking/statting the full path. CreateFile on a missing
+// next component is a no-op stay.
+func (w *existsWatch) rearmCloser() bool {
+	dir, filter := w.watchSnapshot()
+	if isTargetLeafWatch(w.target, dir, filter) {
+		return true
+	}
+	for {
+		nextDir, nextFilter, ok := nextExistsStep(w.target, dir, filter)
+		if !ok {
+			return true
+		}
+		next, err := openExistsDirWatch(nextDir, nextFilter)
+		if err != nil {
+			return true
+		}
+		if w.isClosed() {
+			_ = next.Close()
+			return false
+		}
+		old := w.swapInner(next, nextDir, nextFilter)
+		if old != nil {
+			_ = old.Close()
+		}
+		dir, filter = nextDir, nextFilter
+	}
 }
 
 func (w *existsWatch) signal() {
@@ -159,18 +209,19 @@ func (w *existsWatch) getInner() Watch {
 	return w.inner
 }
 
-func (w *existsWatch) currentDir() string {
+func (w *existsWatch) watchSnapshot() (dir, filter string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.watchDir
+	return w.watchDir, w.filter
 }
 
-func (w *existsWatch) swapInner(inner Watch, dir string) Watch {
+func (w *existsWatch) swapInner(inner Watch, dir, filter string) Watch {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	old := w.inner
 	w.inner = inner
 	w.watchDir = dir
+	w.filter = filter
 	return old
 }
 
@@ -214,6 +265,9 @@ func resolveExistsWatch(raw string) (dir, filter string, err error) {
 }
 
 func getFileAttributes(raw string) (uint32, error) {
+	if h := testStatHook; h != nil {
+		h()
+	}
 	p, err := windows.UTF16PtrFromString(raw)
 	if err != nil {
 		return 0, err
