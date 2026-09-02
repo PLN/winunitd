@@ -176,13 +176,27 @@ Restart=no
 		errc <- err
 	}()
 	pipe := waitNotifyPipe(t, launch, "both.service")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := notify.SendRetry(ctx, pipe, notify.Message{Ready: true}); err != nil {
-		t.Fatal(err)
+	// Windows named-pipe Accept can return from Dial before waitReady is
+	// selected; a single SendRetry then looks successful while Start is
+	// still blocked (CI #42). Resend until Start returns.
+	deadline := time.Now().Add(15 * time.Second)
+	var startErr error
+	got := false
+	for !got && time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		_ = notify.SendRetry(ctx, pipe, notify.Message{Ready: true})
+		cancel()
+		select {
+		case startErr = <-errc:
+			got = true
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
-	if err := waitErr(t, errc); err != nil {
-		t.Fatal(err)
+	if !got {
+		t.Fatal("did not receive error result")
+	}
+	if startErr != nil {
+		t.Fatal(startErr)
 	}
 	if _, ok := notify.LookupEnv(launch.specs()[0].Env, notify.EnvWatchdogUsec); ok {
 		t.Fatal("tcp watchdog must not inject WINUNIT_WATCHDOG_USEC")
