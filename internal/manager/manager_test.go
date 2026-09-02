@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/journal"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/unit"
@@ -439,6 +440,44 @@ WorkingDirectory=C:\Tools
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Follow did not return a new line")
+	}
+}
+
+func TestLogsFollowDeadlineUsesManagerClock(t *testing.T) {
+	t.Parallel()
+	m, fk := managerWithFake(t, &fakeLauncher{}, map[string]string{
+		"foo.service": `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`,
+	})
+	type result struct {
+		got *protocol.LogsResult
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		got, err := m.Logs(protocol.LogsParams{Unit: "foo", Follow: true})
+		ch <- result{got, err}
+	}()
+	waitCond(t, func() bool { return fk.WaitingAt(journal.FollowPoll()) })
+	select {
+	case r := <-ch:
+		t.Fatalf("Follow returned before clock Advanced: %+v %v", r.got, r.err)
+	default:
+	}
+	fk.Advance(journal.FollowWait())
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			t.Fatal(r.err)
+		}
+		if r.got == nil || len(r.got.Entries) != 0 {
+			t.Fatalf("empty follow = %+v", r.got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Follow did not honor manager clock deadline")
 	}
 }
 

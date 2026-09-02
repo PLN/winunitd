@@ -503,11 +503,8 @@ func (m *Manager) Logs(p protocol.LogsParams) (*protocol.LogsResult, error) {
 	}
 	name := rt.unit.Name
 	js := m.journal
-	now := time.Now().UTC()
-	if m.clk.Now != nil {
-		now = m.clk.Now()
-	}
 	m.mu.Unlock()
+	now := m.now()
 
 	var since time.Time
 	if strings.TrimSpace(p.Since) != "" {
@@ -548,9 +545,17 @@ func (m *Manager) Logs(p protocol.LogsParams) (*protocol.LogsResult, error) {
 		return nil, protocol.ErrFailed(err.Error())
 	}
 	if p.Follow && len(entries) == 0 {
-		deadline := time.Now().Add(journal.FollowWait())
-		for len(entries) == 0 && time.Now().Before(deadline) {
-			time.Sleep(journal.FollowPoll())
+		deadline := m.now().Add(journal.FollowWait())
+		for len(entries) == 0 && m.now().Before(deadline) {
+			wait := journal.FollowPoll()
+			if rem := deadline.Sub(m.now()); wait > rem {
+				wait = rem
+			}
+			if wait > 0 {
+				tmr := m.clock().Timer(wait)
+				<-tmr.C()
+				tmr.Stop()
+			}
 			entries, cursor, err = collect()
 			if err != nil {
 				return nil, protocol.ErrFailed(err.Error())

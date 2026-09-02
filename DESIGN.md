@@ -1046,6 +1046,10 @@ invocation ID
 
 The writer **keeps the current file open**. Lines are buffered and flushed on a short timer (and whenever logs are read). `Sync` (fsync) runs on unit capture end, daemon shutdown, and rotate — **not** per line.
 
+`logs` / `Query` flushes the current file under the per-unit write lock, then scans and decodes **without** holding that lock, so a follower cannot stall `capture` beyond a flush. The current file is append-only; reading it unlocked is safe. A follow poll skips `entryID` for lines whose timestamp is strictly before the cursor, and skips rotated archives whose last entry precedes the cursor.
+
+A per-unit “new data” signal from the writer (so Follow blocks instead of polling) and a byte offset in the cursor (so a follow poll reads only the tail) are later.
+
 Per-unit rotation: the current file is capped at **10 MiB**. On rotate it becomes `.log.1`; older generations shift up to `.log.3` (**keep 3** rotated files). `.log.3` is dropped on the next rotate. `logs` reads oldest-to-newest across those files.
 
 ### CLI
@@ -1058,7 +1062,7 @@ winctl logs foo --since "1 hour ago"
 
 `--since` is honored on the daemon (`LogsParams.Since`). Accepted values: RFC3339 (nano or second), a `YYYY-MM-DD` date (UTC midnight), a Go duration subtracted from now (`1h`, `30m`), and `N <unit> ago` (`1 hour ago`, `30 minutes ago`). Invalid values are `invalid-params`, not a silent ignore.
 
-`--follow` is client polling with an opaque cursor (`LogsParams.Cursor` / `LogsResult.Cursor`). Each poll may wait briefly for new lines. There is no streaming RPC.
+`--follow` is client polling with an opaque cursor (`LogsParams.Cursor` / `LogsResult.Cursor`). Each poll may wait briefly for new lines. The wait deadline uses the manager clock (the same `now` as `--since` relative times), so a fake clock can expire it. There is no streaming RPC.
 
 `--boot` is not implemented.
 
