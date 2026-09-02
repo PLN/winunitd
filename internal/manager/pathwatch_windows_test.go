@@ -329,3 +329,66 @@ Type=simple
 		t.Fatalf("gen = %d after PathExists delete, want %d", gotGen, gen)
 	}
 }
+
+func TestWindowsPathExistsSiblingDoesNotSatisfy(t *testing.T) {
+	watchDir := t.TempDir()
+	target := filepath.Join(watchDir, "ready.flag")
+	dir := t.TempDir()
+	count := filepath.Join(dir, "count.txt")
+	m := windowsPathExistsManager(t, dir, target, `
+Type=oneshot
+`, "exit", 0, count)
+	if _, err := m.Start(context.Background(), "foo.path"); err != nil {
+		t.Fatal(err)
+	}
+	assertState(t, m, "foo.path", core.Active)
+	if err := os.WriteFile(filepath.Join(watchDir, "other.txt"), []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(800 * time.Millisecond)
+	if helperCountLines(count) != 0 {
+		t.Fatal("sibling create must not satisfy PathExists")
+	}
+	if err := os.WriteFile(target, []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitWindowsCount(t, count, 1, 8*time.Second)
+}
+
+func TestWindowsPathExistsAncestorCreateSatisfies(t *testing.T) {
+	watchDir := t.TempDir()
+	target := filepath.Join(watchDir, "sub", "ready.flag")
+	dir := t.TempDir()
+	count := filepath.Join(dir, "count.txt")
+	m := windowsPathExistsManager(t, dir, target, `
+Type=oneshot
+`, "exit", 0, count)
+	if _, err := m.Start(context.Background(), "foo.path"); err != nil {
+		t.Fatal(err)
+	}
+	assertState(t, m, "foo.path", core.Active)
+	if helperCountLines(count) != 0 {
+		t.Fatal("missing PathExists must not start the oneshot")
+	}
+	if err := os.WriteFile(filepath.Join(watchDir, "noise.txt"), []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(watchDir, "other"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(800 * time.Millisecond)
+	if helperCountLines(count) != 0 {
+		t.Fatal("sibling create under ancestor must not satisfy PathExists")
+	}
+	if err := os.Mkdir(filepath.Join(watchDir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(800 * time.Millisecond)
+	if helperCountLines(count) != 0 {
+		t.Fatal("intermediate directory must not satisfy PathExists")
+	}
+	if err := os.WriteFile(target, []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitWindowsCount(t, count, 1, 8*time.Second)
+}
