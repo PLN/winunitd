@@ -223,6 +223,17 @@ func (l *winLauncher) create(spec StartSpec) (*winProc, error) {
 		_ = job.Close()
 		return nil, err
 	}
+	if spec.Limits.IoPrioritySet {
+		if err := setProcessIoPriority(pi.Process, spec.Limits.IoPriority); err != nil {
+			_ = windows.TerminateProcess(pi.Process, 1)
+			_ = windows.CloseHandle(pi.Thread)
+			_ = windows.CloseHandle(pi.Process)
+			_ = windows.CloseHandle(stdoutR)
+			_ = windows.CloseHandle(stderrR)
+			_ = job.Close()
+			return nil, err
+		}
+	}
 	if err := assignDaemonPID(l.daemon, int(pi.ProcessId)); err != nil {
 		_ = windows.TerminateProcess(pi.Process, 1)
 		_ = windows.CloseHandle(pi.Thread)

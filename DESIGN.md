@@ -159,6 +159,7 @@ Benefits:
 - Track the entire process hierarchy
 - Terminate all descendants on stop
 - Apply job-wide MemoryMax=, ProcessLimit=, and PriorityClass= (R1)
+- Apply CPUWeight= / CPUQuota= (Job Object CPU rate) and IoPriority= (R2)
 - Detect process lifecycle events
 - Prevent orphaned helper processes
 
@@ -1656,9 +1657,12 @@ Use SCM preshutdown support to obtain more than the minimal normal service shutd
 
 ## 43. Resource Control
 
-Job Objects make job-wide resource limits realistic. R1 applies these
-`[Service]` directives to the unit's existing Job Object (the whole
-process tree, not the main PID only):
+Job Objects make job-wide resource limits realistic. Directives apply
+to the unit's existing Job Object (the whole process tree, not the
+main PID only). Type=scm and Type=scheduled-task have no job; those
+keys are ignored with a verify warning, matching R1.
+
+R1 applies:
 
 ```ini
 MemoryMax=2G
@@ -1671,14 +1675,12 @@ PriorityClass=below-normal
 - `ProcessLimit=` is the maximum number of active processes in that job.
 - `PriorityClass=` is `idle`, `below-normal`, `normal`, `above-normal`,
   or `high`. `realtime` is rejected.
-- Omitting all three leaves today's job (no extra Job Object limits).
+- Omitting all resource keys leaves today's job (no extra Job Object limits).
 - Hitting `MemoryMax=` or `ProcessLimit=` fails the unit with reason
   `resource-limit` (`winctl status`, §44). `Restart=` still applies,
   including `on-failure`. Start-limit still applies to those relaunches.
 
-These are Windows Job Object semantics, not cgroup `memory.max` / `cpu.max`.
-
-CPU and I/O controls are named only when a later slice can enforce them:
+R2 applies:
 
 ```ini
 CPUWeight=50
@@ -1686,7 +1688,34 @@ CPUQuota=25%
 IoPriority=low
 ```
 
-They are not parsed in R1.
+- `CPUWeight=` is an integer 1–10000. It maps to Job Object weight-based
+  CPU rate (Windows weight 1–9):
+  `weight = clamp(1, 9, (CPUWeight + 1110) / 1111)` (integer division).
+  Examples: `CPUWeight=50` → 1; `CPUWeight=5000` → 5; `CPUWeight=10000` → 9.
+  `ControlFlags` are `JOB_OBJECT_CPU_RATE_CONTROL_ENABLE |
+  JOB_OBJECT_CPU_RATE_CONTROL_WEIGHT_BASED`.
+- `CPUQuota=` is `N%` with N in 1–10000. The trailing `%` is required.
+  It maps to a hard-cap `CpuRate = N * 100` (hundredths of a percent),
+  so `CPUQuota=25%` is `CpuRate=2500`. `ControlFlags` are
+  `JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP`.
+  Windows rejects a `CpuRate` above `10000 * number of processors`; that
+  fails activation with reason `configuration` (no silent clamp).
+- `CPUWeight=` and `CPUQuota=` cannot both be set (one CPU control mode
+  per unit).
+- `IoPriority=` is `idle`, `low`, `normal`, or `high`. Job Objects have
+  no I/O-priority information class. R2 sets
+  `NtSetInformationProcess(ProcessIoPriority)` on the main process after
+  it is assigned to the unit job and while it is still `CREATE_SUSPENDED`,
+  so the process stays in the job. Mapping: `idle`→`IoPriorityVeryLow`(0),
+  `low`→`IoPriorityLow`(1), `normal`→`IoPriorityNormal`(2),
+  `high`→`IoPriorityHigh`(3). A failed set fails activation with reason
+  `configuration` (no silent no-op). Children inherit I/O priority at
+  `CreateProcess`.
+
+These are Windows Job Object / process I/O-priority semantics, not cgroup
+`cpu.weight` / `cpu.max` / `io.weight`. A Windows weight 1–9 is not a
+cgroup weight. `CPUQuota=25%` is a Job Object `CpuRate` of 2500
+(25.00% in hundredths-of-percent), not cgroup `cpu.max`.
 
 ---
 
@@ -2583,7 +2612,7 @@ Add:
 - path units — `.path` `PathChanged=` (OR) and `PathExists=` (AND) (★; `PathExistsIsDirectory=` later)
 - registry/event triggers — `.registry` and `.eventlog` are the Windows-native companions (★)
 - templates
-- remaining resource limits (CPUWeight=, CPUQuota=, IoPriority=)
+- remaining resource limits — R2: CPUWeight=, CPUQuota=, IoPriority= (implemented; Windows Job Object / ProcessIoPriority semantics, not cgroups)
 - credentials
 - session-scoped GUI units
 - remote control

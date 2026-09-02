@@ -21,6 +21,9 @@ func OpenUnitJob() (*UnitJob, error) {
 
 // OpenUnitJobWith records limits so QueryLimits can be asserted on Linux.
 func OpenUnitJobWith(lim JobLimits) (*UnitJob, error) {
+	if lim.CPUWeight > 0 && lim.CPURate > 0 {
+		return nil, fmt.Errorf("configuration: CPUWeight and CPUQuota cannot both be set")
+	}
 	return &UnitJob{limits: lim}, nil
 }
 
@@ -85,11 +88,22 @@ func (j *UnitJob) QueryLimits() (JobObjectLimits, error) {
 	if j.closed {
 		return JobObjectLimits{}, fmt.Errorf("unit job is closed")
 	}
-	return JobObjectLimits{
+	got := JobObjectLimits{
 		JobMemory:     j.limits.MemoryMax,
 		ProcessLimit:  j.limits.ProcessLimit,
 		PriorityClass: j.limits.PriorityClass,
-	}, nil
+		CPUWeight:     j.limits.CPUWeight,
+		CPURate:       j.limits.CPURate,
+		IoPriority:    j.limits.IoPriority,
+		IoPrioritySet: j.limits.IoPrioritySet,
+	}
+	switch {
+	case j.limits.CPUWeight > 0:
+		got.CPUControlFlags = JobCPURateEnable | JobCPURateWeightBased
+	case j.limits.CPURate > 0:
+		got.CPUControlFlags = JobCPURateEnable | JobCPURateHardCap
+	}
+	return got, nil
 }
 
 // ResourceLimitC is always nil on the stub.

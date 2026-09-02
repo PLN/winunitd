@@ -368,6 +368,18 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 				st.Reason = r
 			}
 		}
+		if rt.unit != nil && rt.unit.Service != nil {
+			svc := rt.unit.Service
+			if svc.CPUWeightSet {
+				st.CPUWeight = svc.CPUWeight
+			}
+			if svc.CPUQuotaSet {
+				st.CPUQuota = svc.CPUQuota
+			}
+			if svc.IoPrioritySet {
+				st.IoPriority = string(svc.IoPriority)
+			}
+		}
 	}
 	return st
 }

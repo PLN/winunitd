@@ -142,6 +142,9 @@ func TestUnitJobNoBreakawayFlags(t *testing.T) {
 	if got.LimitFlags&windows.JOB_OBJECT_LIMIT_PRIORITY_CLASS != 0 {
 		t.Fatal("no PriorityClass: JOB_OBJECT_LIMIT_PRIORITY_CLASS must not be set")
 	}
+	if got.CPUControlFlags&JobCPURateEnable != 0 {
+		t.Fatal("no CPUWeight/CPUQuota: CPU rate control must not be set")
+	}
 }
 
 func TestStartedUnitIsInOwnJob(t *testing.T) {

@@ -89,3 +89,54 @@ func parsePriorityClass(s string) (PriorityClass, error) {
 		return "", fmt.Errorf("invalid PriorityClass %q (supported: idle, below-normal, normal, above-normal, high)", raw)
 	}
 }
+
+// parseCPUWeight parses CPUWeight= (DESIGN.md §43 R2). Integer 1–10000.
+func parseCPUWeight(s string) (uint32, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty CPUWeight")
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid CPUWeight %q", s)
+	}
+	if n < 1 || n > 10000 {
+		return 0, fmt.Errorf("invalid CPUWeight %q", s)
+	}
+	return uint32(n), nil
+}
+
+// parseCPUQuota parses CPUQuota= N% (DESIGN.md §43 R2). N is an integer 1–10000.
+// The trailing % is required.
+func parseCPUQuota(s string) (uint32, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty CPUQuota")
+	}
+	if !strings.HasSuffix(s, "%") {
+		return 0, fmt.Errorf("invalid CPUQuota %q", s)
+	}
+	num := strings.TrimSpace(s[:len(s)-1])
+	n, err := strconv.ParseInt(num, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid CPUQuota %q", s)
+	}
+	if n < 1 || n > 10000 {
+		return 0, fmt.Errorf("invalid CPUQuota %q", s)
+	}
+	return uint32(n), nil
+}
+
+// parseIoPriority parses IoPriority=. idle, low, normal, high only.
+func parseIoPriority(s string) (IoPriority, error) {
+	raw := strings.TrimSpace(s)
+	v := IoPriority(strings.ToLower(raw))
+	switch v {
+	case IoIdle, IoLow, IoNormal, IoHigh:
+		return v, nil
+	case "":
+		return "", fmt.Errorf("empty IoPriority")
+	default:
+		return "", fmt.Errorf("invalid IoPriority %q (supported: idle, low, normal, high)", raw)
+	}
+}

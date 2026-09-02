@@ -94,6 +94,61 @@ func (p PriorityClass) WindowsPriorityClass() uint32 {
 	}
 }
 
+// IoPriority is a [Service] IoPriority= value (DESIGN.md §43 R2).
+type IoPriority string
+
+const (
+	IoIdle   IoPriority = "idle"
+	IoLow    IoPriority = "low"
+	IoNormal IoPriority = "normal"
+	IoHigh   IoPriority = "high"
+)
+
+// Windows process I/O priority (IO_PRIORITY_HINT / ProcessIoPriority).
+const (
+	IoPriorityVeryLowNT = 0
+	IoPriorityLowNT     = 1
+	IoPriorityNormalNT  = 2
+	IoPriorityHighNT    = 3
+)
+
+// WindowsIoPriority is the ProcessIoPriority ULONG. Idle maps to
+// IoPriorityVeryLow. Zero is a valid idle value; callers must use
+// IoPrioritySet to distinguish omitted.
+func (p IoPriority) WindowsIoPriority() uint32 {
+	switch p {
+	case IoIdle:
+		return IoPriorityVeryLowNT
+	case IoLow:
+		return IoPriorityLowNT
+	case IoNormal:
+		return IoPriorityNormalNT
+	case IoHigh:
+		return IoPriorityHighNT
+	default:
+		return 0
+	}
+}
+
+// WindowsCPUWeight maps CPUWeight= (1–10000) to a Job Object weight (1–9):
+// weight = clamp(1, 9, (CPUWeight + 1110) / 1111) (DESIGN.md §43 R2).
+func WindowsCPUWeight(n uint32) uint32 {
+	w := (n + 1110) / 1111
+	if w < 1 {
+		return 1
+	}
+	if w > 9 {
+		return 9
+	}
+	return w
+}
+
+// WindowsCPURate maps CPUQuota= N% to JOBOBJECT CpuRate (hundredths of a
+// percent): CpuRate = N * 100.
+func WindowsCPURate(percent uint32) uint32 {
+	return percent * 100
+}
+
 // EnvVar is a single Environment= assignment. Values are stored literally;
 // ${} and %VAR% are not expanded.
 type EnvVar struct {
@@ -159,6 +214,11 @@ type ServiceSpec struct {
 	MemoryMax     uint64
 	ProcessLimit  uint32
 	PriorityClass PriorityClass
+	// CPUWeight is the unit-file integer 1–10000 (not the Windows 1–9 weight).
+	CPUWeight uint32
+	// CPUQuota is N from CPUQuota=N% (1–10000). CpuRate = N * 100.
+	CPUQuota   uint32
+	IoPriority IoPriority
 
 	RestartSecSet             bool
 	TimeoutStartSecSet        bool
@@ -169,6 +229,9 @@ type ServiceSpec struct {
 	MemoryMaxSet              bool
 	ProcessLimitSet           bool
 	PriorityClassSet          bool
+	CPUWeightSet              bool
+	CPUQuotaSet               bool
+	IoPrioritySet             bool
 }
 
 // HasJobResourceLimits reports MemoryMax= or ProcessLimit= (PriorityClass=

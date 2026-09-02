@@ -73,3 +73,98 @@ func TestParsePriorityClass(t *testing.T) {
 		}
 	}
 }
+
+func TestParseCPUWeight(t *testing.T) {
+	t.Parallel()
+	if n, err := parseCPUWeight("50"); err != nil || n != 50 {
+		t.Fatalf("50: n=%d err=%v", n, err)
+	}
+	if n, err := parseCPUWeight("1"); err != nil || n != 1 {
+		t.Fatalf("1: n=%d err=%v", n, err)
+	}
+	if n, err := parseCPUWeight("10000"); err != nil || n != 10000 {
+		t.Fatalf("10000: n=%d err=%v", n, err)
+	}
+	for _, in := range []string{"0", "-1", "10001", "abc", "", "50%", "1.5"} {
+		if _, err := parseCPUWeight(in); err == nil {
+			t.Fatalf("parseCPUWeight(%q) succeeded, want error", in)
+		}
+	}
+}
+
+func TestParseCPUQuota(t *testing.T) {
+	t.Parallel()
+	if n, err := parseCPUQuota("25%"); err != nil || n != 25 {
+		t.Fatalf("25%%: n=%d err=%v", n, err)
+	}
+	if n, err := parseCPUQuota("1%"); err != nil || n != 1 {
+		t.Fatalf("1%%: n=%d err=%v", n, err)
+	}
+	if n, err := parseCPUQuota("10000%"); err != nil || n != 10000 {
+		t.Fatalf("10000%%: n=%d err=%v", n, err)
+	}
+	if n, err := parseCPUQuota(" 100% "); err != nil || n != 100 {
+		t.Fatalf(" 100%% : n=%d err=%v", n, err)
+	}
+	for _, in := range []string{"25", "0%", "10001%", "abc%", "%", "-1%", "25.5%", "", "25%%"} {
+		if _, err := parseCPUQuota(in); err == nil {
+			t.Fatalf("parseCPUQuota(%q) succeeded, want error", in)
+		}
+	}
+}
+
+func TestParseIoPriority(t *testing.T) {
+	t.Parallel()
+	ok := []IoPriority{IoIdle, IoLow, IoNormal, IoHigh}
+	for _, want := range ok {
+		got, err := parseIoPriority(string(want))
+		if err != nil || got != want {
+			t.Fatalf("%s: got=%q err=%v", want, got, err)
+		}
+	}
+	got, err := parseIoPriority("Low")
+	if err != nil || got != IoLow {
+		t.Fatalf("case fold: got=%q err=%v", got, err)
+	}
+	for _, in := range []string{"below-normal", "realtime", "critical", "", "idle-low"} {
+		if _, err := parseIoPriority(in); err == nil {
+			t.Fatalf("parseIoPriority(%q) succeeded, want error", in)
+		}
+	}
+}
+
+func TestWindowsCPUWeightMapping(t *testing.T) {
+	t.Parallel()
+	// weight = clamp(1, 9, (CPUWeight + 1110) / 1111)
+	tests := []struct {
+		in, want uint32
+	}{
+		{1, 1},
+		{50, 1},
+		{1111, 1},
+		{1112, 2},
+		{2223, 3},
+		{5000, 5},
+		{8888, 8},
+		{8889, 9},
+		{10000, 9},
+	}
+	for _, tt := range tests {
+		if got := WindowsCPUWeight(tt.in); got != tt.want {
+			t.Fatalf("WindowsCPUWeight(%d) = %d, want %d", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestWindowsCPURateMapping(t *testing.T) {
+	t.Parallel()
+	if got := WindowsCPURate(25); got != 2500 {
+		t.Fatalf("WindowsCPURate(25) = %d, want 2500", got)
+	}
+	if got := WindowsCPURate(1); got != 100 {
+		t.Fatalf("WindowsCPURate(1) = %d, want 100", got)
+	}
+	if got := WindowsCPURate(10000); got != 1000000 {
+		t.Fatalf("WindowsCPURate(10000) = %d, want 1000000", got)
+	}
+}
