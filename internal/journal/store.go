@@ -3,6 +3,7 @@ package journal
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -171,17 +172,51 @@ func (s *Store) Attach(unit string, pid int, invocationID string, stdout, stderr
 // then Flush+Sync that unit's file (DESIGN.md §22: Sync on unit exit,
 // not per line).
 func (s *Store) Wait(unit string) {
+	s.waitCaptures(context.Background(), unit, false)
+}
+
+// WaitContext is Wait with a deadline. If ctx fires first, the hung
+// capture group is abandoned so a later Wait/Attach is not blocked
+// (stopUnit TimeoutStopSec; issue #68). Returns false on timeout.
+func (s *Store) WaitContext(ctx context.Context, unit string) bool {
+	return s.waitCaptures(ctx, unit, true)
+}
+
+func (s *Store) waitCaptures(ctx context.Context, unit string, abandonOnCancel bool) bool {
 	if s == nil {
-		return
+		return true
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	unit = canonicalUnit(unit)
 	s.mu.Lock()
 	wg := s.capWG[unit]
 	s.mu.Unlock()
-	if wg != nil {
-		wg.Wait()
+	if wg == nil {
+		s.syncUnit(unit)
+		return true
 	}
-	s.syncUnit(unit)
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		s.syncUnit(unit)
+		return true
+	case <-ctx.Done():
+		if abandonOnCancel {
+			s.mu.Lock()
+			if s.capWG[unit] == wg {
+				delete(s.capWG, unit)
+			}
+			s.mu.Unlock()
+		}
+		s.syncUnit(unit)
+		return false
+	}
 }
 
 func (s *Store) beginCapture(unit string) func() {

@@ -29,7 +29,7 @@ Commands:
   list-units          List loaded units
   list-timers         List timers
   logs <unit> [--follow] [--since <when>]
-                      Show unit logs (poll --follow; --since RFC3339 / 1h / "1 hour ago")
+                      Show unit logs (poll --follow; --since RFC3339 / 1d / "1 hour ago")
   daemon-reload       Reload unit files
   verify <path|unit>  Verify a unit file path (no daemon) or a loaded unit
   enable-linger <user>
