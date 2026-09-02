@@ -126,4 +126,7 @@ func TestTriggerQuery(t *testing.T) {
 	if tr.Query() != "*[System[(EventID=4242)]]" {
 		t.Fatalf("query = %q", tr.Query())
 	}
+	if q := (Trigger{}).Query(); q != "" {
+		t.Fatalf("EventID=0 query = %q, want empty (not match-all)", q)
+	}
 }

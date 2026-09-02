@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 func TestWindowsOpenSubscribeFiresOnReport(t *testing.T) {
@@ -31,6 +33,45 @@ func TestWindowsOpenSubscribeFiresOnReport(t *testing.T) {
 	case <-s.C():
 	case <-time.After(8 * time.Second):
 		t.Fatal("Application subscribe did not fire after ReportEvent")
+	}
+}
+
+func TestWindowsOpenSubscribeQueryIsEventIDXPath(t *testing.T) {
+	if err := WevtapiOK(); err != nil {
+		t.Skip(err.Error())
+	}
+	tr, err := ParseTrigger("Application:EventID=4242")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := OpenSubscribe(tr)
+	if err != nil {
+		t.Skip(err.Error())
+	}
+	defer s.Close()
+	ws, ok := s.(*winSub)
+	if !ok {
+		t.Fatalf("OpenSubscribe type %T", s)
+	}
+	got := windows.UTF16ToString(ws.queryUTF16)
+	if got != "*[System[(EventID=4242)]]" {
+		t.Fatalf("EvtSubscribe query = %q (must not be NULL)", got)
+	}
+}
+
+func TestWindowsCallbackDeliverSignalsWithoutXML(t *testing.T) {
+	s := &winSub{ch: make(chan struct{}, 1)}
+	id := registerSub(s)
+	t.Cleanup(func() {
+		unregisterSub(id)
+	})
+	if evtSubscribeCallback(evtSubscribeActionDeliver, id, 0) != 0 {
+		t.Fatal("callback")
+	}
+	select {
+	case <-s.ch:
+	default:
+		t.Fatal("deliver must signal without EvtRender of the event handle")
 	}
 }
 
