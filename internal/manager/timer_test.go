@@ -289,7 +289,8 @@ func waitLauncherUnit(t *testing.T, launch *fakeLauncher, name string) {
 }
 
 func TestStatusConcurrentWithTimerTick(t *testing.T) {
-	t.Parallel()
+	// Not Parallel: a Status/ListTimers storm on Windows CI starved
+	// TestRestartOnWatchdogRelaunches (8a193aa).
 	launch := &fakeLauncher{}
 	m, fk := managerWithFake(t, launch, map[string]string{
 		"job.service": `
