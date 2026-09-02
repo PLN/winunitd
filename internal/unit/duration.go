@@ -12,10 +12,10 @@ import (
 
 const maxDuration = time.Duration(math.MaxInt64)
 
-// parseDuration parses a systemd-style time span.
+// ParseDuration parses a systemd-style time span.
 // A bare number is seconds. Units may be concatenated or whitespace-separated
 // (for example "5s", "1h 30min"). "infinity" is the maximum duration.
-func parseDuration(s string) (time.Duration, error) {
+func ParseDuration(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return 0, fmt.Errorf("empty duration")

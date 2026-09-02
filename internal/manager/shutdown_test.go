@@ -2,10 +2,13 @@ package manager
 
 import (
 	"context"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/runtime"
 )
 
 func TestShutdownStopsAfterOrderedServices(t *testing.T) {
@@ -276,5 +279,103 @@ RestartSec=1s
 	fk.Advance(time.Second)
 	if got := launch.nstarts(); got != n {
 		t.Fatalf("restart after shutdown: starts %d -> %d", n, got)
+	}
+}
+
+// hangJournalLauncher is a fakeLauncher whose stdout never reaches EOF,
+// so journal.Wait blocks until abandoned (issue #68).
+type hangJournalLauncher struct {
+	fakeLauncher
+	pw *io.PipeWriter
+}
+
+func (f *hangJournalLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
+	pr, pw := io.Pipe()
+	f.mu.Lock()
+	f.starts = append(f.starts, spec)
+	f.pw = pw
+	pid := f.pid
+	f.mu.Unlock()
+	if pid == 0 {
+		pid = 1
+	}
+	job, err := runtime.OpenUnitJob()
+	if err != nil {
+		_ = pw.Close()
+		return nil, err
+	}
+	return &fakeProc{
+		name:   spec.Unit,
+		rec:    &f.fakeLauncher,
+		pid:    pid,
+		job:    job,
+		done:   make(chan struct{}),
+		stdout: io.NopCloser(pr),
+		stderr: io.NopCloser(strings.NewReader("")),
+	}, nil
+}
+
+func TestStopUnitReleasesOpLockDuringJournalWait(t *testing.T) {
+	t.Parallel()
+	launch := &hangJournalLauncher{}
+	m, fk := managerWithFake(t, launch, map[string]string{
+		"foo.service": `
+[Service]
+Type=simple
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+TimeoutStopSec=30s
+`,
+	})
+	if _, err := m.Start(context.Background(), "foo"); err != nil {
+		t.Fatal(err)
+	}
+
+	stopErr := make(chan error, 1)
+	go func() {
+		_, err := m.Stop("foo")
+		stopErr <- err
+	}()
+
+	waitCond(t, func() bool {
+		m.mu.Lock()
+		st := m.stateOfLocked("foo.service")
+		m.mu.Unlock()
+		if st != core.Deactivating {
+			return false
+		}
+		unlock, ok := m.ops.tryLock("foo.service")
+		if !ok {
+			return false
+		}
+		unlock()
+		select {
+		case <-stopErr:
+			return false
+		default:
+			return true
+		}
+	})
+
+	fk.Advance(30 * time.Second)
+	select {
+	case err := <-stopErr:
+		if err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop did not return after TimeoutStopSec")
+	}
+
+	if _, err := m.Start(context.Background(), "foo"); err != nil {
+		t.Fatalf("later Start blocked: %v", err)
+	}
+	if launch.pw != nil {
+		_ = launch.pw.Close()
 	}
 }

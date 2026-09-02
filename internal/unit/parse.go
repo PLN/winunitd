@@ -514,7 +514,7 @@ func (p *parser) finishStartLimit() {
 	p.unit.StartLimitInterval = DefaultStartLimitInterval
 	p.unit.StartLimitBurst = DefaultStartLimitBurst
 	if p.startLimitInterval != "" {
-		d, err := parseDuration(p.startLimitInterval)
+		d, err := ParseDuration(p.startLimitInterval)
 		if err != nil {
 			p.errorf(p.startLimitIntervalL, "invalid StartLimitIntervalSec: %s", err.Error())
 		} else {
@@ -644,7 +644,7 @@ func (p *parser) finishService() {
 	}
 
 	if s.restartSec != "" {
-		d, err := parseDuration(s.restartSec)
+		d, err := ParseDuration(s.restartSec)
 		if err != nil {
 			p.errorf(s.restartSecL, "invalid RestartSec: %s", err.Error())
 		} else {
@@ -653,7 +653,7 @@ func (p *parser) finishService() {
 		}
 	}
 	if s.timeoutStart != "" {
-		d, err := parseDuration(s.timeoutStart)
+		d, err := ParseDuration(s.timeoutStart)
 		if err != nil {
 			p.errorf(s.timeoutStartL, "invalid TimeoutStartSec: %s", err.Error())
 		} else {
@@ -662,7 +662,7 @@ func (p *parser) finishService() {
 		}
 	}
 	if s.timeoutStop != "" {
-		d, err := parseDuration(s.timeoutStop)
+		d, err := ParseDuration(s.timeoutStop)
 		if err != nil {
 			p.errorf(s.timeoutStopL, "invalid TimeoutStopSec: %s", err.Error())
 		} else {
@@ -699,7 +699,7 @@ func (p *parser) finishService() {
 	}
 
 	if s.watchdogSec != "" {
-		d, err := parseDuration(s.watchdogSec)
+		d, err := ParseDuration(s.watchdogSec)
 		if err != nil {
 			p.errorf(s.watchdogSecL, "invalid WatchdogSec: %s", err.Error())
 		} else {
@@ -774,7 +774,7 @@ func (p *parser) finishTimer() {
 		if raw == "" {
 			return 0, false
 		}
-		d, err := parseDuration(raw)
+		d, err := ParseDuration(raw)
 		if err != nil {
 			p.errorf(line, "invalid %s: %s", label, err.Error())
 			return 0, false

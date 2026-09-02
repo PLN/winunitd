@@ -136,8 +136,6 @@ func (m *Manager) replaceLocked(units []*unit.Unit, g *core.Graph, links map[str
 	// stopped (DESIGN.md §33); their restart timers are cancelled above
 	// so a mid-delay drop cannot relaunch or leave SubAutoRestart.
 	m.syncTimersLocked()
-	m.syncRegistryLocked()
-	m.syncEventLogLocked()
-	m.syncPathLocked()
+	m.syncHubsLocked()
 	return dropped
 }

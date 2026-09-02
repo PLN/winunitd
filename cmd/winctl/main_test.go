@@ -792,6 +792,16 @@ WorkingDirectory=C:\Tools
 
 	out.Reset()
 	errb.Reset()
+	code = runCLI([]string{"logs", "foo", "--since", "1d"}, &out, &errb, dial)
+	if code != 0 {
+		t.Fatalf("logs --since 1d exit %d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "hello from unit") {
+		t.Fatalf("logs --since 1d dropped live lines: %s", out.String())
+	}
+
+	out.Reset()
+	errb.Reset()
 	future := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
 	code = runCLI([]string{"logs", "foo", "--since", future}, &out, &errb, dial)
 	if code != 0 {
