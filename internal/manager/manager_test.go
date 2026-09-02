@@ -1014,6 +1014,83 @@ PriorityClass=below-normal
 	}
 }
 
+func TestStartPassesCPUWeightToLauncher(t *testing.T) {
+	t.Parallel()
+	launch := &fakeLauncher{}
+	dir := t.TempDir()
+	units := filepath.Join(dir, "units")
+	if err := os.MkdirAll(units, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeUnit(t, units, "cpu.service", `
+[Service]
+Type=simple
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+CPUWeight=50
+IoPriority=low
+`)
+	m, err := New(Config{BaseDir: dir, Launch: launch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopAll(m) })
+	if _, err := m.Start(context.Background(), "cpu"); err != nil {
+		t.Fatal(err)
+	}
+	got := launch.specs()
+	if len(got) != 1 {
+		t.Fatalf("starts = %+v", got)
+	}
+	want := runtime.JobLimits{
+		CPUWeight:     unit.WindowsCPUWeight(50),
+		IoPriority:    unit.IoPriorityLowNT,
+		IoPrioritySet: true,
+	}
+	if got[0].Limits != want {
+		t.Fatalf("limits = %+v, want %+v", got[0].Limits, want)
+	}
+}
+
+func TestStartPassesCPUQuotaToLauncher(t *testing.T) {
+	t.Parallel()
+	launch := &fakeLauncher{}
+	dir := t.TempDir()
+	units := filepath.Join(dir, "units")
+	if err := os.MkdirAll(units, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeUnit(t, units, "quota.service", `
+[Service]
+Type=simple
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+CPUQuota=25%
+`)
+	m, err := New(Config{BaseDir: dir, Launch: launch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopAll(m) })
+	if _, err := m.Start(context.Background(), "quota"); err != nil {
+		t.Fatal(err)
+	}
+	got := launch.specs()
+	if len(got) != 1 {
+		t.Fatalf("starts = %+v", got)
+	}
+	want := runtime.JobLimits{CPURate: unit.WindowsCPURate(25)}
+	if got[0].Limits != want {
+		t.Fatalf("limits = %+v, want %+v", got[0].Limits, want)
+	}
+}
+
 func TestStatusResourceLimitReason(t *testing.T) {
 	t.Parallel()
 	m := testManager(t, map[string]string{
@@ -1039,6 +1116,39 @@ MemoryMax=2G
 	}
 	if st.Unit.Reason != core.ReasonResourceLimit || st.Unit.Error != core.ReasonResourceLimit {
 		t.Fatalf("reason=%q error=%q", st.Unit.Reason, st.Unit.Error)
+	}
+}
+
+func TestStatusReflectsCPULimits(t *testing.T) {
+	t.Parallel()
+	m := testManager(t, map[string]string{
+		"cpu.service": `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+CPUWeight=50
+IoPriority=low
+`,
+		"quota.service": `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+CPUQuota=25%
+`,
+	})
+	st, err := m.Status("cpu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Unit == nil || st.Unit.CPUWeight != 50 || st.Unit.IoPriority != "low" || st.Unit.CPUQuota != 0 {
+		t.Fatalf("cpu status = %+v", st.Unit)
+	}
+	st, err = m.Status("quota")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Unit == nil || st.Unit.CPUQuota != 25 || st.Unit.CPUWeight != 0 {
+		t.Fatalf("quota status = %+v", st.Unit)
 	}
 }
 

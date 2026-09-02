@@ -565,8 +565,9 @@ func TestFollowerOn10MiBDoesNotStallAppend(t *testing.T) {
 	bound := 20 * time.Millisecond
 	if runtime.GOOS == "windows" {
 		// Flush of the 10 MiB current file on windows-latest is often
-		// 30–40ms (a63a3b0: 33ms). Still far below a full-file scan.
-		bound = 100 * time.Millisecond
+		// 30–40ms (a63a3b0: 33ms) and has been observed at ~106ms
+		// under Actions load. Still far below a full-file scan.
+		bound = 200 * time.Millisecond
 	}
 	if scanDur > 50*time.Millisecond {
 		bound = scanDur / 5
