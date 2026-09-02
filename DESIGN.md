@@ -1029,7 +1029,7 @@ User managers use `%LOCALAPPDATA%\winunitd\journal\`. Tests inject a temp `BaseD
 
 On-disk format is JSON lines with a `v` field (currently `v=1`, DESIGN.md §53). Each unit has one **current** file plus rotated generations.
 
-File name: reversible percent-encoding of the lower-case unit name so Windows-forbidden characters cannot collide (`foo:bar` → `foo%3Abar.log`, `foo*bar` → `foo%2Abar.log`). Map keys and files use the normalized name (DESIGN.md §36). `logs` / `Read` also filter by the record `unit` field so a mixed or colliding file cannot bleed lines across units.
+File name: reversible percent-encoding of the lower-case unit name so Windows-forbidden characters cannot collide (`foo:bar` → `foo%3Abar.log`, `foo*bar` → `foo%2Abar.log`). Reserved device basenames (`CON`/`PRN`/`AUX`/`NUL`/`COM1`–`9`/`LPT1`–`9`) and trailing dots or spaces are percent-encoded the same way. Map keys and files use the normalized name (DESIGN.md §36). `logs` / `Read` also filter by the record `unit` field so a mixed or colliding file cannot bleed lines across units.
 
 Fields stored in `v=1`:
 
@@ -1060,7 +1060,7 @@ winctl logs foo --follow
 winctl logs foo --since "1 hour ago"
 ```
 
-`--since` is honored on the daemon (`LogsParams.Since`). Accepted values: RFC3339 (nano or second), a `YYYY-MM-DD` date (UTC midnight), a Go duration subtracted from now (`1h`, `30m`), and `N <unit> ago` (`1 hour ago`, `30 minutes ago`). Invalid values are `invalid-params`, not a silent ignore.
+`--since` is honored on the daemon (`LogsParams.Since`). Accepted values: RFC3339 (nano or second), a `YYYY-MM-DD` date (UTC midnight), a unit-file duration subtracted from now (`1h`, `1d`, `30min`, `1h 30min`), and the same duration with a trailing `ago` (`1 hour ago`, `1 day 2 hours ago`). Invalid values are `invalid-params`, not a silent ignore.
 
 `--follow` is client polling with an opaque cursor (`LogsParams.Cursor` / `LogsResult.Cursor`). Each poll may wait briefly for new lines. The wait deadline uses the manager clock (the same `now` as `--since` relative times), so a fake clock can expire it. There is no streaming RPC.
 

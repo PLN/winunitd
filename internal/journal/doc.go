@@ -4,7 +4,8 @@
 // <base-dir>\journal\<encoded-unit>.log so they survive daemon-reload.
 // The file name and per-unit mutex key use the lower-case unit name
 // (DESIGN.md §36) with a reversible percent-encoding so Windows-forbidden
-// characters cannot collide. Read/Query filter by the record unit field.
+// characters and reserved device basenames cannot collide. Read/Query
+// filter by the record unit field.
 //
 // The current file is kept open. Lines are buffered and timer-flushed;
 // Sync runs on unit exit (Wait), daemon shutdown (Close), and rotate —
