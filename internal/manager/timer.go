@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/timers"
 	"github.com/PLN/winunitd/internal/unit"
 )
@@ -90,4 +91,21 @@ func formatTimerStamp(t time.Time) string {
 		return ""
 	}
 	return t.UTC().Format(time.RFC3339Nano)
+}
+
+// overlayTimer fills Next/Last from the engine after m.mu is released
+// so Status/ListUnits/ListTimers do not nest e.mu inside m.mu (issue #66).
+func (m *Manager) overlayTimer(st *protocol.UnitStatus) {
+	if st == nil || st.Kind != string(unit.KindTimer) {
+		return
+	}
+	st.Next, st.Last = m.timerStamps(st.Name)
+}
+
+func (m *Manager) timerStamps(name string) (next, last string) {
+	if m == nil || m.engine == nil {
+		return "", ""
+	}
+	snap := m.engine.Status(name)
+	return formatTimerStamp(snap.Next), formatTimerStamp(snap.Last)
 }
