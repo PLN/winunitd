@@ -16,7 +16,6 @@ const (
 	evtSubscribeToFutureEvents = 1
 	evtSubscribeActionError    = 0
 	evtSubscribeActionDeliver  = 1
-	evtRenderEventXml          = 1
 	errorEvtInvalidChannelPath = 15000
 	errorEvtChannelNotFound    = 15007
 )
@@ -24,7 +23,6 @@ const (
 var (
 	modWevtapi       = windows.NewLazySystemDLL("wevtapi.dll")
 	procEvtSubscribe = modWevtapi.NewProc("EvtSubscribe")
-	procEvtRender    = modWevtapi.NewProc("EvtRender")
 	procEvtClose     = modWevtapi.NewProc("EvtClose")
 
 	modAdvapi32               = windows.NewLazySystemDLL("advapi32.dll")
@@ -41,25 +39,24 @@ var (
 )
 
 type winSub struct {
-	id      uintptr
-	sub     windows.Handle
-	eventID uint16
-	ch      chan struct{}
+	id         uintptr
+	sub        windows.Handle
+	ch         chan struct{}
+	queryUTF16 []uint16
 
 	mu     sync.Mutex
 	closed bool
 }
 
 // OpenSubscribe watches channel for EventID via EvtSubscribe (push callback).
-// An unknown channel returns ErrUnknownChannel.
+// An unknown channel returns ErrUnknownChannel. A null or empty query
+// returns ErrEmptyQuery (or a parse error); it does not match-all.
 func OpenSubscribe(t Trigger) (Subscription, error) {
-	if t.Channel == "" || t.EventID == 0 {
-		parsed, err := ParseTrigger(t.Raw)
-		if err != nil {
-			return nil, err
-		}
-		t = parsed
+	resolved, query, err := subscribeQuery(t)
+	if err != nil {
+		return nil, err
 	}
+	t = resolved
 	if err := modWevtapi.Load(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrSubscribeFailed, err)
 	}
@@ -67,20 +64,24 @@ func OpenSubscribe(t Trigger) (Subscription, error) {
 	if err != nil {
 		return nil, err
 	}
+	queryUTF16, err := windows.UTF16FromString(query)
+	if err != nil {
+		return nil, err
+	}
 
 	s := &winSub{
-		eventID: t.EventID,
-		ch:      make(chan struct{}, 8),
+		ch:         make(chan struct{}, 8),
+		queryUTF16: queryUTF16,
 	}
 	id := registerSub(s)
 
-	// Push callback, Query=NULL (all events on the channel). EventID is
-	// filtered in the callback so classic ReportEvent records match.
+	// EvtSubscribe applies *[System[(EventID=N)]]; the callback only
+	// signals matches. Do not Query=NULL + EvtRender every event.
 	r0, _, callErr := procEvtSubscribe.Call(
 		0,
 		0,
 		uintptr(unsafe.Pointer(channel)),
-		0,
+		uintptr(unsafe.Pointer(&s.queryUTF16[0])),
 		0,
 		id,
 		subscribeCallback,
@@ -142,6 +143,7 @@ func (s *winSub) isClosed() bool {
 }
 
 func evtSubscribeCallback(action, ctx, handle uintptr) uintptr {
+	_ = handle // EventID filter is EvtSubscribe Query; do not EvtRender.
 	subMu.Lock()
 	s := subByID[ctx]
 	subMu.Unlock()
@@ -155,50 +157,8 @@ func evtSubscribeCallback(action, ctx, handle uintptr) uintptr {
 	if action != evtSubscribeActionDeliver {
 		return 0
 	}
-	xml, err := renderXML(windows.Handle(handle))
-	if err != nil {
-		return 0
-	}
-	id, ok := eventIDFromXML(xml)
-	if !ok || id != s.eventID {
-		return 0
-	}
 	s.signal()
 	return 0
-}
-
-func renderXML(h windows.Handle) (string, error) {
-	var used, props uint32
-	r, _, err := procEvtRender.Call(
-		0,
-		uintptr(h),
-		evtRenderEventXml,
-		0,
-		0,
-		uintptr(unsafe.Pointer(&used)),
-		uintptr(unsafe.Pointer(&props)),
-	)
-	if r == 0 {
-		if errno, ok := err.(syscall.Errno); !ok || errno != windows.ERROR_INSUFFICIENT_BUFFER || used == 0 {
-			if used == 0 {
-				return "", err
-			}
-		}
-	}
-	buf := make([]uint16, used/2+2)
-	r, _, err = procEvtRender.Call(
-		0,
-		uintptr(h),
-		evtRenderEventXml,
-		uintptr(len(buf)*2),
-		uintptr(unsafe.Pointer(&buf[0])),
-		uintptr(unsafe.Pointer(&used)),
-		uintptr(unsafe.Pointer(&props)),
-	)
-	if r == 0 {
-		return "", err
-	}
-	return windows.UTF16ToString(buf), nil
 }
 
 func registerSub(s *winSub) uintptr {
