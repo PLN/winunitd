@@ -168,6 +168,7 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 		nrt.SetMain(proc.PID(), proc.Job())
 	}
 	m.journal.Wait(name)
+	m.journal.SetOrigin(m.journalOrigin())
 	m.journal.Attach(name, proc.PID(), inv, proc.Stdout(), proc.Stderr())
 
 	m.mu.Lock()
@@ -545,4 +546,19 @@ func (m *Manager) hasInteractiveSession() bool {
 		return true
 	}
 	return m.cfg.HasInteractiveSession()
+}
+
+// journalOrigin is user-manager identity for v=2 journal lines.
+// System-scope leaves session and user SID empty.
+func (m *Manager) journalOrigin() journal.Origin {
+	if m == nil || !m.cfg.UserScope {
+		return journal.Origin{}
+	}
+	o := journal.Origin{UserSID: m.cfg.NotifySID}
+	if m.cfg.SessionID != nil {
+		o.Session = m.cfg.SessionID()
+	} else if o.UserSID != "" {
+		o.Session = runtime.SIDSession(o.UserSID)
+	}
+	return o
 }

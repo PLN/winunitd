@@ -2,6 +2,9 @@
 //
 // stdout/stderr from CreateProcess are appended as JSON lines under
 // <base-dir>\journal\<encoded-unit>.log so they survive daemon-reload.
+// Writers emit v=2 (timestamp, unit, pid, stream, message, invocationId,
+// severity, session, userSid). Readers accept mixed files: v=1 lines
+// decode with empty severity/session/userSid. Old files are not rewritten.
 // The file name and per-unit mutex key use the lower-case unit name
 // (DESIGN.md §36) with a reversible percent-encoding so Windows-forbidden
 // characters and reserved device basenames cannot collide. Read/Query

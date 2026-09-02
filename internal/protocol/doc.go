@@ -23,6 +23,10 @@
 //	LogsParams:  unit, since, follow, cursor
 //	LogsResult:  unit, entries, cursor
 //
+// LogEntry is the v=2 journal record (timestamp, unit, pid, stream,
+// message, invocationId, severity, session, userSid). Historical v=1
+// lines decode with empty severity/session/userSid.
+//
 // since is a lower bound (RFC3339, YYYY-MM-DD, Go duration, or
 // "N <unit> ago"). Invalid since is invalid-params — never a silent
 // ignore. follow waits briefly for new lines after cursor; winctl
