@@ -17,3 +17,9 @@ func SIDHasInteractiveSession(sid string) bool {
 	_ = sid
 	return false
 }
+
+// SIDSession is empty off Windows.
+func SIDSession(sid string) string {
+	_ = sid
+	return ""
+}

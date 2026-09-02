@@ -336,8 +336,17 @@ WorkingDirectory=C:\Tools
 	if msgs["hello from unit"].Stream != "stdout" {
 		t.Fatalf("stdout = %+v", msgs["hello from unit"])
 	}
+	if msgs["hello from unit"].Severity != journal.SeverityInfo {
+		t.Fatalf("stdout severity = %+v", msgs["hello from unit"])
+	}
 	if msgs["warn from unit"].Stream != "stderr" {
 		t.Fatalf("stderr = %+v", msgs["warn from unit"])
+	}
+	if msgs["warn from unit"].Severity != journal.SeverityErr {
+		t.Fatalf("stderr severity = %+v", msgs["warn from unit"])
+	}
+	if msgs["hello from unit"].Session != "" || msgs["hello from unit"].UserSID != "" {
+		t.Fatalf("system-scope origin = %+v", msgs["hello from unit"])
 	}
 	st, err := client.Status(ctx, "foo")
 	if err != nil {
@@ -395,6 +404,96 @@ WorkingDirectory=C:\Tools
 	}
 	if len(replay.Entries) != 0 {
 		t.Fatalf("cursor replay = %+v", replay)
+	}
+}
+
+func TestLogsReadsHistoricalV1(t *testing.T) {
+	t.Parallel()
+	m := testManager(t, map[string]string{
+		"foo.service": `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`,
+	})
+	line := `{"v":1,"timestamp":"2026-01-01T00:00:00Z","unit":"foo.service","pid":1,"stream":"stdout","message":"legacy","invocationId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}` + "\n"
+	if err := os.WriteFile(filepath.Join(m.cfg.JournalDir(), "foo.service.log"), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	logs, err := m.Logs(protocol.LogsParams{Unit: "foo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs.Entries) != 1 || logs.Entries[0].Message != "legacy" || logs.Entries[0].Stream != "stdout" {
+		t.Fatalf("v=1 logs = %+v", logs)
+	}
+	if logs.Entries[0].Severity != "" || logs.Entries[0].Session != "" || logs.Entries[0].UserSID != "" {
+		t.Fatalf("v=1 new fields must be empty: %+v", logs.Entries[0])
+	}
+}
+
+func TestLogsUserScopeSIDAndSession(t *testing.T) {
+	t.Parallel()
+	launch := &fakeLauncher{stdout: "hello from user\n", stderr: "warn from user\n"}
+	dir := t.TempDir()
+	units := filepath.Join(dir, "units")
+	if err := os.MkdirAll(units, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeUnit(t, units, "foo.service", `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`)
+	const sid = "S-1-5-21-1-2-3-1001"
+	m, err := New(Config{
+		BaseDir:               dir,
+		Launch:                launch,
+		UserScope:             true,
+		NotifySID:             sid,
+		SessionID:             func() string { return "3" },
+		HasInteractiveSession: func() bool { return true },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopAll(m) })
+
+	if _, err := m.Start(context.Background(), "foo"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	var logs *protocol.LogsResult
+	for time.Now().Before(deadline) {
+		logs, err = m.Logs(protocol.LogsParams{Unit: "foo"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(logs.Entries) >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if logs == nil || len(logs.Entries) < 2 {
+		t.Fatalf("user-scope logs = %+v", logs)
+	}
+	for _, e := range logs.Entries {
+		if e.UserSID != sid || e.Session != "3" {
+			t.Fatalf("origin = %+v", e)
+		}
+	}
+	msgs := map[string]protocol.LogEntry{}
+	for _, e := range logs.Entries {
+		msgs[e.Message] = e
+	}
+	if msgs["hello from user"].Severity != journal.SeverityInfo {
+		t.Fatalf("stdout = %+v", msgs["hello from user"])
+	}
+	if msgs["warn from user"].Severity != journal.SeverityErr {
+		t.Fatalf("stderr = %+v", msgs["warn from user"])
 	}
 }
 

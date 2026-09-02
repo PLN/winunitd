@@ -529,6 +529,9 @@ func (m *Manager) Logs(p protocol.LogsParams) (*protocol.LogsResult, error) {
 				Stream:       e.Stream,
 				Message:      e.Message,
 				InvocationID: e.InvocationID,
+				Severity:     e.Severity,
+				Session:      e.Session,
+				UserSID:      e.UserSID,
 			}
 			if !e.Timestamp.IsZero() {
 				le.Timestamp = e.Timestamp.UTC().Format(time.RFC3339Nano)

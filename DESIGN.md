@@ -1027,11 +1027,11 @@ C:\ProgramData\winunitd\journal\
 
 User managers use `%LOCALAPPDATA%\winunitd\journal\`. Tests inject a temp `BaseDir`.
 
-On-disk format is JSON lines with a `v` field (currently `v=1`, DESIGN.md §53). Each unit has one **current** file plus rotated generations.
+On-disk format is JSON lines with a `v` field (currently `v=2`, DESIGN.md §53). Each unit has one **current** file plus rotated generations.
 
 File name: reversible percent-encoding of the lower-case unit name so Windows-forbidden characters cannot collide (`foo:bar` → `foo%3Abar.log`, `foo*bar` → `foo%2Abar.log`). Reserved device basenames (`CON`/`PRN`/`AUX`/`NUL`/`COM1`–`9`/`LPT1`–`9`) and trailing dots or spaces are percent-encoded the same way. Map keys and files use the normalized name (DESIGN.md §36). `logs` / `Read` also filter by the record `unit` field so a mixed or colliding file cannot bleed lines across units.
 
-Fields stored in `v=1`:
+Fields stored in `v=2`:
 
 ```text
 timestamp
@@ -1040,9 +1040,14 @@ pid
 stream
 message
 invocation ID
+severity
+session
+user SID
 ```
 
-`severity`, `session`, and `user SID` are reserved for a later additive schema bump. The `v` field exists so that bump does not rewrite old lines.
+`v=1` lines (timestamp, unit, pid, stream, message, invocation ID) remain readable. Missing `severity` / `session` / `user SID` decode as empty. Writers emit `v=2` and do not rewrite old files.
+
+`severity` is mapped from `stream` (`stdout` → `info`, `stderr` → `err`). There is no unit-file severity directive. `session` and `user SID` come from the user-manager / unit runtime when known; system-scope lines leave them empty.
 
 The writer **keeps the current file open**. Lines are buffered and flushed on a short timer (and whenever logs are read). `Sync` (fsync) runs on unit capture end, daemon shutdown, and rotate — **not** per line.
 

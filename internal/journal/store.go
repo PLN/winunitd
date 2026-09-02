@@ -16,9 +16,6 @@ import (
 	"time"
 )
 
-// FormatVersion is the on-disk journal record version (DESIGN.md §53).
-const FormatVersion = 1
-
 // DefaultMaxSize is the current-file cap before rotate (DESIGN.md §22).
 const DefaultMaxSize = 10 << 20 // 10 MiB
 
@@ -45,6 +42,7 @@ type Store struct {
 	closed bool
 	files  map[string]*unitFile
 	capWG  map[string]*sync.WaitGroup
+	origin Origin
 
 	// onOpen / onSync / onScan / onEntryID are test hooks (nil in production).
 	// onOpen fires after a successful OpenFile; onSync fires immediately
@@ -57,7 +55,8 @@ type Store struct {
 	onEntryID func()
 }
 
-// Entry is one journal line (DESIGN.md §22).
+// Entry is one journal line (DESIGN.md §22). v=2 adds Severity, Session,
+// and UserSID. v=1 lines decode with those fields empty.
 type Entry struct {
 	Timestamp    time.Time
 	Unit         string
@@ -65,6 +64,9 @@ type Entry struct {
 	Stream       string
 	Message      string
 	InvocationID string
+	Severity     string
+	Session      string
+	UserSID      string
 }
 
 type record struct {
@@ -75,6 +77,9 @@ type record struct {
 	Stream       string `json:"stream,omitempty"`
 	Message      string `json:"message"`
 	InvocationID string `json:"invocationId,omitempty"`
+	Severity     string `json:"severity"`
+	Session      string `json:"session"`
+	UserSID      string `json:"userSid"`
 }
 
 type unitFile struct {
@@ -115,6 +120,26 @@ func (s *Store) Dir() string {
 	return s.dir
 }
 
+// SetOrigin records user-manager identity for subsequent Attach writes.
+// Empty Origin is the system-scope default.
+func (s *Store) SetOrigin(o Origin) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.origin = o
+	s.mu.Unlock()
+}
+
+func (s *Store) snapshotOrigin() Origin {
+	if s == nil {
+		return Origin{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.origin
+}
+
 // Close flushes and Syncs every open unit file, then closes them.
 // Further Append/Attach writes are dropped. Safe to call more than once.
 func (s *Store) Close() error {
@@ -143,10 +168,11 @@ func (s *Store) Close() error {
 }
 
 // Attach writes stdout and stderr to the unit's journal file, tagging
-// each line with invocationID (DESIGN.md §22, §24). Empty invocationID
-// is replaced with a new ID so isolated journal use still correlates
-// a capture. Nil streams are ignored. A nil Store still drains so the
-// child cannot block.
+// each line with invocationID (DESIGN.md §22, §24) and v=2 fields
+// (severity from stream; session and user SID from SetOrigin). Empty
+// invocationID is replaced with a new ID so isolated journal use still
+// correlates a capture. Nil streams are ignored. A nil Store still
+// drains so the child cannot block.
 func (s *Store) Attach(unit string, pid int, invocationID string, stdout, stderr io.Reader) {
 	if s == nil {
 		go drain(stdout)
@@ -157,14 +183,15 @@ func (s *Store) Attach(unit string, pid int, invocationID string, stdout, stderr
 	if invocationID == "" {
 		invocationID = NewInvocationID()
 	}
+	origin := s.snapshotOrigin()
 	done := s.beginCapture(unit)
 	go func() {
 		defer done()
-		s.capture(unit, pid, invocationID, "stdout", stdout)
+		s.capture(unit, pid, invocationID, origin, "stdout", stdout)
 	}()
 	go func() {
 		defer done()
-		s.capture(unit, pid, invocationID, "stderr", stderr)
+		s.capture(unit, pid, invocationID, origin, "stderr", stderr)
 	}()
 }
 
@@ -233,7 +260,7 @@ func (s *Store) beginCapture(unit string) func() {
 	return wg.Done
 }
 
-func (s *Store) capture(unit string, pid int, inv, stream string, r io.Reader) {
+func (s *Store) capture(unit string, pid int, inv string, origin Origin, stream string, r io.Reader) {
 	if r == nil {
 		return
 	}
@@ -250,6 +277,9 @@ func (s *Store) capture(unit string, pid int, inv, stream string, r io.Reader) {
 					Stream:       stream,
 					Message:      msg,
 					InvocationID: inv,
+					Severity:     SeverityFromStream(stream),
+					Session:      origin.Session,
+					UserSID:      origin.UserSID,
 				})
 			}
 		}
@@ -264,6 +294,9 @@ func (s *Store) append(e Entry) {
 		return
 	}
 	e.Unit = canonicalUnit(e.Unit)
+	if e.Severity == "" {
+		e.Severity = SeverityFromStream(e.Stream)
+	}
 	rec := record{
 		V:            FormatVersion,
 		Timestamp:    e.Timestamp.UTC().Format(time.RFC3339Nano),
@@ -272,6 +305,9 @@ func (s *Store) append(e Entry) {
 		Stream:       e.Stream,
 		Message:      e.Message,
 		InvocationID: e.InvocationID,
+		Severity:     e.Severity,
+		Session:      e.Session,
+		UserSID:      e.UserSID,
 	}
 	raw, err := json.Marshal(rec)
 	if err != nil {
@@ -617,6 +653,9 @@ func decodeRecord(line []byte) (Entry, bool) {
 		Stream:       rec.Stream,
 		Message:      rec.Message,
 		InvocationID: rec.InvocationID,
+		Severity:     rec.Severity,
+		Session:      rec.Session,
+		UserSID:      rec.UserSID,
 	}
 	if rec.Timestamp != "" {
 		if t, err := time.Parse(time.RFC3339Nano, rec.Timestamp); err == nil {
