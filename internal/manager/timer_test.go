@@ -2,8 +2,10 @@ package manager
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -284,6 +286,74 @@ OnUnitActiveSec=5s
 func waitLauncherUnit(t *testing.T, launch *fakeLauncher, name string) {
 	t.Helper()
 	waitCond(t, func() bool { return containsString(launch.units(), name) })
+}
+
+func TestStatusConcurrentWithTimerTick(t *testing.T) {
+	// Not Parallel: a Status/ListTimers storm on Windows CI starved
+	// TestRestartOnWatchdogRelaunches (8a193aa).
+	launch := &fakeLauncher{}
+	m, fk := managerWithFake(t, launch, map[string]string{
+		"job.service": `
+[Service]
+Type=oneshot
+ExecStart=C:\Tools\job.exe
+WorkingDirectory=C:\Tools
+`,
+		"job.timer": `
+[Timer]
+OnStartupSec=5s
+`,
+	})
+	if _, err := m.Start(context.Background(), "job.timer"); err != nil {
+		t.Fatal(err)
+	}
+	waitCond(t, func() bool {
+		st, err := m.Status("job.timer")
+		return err == nil && st.Unit != nil && st.Unit.Next != ""
+	})
+
+	stop := make(chan struct{})
+	var statusErr atomic.Value
+	go func() {
+		// Do not busy-spin: a tight Status loop starves other Parallel
+		// tests on Windows CI (same class as the Gosched wait in
+		// waitErr / issue #92).
+		tick := time.NewTicker(5 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-tick.C:
+			}
+			st, err := m.Status("job.timer")
+			if err != nil {
+				statusErr.Store(err)
+				return
+			}
+			if st.Unit == nil {
+				statusErr.Store(fmt.Errorf("status missing unit"))
+				return
+			}
+			_, err = m.ListTimers()
+			if err != nil {
+				statusErr.Store(err)
+				return
+			}
+		}
+	}()
+
+	advanceWait(t, fk, 5*time.Second)
+	waitLauncherUnit(t, launch, "job.service")
+	close(stop)
+
+	st, err := m.Status("job.timer")
+	if err != nil || st.Unit == nil || st.Unit.Last == "" {
+		t.Fatalf("status after tick = %+v err=%v", st, err)
+	}
+	if v := statusErr.Load(); v != nil {
+		t.Fatal(v)
+	}
 }
 
 func TestListTimersNextAfterCalendarJump(t *testing.T) {

@@ -29,6 +29,11 @@ type Engine struct {
 	stopped chan struct{}
 	running bool
 	fires   sync.WaitGroup
+
+	// onStatusDeadline is a test hook (nil in production). It fires after
+	// e.mu is released and before NextDeadline. Status must not hold the
+	// engine lock across calendar search.
+	onStatusDeadline func()
 }
 
 type armed struct {
@@ -441,19 +446,29 @@ type Snapshot struct {
 
 // Status returns next and last actual elapse for an armed timer.
 // Next is recomputed from the current clock so list-timers is not stale
-// across a wall jump (DESIGN.md §18).
+// across a wall jump (DESIGN.md §18). Spec/runtime are copied under e.mu;
+// NextDeadline runs unlocked so a calendar search does not nest e.mu
+// inside the manager lock or stall the scheduler loop.
 func (e *Engine) Status(name string) Snapshot {
 	if e == nil {
 		return Snapshot{}
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	a := e.armed[name]
 	if a == nil {
+		e.mu.Unlock()
 		return Snapshot{}
 	}
-	out := Snapshot{Last: a.rt.LastActual}
-	if next, ok := NextDeadline(a.spec, a.rt, e.clk); ok {
+	spec := a.spec
+	rt := a.rt
+	clk := e.clk
+	last := a.rt.LastActual
+	e.mu.Unlock()
+	if e.onStatusDeadline != nil {
+		e.onStatusDeadline()
+	}
+	out := Snapshot{Last: last}
+	if next, ok := NextDeadline(spec, rt, clk); ok {
 		out.Next = next
 	}
 	return out

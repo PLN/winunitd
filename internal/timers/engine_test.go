@@ -3,6 +3,7 @@ package timers
 import (
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -249,6 +250,82 @@ func TestEngineStopWaitsForFire(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Stop did not return after the fire goroutine finished")
+	}
+}
+
+func TestStatusUnlocksBeforeNextDeadline(t *testing.T) {
+	t.Parallel()
+	e, fk := testEngine(t, nil)
+	cal, err := ParseCalendar("*-12-25 00:00:00")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.Arm(Spec{Name: "cal.timer", OnCalendar: []Calendar{cal}})
+	want := time.Date(2026, 12, 25, 0, 0, 0, 0, time.UTC)
+	waitNext(t, e, "cal.timer", want)
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var lockHeld atomic.Bool
+	var once atomic.Bool
+	e.onStatusDeadline = func() {
+		if !once.CompareAndSwap(false, true) {
+			return
+		}
+		if !e.mu.TryLock() {
+			lockHeld.Store(true)
+		} else {
+			e.mu.Unlock()
+		}
+		close(started)
+		<-release
+	}
+
+	errc := make(chan Snapshot, 1)
+	go func() { errc <- e.Status("cal.timer") }()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Status did not reach NextDeadline")
+	}
+
+	armDone := make(chan struct{})
+	go func() {
+		e.Arm(Spec{Name: "other.timer", OnStartupSec: time.Second, OnStartupSecSet: true})
+		close(armDone)
+	}()
+	select {
+	case <-armDone:
+	case <-time.After(500 * time.Millisecond):
+		close(release)
+		t.Fatal("Arm stalled while Status computed NextDeadline")
+	}
+
+	tickDone := make(chan struct{})
+	go func() {
+		fk.Advance(time.Millisecond)
+		close(tickDone)
+	}()
+	select {
+	case <-tickDone:
+	case <-time.After(500 * time.Millisecond):
+		close(release)
+		t.Fatal("timer tick stalled while Status computed NextDeadline")
+	}
+
+	close(release)
+	var snap Snapshot
+	select {
+	case snap = <-errc:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Status did not return")
+	}
+	if lockHeld.Load() {
+		t.Fatal("Status held e.mu during NextDeadline")
+	}
+	if !snap.Next.Equal(want) {
+		t.Fatalf("Next = %v, want %v", snap.Next, want)
 	}
 }
 

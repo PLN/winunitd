@@ -266,6 +266,7 @@ func (m *Manager) ListUnits() (*protocol.ListUnitsResult, error) {
 	for i := range out {
 		m.overlaySCM(&out[i], scmNames[i])
 		m.overlayTask(&out[i], taskNames[i])
+		m.overlayTimer(&out[i])
 	}
 	return &protocol.ListUnitsResult{Units: out}, nil
 }
@@ -273,7 +274,6 @@ func (m *Manager) ListUnits() (*protocol.ListUnitsResult, error) {
 // ListTimers returns loaded timer units.
 func (m *Manager) ListTimers() (*protocol.ListTimersResult, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	var out []protocol.TimerStatus
 	for _, name := range m.names() {
 		rt := m.units[name]
@@ -293,9 +293,11 @@ func (m *Manager) ListTimers() (*protocol.ListTimersResult, error) {
 			ActiveState: st.ActiveState,
 			Enabled:     st.Enabled,
 			Unit:        activated,
-			Next:        st.Next,
-			Last:        st.Last,
 		})
+	}
+	m.mu.Unlock()
+	for i := range out {
+		out[i].Next, out[i].Last = m.timerStamps(out[i].Name)
 	}
 	return &protocol.ListTimersResult{Timers: out}, nil
 }
@@ -319,6 +321,7 @@ func (m *Manager) Status(name string) (*protocol.StatusResult, error) {
 	m.mu.Unlock()
 	m.overlaySCM(&st, svcName)
 	m.overlayTask(&st, taskName)
+	m.overlayTimer(&st)
 	return &protocol.StatusResult{Unit: &st}, nil
 }
 
@@ -364,11 +367,6 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 			if r := core.StatusReason(rt.err); r != "" {
 				st.Reason = r
 			}
-		}
-		if rt.unit != nil && rt.unit.Kind == unit.KindTimer && m.engine != nil {
-			snap := m.engine.Status(name)
-			st.Next = formatTimerStamp(snap.Next)
-			st.Last = formatTimerStamp(snap.Last)
 		}
 	}
 	return st
