@@ -28,4 +28,20 @@ func TestJobLimitsFromSpec(t *testing.T) {
 	if got != want {
 		t.Fatalf("got %+v want %+v", got, want)
 	}
+
+	cpu := &unit.ServiceSpec{CPUWeight: 50, CPUWeightSet: true}
+	got = JobLimitsFromSpec(cpu)
+	if got.CPUWeight != unit.WindowsCPUWeight(50) || got.CPURate != 0 {
+		t.Fatalf("CPUWeight spec = %+v", got)
+	}
+	quota := &unit.ServiceSpec{CPUQuota: 25, CPUQuotaSet: true}
+	got = JobLimitsFromSpec(quota)
+	if got.CPURate != unit.WindowsCPURate(25) || got.CPUWeight != 0 {
+		t.Fatalf("CPUQuota spec = %+v", got)
+	}
+	io := &unit.ServiceSpec{IoPriority: unit.IoLow, IoPrioritySet: true}
+	got = JobLimitsFromSpec(io)
+	if !got.IoPrioritySet || got.IoPriority != unit.IoPriorityLowNT {
+		t.Fatalf("IoPriority spec = %+v", got)
+	}
 }

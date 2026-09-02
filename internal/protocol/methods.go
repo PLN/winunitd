@@ -111,7 +111,8 @@ type MachineStatus struct {
 
 // UnitStatus is one loaded unit (DESIGN.md §24, §45). MainPID is set when
 // the unit has a live process. InvocationID is the last unit-start UUID.
-// Resource metrics are not reported.
+// Resource metrics are not reported. CPUWeight/CPUQuota/IoPriority are the
+// configured unit-file values when set (cheap; not a live Job Object query).
 type UnitStatus struct {
 	Name         string `json:"name"`
 	Description  string `json:"description,omitempty"`
@@ -126,6 +127,10 @@ type UnitStatus struct {
 	Reason       string `json:"reason,omitempty"` // DESIGN.md §44
 	Next         string `json:"next,omitempty"`
 	Last         string `json:"last,omitempty"`
+	// Configured [Service] R2 limits (unit file; not a live Job Object query).
+	CPUWeight  uint32 `json:"cpuWeight,omitempty"`
+	CPUQuota   uint32 `json:"cpuQuota,omitempty"` // N from CPUQuota=N%
+	IoPriority string `json:"ioPriority,omitempty"`
 }
 
 // UnitResult is the payload for start, stop, and restart.

@@ -32,6 +32,7 @@ type UnitJob struct {
 	iocp    windows.Handle
 	limitCh chan struct{}
 	hit     atomic.Uint32
+	limits  JobLimits
 }
 
 // OpenUnitJob creates an unnamed unit job. Nested assignment under the
@@ -41,9 +42,15 @@ func OpenUnitJob() (*UnitJob, error) {
 	return OpenUnitJobWith(JobLimits{})
 }
 
-// OpenUnitJobWith creates a unit job and applies optional R1 limits
+// OpenUnitJobWith creates a unit job and applies optional R1/R2 limits
 // (DESIGN.md §43). KILL_ON_JOB_CLOSE is always set; breakaway is not.
+// CPUWeight=/CPUQuota= use JobObjectCpuRateControlInformation on this job
+// (not the daemon job). IoPriority= is recorded here and applied to the
+// process after job assignment.
 func OpenUnitJobWith(lim JobLimits) (*UnitJob, error) {
+	if lim.CPUWeight > 0 && lim.CPURate > 0 {
+		return nil, fmt.Errorf("configuration: CPUWeight and CPUQuota cannot both be set")
+	}
 	h, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create unit job: %w", err)
@@ -76,7 +83,11 @@ func OpenUnitJobWith(lim JobLimits) (*UnitJob, error) {
 		_ = windows.CloseHandle(h)
 		return nil, fmt.Errorf("set unit job limits: %w", err)
 	}
-	j := &UnitJob{handle: h}
+	if err := setJobCPURate(h, lim); err != nil {
+		_ = windows.CloseHandle(h)
+		return nil, err
+	}
+	j := &UnitJob{handle: h, limits: lim}
 	if lim.WatchViolations() {
 		if err := j.startLimitWatch(); err != nil {
 			_ = windows.CloseHandle(h)
@@ -237,7 +248,15 @@ func (j *UnitJob) QueryLimits() (JobObjectLimits, error) {
 	if j.handle == 0 {
 		return JobObjectLimits{}, fmt.Errorf("unit job is closed")
 	}
-	return queryJobLimits(j.handle)
+	got, err := queryJobLimits(j.handle)
+	if err != nil {
+		return JobObjectLimits{}, err
+	}
+	if j.limits.IoPrioritySet {
+		got.IoPriority = j.limits.IoPriority
+		got.IoPrioritySet = true
+	}
+	return got, nil
 }
 
 func queryJobLimits(h windows.Handle) (JobObjectLimits, error) {
@@ -267,7 +286,74 @@ func queryJobLimits(h windows.Handle) (JobObjectLimits, error) {
 	if flags&windows.JOB_OBJECT_LIMIT_PRIORITY_CLASS != 0 {
 		got.PriorityClass = info.BasicLimitInformation.PriorityClass
 	}
+	cpu, err := queryJobCPURate(h)
+	if err == nil {
+		got.CPUControlFlags = cpu.ControlFlags
+		if cpu.ControlFlags&JobCPURateWeightBased != 0 {
+			got.CPUWeight = cpu.Value
+		}
+		if cpu.ControlFlags&JobCPURateHardCap != 0 {
+			got.CPURate = cpu.Value
+		}
+	}
 	return got, nil
+}
+
+// jobCPURateControl is JOBOBJECT_CPU_RATE_CONTROL_INFORMATION (winnt.h).
+// Value is the CpuRate/Weight union.
+type jobCPURateControl struct {
+	ControlFlags uint32
+	Value        uint32
+}
+
+func setJobCPURate(h windows.Handle, lim JobLimits) error {
+	var cpu jobCPURateControl
+	switch {
+	case lim.CPUWeight > 0:
+		cpu.ControlFlags = JobCPURateEnable | JobCPURateWeightBased
+		cpu.Value = lim.CPUWeight
+	case lim.CPURate > 0:
+		cpu.ControlFlags = JobCPURateEnable | JobCPURateHardCap
+		cpu.Value = lim.CPURate
+	default:
+		return nil
+	}
+	if _, err := windows.SetInformationJobObject(
+		h,
+		windows.JobObjectCpuRateControlInformation,
+		uintptr(unsafe.Pointer(&cpu)),
+		uint32(unsafe.Sizeof(cpu)),
+	); err != nil {
+		return fmt.Errorf("configuration: set unit job cpu rate: %w", err)
+	}
+	return nil
+}
+
+func queryJobCPURate(h windows.Handle) (jobCPURateControl, error) {
+	var cpu jobCPURateControl
+	if err := windows.QueryInformationJobObject(
+		h,
+		windows.JobObjectCpuRateControlInformation,
+		uintptr(unsafe.Pointer(&cpu)),
+		uint32(unsafe.Sizeof(cpu)),
+		nil,
+	); err != nil {
+		return jobCPURateControl{}, err
+	}
+	return cpu, nil
+}
+
+func setProcessIoPriority(process windows.Handle, prio uint32) error {
+	v := prio
+	if err := windows.NtSetInformationProcess(
+		process,
+		int32(windows.ProcessIoPriority),
+		unsafe.Pointer(&v),
+		uint32(unsafe.Sizeof(v)),
+	); err != nil {
+		return fmt.Errorf("configuration: set process IoPriority: %w", err)
+	}
+	return nil
 }
 
 // ResourceLimitC is closed when MemoryMax= or ProcessLimit= is hit.

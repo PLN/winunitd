@@ -45,6 +45,9 @@ var knownDirectives = map[string]map[string]bool{
 		"MemoryMax":              true,
 		"ProcessLimit":           true,
 		"PriorityClass":          true,
+		"CPUWeight":              true,
+		"CPUQuota":               true,
+		"IoPriority":             true,
 	},
 	"Timer": {
 		"OnBootSec":       true,
@@ -122,6 +125,12 @@ type serviceBuilder struct {
 	processLimitL  int
 	priorityClass  string
 	priorityClassL int
+	cpuWeight      string
+	cpuWeightL     int
+	cpuQuota       string
+	cpuQuotaL      int
+	ioPriority     string
+	ioPriorityL    int
 }
 
 type timerBuilder struct {
@@ -411,6 +420,15 @@ func (p *parser) applyService(e iniEntry) {
 	case "PriorityClass":
 		s.priorityClass = e.value
 		s.priorityClassL = e.line
+	case "CPUWeight":
+		s.cpuWeight = e.value
+		s.cpuWeightL = e.line
+	case "CPUQuota":
+		s.cpuQuota = e.value
+		s.cpuQuotaL = e.line
+	case "IoPriority":
+		s.ioPriority = e.value
+		s.ioPriorityL = e.line
 	}
 }
 
@@ -739,6 +757,40 @@ func (p *parser) finishJobLimits(spec *ServiceSpec, s *serviceBuilder) {
 			spec.PriorityClassSet = true
 		}
 	}
+	if s.cpuWeight != "" {
+		n, err := parseCPUWeight(s.cpuWeight)
+		if err != nil {
+			p.errorf(s.cpuWeightL, "%s", err.Error())
+		} else {
+			spec.CPUWeight = n
+			spec.CPUWeightSet = true
+		}
+	}
+	if s.cpuQuota != "" {
+		n, err := parseCPUQuota(s.cpuQuota)
+		if err != nil {
+			p.errorf(s.cpuQuotaL, "%s", err.Error())
+		} else {
+			spec.CPUQuota = n
+			spec.CPUQuotaSet = true
+		}
+	}
+	if spec.CPUWeightSet && spec.CPUQuotaSet {
+		line := s.cpuQuotaL
+		if s.cpuWeightL > 0 && (line == 0 || s.cpuWeightL < line) {
+			line = s.cpuWeightL
+		}
+		p.errorf(line, "CPUWeight and CPUQuota cannot both be set")
+	}
+	if s.ioPriority != "" {
+		ip, err := parseIoPriority(s.ioPriority)
+		if err != nil {
+			p.errorf(s.ioPriorityL, "%s", err.Error())
+		} else {
+			spec.IoPriority = ip
+			spec.IoPrioritySet = true
+		}
+	}
 	if !spec.Type.IsExternalProxy() {
 		return
 	}
@@ -757,6 +809,21 @@ func (p *parser) finishJobLimits(spec *ServiceSpec, s *serviceBuilder) {
 		p.warnf(s.priorityClassL, "PriorityClass is ignored for Type=%s", tag)
 		spec.PriorityClass = ""
 		spec.PriorityClassSet = false
+	}
+	if spec.CPUWeightSet {
+		p.warnf(s.cpuWeightL, "CPUWeight is ignored for Type=%s", tag)
+		spec.CPUWeight = 0
+		spec.CPUWeightSet = false
+	}
+	if spec.CPUQuotaSet {
+		p.warnf(s.cpuQuotaL, "CPUQuota is ignored for Type=%s", tag)
+		spec.CPUQuota = 0
+		spec.CPUQuotaSet = false
+	}
+	if spec.IoPrioritySet {
+		p.warnf(s.ioPriorityL, "IoPriority is ignored for Type=%s", tag)
+		spec.IoPriority = ""
+		spec.IoPrioritySet = false
 	}
 }
 

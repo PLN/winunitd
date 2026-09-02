@@ -63,7 +63,9 @@ used as a default. Type=scm requires ServiceName= and does not use ExecStart=.
 Type=scheduled-task requires TaskName= and rejects ExecStart= / ExecStartArg=.
 MemoryMax= accepts K/M/G (e.g. 2G). ProcessLimit= must be a positive integer.
 PriorityClass= is idle, below-normal, normal, above-normal, or high (not realtime).
-Those three keys are [Service] only.
+CPUWeight= is an integer 1–10000. CPUQuota= is N% with N in 1–10000 (trailing % required).
+CPUWeight= and CPUQuota= cannot both be set. IoPriority= is idle, low, normal, or high.
+Those keys are [Service] only.
 
 A foo.registry unit watches [Registry] RegistryChanged= (HKLM\\... or HKCU\\...
 only; no PowerShell drive) and activates foo.service by basename. Path verify
@@ -650,6 +652,15 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		}
 		if u.Last != "" {
 			fmt.Fprintf(c.stdout, "       Last: %s\n", u.Last)
+		}
+		if u.CPUWeight != 0 {
+			fmt.Fprintf(c.stdout, "  CPUWeight: %d\n", u.CPUWeight)
+		}
+		if u.CPUQuota != 0 {
+			fmt.Fprintf(c.stdout, "   CPUQuota: %d%%\n", u.CPUQuota)
+		}
+		if u.IoPriority != "" {
+			fmt.Fprintf(c.stdout, " IoPriority: %s\n", u.IoPriority)
 		}
 		return 0
 	}

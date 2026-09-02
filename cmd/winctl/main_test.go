@@ -557,6 +557,10 @@ ExecStart=C:\Tools\foo.exe
 		{"MemoryMax=abc", "MemoryMax=abc\n", `invalid MemoryMax "abc"`},
 		{"ProcessLimit=-1", "ProcessLimit=-1\n", `invalid ProcessLimit "-1"`},
 		{"PriorityClass=realtime", "PriorityClass=realtime\n", `invalid PriorityClass "realtime"`},
+		{"CPUWeight=0", "CPUWeight=0\n", `invalid CPUWeight "0"`},
+		{"CPUQuota=25", "CPUQuota=25\n", `invalid CPUQuota "25"`},
+		{"CPUWeight+CPUQuota", "CPUWeight=50\nCPUQuota=25%\n", "CPUWeight and CPUQuota cannot both be set"},
+		{"IoPriority=critical", "IoPriority=critical\n", `invalid IoPriority "critical"`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			p := filepath.Join(dir, strings.ReplaceAll(tt.name, "=", "-")+".service")
@@ -1015,6 +1019,43 @@ func TestPrintStatusResourceLimit(t *testing.T) {
 	}
 	if !strings.Contains(got, "Reason: resource-limit") {
 		t.Fatalf("missing reason: %s", got)
+	}
+}
+
+func TestPrintStatusCPULimits(t *testing.T) {
+	var out bytes.Buffer
+	c := &cli{stdout: &out}
+	code := c.printStatus(&protocol.StatusResult{Unit: &protocol.UnitStatus{
+		Name:        "cpu.service",
+		LoadState:   "loaded",
+		ActiveState: "active",
+		CPUWeight:   50,
+		IoPriority:  "low",
+	}})
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	got := out.String()
+	if !strings.Contains(got, "CPUWeight: 50") {
+		t.Fatalf("missing CPUWeight: %s", got)
+	}
+	if !strings.Contains(got, "IoPriority: low") {
+		t.Fatalf("missing IoPriority: %s", got)
+	}
+
+	out.Reset()
+	code = c.printStatus(&protocol.StatusResult{Unit: &protocol.UnitStatus{
+		Name:        "quota.service",
+		LoadState:   "loaded",
+		ActiveState: "active",
+		CPUQuota:    25,
+	}})
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	got = out.String()
+	if !strings.Contains(got, "CPUQuota: 25%") {
+		t.Fatalf("missing CPUQuota: %s", got)
 	}
 }
 
