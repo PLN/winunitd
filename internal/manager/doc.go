@@ -26,8 +26,9 @@
 // journal/<unit>.log (each start tagged with InvocationID=) and returned
 // by logs. The timer scheduler lives in
 // internal/timers (not Task Scheduler). Engine.ClockChanged (SCM
-// TIMECHANGE / POWEREVENT, or a 30s poll) recomputes calendar Next so
-// list-timers is not stale across a wall jump. .registry units watch
+// TIMECHANGE / POWEREVENT, or a 30s poll) recomputes the scheduled
+// calendar next so Status/list-timers stay consistent with the heap
+// across a wall jump. .registry units watch
 // RegistryChanged= keys (RegNotifyChangeKeyValue on Windows; tests inject
 // a stub). .eventlog units watch EventLogTrigger= channels (EvtSubscribe
 // on Windows; tests inject a stub). .path units watch PathChanged= files

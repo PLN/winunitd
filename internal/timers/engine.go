@@ -21,27 +21,33 @@ type Engine struct {
 	store *Store
 	fire  FireFunc
 
-	mu      sync.Mutex
-	armed   map[string]*armed
-	pq      deadlineHeap
-	wakeup  chan struct{}
-	stop    chan struct{}
-	stopped chan struct{}
-	running bool
-	fires   sync.WaitGroup
+	mu       sync.Mutex
+	armed    map[string]*armed
+	pq       deadlineHeap
+	wakeup   chan struct{}
+	stop     chan struct{}
+	stopped  chan struct{}
+	running  bool
+	fires    sync.WaitGroup
+	clockGen uint64 // incremented on ClockChanged; armed.schedGen tracks it
 
 	// onStatusDeadline is a test hook (nil in production). It fires after
-	// e.mu is released and before NextDeadline. Status must not hold the
-	// engine lock across calendar search.
+	// e.mu is released and before NextDeadline on the dirty-cache path.
+	// Status must not hold the engine lock across calendar search.
 	onStatusDeadline func()
+
+	// onNextDeadline is a test hook (nil in production). It fires when
+	// NextDeadline runs from reschedule or from a dirty Status.
+	onNextDeadline func()
 }
 
 type armed struct {
-	spec Spec
-	rt   Runtime
-	next time.Time
-	ok   bool
-	gen  uint64
+	spec     Spec
+	rt       Runtime
+	next     time.Time
+	ok       bool
+	gen      uint64
+	schedGen uint64 // e.clockGen at last rescheduleLocked
 }
 
 // NewEngine starts a scheduler goroutine. Stop it with Stop.
@@ -115,6 +121,7 @@ func (e *Engine) ClockChanged() {
 		e.mu.Unlock()
 		return
 	}
+	e.clockGen++
 	e.mu.Unlock()
 	e.fireDue()
 	e.recalcWall()
@@ -336,9 +343,13 @@ func (e *Engine) monotonicWaitLocked(spec Spec, rt Runtime) time.Duration {
 }
 
 func (e *Engine) rescheduleLocked(a *armed) {
+	if e.onNextDeadline != nil {
+		e.onNextDeadline()
+	}
 	next, ok := NextDeadline(a.spec, a.rt, e.clk)
 	a.next = next
 	a.ok = ok
+	a.schedGen = e.clockGen
 	a.gen++
 	if ok {
 		heap.Push(&e.pq, &pqItem{name: a.spec.Name, when: next, gen: a.gen})
@@ -445,10 +456,11 @@ type Snapshot struct {
 }
 
 // Status returns next and last actual elapse for an armed timer.
-// Next is recomputed from the current clock so list-timers is not stale
-// across a wall jump (DESIGN.md §18). Spec/runtime are copied under e.mu;
-// NextDeadline runs unlocked so a calendar search does not nest e.mu
-// inside the manager lock or stall the scheduler loop.
+// Next is the scheduled a.next so Status and the heap agree. Paths that
+// change schedule state (Arm, Disarm, fire, UnitActive, ClockChanged)
+// recompute a.next. If ClockChanged has incremented clockGen since the
+// last reschedule, NextDeadline runs unlocked so a calendar search does
+// not nest e.mu inside the manager lock or stall the scheduler loop (H8).
 func (e *Engine) Status(name string) Snapshot {
 	if e == nil {
 		return Snapshot{}
@@ -459,13 +471,24 @@ func (e *Engine) Status(name string) Snapshot {
 		e.mu.Unlock()
 		return Snapshot{}
 	}
+	last := a.rt.LastActual
+	if a.schedGen == e.clockGen {
+		out := Snapshot{Last: last}
+		if a.ok {
+			out.Next = a.next
+		}
+		e.mu.Unlock()
+		return out
+	}
 	spec := a.spec
 	rt := a.rt
 	clk := e.clk
-	last := a.rt.LastActual
 	e.mu.Unlock()
 	if e.onStatusDeadline != nil {
 		e.onStatusDeadline()
+	}
+	if e.onNextDeadline != nil {
+		e.onNextDeadline()
 	}
 	out := Snapshot{Last: last}
 	if next, ok := NextDeadline(spec, rt, clk); ok {

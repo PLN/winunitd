@@ -163,8 +163,16 @@ OnStartupSec=5s
 	if _, err := m.Start(context.Background(), "foo.timer"); err != nil {
 		t.Fatal(err)
 	}
+	waitCond(t, func() bool {
+		st, err := m.Status("foo.timer")
+		return err == nil && st.Unit != nil && st.Unit.Next != ""
+	})
 	if _, err := m.Stop("foo.timer"); err != nil {
 		t.Fatal(err)
+	}
+	st, err := m.Status("foo.timer")
+	if err != nil || st.Unit == nil || st.Unit.Next != "" {
+		t.Fatalf("stopped timer still reports next: %+v err=%v", st, err)
 	}
 	fk.Advance(5 * time.Second)
 	if containsString(launch.units(), "foo.service") {
