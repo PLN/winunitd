@@ -160,15 +160,17 @@ type LogsParams struct {
 }
 
 // LogsResult is a snapshot of stored journal entries (DESIGN.md §22).
-// Cursor is passed back on the next poll when following. LogEntry does
-// not yet include severity, session, or user SID (J2 schema bump).
+// Cursor is passed back on the next poll when following. LogEntry is the
+// v=2 journal record (severity / session / user SID may be empty on
+// historical v=1 lines).
 type LogsResult struct {
 	Unit    string     `json:"unit"`
 	Entries []LogEntry `json:"entries"`
 	Cursor  string     `json:"cursor,omitempty"`
 }
 
-// LogEntry is one journal line (DESIGN.md §22). v=1 fields only.
+// LogEntry is one journal line (DESIGN.md §22). Writers emit v=2 with
+// severity, session, and userSid. v=1 lines decode with those fields empty.
 type LogEntry struct {
 	Timestamp    string `json:"timestamp,omitempty"`
 	Unit         string `json:"unit,omitempty"`
@@ -176,6 +178,9 @@ type LogEntry struct {
 	Stream       string `json:"stream,omitempty"`
 	Message      string `json:"message"`
 	InvocationID string `json:"invocationId,omitempty"`
+	Severity     string `json:"severity,omitempty"`
+	Session      string `json:"session,omitempty"`
+	UserSID      string `json:"userSid,omitempty"`
 }
 
 // DaemonReloadParams is the body for daemon-reload.

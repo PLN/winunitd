@@ -54,6 +54,11 @@ type Config struct {
 	// separate; one manager per SID already). Type=scm and
 	// Type=scheduled-task are rejected here.
 	UserScope bool
+	// SessionID returns the Windows session ID to store on journal lines
+	// (decimal string). Nil uses runtime.SIDSession(NotifySID) when
+	// UserScope. Tests inject a fake. Empty is allowed (linger without
+	// a session, or unknown).
+	SessionID func() string
 	// SCM orchestrates Type=scm proxy units (DESIGN.md §51). Nil uses
 	// runtime.DefaultSCM(). It never creates, changes, or deletes SCM
 	// configuration. Tests inject a fake so Linux does not call a real SCM.

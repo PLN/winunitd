@@ -23,8 +23,9 @@
 // Unit names are case-insensitive and stored lower-case (DESIGN.md §36).
 // Enable writes files under enabled/<target>/<unit>; boot starts default.target, which Wants=
 // timers.target so enabled timers arm. stdout/stderr are stored under
-// journal/<unit>.log (each start tagged with InvocationID=) and returned
-// by logs. The timer scheduler lives in
+// journal/<unit>.log as v=2 JSON lines (severity from stream; session and
+// user SID from the user manager when known) and returned by logs.
+// Historical v=1 lines still read. The timer scheduler lives in
 // internal/timers (not Task Scheduler). Engine.ClockChanged (SCM
 // TIMECHANGE / POWEREVENT, or a 30s poll) recomputes the scheduled
 // calendar next so Status/list-timers stay consistent with the heap
