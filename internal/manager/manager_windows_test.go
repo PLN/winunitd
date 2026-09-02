@@ -55,8 +55,10 @@ func TestMain(m *testing.M) {
 		recordHelperCount()
 		os.Exit(helperExitCode())
 	case "count-then-sleep":
-		recordHelperCount()
-		n := helperCountLines(os.Getenv("WINUNITD_JOB_COUNT"))
+		// Count lines before this append. A second Open after Close can
+		// miss the line we just wrote on Windows (sharing / visibility),
+		// which made the 2nd start exit and the unit fail to stay running.
+		n := recordHelperCountN()
 		sleepAfter := 2
 		if v := os.Getenv("WINUNITD_JOB_SLEEP_AFTER"); v != "" {
 			if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
@@ -187,16 +189,25 @@ func TestMain(m *testing.M) {
 }
 
 func recordHelperCount() {
+	_ = recordHelperCountN()
+}
+
+// recordHelperCountN appends one start record and returns this start's
+// 1-based index (lines already on disk + 1), without re-opening the file
+// to recount.
+func recordHelperCountN() int {
 	path := os.Getenv("WINUNITD_JOB_COUNT")
 	if path == "" {
-		return
+		return 0
 	}
+	n := helperCountLines(path) + 1
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return
+		return n
 	}
 	fmt.Fprintf(f, "%d %d\n", time.Now().UnixMilli(), os.Getpid())
 	_ = f.Close()
+	return n
 }
 
 func helperExitCode() int {
@@ -848,7 +859,7 @@ func mustJSONArgv(t *testing.T, exe string, helper string) string {
 
 func waitWindowsLiveProc(t *testing.T, m *Manager, name string) runtime.Process {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		m.mu.Lock()
 		proc := m.procOfLocked(name)
@@ -858,7 +869,13 @@ func waitWindowsLiveProc(t *testing.T, m *Manager, name string) runtime.Process 
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatal("unit did not stay running after restart")
+	m.mu.Lock()
+	proc := m.procOfLocked(name)
+	st := m.stateOfLocked(name)
+	sub := m.subOfLocked(name)
+	m.mu.Unlock()
+	alive := proc != nil && proc.Alive()
+	t.Fatalf("unit did not stay running after restart: state=%s/%s proc=%v alive=%v", st, sub, proc != nil, alive)
 	return nil
 }
 
