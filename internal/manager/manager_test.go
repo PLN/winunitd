@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/journal"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/unit"
@@ -439,6 +440,87 @@ WorkingDirectory=C:\Tools
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Follow did not return a new line")
+	}
+}
+
+func TestLogsSinceUsesManagerClock(t *testing.T) {
+	t.Parallel()
+	m, fk := managerWithFake(t, &fakeLauncher{}, map[string]string{
+		"foo.service": `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`,
+	})
+	now := fk.Now()
+	path := filepath.Join(m.journal.Dir(), "foo.service.log")
+	var body []byte
+	for _, rec := range []struct {
+		ts  time.Time
+		msg string
+	}{
+		{now.Add(-2 * time.Hour), "old"},
+		{now, "now"},
+	} {
+		raw, err := json.Marshal(map[string]any{
+			"v":         1,
+			"timestamp": rec.ts.UTC().Format(time.RFC3339Nano),
+			"unit":      "foo.service",
+			"message":   rec.msg,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body = append(body, raw...)
+		body = append(body, '\n')
+	}
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.Logs(protocol.LogsParams{Unit: "foo", Since: "1 hour ago"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || len(got.Entries) != 1 || got.Entries[0].Message != "now" {
+		t.Fatalf("since on fake clock = %+v (now=%v)", got, now)
+	}
+}
+
+func TestLogsFollowDeadlineUsesManagerClock(t *testing.T) {
+	t.Parallel()
+	m, fk := managerWithFake(t, &fakeLauncher{}, map[string]string{
+		"foo.service": `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`,
+	})
+	type result struct {
+		got *protocol.LogsResult
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		got, err := m.Logs(protocol.LogsParams{Unit: "foo", Follow: true})
+		ch <- result{got, err}
+	}()
+	waitCond(t, func() bool { return fk.WaitingAt(journal.FollowPoll()) })
+	select {
+	case r := <-ch:
+		t.Fatalf("Follow returned before clock Advanced: %+v %v", r.got, r.err)
+	default:
+	}
+	fk.Advance(journal.FollowWait())
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			t.Fatal(r.err)
+		}
+		if r.got == nil || len(r.got.Entries) != 0 {
+			t.Fatalf("empty follow = %+v", r.got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Follow did not honor manager clock deadline")
 	}
 }
 
