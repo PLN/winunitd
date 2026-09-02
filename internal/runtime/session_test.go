@@ -11,3 +11,13 @@ func TestSIDHasInteractiveSessionInvalidSID(t *testing.T) {
 		t.Fatal("invalid SID must not have an interactive session")
 	}
 }
+
+func TestSIDSessionInvalidSID(t *testing.T) {
+	t.Parallel()
+	if SIDSession("") != "" {
+		t.Fatal("empty SID")
+	}
+	if SIDSession("not-a-sid") != "" {
+		t.Fatal("invalid SID must not have a session id")
+	}
+}

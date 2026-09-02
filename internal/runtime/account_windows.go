@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -51,12 +52,29 @@ func LookupAccountName(name string) (UserInfo, error) {
 // SIDHasInteractiveSession reports whether sid currently has a suitable
 // interactive session (active, connected, or disconnected; not session 0).
 func SIDHasInteractiveSession(sid string) bool {
+	_, ok := sidInteractiveSessionID(sid)
+	return ok
+}
+
+// SIDSession returns a decimal Windows session ID for sid when that user
+// currently has a suitable interactive session. Empty if none (system
+// scope, linger-without-session, or lookup failure). If several sessions
+// match, the first enumerated ID is used.
+func SIDSession(sid string) string {
+	id, ok := sidInteractiveSessionID(sid)
+	if !ok {
+		return ""
+	}
+	return strconv.FormatUint(uint64(id), 10)
+}
+
+func sidInteractiveSessionID(sid string) (uint32, bool) {
 	if !validAccountSID(sid) {
-		return false
+		return 0, false
 	}
 	ids, err := InteractiveSessions()
 	if err != nil {
-		return false
+		return 0, false
 	}
 	for _, id := range ids {
 		got, err := sessionUserSID(id)
@@ -64,10 +82,10 @@ func SIDHasInteractiveSession(sid string) bool {
 			continue
 		}
 		if strings.EqualFold(got, sid) {
-			return true
+			return id, true
 		}
 	}
-	return false
+	return 0, false
 }
 
 var (
