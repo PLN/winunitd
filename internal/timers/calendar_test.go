@@ -399,3 +399,98 @@ func TestCalendarFallBackIsFirstOccurrenceNotSecond(t *testing.T) {
 			got, got.Unix(), first, first.Unix(), second.Unix())
 	}
 }
+
+func TestCalendarSearchJumpsMonthDay(t *testing.T) {
+	t.Parallel()
+	utc := time.UTC
+	ny := mustLoc(t, "America/New_York")
+
+	type tc struct {
+		name     string
+		expr     string
+		from     time.Time
+		next     time.Time
+		prev     time.Time
+		maxVisit int
+	}
+	cases := []tc{
+		{
+			name:     "*-12-25 from January jumps to Dec 25 not a day walk",
+			expr:     "*-12-25 00:00",
+			from:     civil(utc, 2026, 1, 15, 12, 0, 0),
+			next:     civil(utc, 2026, 12, 25, 0, 0, 0),
+			prev:     civil(utc, 2025, 12, 25, 0, 0, 0),
+			maxVisit: 4,
+		},
+		{
+			name:     "*-2-29 after a leap day skips AddDate year overflow (Mar 1)",
+			expr:     "*-2-29 03:00",
+			from:     civil(utc, 2024, 2, 29, 12, 0, 0),
+			next:     civil(utc, 2028, 2, 29, 3, 0, 0),
+			prev:     civil(utc, 2024, 2, 29, 3, 0, 0),
+			maxVisit: 4,
+		},
+		{
+			name:     "*-*-31 after Jan 31 skips AddDate month overflow (Mar 2/3)",
+			expr:     "*-*-31 03:00",
+			from:     civil(utc, 2026, 1, 31, 12, 0, 0),
+			next:     civil(utc, 2026, 3, 31, 3, 0, 0),
+			prev:     civil(utc, 2026, 1, 31, 3, 0, 0),
+			maxVisit: 4,
+		},
+		{
+			name:     "*-12-* from January is Dec 1 (month jump, not Dec 15)",
+			expr:     "*-12-* 03:00",
+			from:     civil(utc, 2026, 1, 15, 12, 0, 0),
+			next:     civil(utc, 2026, 12, 1, 3, 0, 0),
+			prev:     civil(utc, 2025, 12, 31, 3, 0, 0),
+			maxVisit: 4,
+		},
+		{
+			name:     "Mon *-12-25 skips non-Monday Christmas",
+			expr:     "Mon *-12-25 00:00",
+			from:     civil(utc, 2026, 1, 15, 12, 0, 0),
+			next:     civil(utc, 2028, 12, 25, 0, 0, 0),
+			prev:     civil(utc, 2023, 12, 25, 0, 0, 0),
+			maxVisit: 8,
+		},
+		{
+			name:     "fixed month/day on DST gap day still first valid after gap",
+			expr:     "*-03-08 02:30",
+			from:     civil(ny, 2026, 3, 1, 0, 0, 0),
+			next:     utcInstant(ny, 2026, 3, 8, 7, 0, 0),
+			prev:     civil(ny, 2025, 3, 8, 2, 30, 0),
+			maxVisit: 4,
+		},
+	}
+
+	for _, tt := range cases {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cal := mustCal(t, tt.expr)
+			var nNext, nPrev int
+			cal.visit = func(time.Time) { nNext++ }
+			gotNext := cal.Next(tt.from)
+			if !gotNext.Equal(tt.next) {
+				t.Fatalf("Next(%v) = %v, want %v", tt.from, gotNext, tt.next)
+			}
+			if nNext == 0 || nNext > tt.maxVisit {
+				t.Fatalf("Next visited %d civil dates, want 1..%d (jump, not day walk)", nNext, tt.maxVisit)
+			}
+			cal.visit = func(time.Time) { nPrev++ }
+			gotPrev := cal.Previous(tt.from)
+			if !gotPrev.Equal(tt.prev) {
+				t.Fatalf("Previous(%v) = %v, want %v", tt.from, gotPrev, tt.prev)
+			}
+			if nPrev == 0 || nPrev > tt.maxVisit {
+				t.Fatalf("Previous visited %d civil dates, want 1..%d", nPrev, tt.maxVisit)
+			}
+		})
+	}
+
+	// 2026-12-25 is Friday; 2028-12-25 is Monday (leap-year weekday skip).
+	if wd := civil(utc, 2028, 12, 25, 0, 0, 0).Weekday(); wd != time.Monday {
+		t.Fatalf("2028-12-25 is %s, want Monday (table fixture)", wd)
+	}
+}
