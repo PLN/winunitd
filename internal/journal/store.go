@@ -47,8 +47,9 @@ type Store struct {
 
 	// onOpen / onSync / onScan / onEntryID are test hooks (nil in production).
 	// onOpen fires after a successful OpenFile; onSync fires immediately
-	// before Sync; onScan fires after the write lock is released, before
-	// the file scan; onEntryID fires when a line's cursor id is computed.
+	// before Sync; onScan fires once per decoded line during the unlocked
+	// scan (write lock must not be held); onEntryID fires when a line's
+	// cursor id is computed.
 	onOpen    func()
 	onSync    func()
 	onScan    func()
@@ -460,9 +461,6 @@ func (s *Store) Query(unit string, since time.Time, cursor string) ([]Entry, str
 }
 
 func (s *Store) scan(unit string, since time.Time, cursor string) ([]Entry, string, error) {
-	if s.onScan != nil {
-		s.onScan()
-	}
 	var out []Entry
 	next := cursor
 	past := cursor == ""
@@ -499,6 +497,9 @@ func (s *Store) scan(unit string, since time.Time, cursor string) ([]Entry, stri
 			e, ok := decodeRecord(line)
 			if !ok {
 				continue
+			}
+			if s.onScan != nil {
+				s.onScan()
 			}
 			if canonicalUnit(e.Unit) != unit {
 				continue

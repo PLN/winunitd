@@ -443,6 +443,49 @@ WorkingDirectory=C:\Tools
 	}
 }
 
+func TestLogsSinceUsesManagerClock(t *testing.T) {
+	t.Parallel()
+	m, fk := managerWithFake(t, &fakeLauncher{}, map[string]string{
+		"foo.service": `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`,
+	})
+	now := fk.Now()
+	path := filepath.Join(m.journal.Dir(), "foo.service.log")
+	var body []byte
+	for _, rec := range []struct {
+		ts  time.Time
+		msg string
+	}{
+		{now.Add(-2 * time.Hour), "old"},
+		{now, "now"},
+	} {
+		raw, err := json.Marshal(map[string]any{
+			"v":         1,
+			"timestamp": rec.ts.UTC().Format(time.RFC3339Nano),
+			"unit":      "foo.service",
+			"message":   rec.msg,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body = append(body, raw...)
+		body = append(body, '\n')
+	}
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.Logs(protocol.LogsParams{Unit: "foo", Since: "1 hour ago"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || len(got.Entries) != 1 || got.Entries[0].Message != "now" {
+		t.Fatalf("since on fake clock = %+v (now=%v)", got, now)
+	}
+}
+
 func TestLogsFollowDeadlineUsesManagerClock(t *testing.T) {
 	t.Parallel()
 	m, fk := managerWithFake(t, &fakeLauncher{}, map[string]string{
