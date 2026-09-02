@@ -6,5 +6,7 @@
 // Fake.Advance drive waits without sleeping on the real clock (issue #28).
 // Engine.ClockChanged recomputes OnCalendar / OnUnitActiveSec deadlines after
 // a wall jump and wakes the loop; OnBootSec heap entries are not rewritten.
+// Status reports the scheduled next (a.next), refreshed on Arm, fire,
+// UnitActive, and ClockChanged — not a per-call calendar search.
 // A 30s poll remains as fallback when the host does not deliver TIMECHANGE.
 package timers

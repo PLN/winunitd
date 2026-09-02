@@ -188,13 +188,15 @@ func TestEngineClockChangedFiresCalendarWithoutPoll(t *testing.T) {
 	waitQuiet(t, fired)
 	fk.JumpWall(fk.Now().Add(4 * time.Hour))
 	waitQuiet(t, fired)
-	if got := e.Status("cal.timer").Next; !got.Equal(time.Date(2026, 9, 2, 15, 0, 0, 0, time.UTC)) {
-		t.Fatalf("Next stayed stale after wall jump: %v", got)
+	if got := e.Status("cal.timer").Next; !got.Equal(today) {
+		t.Fatalf("Status must keep scheduled next until ClockChanged: %v", got)
 	}
 	e.ClockChanged()
 	if name := waitFired(t, fired); name != "cal.timer" {
 		t.Fatalf("fired %q", name)
 	}
+	tomorrow := time.Date(2026, 9, 2, 15, 0, 0, 0, time.UTC)
+	waitNext(t, e, "cal.timer", tomorrow)
 }
 
 func TestEngineClockChangedLeavesOnBootSecHeap(t *testing.T) {
@@ -264,6 +266,10 @@ func TestStatusUnlocksBeforeNextDeadline(t *testing.T) {
 	want := time.Date(2026, 12, 25, 0, 0, 0, 0, time.UTC)
 	waitNext(t, e, "cal.timer", want)
 
+	e.mu.Lock()
+	e.clockGen++
+	e.mu.Unlock()
+
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var lockHeld atomic.Bool
@@ -326,6 +332,102 @@ func TestStatusUnlocksBeforeNextDeadline(t *testing.T) {
 	}
 	if !snap.Next.Equal(want) {
 		t.Fatalf("Next = %v, want %v", snap.Next, want)
+	}
+}
+
+func TestStatusUsesCachedNextUnlessClockChanged(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t, nil)
+	cal, err := ParseCalendar("*-12-25 00:00:00")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var n atomic.Int64
+	e.onNextDeadline = func() { n.Add(1) }
+	e.Arm(Spec{Name: "cal.timer", OnCalendar: []Calendar{cal}})
+	want := time.Date(2026, 12, 25, 0, 0, 0, 0, time.UTC)
+	waitNext(t, e, "cal.timer", want)
+	afterArm := n.Load()
+	if afterArm < 1 {
+		t.Fatal("Arm did not compute NextDeadline")
+	}
+	snap := e.Status("cal.timer")
+	if n.Load() != afterArm {
+		t.Fatalf("Status called NextDeadline (%d -> %d)", afterArm, n.Load())
+	}
+	if !snap.Next.Equal(want) {
+		t.Fatalf("cached Next = %v, want %v", snap.Next, want)
+	}
+	_, heapNext := armedHeap(t, e, "cal.timer")
+	if !snap.Next.Equal(heapNext) {
+		t.Fatalf("Status %v != heap %v", snap.Next, heapNext)
+	}
+
+	e.ClockChanged()
+	afterClock := n.Load()
+	if afterClock <= afterArm {
+		t.Fatal("ClockChanged did not recompute NextDeadline")
+	}
+	snap = e.Status("cal.timer")
+	if n.Load() != afterClock {
+		t.Fatalf("Status after ClockChanged called NextDeadline (%d -> %d)", afterClock, n.Load())
+	}
+	if !snap.Next.Equal(want) {
+		t.Fatalf("Next after ClockChanged = %v, want %v", snap.Next, want)
+	}
+}
+
+func TestStatusNextAfterFireAndArmMatchesHeap(t *testing.T) {
+	t.Parallel()
+	fired := make(chan string, 4)
+	e, fk := testEngine(t, func(name string) { fired <- name })
+	cal, err := ParseCalendar("*-*-* 15:00:00")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var n atomic.Int64
+	e.onNextDeadline = func() { n.Add(1) }
+	e.Arm(Spec{Name: "cal.timer", OnCalendar: []Calendar{cal}})
+	today := time.Date(2026, 9, 1, 15, 0, 0, 0, time.UTC)
+	waitNext(t, e, "cal.timer", today)
+	waitQuiet(t, fired)
+
+	fk.Advance(3 * time.Hour)
+	if name := waitFired(t, fired); name != "cal.timer" {
+		t.Fatalf("fired %q", name)
+	}
+	tomorrow := time.Date(2026, 9, 2, 15, 0, 0, 0, time.UTC)
+	waitNext(t, e, "cal.timer", tomorrow)
+	afterFire := n.Load()
+	snap := e.Status("cal.timer")
+	if n.Load() != afterFire {
+		t.Fatalf("Status after fire called NextDeadline (%d -> %d)", afterFire, n.Load())
+	}
+	if !snap.Next.Equal(tomorrow) {
+		t.Fatalf("Next after fire = %v, want %v", snap.Next, tomorrow)
+	}
+	_, heapNext := armedHeap(t, e, "cal.timer")
+	if !snap.Next.Equal(heapNext) {
+		t.Fatalf("Status %v != heap %v after fire", snap.Next, heapNext)
+	}
+
+	e.Disarm("cal.timer")
+	if got := e.Status("cal.timer"); !got.Next.IsZero() {
+		t.Fatalf("Disarm left cached Next %v", got.Next)
+	}
+	newCal, err := ParseCalendar("*-01-01 00:00:00")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.Arm(Spec{Name: "cal.timer", OnCalendar: []Calendar{newCal}})
+	newYears := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	waitNext(t, e, "cal.timer", newYears)
+	afterArm := n.Load()
+	if e.Status("cal.timer").Next.Equal(tomorrow) {
+		t.Fatal("Arm left stale cached next from the previous spec")
+	}
+	if n.Load() != afterArm {
+		t.Fatalf("Status after re-Arm called NextDeadline (%d -> %d)", afterArm, n.Load())
 	}
 }
 
