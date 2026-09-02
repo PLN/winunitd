@@ -128,7 +128,6 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 		m.mu.Lock()
 		if rt := m.units[name]; rt != nil && !m.closed {
 			rt.notify = nrt
-			rt.terminated = false
 			m.mu.Unlock()
 		} else {
 			m.mu.Unlock()
@@ -186,6 +185,7 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 		return nil
 	}
 	rt.proc = proc
+	rt.terminated = false
 	if svc.Type == unit.TypeNotify {
 		rt.step(core.EventStartRequested)
 	} else if autoRestart {
@@ -253,6 +253,11 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 	m.mu.Lock()
 	rt := m.units[name]
 	if rt == nil || rt.proc != proc {
+		if rt != nil && rt.proc == nil {
+			// Evicted setter: we set terminated then launchUnit took this
+			// proc before we reaped it (issue #62).
+			rt.terminated = false
+		}
 		m.mu.Unlock()
 		// No longer the live proc: still close what we were given if
 		// launchUnit (or another owner) has not already (issue #25).
