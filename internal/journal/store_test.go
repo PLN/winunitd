@@ -634,6 +634,34 @@ func TestQuerySkipsArchivesAndIDsBeforeCursor(t *testing.T) {
 	}
 }
 
+func TestQueryCursorOutOfOrderTimestamps(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	t1 := time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC)
+	t2 := time.Date(2026, 1, 1, 0, 0, 2, 0, time.UTC)
+	s.append(Entry{Timestamp: t2, Unit: "foo.service", Message: "late-ts-first"})
+	s.append(Entry{Timestamp: t1, Unit: "foo.service", Message: "early-ts-second"})
+
+	all, cur, err := s.Query("foo.service", time.Time{}, "")
+	if err != nil || len(all) != 2 || cur == "" {
+		t.Fatalf("all = %+v %q %v", all, cur, err)
+	}
+	more, _, err := s.Query("foo.service", time.Time{}, cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(more) != 0 {
+		t.Fatalf("out-of-order cursor replay = %+v", more)
+	}
+	first, cur1, err := s.Query("foo.service", time.Time{}, formatCursor(entryID(all[0]), 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 || first[0].Message != "early-ts-second" {
+		t.Fatalf("after first = %+v (cur1=%s)", first, cur1)
+	}
+}
+
 func journalJSONLine(ts time.Time, unit, msg string) []byte {
 	raw, err := json.Marshal(record{
 		V:         FormatVersion,
