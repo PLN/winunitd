@@ -2,6 +2,7 @@ package journal
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -818,4 +819,27 @@ func waitEntries(t *testing.T, s *Store, unit string, n int) []Entry {
 	}
 	t.Fatalf("entries = %+v, want >= %d", got, n)
 	return nil
+}
+
+func TestWaitContextAbandonsHungCapture(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	pr, pw := io.Pipe()
+	s.Attach("hang.service", 1, NewInvocationID(), io.NopCloser(pr), strings.NewReader(""))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if s.WaitContext(ctx, "hang.service") {
+		t.Fatal("WaitContext succeeded on a hung capture")
+	}
+	done := make(chan struct{})
+	go func() {
+		s.Wait("hang.service")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait still blocked after WaitContext abandoned the capture")
+	}
+	_ = pw.Close()
 }

@@ -27,9 +27,7 @@ type unitRuntime struct {
 	stopping      bool
 	terminated    bool
 	invocation    string
-	regWatch      *registryRuntime
-	evtWatch      *eventLogRuntime
-	pathWatch     *pathRuntime
+	hub           *watchRuntime
 	err           string
 	startTimes    []time.Time
 }
@@ -113,12 +111,10 @@ type unitTeardown struct {
 	watchdog context.CancelFunc
 	notify   *notifyRuntime
 	restart  context.CancelFunc
-	reg      *registryRuntime
-	evt      *eventLogRuntime
-	path     *pathRuntime
+	hub      *watchRuntime
 }
 
-// detachAsync takes watchdog, notify, restart timer, and registry/eventlog/path watches.
+// detachAsync takes watchdog, notify, restart timer, and hub watches.
 // It does not Stop the process (DESIGN.md §33: vanished units are not stopped).
 func (rt *unitRuntime) detachAsync() unitTeardown {
 	if rt == nil {
@@ -128,16 +124,12 @@ func (rt *unitRuntime) detachAsync() unitTeardown {
 		watchdog: rt.watchdog,
 		notify:   rt.notify,
 		restart:  rt.restartCancel,
-		reg:      rt.regWatch,
-		evt:      rt.evtWatch,
-		path:     rt.pathWatch,
+		hub:      rt.hub,
 	}
 	rt.watchdog = nil
 	rt.notify = nil
 	rt.restartCancel = nil
-	rt.regWatch = nil
-	rt.evtWatch = nil
-	rt.pathWatch = nil
+	rt.hub = nil
 	return td
 }
 
@@ -148,14 +140,8 @@ func (td unitTeardown) cancelNonblocking() {
 	if td.watchdog != nil {
 		td.watchdog()
 	}
-	if td.reg != nil && td.reg.cancel != nil {
-		td.reg.cancel()
-	}
-	if td.evt != nil && td.evt.cancel != nil {
-		td.evt.cancel()
-	}
-	if td.path != nil && td.path.cancel != nil {
-		td.path.cancel()
+	if td.hub != nil && td.hub.cancel != nil {
+		td.hub.cancel()
 	}
 }
 
@@ -163,14 +149,8 @@ func (td unitTeardown) closeBlocking() {
 	if td.notify != nil {
 		td.notify.Close()
 	}
-	if td.reg != nil {
-		closeWatches(td.reg.watches)
-	}
-	if td.evt != nil {
-		closeSubs(td.evt.subs)
-	}
-	if td.path != nil {
-		closePathWatches(td.path.watches)
+	if td.hub != nil {
+		closeWatchers(td.hub.watches)
 	}
 }
 

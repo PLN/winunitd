@@ -39,27 +39,27 @@ func TestParseDuration(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := parseDuration(tt.in)
+			got, err := ParseDuration(tt.in)
 			if tt.wantErr != "" {
 				if err == nil {
-					t.Fatalf("parseDuration(%q) = %v, want error %q", tt.in, got, tt.wantErr)
+					t.Fatalf("ParseDuration(%q) = %v, want error %q", tt.in, got, tt.wantErr)
 				}
 				if !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("parseDuration(%q) error %q, want substring %q", tt.in, err.Error(), tt.wantErr)
+					t.Fatalf("ParseDuration(%q) error %q, want substring %q", tt.in, err.Error(), tt.wantErr)
 				}
 				if got < 0 {
-					t.Fatalf("parseDuration(%q) returned negative duration %v with error", tt.in, got)
+					t.Fatalf("ParseDuration(%q) returned negative duration %v with error", tt.in, got)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("parseDuration(%q): %v", tt.in, err)
+				t.Fatalf("ParseDuration(%q): %v", tt.in, err)
 			}
 			if got != tt.want {
-				t.Fatalf("parseDuration(%q) = %v, want %v", tt.in, got, tt.want)
+				t.Fatalf("ParseDuration(%q) = %v, want %v", tt.in, got, tt.want)
 			}
 			if got < 0 {
-				t.Fatalf("parseDuration(%q) wrapped to negative %v", tt.in, got)
+				t.Fatalf("ParseDuration(%q) wrapped to negative %v", tt.in, got)
 			}
 		})
 	}

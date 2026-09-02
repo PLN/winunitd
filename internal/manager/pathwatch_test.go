@@ -606,7 +606,7 @@ func TestPathExistsOneshotAgainAfterRecreate(t *testing.T) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		rt := m.units["foo.path"]
-		return rt != nil && rt.pathWatch != nil && !rt.pathWatch.existsSatisfied
+		return rt != nil && rt.hub != nil && !rt.hub.existsSatisfied
 	})
 	hub.SetExists(`C:\Data\ready.flag`, true)
 	waitStarts(t, launch, 2, 2*time.Second)

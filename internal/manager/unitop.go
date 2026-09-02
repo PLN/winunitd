@@ -30,3 +30,23 @@ func (o *unitOps) lock(name string) func() {
 	u.Lock()
 	return u.Unlock
 }
+
+func (o *unitOps) tryLock(name string) (func(), bool) {
+	if o == nil {
+		return func() {}, true
+	}
+	o.mu.Lock()
+	if o.by == nil {
+		o.by = make(map[string]*sync.Mutex)
+	}
+	u := o.by[name]
+	if u == nil {
+		u = new(sync.Mutex)
+		o.by[name] = u
+	}
+	o.mu.Unlock()
+	if !u.TryLock() {
+		return nil, false
+	}
+	return u.Unlock, true
+}

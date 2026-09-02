@@ -2,6 +2,8 @@ package manager
 
 import (
 	"context"
+	"log"
+	"time"
 
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/protocol"
@@ -121,7 +123,14 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 	}
 
 	unlock := m.ops.lock(name)
-	defer unlock()
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			unlock()
+		}
+	}
+	defer release()
 
 	m.mu.Lock()
 	rt, err := m.lookup(name)
@@ -157,14 +166,8 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 	if kind == unit.KindTimer && m.engine != nil {
 		m.engine.Disarm(name)
 	}
-	if kind == unit.KindRegistry {
-		m.disarmRegistry(name)
-	}
-	if kind == unit.KindEventLog {
-		m.disarmEventLog(name)
-	}
-	if kind == unit.KindPath {
-		m.disarmPath(name)
+	if kind == unit.KindRegistry || kind == unit.KindEventLog || kind == unit.KindPath {
+		m.disarmHub(name)
 	}
 
 	var stopErr error
@@ -179,9 +182,10 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 	} else if proc != nil {
 		_ = m.stopProcess(proc, timeout)
 	}
-	if m.journal != nil {
-		m.journal.Wait(name)
-	}
+	// Release the per-unit op lock before journal.Wait so a hung
+	// capture cannot block later Start/Stop (issue #68).
+	release()
+	m.waitJournal(name, timeout)
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -214,4 +218,15 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 		active = rt.state.String()
 	}
 	return &protocol.UnitResult{Unit: name, ActiveState: active}, nil
+}
+
+func (m *Manager) waitJournal(name string, timeout time.Duration) {
+	if m == nil || m.journal == nil {
+		return
+	}
+	ctx, cancel := m.clockTimeout(context.Background(), timeout)
+	defer cancel()
+	if !m.journal.WaitContext(ctx, name) {
+		log.Printf("winunitd: %s: journal wait exceeded TimeoutStopSec", name)
+	}
 }
