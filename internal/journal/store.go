@@ -2,6 +2,7 @@ package journal
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -44,10 +45,14 @@ type Store struct {
 	files  map[string]*unitFile
 	capWG  map[string]*sync.WaitGroup
 
-	// onOpen / onSync are test hooks (nil in production). onOpen fires
-	// after a successful OpenFile; onSync fires immediately before Sync.
-	onOpen func()
-	onSync func()
+	// onOpen / onSync / onScan / onEntryID are test hooks (nil in production).
+	// onOpen fires after a successful OpenFile; onSync fires immediately
+	// before Sync; onScan fires after the write lock is released, before
+	// the file scan; onEntryID fires when a line's cursor id is computed.
+	onOpen    func()
+	onSync    func()
+	onScan    func()
+	onEntryID func()
 }
 
 // Entry is one journal line (DESIGN.md §22).
@@ -434,6 +439,10 @@ func (s *Store) Read(unit string) ([]Entry, error) {
 // cursor is positioned after the last entry in the result, or equals the
 // input cursor when the result is empty. Records whose unit field does
 // not match are dropped (no cross-unit bleed).
+//
+// The current file is flushed under the per-unit write lock, then that
+// lock is released before the scan. The current file is append-only, so
+// reading it unlocked is safe; capture/append wait only for the flush.
 func (s *Store) Query(unit string, since time.Time, cursor string) ([]Entry, string, error) {
 	if s == nil {
 		return nil, cursor, nil
@@ -445,22 +454,30 @@ func (s *Store) Query(unit string, since time.Time, cursor string) ([]Entry, str
 		if !f.closed {
 			_ = f.flushLocked()
 		}
-		out, next, err := s.readLocked(unit, since, cursor)
 		f.mu.Unlock()
-		return out, next, err
 	}
-	return s.readLocked(unit, since, cursor)
+	return s.scan(unit, since, cursor)
 }
 
-func (s *Store) readLocked(unit string, since time.Time, cursor string) ([]Entry, string, error) {
+func (s *Store) scan(unit string, since time.Time, cursor string) ([]Entry, string, error) {
+	if s.onScan != nil {
+		s.onScan()
+	}
 	var out []Entry
 	next := cursor
 	past := cursor == ""
 	wantID, wantN := parseCursor(cursor)
 	cursorTS := cursorTime(wantID)
 	seen := map[string]int{}
+	base := s.path(unit)
 
 	for _, path := range s.logPaths(unit) {
+		if path != base && !cursorTS.IsZero() {
+			last := peekLastTimestamp(path)
+			if !last.IsZero() && last.Before(cursorTS) {
+				continue
+			}
+		}
 		f, err := os.Open(path)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -488,7 +505,10 @@ func (s *Store) readLocked(unit string, since time.Time, cursor string) ([]Entry
 			if !since.IsZero() && e.Timestamp.Before(since) {
 				continue
 			}
-			id := entryID(e)
+			if !past && !cursorTS.IsZero() && !e.Timestamp.IsZero() && e.Timestamp.Before(cursorTS) {
+				continue
+			}
+			id := s.idFor(e)
 			seen[id]++
 			if !past {
 				if id == wantID {
@@ -521,6 +541,13 @@ func (s *Store) readLocked(unit string, since time.Time, cursor string) ([]Entry
 		out = []Entry{}
 	}
 	return out, next, nil
+}
+
+func (s *Store) idFor(e Entry) string {
+	if s != nil && s.onEntryID != nil {
+		s.onEntryID()
+	}
+	return entryID(e)
 }
 
 func (s *Store) logPaths(unit string) []string {
@@ -603,6 +630,60 @@ func cursorTime(id string) time.Time {
 		return t
 	}
 	return time.Time{}
+}
+
+// peekLastTimestamp returns the timestamp of the last JSON line in path.
+// A missing file, empty file, or undecodable tail yields the zero time
+// (caller must not skip). Max line size matches the scanner (1 MiB).
+func peekLastTimestamp(path string) time.Time {
+	f, err := os.Open(path)
+	if err != nil {
+		return time.Time{}
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || st.Size() == 0 {
+		return time.Time{}
+	}
+	const tail = 1024 * 1024
+	size := st.Size()
+	off := int64(0)
+	n := size
+	if size > tail {
+		off = size - tail
+		n = tail
+	}
+	buf := make([]byte, n)
+	nr, _ := f.ReadAt(buf, off)
+	if nr <= 0 {
+		return time.Time{}
+	}
+	buf = buf[:nr]
+	if off > 0 && bytes.IndexByte(buf, '\n') < 0 {
+		return time.Time{}
+	}
+	line := lastNonEmptyLine(buf)
+	if len(line) == 0 {
+		return time.Time{}
+	}
+	e, ok := decodeRecord(line)
+	if !ok {
+		return time.Time{}
+	}
+	return e.Timestamp
+}
+
+func lastNonEmptyLine(buf []byte) []byte {
+	for len(buf) > 0 && (buf[len(buf)-1] == '\n' || buf[len(buf)-1] == '\r') {
+		buf = buf[:len(buf)-1]
+	}
+	if i := bytes.LastIndexByte(buf, '\n'); i >= 0 {
+		buf = buf[i+1:]
+	}
+	if len(buf) > 0 && buf[len(buf)-1] == '\r' {
+		buf = buf[:len(buf)-1]
+	}
+	return buf
 }
 
 func (s *Store) path(unit string) string {

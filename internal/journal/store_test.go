@@ -1,7 +1,9 @@
 package journal
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -433,6 +435,216 @@ func TestQuerySinceAndCursor(t *testing.T) {
 	if len(afterDup) != 0 {
 		t.Fatalf("duplicate cursor replay = %+v", afterDup)
 	}
+}
+
+func TestQueryFlushesThenUnlocksBeforeScan(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	s.flushEvery = time.Hour
+	s.append(Entry{Timestamp: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Unit: "foo.service", Message: "buffered"})
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	s.onScan = func() {
+		close(started)
+		<-release
+	}
+
+	errc := make(chan error, 1)
+	go func() {
+		got, _, err := s.Query("foo.service", time.Time{}, "")
+		if err != nil {
+			errc <- err
+			return
+		}
+		if len(got) != 1 || got[0].Message != "buffered" {
+			errc <- fmt.Errorf("query = %+v", got)
+			return
+		}
+		errc <- nil
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("scan did not start")
+	}
+
+	done := make(chan struct{})
+	var elapsed time.Duration
+	go func() {
+		start := time.Now()
+		s.append(Entry{Timestamp: time.Now().UTC(), Unit: "foo.service", Message: "concurrent"})
+		elapsed = time.Since(start)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		close(release)
+		t.Fatal("append stalled while Query was scanning")
+	}
+	close(release)
+	if err := <-errc; err != nil {
+		t.Fatal(err)
+	}
+	if elapsed > 100*time.Millisecond {
+		t.Fatalf("append held lock during scan: %v", elapsed)
+	}
+}
+
+func TestFollowerOn10MiBDoesNotStallAppend(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	unit := "big.service"
+	old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	line := journalJSONLine(old, unit, strings.Repeat("x", 200))
+	payload := bytes.Repeat(line, (10<<20)/len(line)+1)
+	if err := os.WriteFile(s.path(unit), payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.append(Entry{Timestamp: old.Add(time.Hour), Unit: unit, Message: "tail"})
+	s.syncUnit(unit)
+
+	all, cur, err := s.Query(unit, time.Time{}, "")
+	if err != nil || len(all) < 2 || cur == "" {
+		t.Fatalf("seed query = %d %q %v", len(all), cur, err)
+	}
+
+	start := time.Now()
+	if _, _, err := s.Query(unit, time.Time{}, cur); err != nil {
+		t.Fatal(err)
+	}
+	scanDur := time.Since(start)
+
+	stop := make(chan struct{})
+	var following atomic.Int32
+	go func() {
+		for {
+			following.Add(1)
+			if _, _, err := s.Query(unit, time.Time{}, cur); err != nil {
+				return
+			}
+			select {
+			case <-stop:
+				return
+			default:
+			}
+		}
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for following.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if following.Load() == 0 {
+		t.Fatal("follower never queried")
+	}
+
+	start = time.Now()
+	s.append(Entry{Timestamp: time.Now().UTC(), Unit: unit, Message: "live"})
+	elapsed := time.Since(start)
+	close(stop)
+
+	bound := 20 * time.Millisecond
+	if scanDur > 50*time.Millisecond {
+		bound = scanDur / 5
+	}
+	if elapsed > bound {
+		t.Fatalf("append blocked %v; scan is %v (want ≤ %v, a flush not a full read)", elapsed, scanDur, bound)
+	}
+}
+
+func TestQuerySkipsArchivesAndIDsBeforeCursor(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	unit := "foo.service"
+	old0 := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	var arch bytes.Buffer
+	const nOld = 500
+	for i := 0; i < nOld; i++ {
+		arch.Write(journalJSONLine(old0.Add(time.Duration(i)*time.Millisecond), unit, "old"+strconv.Itoa(i)))
+	}
+	if err := os.WriteFile(s.path(unit)+".1", arch.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	new0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.append(Entry{Timestamp: new0, Unit: unit, Message: "new1"})
+	s.append(Entry{Timestamp: new0.Add(time.Second), Unit: unit, Message: "new2"})
+	s.syncUnit(unit)
+
+	all, _, err := s.Query(unit, time.Time{}, "")
+	if err != nil || len(all) != nOld+2 {
+		t.Fatalf("all = %d, want %d (%v)", len(all), nOld+2, err)
+	}
+	// Cursor on the first current-file line: archive last precedes
+	// cursorTS, so the rotated file must not be opened or hashed.
+	cur := formatCursor(entryID(all[nOld]), 1)
+
+	var ids atomic.Int32
+	s.onEntryID = func() { ids.Add(1) }
+	got, _, err := s.Query(unit, time.Time{}, cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Message != "new2" {
+		t.Fatalf("after archive cursor = %+v", got)
+	}
+	if n := ids.Load(); n != 2 {
+		t.Fatalf("entryID calls = %d, want 2 (archive skipped; cursor line + new2)", n)
+	}
+
+	// Current-file skip: timestamps before cursorTS must not compute entryID.
+	mid := all[10]
+	curMid := formatCursor(entryID(mid), 1)
+	ids.Store(0)
+	rest, _, err := s.Query(unit, time.Time{}, curMid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rest) != nOld-11+2 {
+		t.Fatalf("rest after mid-archive cursor = %d, want %d", len(rest), nOld-11+2)
+	}
+	if n := ids.Load(); n != int32(len(rest)+1) {
+		t.Fatalf("entryID calls = %d, want %d (cursor line + rest; not the 11 skipped)", n, len(rest)+1)
+	}
+
+	// Archive whose last line is at the cursor timestamp must still be scanned
+	// (duplicate-id counting), so do not skip it.
+	dupT := new0.Add(2 * time.Hour)
+	var same bytes.Buffer
+	same.Write(journalJSONLine(dupT, unit, "same"))
+	same.Write(journalJSONLine(dupT, unit, "same"))
+	if err := os.WriteFile(s.path(unit)+".2", same.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.append(Entry{Timestamp: dupT, Unit: unit, Message: "same"})
+	s.syncUnit(unit)
+	dups, dupCur, err := s.Query(unit, dupT, "")
+	if err != nil || len(dups) != 3 {
+		t.Fatalf("dups across archive = %d %v", len(dups), err)
+	}
+	after, _, err := s.Query(unit, dupT, dupCur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 0 {
+		t.Fatalf("duplicate cursor across archive replay = %+v", after)
+	}
+}
+
+func journalJSONLine(ts time.Time, unit, msg string) []byte {
+	raw, err := json.Marshal(record{
+		V:         FormatVersion,
+		Timestamp: ts.UTC().Format(time.RFC3339Nano),
+		Unit:      unit,
+		Message:   msg,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return append(raw, '\n')
 }
 
 func TestOpenReuseNoFsyncPerLine(t *testing.T) {
