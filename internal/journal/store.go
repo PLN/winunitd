@@ -472,7 +472,8 @@ func (s *Store) scan(unit string, since time.Time, cursor string) ([]Entry, stri
 	base := s.path(unit)
 
 	for _, path := range s.logPaths(unit) {
-		if path != base && !cursorTS.IsZero() {
+		archive := path != base
+		if archive && !cursorTS.IsZero() {
 			last := peekLastTimestamp(path)
 			if !last.IsZero() && last.Before(cursorTS) {
 				continue
@@ -519,7 +520,12 @@ func (s *Store) scan(unit string, since time.Time, cursor string) ([]Entry, stri
 						continue
 					}
 					past = true
-				} else if !e.Timestamp.IsZero() && e.Timestamp.After(cursorTS) {
+				} else if archive && !e.Timestamp.IsZero() && e.Timestamp.After(cursorTS) {
+					// Archives are complete generations. A timestamp after
+					// the cursor means the cursor line is gone (rotated
+					// off). The current file can have out-of-order stamps
+					// from concurrent stdout/stderr capture, so it matches
+					// the cursor by id only.
 					past = true
 				} else {
 					continue
