@@ -6,8 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 func TestWindowsOpenWatchFiresOnDirModify(t *testing.T) {
@@ -166,5 +169,197 @@ func TestWindowsResolveExistsWatchWalksUp(t *testing.T) {
 	}
 	if !strings.EqualFold(filter, "sub") {
 		t.Fatalf("filter = %q, want sub", filter)
+	}
+}
+
+func TestWindowsResolveExistsWatchExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "ready.flag")
+	if err := os.WriteFile(target, []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	watchDir, filter, err := resolveExistsWatch(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.EqualFold(watchDir, dir) {
+		t.Fatalf("watchDir = %q, want %q", watchDir, dir)
+	}
+	if !strings.EqualFold(filter, "ready.flag") {
+		t.Fatalf("filter = %q", filter)
+	}
+}
+
+func TestExistsNotifyFilterNameOnly(t *testing.T) {
+	want := uint32(windows.FILE_NOTIFY_CHANGE_FILE_NAME | windows.FILE_NOTIFY_CHANGE_DIR_NAME)
+	if existsNotifyFilter != want {
+		t.Fatalf("existsNotifyFilter = %#x, want %#x", existsNotifyFilter, want)
+	}
+	banned := windows.FILE_NOTIFY_CHANGE_ATTRIBUTES |
+		windows.FILE_NOTIFY_CHANGE_SIZE |
+		windows.FILE_NOTIFY_CHANGE_LAST_WRITE |
+		windows.FILE_NOTIFY_CHANGE_CREATION |
+		windows.FILE_NOTIFY_CHANGE_SECURITY
+	if existsNotifyFilter&banned != 0 {
+		t.Fatalf("existsNotifyFilter %#x includes content/attr/security bits", existsNotifyFilter)
+	}
+}
+
+func withStatCount(t *testing.T) *atomic.Int64 {
+	t.Helper()
+	var n atomic.Int64
+	testStatHook = func() { n.Add(1) }
+	t.Cleanup(func() { testStatHook = nil })
+	return &n
+}
+
+func drainExists(t *testing.T, w Watch) {
+	t.Helper()
+	select {
+	case <-w.C():
+	default:
+	}
+}
+
+func TestWindowsOpenExistsWatchSiblingAppendDoesNotFire(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "ready.flag")
+	sibling := filepath.Join(dir, "noise.log")
+	if err := os.WriteFile(sibling, []byte("0"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := ParseExists(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := OpenExistsWatch(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	drainExists(t, w)
+
+	n := withStatCount(t)
+	for i := 0; i < 100; i++ {
+		if err := os.WriteFile(sibling, []byte{byte(i)}, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	select {
+	case <-w.C():
+		t.Fatal("sibling appends must not fire a PathExists watch")
+	case <-time.After(400 * time.Millisecond):
+	}
+	if got := n.Load(); got != 0 {
+		t.Fatalf("sibling appends caused %d stats, want 0", got)
+	}
+
+	if err := os.WriteFile(target, []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-w.C():
+	case <-time.After(3 * time.Second):
+		t.Fatal("PathExists watch did not fire after create")
+	}
+	if got := n.Load(); got > 1 {
+		t.Fatalf("stats after relevant create = %d, want ≤1", got)
+	}
+}
+
+func TestWindowsOpenExistsWatchSiblingCreateDoesNotFire(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "ready.flag")
+	s, err := ParseExists(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := OpenExistsWatch(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	drainExists(t, w)
+
+	n := withStatCount(t)
+	if err := os.WriteFile(filepath.Join(dir, "other.txt"), []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-w.C():
+		t.Fatal("sibling create must not fire a PathExists watch")
+	case <-time.After(400 * time.Millisecond):
+	}
+	if got := n.Load(); got != 0 {
+		t.Fatalf("sibling create caused %d stats, want 0", got)
+	}
+
+	if err := os.WriteFile(target, []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-w.C():
+	case <-time.After(3 * time.Second):
+		t.Fatal("PathExists watch did not fire after matching create")
+	}
+	if got := n.Load(); got > 1 {
+		t.Fatalf("stats after relevant create = %d, want ≤1", got)
+	}
+}
+
+func TestWindowsOpenExistsWatchAncestorIgnoresSibling(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "sub", "ready.flag")
+	s, err := ParseExists(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := OpenExistsWatch(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	drainExists(t, w)
+
+	n := withStatCount(t)
+	if err := os.WriteFile(filepath.Join(dir, "noise.txt"), []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "other"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-w.C():
+		t.Fatal("sibling create under ancestor must not fire")
+	case <-time.After(400 * time.Millisecond):
+	}
+	if got := n.Load(); got != 0 {
+		t.Fatalf("sibling noise caused %d stats, want 0", got)
+	}
+
+	before := n.Load()
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-w.C():
+		t.Fatal("intermediate directory create must not fire until the target exists")
+	case <-time.After(400 * time.Millisecond):
+	}
+	if got := n.Load() - before; got > 1 {
+		t.Fatalf("stats after intermediate create = %d, want ≤1", got)
+	}
+
+	before = n.Load()
+	if err := os.WriteFile(target, []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-w.C():
+	case <-time.After(3 * time.Second):
+		t.Fatal("PathExists watch did not fire after target create under ancestor")
+	}
+	if got := n.Load() - before; got > 1 {
+		t.Fatalf("stats after target create = %d, want ≤1", got)
 	}
 }

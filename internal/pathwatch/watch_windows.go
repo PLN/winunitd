@@ -21,6 +21,11 @@ const (
 		windows.FILE_NOTIFY_CHANGE_CREATION |
 		windows.FILE_NOTIFY_CHANGE_SECURITY
 
+	// existsNotifyFilter is the narrowest ReadDirectoryChangesW mask that
+	// still reports create, delete, and rename of a directory entry.
+	existsNotifyFilter = windows.FILE_NOTIFY_CHANGE_FILE_NAME |
+		windows.FILE_NOTIFY_CHANGE_DIR_NAME
+
 	notifyBufSize = 64 * 1024
 )
 
@@ -28,6 +33,7 @@ type winWatch struct {
 	dir    windows.Handle
 	event  windows.Handle
 	filter string // basename; empty means any change in the directory
+	mask   uint32
 	ch     chan struct{}
 
 	mu        sync.Mutex
@@ -58,6 +64,10 @@ func OpenWatch(s Spec) (Watch, error) {
 }
 
 func openDirWatch(watchDir, filter string) (Watch, error) {
+	return openDirWatchNotify(watchDir, filter, notifyFilter)
+}
+
+func openDirWatchNotify(watchDir, filter string, mask uint32) (Watch, error) {
 	p, err := windows.UTF16PtrFromString(watchDir)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrUnwatchable, watchDir)
@@ -82,11 +92,15 @@ func openDirWatch(watchDir, filter string) (Watch, error) {
 		_ = windows.CloseHandle(h)
 		return nil, fmt.Errorf("%w: %s: %v", ErrUnwatchable, watchDir, err)
 	}
+	if mask == 0 {
+		mask = notifyFilter
+	}
 	armed := make(chan struct{})
 	w := &winWatch{
 		dir:    h,
 		event:  ev,
 		filter: filter,
+		mask:   mask,
 		ch:     make(chan struct{}, 1),
 		armed:  armed,
 	}
@@ -137,7 +151,7 @@ func (w *winWatch) loop() {
 			&buf[0],
 			uint32(len(buf)),
 			false, // non-recursive: this directory only
-			notifyFilter,
+			w.mask,
 			nil,
 			&ov,
 			0,
@@ -178,9 +192,10 @@ func (w *winWatch) signal() {
 
 func (w *winWatch) match(buf []byte) bool {
 	if w.filter == "" {
-		// Directory PathChanged= / PathExists= ancestor: any completion
-		// is a change. Do not require a parsed filename; empty or
-		// unparseable buffers still mean something happened here.
+		// Directory PathChanged=: any completion is a change. Do not
+		// require a parsed filename; empty or unparseable buffers still
+		// mean something happened here. PathExists= ancestor watches
+		// always pass a basename filter.
 		return true
 	}
 	if len(buf) == 0 {
