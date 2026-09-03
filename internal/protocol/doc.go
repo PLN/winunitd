@@ -15,11 +15,12 @@
 // pipe only.
 //
 // DefaultAuthorizer (system pipe) and UserAuthorizer (user pipe) derive
-// Peer from the named-pipe client token (GetNamedPipeClientProcessId →
-// process token; CheckTokenMembership for Administrators). The DACL is
-// defense-in-depth. A user-pipe client is the connecting user (Owner),
-// not Administrator unless the token is. Test authorizers (AllowAdmin,
-// AllowOwner) are for unit tests only.
+// Peer from the named-pipe client token (ImpersonateNamedPipeClient
+// after an identification-level dial; GetNamedPipeClientProcessId only
+// if impersonation fails; CheckTokenMembership for Administrators). The
+// DACL is defense-in-depth. A user-pipe client is the connecting user
+// (Owner), not Administrator unless the token is. Test authorizers
+// (AllowAdmin, AllowOwner) are for unit tests only.
 //
 // ListenPipe / ListenPipeSDDL create every winunitd named pipe (system
 // control, user control, notify) with PIPE_REJECT_REMOTE_CLIENTS and
@@ -31,6 +32,8 @@
 // CheckTokenMembership). DialUser verifies the server token user SID is
 // that user-manager identity. Mismatch is a squat: the connection is
 // closed and no RPC is sent. DialPipe does not check (notify / tests).
+// DialPipe / DialDefault / DialUser use PipeDialImpLevel (identification),
+// not SECURITY_ANONYMOUS.
 //
 // Transport is newline-delimited compact JSON over a byte stream, so the
 // same codec and handler can run on a Windows named pipe or on a fake

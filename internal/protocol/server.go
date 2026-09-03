@@ -59,6 +59,7 @@ func ServeConn(ctx context.Context, conn io.ReadWriteCloser, h Handler, auth Aut
 	}
 	peer, err := authorize(auth, netConn)
 	if err != nil {
+		logAuthf("winunitd: authorizer: %v", err)
 		peer = Peer{}
 	}
 

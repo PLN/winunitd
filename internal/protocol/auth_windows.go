@@ -12,41 +12,20 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// DefaultAuthorizer derives Peer from the named-pipe client token.
-// It does not stamp Administrator on every connection.
-func DefaultAuthorizer() Authorizer {
-	return pipeAuthorizer("")
-}
-
-// UserAuthorizer is DefaultAuthorizer plus Owner when the token SID
-// matches ownerSID (the user-manager pipe key).
-func UserAuthorizer(ownerSID string) Authorizer {
-	return pipeAuthorizer(ownerSID)
-}
-
-func pipeAuthorizer(ownerSID string) Authorizer {
-	return func(conn net.Conn) (Peer, error) {
-		return peerFromNamedPipe(conn, ownerSID)
-	}
-}
-
-func peerFromNamedPipe(conn net.Conn, ownerSID string) (Peer, error) {
-	if conn == nil {
-		return Peer{}, fmt.Errorf("nil connection")
-	}
+func impersonatePeerPlatform(conn net.Conn, ownerSID string) (Peer, error) {
 	h, ok := connHandle(conn)
 	if !ok {
 		return Peer{}, fmt.Errorf("connection is not a named pipe")
 	}
-	p, err := peerFromClientProcess(h, ownerSID)
-	if err == nil {
-		return p, nil
+	return peerFromImpersonation(h, ownerSID)
+}
+
+func clientProcessPeerPlatform(conn net.Conn, ownerSID string) (Peer, error) {
+	h, ok := connHandle(conn)
+	if !ok {
+		return Peer{}, fmt.Errorf("connection is not a named pipe")
 	}
-	p, err2 := peerFromImpersonation(h, ownerSID)
-	if err2 == nil {
-		return p, nil
-	}
-	return Peer{}, fmt.Errorf("client process token: %v; impersonation fallback: %w", err, err2)
+	return peerFromClientProcess(h, ownerSID)
 }
 
 func peerFromClientProcess(h windows.Handle, ownerSID string) (Peer, error) {
@@ -72,9 +51,9 @@ func peerFromClientProcess(h windows.Handle, ownerSID string) (Peer, error) {
 }
 
 func peerFromImpersonation(h windows.Handle, ownerSID string) (Peer, error) {
-	// Impersonation is the fallback when the client process token cannot
-	// be opened. Lock the OS thread so RevertToSelf applies to the same
-	// thread that impersonated; dispatch runs after revert.
+	// Production A1 path: the connection token, not the opener PID.
+	// Lock the OS thread so RevertToSelf applies to the same thread
+	// that impersonated; dispatch runs after revert.
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	if err := impersonateNamedPipeClient(h); err != nil {
@@ -110,18 +89,24 @@ func peerFromToken(tok windows.Token, ownerSID string) (Peer, error) {
 	if err != nil {
 		return Peer{}, err
 	}
-	// CheckTokenMembership requires an impersonation token (a process
-	// primary token fails with ERROR_NO_IMPERSONATION_TOKEN).
-	imp, err := duplicateImpersonation(tok)
+	// ImpersonateNamedPipeClient already yields an impersonation token
+	// (identification is enough). A process primary token (PID fallback)
+	// fails CheckTokenMembership with ERROR_NO_IMPERSONATION_TOKEN and
+	// needs DuplicateTokenEx first. Do not raise an identification token
+	// to SecurityImpersonation — that fails ERROR_BAD_IMPERSONATION_LEVEL.
+	isAdmin, err := tok.IsMember(adminSID)
 	if err != nil {
-		return Peer{}, err
+		imp, err2 := duplicateImpersonation(tok)
+		if err2 != nil {
+			return Peer{}, err2
+		}
+		defer imp.Close()
+		isAdmin, err = imp.IsMember(adminSID)
+		if err != nil {
+			return Peer{}, err
+		}
 	}
-	defer imp.Close()
 	// A UAC-filtered token is not Administrator: Administrators is deny-only.
-	isAdmin, err := imp.IsMember(adminSID)
-	if err != nil {
-		return Peer{}, err
-	}
 	p.Administrator = isAdmin
 
 	if ownerSID != "" && sidEqual(sid, ownerSID) {

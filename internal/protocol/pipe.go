@@ -17,6 +17,18 @@ const DefaultPipeName = `\\.\pipe\winunitd\control`
 // DialDefault requires the server process to be LocalSystem or
 // Administrators. DialUser requires the server token user SID to be that
 // user-manager identity. DialPipe does not check (notify and tests).
+//
+// DialPipe / DialDefault / DialUser open the pipe at PipeDialImpLevel
+// (SECURITY_IDENTIFICATION), not SECURITY_ANONYMOUS, so the server can
+// ImpersonateNamedPipeClient and read the connecting token.
+
+// PipeDialImpLevel is SECURITY_IDENTIFICATION (SecurityIdentification << 16).
+// Identification is enough for OpenThreadToken + GetTokenUser +
+// CheckTokenMembership and does not let the server act as the client.
+// go-winio DialPipeContext defaults to PipeImpLevelAnonymous (0).
+const PipeDialImpLevel = 0x00010000
+
+const pipeDialImpLevelAnonymous = 0
 
 // ControlPipeSDDL allows LocalSystem and Administrators only.
 // D:P — protected DACL (no inherited ACEs). GA — generic all.
