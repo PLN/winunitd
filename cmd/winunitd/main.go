@@ -11,11 +11,13 @@ import (
 	"github.com/PLN/winunitd/internal/manager"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/version"
 )
 
 const usage = `winunitd — Windows unit manager daemon
 
 Usage:
+  winunitd [--version]
   winunitd [--base-dir DIR]
   winunitd --user-manager SID [--base-dir DIR]
   winunitd install [--base-dir DIR]
@@ -68,6 +70,7 @@ Flags:
                          %LOCALAPPDATA%\winunitd (user manager)
   --user-manager SID     Run as the per-user manager for SID (not an SCM service)
   -h, --help             Show this help
+  --version              Print 0.1.0-alpha and exit
 `
 
 func main() {
@@ -79,6 +82,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		switch a {
 		case "-h", "-help", "--help":
 			fmt.Fprint(stdout, usage)
+			return 0
+		case "-version", "--version":
+			fmt.Fprintf(stdout, "winunitd %s\n", version.Version)
 			return 0
 		}
 	}
