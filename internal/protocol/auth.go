@@ -1,12 +1,17 @@
 package protocol
 
 import (
+	"fmt"
+	"log"
 	"net"
+	"sync"
 )
 
 // Peer is the authenticated identity of a control connection.
 // Production Windows fills this from the named-pipe client token
-// (DESIGN.md §30). The pipe DACL is defense-in-depth, not the auth model.
+// (DESIGN.md §30): ImpersonateNamedPipeClient first; GetNamedPipeClientProcessId
+// only if impersonation fails. The pipe DACL is defense-in-depth, not the
+// auth model.
 type Peer struct {
 	SID           string
 	LocalSystem   bool
@@ -59,4 +64,67 @@ func authorize(auth Authorizer, conn net.Conn) (Peer, error) {
 		return Peer{}, nil
 	}
 	return auth(conn)
+}
+
+// DefaultAuthorizer derives Peer from the named-pipe client token.
+// It does not stamp Administrator on every connection.
+func DefaultAuthorizer() Authorizer {
+	return pipeAuthorizer("")
+}
+
+// UserAuthorizer is DefaultAuthorizer plus Owner when the token SID
+// matches ownerSID (the user-manager pipe key).
+func UserAuthorizer(ownerSID string) Authorizer {
+	return pipeAuthorizer(ownerSID)
+}
+
+type peerLookup func(conn net.Conn, ownerSID string) (Peer, error)
+
+func pipeAuthorizer(ownerSID string) Authorizer {
+	return authorizerWithLookups(ownerSID, impersonatePeerPlatform, clientProcessPeerPlatform)
+}
+
+// authorizerWithLookups is the production A1 path with injectable lookups.
+// Tests use it to return admin vs non-admin Peers from a fake impersonation
+// hook without a real pipe, and to prove PID is only a fallback.
+func authorizerWithLookups(ownerSID string, impersonate, pid peerLookup) Authorizer {
+	return func(conn net.Conn) (Peer, error) {
+		return peerFromLookups(conn, ownerSID, impersonate, pid)
+	}
+}
+
+func peerFromLookups(conn net.Conn, ownerSID string, impersonate, pid peerLookup) (Peer, error) {
+	if conn == nil {
+		return Peer{}, fmt.Errorf("nil connection")
+	}
+	if impersonate == nil {
+		impersonate = impersonatePeerPlatform
+	}
+	if pid == nil {
+		pid = clientProcessPeerPlatform
+	}
+	p, err := impersonate(conn, ownerSID)
+	if err == nil {
+		return p, nil
+	}
+	p, err2 := pid(conn, ownerSID)
+	if err2 == nil {
+		logAuthf("winunitd: authorizer: impersonation failed, using client process token: %v", err)
+		return p, nil
+	}
+	return Peer{}, fmt.Errorf("impersonation: %v; client process token: %w", err, err2)
+}
+
+var (
+	authLogMu sync.Mutex
+	authLog   = func(format string, args ...any) {
+		log.Printf(format, args...)
+	}
+)
+
+func logAuthf(format string, args ...any) {
+	authLogMu.Lock()
+	f := authLog
+	authLogMu.Unlock()
+	f(format, args...)
 }
