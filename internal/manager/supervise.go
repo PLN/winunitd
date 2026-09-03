@@ -167,7 +167,10 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 	if nrt != nil {
 		nrt.SetMain(proc.PID(), proc.Job())
 	}
-	m.journal.Wait(name)
+	// Bound the previous capture wait by TimeoutStopSec so a self-exited
+	// unit with a lingering journal cannot hang the next Start or
+	// Restart= relaunch (issue #83). Same wait/abandon as stopUnit (#68).
+	m.waitJournal(name, stopTimeout(u))
 	m.journal.SetOrigin(m.journalOrigin())
 	m.journal.Attach(name, proc.PID(), inv, proc.Stdout(), proc.Stderr())
 
