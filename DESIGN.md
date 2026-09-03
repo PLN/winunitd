@@ -1308,6 +1308,23 @@ Impersonation is not the primary path: Peer is a snapshot at accept, there is no
 
 `DefaultAuthorizer` must not stamp `Administrator` on every peer. A user-pipe client is the connecting user (`Owner`); linger and other admin-only methods require `Peer.CanLinger()` (Administrators or LocalSystem). Test authorizers (`AllowAdmin`, `AllowOwner`) are for unit tests only.
 
+Pipe create (system control, user control, and any other winunitd named pipe created the same way, including notify):
+
+- `PIPE_REJECT_REMOTE_CLIENTS` — remote SMB clients cannot connect. This is local IPC.
+- `FILE_FLAG_FIRST_PIPE_INSTANCE` (NT `FILE_CREATE` for the first instance) — if the name is already taken, listen fails closed. Do not attach to a squat.
+
+Client squat defense, after connect, before any RPC:
+
+1. `GetNamedPipeServerProcessId`
+2. Open the server process (`PROCESS_QUERY_LIMITED_INFORMATION`) and its token (`TOKEN_QUERY`)
+3. Token owner SID (and token user SID / `CheckTokenMembership` as below)
+
+System pipe (`\\.\pipe\winunitd\control`): the documented daemon identity is LocalSystem (SCM `Account: LocalSystem`). Accept if token owner is LocalSystem (`S-1-5-18`) or Administrators (`S-1-5-32-544`), or the token user is LocalSystem, or `CheckTokenMembership` on Administrators (elevated console `winunitd`). Mismatch → close; do not send RPCs.
+
+User pipe (`\\.\pipe\winunitd\user\<SID>\control`): the documented user-manager identity is that SID. The user-manager process runs as that user (`winunitd --user-manager <SID>` checks the process token user SID matches). Accept if the server token user SID is that pipe’s SID. Mismatch → close; do not send RPCs.
+
+A failed open of the server process or token fails closed (treat as squat). This does not replace or weaken Peer/Authorizer on the server.
+
 Malformed JSON is answered with `invalid-request`, then the connection closes.
 
 `logs` honors `Follow` and `Since` (see §22). They are not reserved or silently ignored.

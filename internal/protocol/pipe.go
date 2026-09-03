@@ -9,6 +9,15 @@ import (
 // DefaultPipeName is the system manager control pipe (DESIGN.md §30).
 const DefaultPipeName = `\\.\pipe\winunitd\control`
 
+// Windows ListenPipe / ListenPipeSDDL (system control, user control, and
+// notify — any pipe created the same way) set PIPE_REJECT_REMOTE_CLIENTS
+// and create the first instance only (FILE_FLAG_FIRST_PIPE_INSTANCE /
+// NT FILE_CREATE). A name that is already taken fails closed.
+//
+// DialDefault requires the server process to be LocalSystem or
+// Administrators. DialUser requires the server token user SID to be that
+// user-manager identity. DialPipe does not check (notify and tests).
+
 // ControlPipeSDDL allows LocalSystem and Administrators only.
 // D:P — protected DACL (no inherited ACEs). GA — generic all.
 // SY — Local System (S-1-5-18). BA — Builtin Administrators (S-1-5-32-544).
