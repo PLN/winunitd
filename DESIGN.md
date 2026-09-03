@@ -1729,12 +1729,15 @@ IoPriority=low
   Examples: `CPUWeight=50` → 1; `CPUWeight=5000` → 5; `CPUWeight=10000` → 9.
   `ControlFlags` are `JOB_OBJECT_CPU_RATE_CONTROL_ENABLE |
   JOB_OBJECT_CPU_RATE_CONTROL_WEIGHT_BASED`.
-- `CPUQuota=` is `N%` with N in 1–10000. The trailing `%` is required.
-  It maps to a hard-cap `CpuRate = N * 100` (hundredths of a percent),
-  so `CPUQuota=25%` is `CpuRate=2500`. `ControlFlags` are
+- `CPUQuota=` is `N%` with N in 1–100 (percentage of total machine CPU).
+  The trailing `%` is required. This is Job Object semantics, not systemd
+  per-CPU `CPUQuota=` (systemd `200%` means two CPUs; here `100%` is
+  already the whole machine). It maps to a hard-cap `CpuRate = N * 100`
+  (hundredths of a percent), so `CPUQuota=25%` is `CpuRate=2500` and
+  `CPUQuota=100%` is `CpuRate=10000`. Windows `CpuRate` max is 10000.
+  Out-of-range N (`0`, `>100`) is a parse/verify error; there is no
+  silent clamp at start. `ControlFlags` are
   `JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP`.
-  Windows rejects a `CpuRate` above `10000 * number of processors`; that
-  fails activation with reason `configuration` (no silent clamp).
 - `CPUWeight=` and `CPUQuota=` cannot both be set (one CPU control mode
   per unit).
 - `IoPriority=` is `idle`, `low`, `normal`, or `high`. Job Objects have
@@ -1748,9 +1751,10 @@ IoPriority=low
   `CreateProcess`.
 
 These are Windows Job Object / process I/O-priority semantics, not cgroup
-`cpu.weight` / `cpu.max` / `io.weight`. A Windows weight 1–9 is not a
-cgroup weight. `CPUQuota=25%` is a Job Object `CpuRate` of 2500
-(25.00% in hundredths-of-percent), not cgroup `cpu.max`.
+`cpu.weight` / `cpu.max` / `io.weight` and not systemd per-CPU `CPUQuota=`.
+A Windows weight 1–9 is not a cgroup weight. `CPUQuota=25%` is a Job Object
+`CpuRate` of 2500 (25.00% of total machine CPU in hundredths-of-percent),
+not cgroup `cpu.max`.
 
 ---
 

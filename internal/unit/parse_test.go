@@ -1261,6 +1261,22 @@ CPUWeight=10001
 			wantErr: []string{`invalid CPUWeight "10001"`},
 		},
 		{
+			name: "job object CPUQuota 100%",
+			file: "quota100.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+CPUQuota=100%
+`,
+			noWarn: true,
+			check: func(t *testing.T, u *Unit) {
+				if !u.Service.CPUQuotaSet || u.Service.CPUQuota != 100 {
+					t.Fatalf("CPUQuota = %d set=%v", u.Service.CPUQuota, u.Service.CPUQuotaSet)
+				}
+			},
+		},
+		{
 			name: "CPUQuota missing percent fails",
 			file: "foo.service",
 			src: `
@@ -1281,6 +1297,28 @@ WorkingDirectory=C:\Tools
 CPUQuota=0%
 `,
 			wantErr: []string{`invalid CPUQuota "0%"`},
+		},
+		{
+			name: "CPUQuota 101 percent fails",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+CPUQuota=101%
+`,
+			wantErr: []string{`invalid CPUQuota "101%"`},
+		},
+		{
+			name: "CPUQuota 10000 percent fails",
+			file: "foo.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+CPUQuota=10000%
+`,
+			wantErr: []string{`invalid CPUQuota "10000%"`},
 		},
 		{
 			name: "CPUWeight and CPUQuota together fail",

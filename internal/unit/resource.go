@@ -106,8 +106,9 @@ func parseCPUWeight(s string) (uint32, error) {
 	return uint32(n), nil
 }
 
-// parseCPUQuota parses CPUQuota= N% (DESIGN.md §43 R2). N is an integer 1–10000.
-// The trailing % is required.
+// parseCPUQuota parses CPUQuota= N% (DESIGN.md §43 R2). N is an integer 1–100
+// (percentage of total machine CPU, Job Object semantics). The trailing % is
+// required. Out-of-range N is a parse error; there is no silent clamp later.
 func parseCPUQuota(s string) (uint32, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -121,7 +122,7 @@ func parseCPUQuota(s string) (uint32, error) {
 	if err != nil {
 		return 0, fmt.Errorf("invalid CPUQuota %q", s)
 	}
-	if n < 1 || n > 10000 {
+	if n < 1 || n > 100 {
 		return 0, fmt.Errorf("invalid CPUQuota %q", s)
 	}
 	return uint32(n), nil

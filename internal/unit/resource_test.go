@@ -100,13 +100,13 @@ func TestParseCPUQuota(t *testing.T) {
 	if n, err := parseCPUQuota("1%"); err != nil || n != 1 {
 		t.Fatalf("1%%: n=%d err=%v", n, err)
 	}
-	if n, err := parseCPUQuota("10000%"); err != nil || n != 10000 {
-		t.Fatalf("10000%%: n=%d err=%v", n, err)
+	if n, err := parseCPUQuota("100%"); err != nil || n != 100 {
+		t.Fatalf("100%%: n=%d err=%v", n, err)
 	}
 	if n, err := parseCPUQuota(" 100% "); err != nil || n != 100 {
 		t.Fatalf(" 100%% : n=%d err=%v", n, err)
 	}
-	for _, in := range []string{"25", "0%", "10001%", "abc%", "%", "-1%", "25.5%", "", "25%%"} {
+	for _, in := range []string{"25", "50", "0%", "101%", "10000%", "abc%", "%", "-1%", "25.5%", "", "25%%"} {
 		if _, err := parseCPUQuota(in); err == nil {
 			t.Fatalf("parseCPUQuota(%q) succeeded, want error", in)
 		}
@@ -158,13 +158,19 @@ func TestWindowsCPUWeightMapping(t *testing.T) {
 
 func TestWindowsCPURateMapping(t *testing.T) {
 	t.Parallel()
-	if got := WindowsCPURate(25); got != 2500 {
-		t.Fatalf("WindowsCPURate(25) = %d, want 2500", got)
-	}
 	if got := WindowsCPURate(1); got != 100 {
 		t.Fatalf("WindowsCPURate(1) = %d, want 100", got)
 	}
-	if got := WindowsCPURate(10000); got != 1000000 {
-		t.Fatalf("WindowsCPURate(10000) = %d, want 1000000", got)
+	if got := WindowsCPURate(25); got != 2500 {
+		t.Fatalf("WindowsCPURate(25) = %d, want 2500", got)
+	}
+	if got := WindowsCPURate(100); got != 10000 {
+		t.Fatalf("WindowsCPURate(100) = %d, want 10000", got)
+	}
+	// A passing parse is N in 1–100, so CpuRate never exceeds 10000.
+	for n := uint32(1); n <= 100; n++ {
+		if got := WindowsCPURate(n); got > 10000 {
+			t.Fatalf("WindowsCPURate(%d) = %d, exceeds 10000", n, got)
+		}
 	}
 }

@@ -565,6 +565,9 @@ ExecStart=C:\Tools\foo.exe
 		{"PriorityClass=realtime", "PriorityClass=realtime\n", `invalid PriorityClass "realtime"`},
 		{"CPUWeight=0", "CPUWeight=0\n", `invalid CPUWeight "0"`},
 		{"CPUQuota=25", "CPUQuota=25\n", `invalid CPUQuota "25"`},
+		{"CPUQuota=0%", "CPUQuota=0%\n", `invalid CPUQuota "0%"`},
+		{"CPUQuota=101%", "CPUQuota=101%\n", `invalid CPUQuota "101%"`},
+		{"CPUQuota=10000%", "CPUQuota=10000%\n", `invalid CPUQuota "10000%"`},
 		{"CPUWeight+CPUQuota", "CPUWeight=50\nCPUQuota=25%\n", "CPUWeight and CPUQuota cannot both be set"},
 		{"IoPriority=critical", "IoPriority=critical\n", `invalid IoPriority "critical"`},
 	} {
