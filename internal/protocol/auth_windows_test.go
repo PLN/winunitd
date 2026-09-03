@@ -46,7 +46,7 @@ func TestPeerFromTokenNonAdmin(t *testing.T) {
 
 func TestPeerFromTokenOwnerMatch(t *testing.T) {
 	var tok windows.Token
-	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY, &tok); err != nil {
+	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY|windows.TOKEN_DUPLICATE, &tok); err != nil {
 		t.Fatal(err)
 	}
 	defer tok.Close()
