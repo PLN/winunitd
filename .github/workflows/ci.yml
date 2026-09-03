@@ -28,7 +28,9 @@ jobs:
       - name: Test
         env:
           CGO_ENABLED: 1
-        run: go test -race ./...
+        # -parallel 1: Windows -race + t.Parallel starves notify/watchdog
+        # goroutines; the first two -race jobs failed on wait timeouts.
+        run: go test -race -parallel 1 ./...
 
       - name: Build
         run: go build ./cmd/winunitd ./cmd/winctl ./cmd/winunit-notify

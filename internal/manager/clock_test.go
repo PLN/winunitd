@@ -55,7 +55,9 @@ func managerWithFake(t *testing.T, launch runtime.Launcher, files map[string]str
 
 func waitCond(t *testing.T, ok func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	// 30s: Windows -race + t.Parallel starves manager goroutines; 5s
+	// was enough for plain go test and failed CI #69's first -race job.
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if ok() {
 			return

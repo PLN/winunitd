@@ -10,6 +10,7 @@ import (
 
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/notify"
+	"github.com/PLN/winunitd/internal/timers"
 	"github.com/PLN/winunitd/internal/unit"
 )
 
@@ -155,18 +156,11 @@ WatchdogSec=1s
 		t.Fatal(err)
 	}
 
-	advanceWait(t, fk, 400*time.Millisecond)
+	waitCond(t, func() bool { return fk.WaitingAt(time.Second) })
+	fk.Advance(400 * time.Millisecond)
 	assertState(t, m, "hb.service", core.Active)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := notify.Send(ctx, pipe, notify.Message{Watchdog: true}); err != nil {
-		t.Fatal(err)
-	}
-	waitCond(t, func() bool {
-		when, ok := fk.NextWhen()
-		return ok && !when.Before(fk.Now().Add(900*time.Millisecond))
-	})
-	advanceWait(t, fk, time.Second)
+	sendWatchdogUntilArmed(t, pipe, fk)
+	fk.Advance(time.Second)
 	waitState(t, m, "hb.service", core.Failed)
 }
 
@@ -447,6 +441,24 @@ WatchdogSec=2s
 		t.Fatal(err)
 	}
 	assertState(t, m, "cli.service", core.Active)
+}
+
+// sendWatchdogUntilArmed sends WATCHDOG until the fake clock has a 1s
+// wait (watchdogLoop Reset). One Send at a time so leftover pulses do
+// not Reset again after the caller Advances (that left the unit Active).
+func sendWatchdogUntilArmed(t *testing.T, pipe string, fk *timers.Fake) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if fk.WaitingAt(time.Second) {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		_ = notify.SendRetry(ctx, pipe, notify.Message{Watchdog: true})
+		cancel()
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("WATCHDOG pulse did not refresh timer")
 }
 
 // sendReadyUntilStart resends READY=1 until Start returns.
