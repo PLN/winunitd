@@ -1299,17 +1299,23 @@ The DACL is defense-in-depth:
 - system pipe: LocalSystem and Administrators
 - user pipe: that user, LocalSystem, and Administrators
 
-It is not the auth model. `Peer` is derived once at accept from the named-pipe client token:
+It is not the auth model. `Peer` is derived once at accept from the named-pipe client token. Clients (`winctl` and any in-tree pipe dialer) open the pipe at identification impersonation level (`SECURITY_IDENTIFICATION` / `PipeImpLevelIdentification`), not `SECURITY_ANONYMOUS`, so `ImpersonateNamedPipeClient` can see the connecting caller.
 
-1. `GetNamedPipeClientProcessId`
-2. Open the client process (`PROCESS_QUERY_LIMITED_INFORMATION`)
-3. Open the process token (`TOKEN_QUERY`)
-4. Token user SID → `Peer.SID`
-5. `CheckTokenMembership` on `BUILTIN\Administrators` → `Peer.Administrator` (the process token is `DuplicateTokenEx`'d to an impersonation token first; `CheckTokenMembership` does not accept a primary token)
-6. Token user SID `S-1-5-18` → `Peer.LocalSystem`
-7. On a user pipe, token SID matching the pipe owner SID → `Peer.Owner`
+Production path:
 
-Impersonation is not the primary path: Peer is a snapshot at accept, there is no impersonation across RPC, and the token is closed before dispatch. If opening the client process token is denied, the server may fall back to `ImpersonateNamedPipeClient` + `CheckTokenMembership` on that OS thread (`LockOSThread`), then `RevertToSelf` before any RPC.
+1. `ImpersonateNamedPipeClient` on the accepted connection
+2. `OpenThreadToken` (`TOKEN_QUERY|TOKEN_DUPLICATE`)
+3. Token user SID → `Peer.SID`
+4. `CheckTokenMembership` on `BUILTIN\Administrators` → `Peer.Administrator` (an `ImpersonateNamedPipeClient` thread token is already an impersonation token; identification level is enough. A process primary token from the PID fallback is `DuplicateTokenEx`'d to an impersonation token first; `CheckTokenMembership` does not accept a primary token)
+5. Token user SID `S-1-5-18` → `Peer.LocalSystem`
+6. On a user pipe, token SID matching the pipe owner SID → `Peer.Owner`
+7. `RevertToSelf` before any RPC (`LockOSThread` so revert applies to the same OS thread)
+
+Peer is a snapshot at accept: there is no impersonation across RPC, and the token is closed before dispatch.
+
+If impersonation fails (old client that dialed `SECURITY_ANONYMOUS`), the server logs the failure and falls back to `GetNamedPipeClientProcessId` → open the client process (`PROCESS_QUERY_LIMITED_INFORMATION`) → open the process token (`TOKEN_QUERY|TOKEN_DUPLICATE`) → the same SID / Administrators / LocalSystem / Owner derivation. The PID path is not the primary A1 path: handle inheritance and PID reuse would authorize as the opener, not the connecting caller.
+
+A failed impersonation with no usable fallback Peer fails closed (deny / close). `ServeConn` logs the Authorizer error; it does not drop it or proceed as AllowAdmin.
 
 `DefaultAuthorizer` must not stamp `Administrator` on every peer. A user-pipe client is the connecting user (`Owner`); linger and other admin-only methods require `Peer.CanLinger()` (Administrators or LocalSystem). Test authorizers (`AllowAdmin`, `AllowOwner`) are for unit tests only.
 

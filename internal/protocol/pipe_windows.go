@@ -77,10 +77,13 @@ func ListenUserControl(sid string) (net.Listener, error) {
 	return listenPipeSDDL(UserPipeName(sid), sddl)
 }
 
-// DialPipe connects to a named pipe. It does not check the server owner;
-// DialDefault and DialUser do (squat defense). Notify uses this path.
+// DialPipe connects to a named pipe at PipeDialImpLevel (identification).
+// It does not check the server owner; DialDefault and DialUser do
+// (squat defense). Notify uses this path.
 func DialPipe(ctx context.Context, name string) (net.Conn, error) {
-	return winio.DialPipeContext(ctx, name)
+	return winio.DialPipeAccessImpLevel(ctx, name,
+		uint32(windows.GENERIC_READ|windows.GENERIC_WRITE),
+		winio.PipeImpLevel(PipeDialImpLevel))
 }
 
 // DialDefault connects to DefaultPipeName and refuses the connection
