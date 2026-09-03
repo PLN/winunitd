@@ -12,12 +12,14 @@ import (
 
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/unit"
+	"github.com/PLN/winunitd/internal/version"
 )
 
 const usage = `winctl — control interface for winunitd
 
 Usage:
   winctl [--help]
+  winctl [--version]
   winctl [--user] <command> [args]
   winctl <command> [--user] [args]
 
@@ -50,6 +52,7 @@ disable-linger always use the system pipe.
 Flags:
   --user          Talk to the per-user manager (current user SID)
   -h, --help      Show this help
+  --version       Print 0.1.0-alpha and exit
 `
 
 const statusUsage = `winctl status — show machine or unit status
@@ -166,6 +169,10 @@ func (c *cli) run(args []string) int {
 		fmt.Fprint(c.stdout, usage)
 		return 0
 	}
+	if isVersionFlag(args[0]) {
+		fmt.Fprintf(c.stdout, "winctl %s\n", version.Version)
+		return 0
+	}
 
 	cmd, rest := args[0], args[1:]
 	if len(rest) == 1 && isHelpFlag(rest[0]) {
@@ -217,6 +224,15 @@ func (c *cli) run(args []string) int {
 func isHelpFlag(s string) bool {
 	switch strings.TrimSpace(s) {
 	case "-h", "-help", "--help", "help":
+		return true
+	default:
+		return false
+	}
+}
+
+func isVersionFlag(s string) bool {
+	switch strings.TrimSpace(s) {
+	case "-version", "--version":
 		return true
 	default:
 		return false

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/version"
 )
 
 func TestRunHelp(t *testing.T) {
@@ -42,6 +43,26 @@ func TestRunHelp(t *testing.T) {
 	}
 	if !strings.Contains(got, "graphical-session.target") {
 		t.Fatalf("help missing graphical-session.target: %s", got)
+	}
+	if !strings.Contains(got, "--version") {
+		t.Fatalf("help missing --version: %s", got)
+	}
+}
+
+func TestRunVersion(t *testing.T) {
+	for _, flag := range []string{"--version", "-version"} {
+		var out, errb bytes.Buffer
+		code := run([]string{flag}, &out, &errb)
+		if code != 0 {
+			t.Fatalf("%s exit %d stderr=%s", flag, code, errb.String())
+		}
+		want := "winunitd " + version.Version
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("%s stdout=%q want %q", flag, out.String(), want)
+		}
+		if version.Version != "0.1.0-alpha" {
+			t.Fatalf("version.Version = %q, want 0.1.0-alpha", version.Version)
+		}
 	}
 }
 
