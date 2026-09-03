@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 )
@@ -68,6 +69,11 @@ func ServeConn(ctx context.Context, conn io.ReadWriteCloser, h Handler, auth Aut
 		}
 		var req Request
 		if err := decodeMessage(br, &req); err != nil {
+			if isDisconnect(err) {
+				return
+			}
+			resp := newResponse(req.ID, nil, ErrInvalidRequest("malformed request"))
+			_ = encodeMessage(conn, resp)
 			return
 		}
 		resp := dispatch(ctx, h, peer, &req)
@@ -99,4 +105,9 @@ func dispatch(ctx context.Context, h Handler, peer Peer, req *Request) *Response
 	}
 	result, err := h.Handle(ctx, req.Method, req.Params)
 	return newResponse(id, result, err)
+}
+
+func isDisconnect(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, io.ErrClosedPipe) || errors.Is(err, net.ErrClosed)
 }

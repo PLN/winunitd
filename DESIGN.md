@@ -1275,7 +1275,7 @@ Keep secrets separate from declarative unit configuration.
 
 ## 30. Control Plane
 
-Local control should use a protected Named Pipe.
+Local control uses a protected Named Pipe.
 
 Example:
 
@@ -1283,23 +1283,36 @@ Example:
 \\.\pipe\winunitd\control
 ```
 
-Security descriptor determines:
+Per-user managers:
 
-- administrators
-- local system
-- owning user for user managers
+```text
+\\.\pipe\winunitd\user\<SID>\control
+```
 
-Protocol options:
+The DACL is defense-in-depth:
 
-- protobuf
-- MessagePack
-- compact JSON RPC
+- system pipe: LocalSystem and Administrators
+- user pipe: that user, LocalSystem, and Administrators
 
-Recommendation:
+It is not the auth model. `Peer` is derived once at accept from the named-pipe client token:
 
-Use a versioned binary or structured protocol from the beginning.
+1. `GetNamedPipeClientProcessId`
+2. Open the client process (`PROCESS_QUERY_LIMITED_INFORMATION`)
+3. Open the process token (`TOKEN_QUERY`)
+4. Token user SID → `Peer.SID`
+5. `CheckTokenMembership` on `BUILTIN\Administrators` → `Peer.Administrator` (the process token is `DuplicateTokenEx`'d to an impersonation token first; `CheckTokenMembership` does not accept a primary token)
+6. Token user SID `S-1-5-18` → `Peer.LocalSystem`
+7. On a user pipe, token SID matching the pipe owner SID → `Peer.Owner`
 
-Do not make CLI output parsing the API.
+Impersonation is not the primary path: Peer is a snapshot at accept, there is no impersonation across RPC, and the token is closed before dispatch. If opening the client process token is denied, the server may fall back to `ImpersonateNamedPipeClient` + `CheckTokenMembership` on that OS thread (`LockOSThread`), then `RevertToSelf` before any RPC.
+
+`DefaultAuthorizer` must not stamp `Administrator` on every peer. A user-pipe client is the connecting user (`Owner`); linger and other admin-only methods require `Peer.CanLinger()` (Administrators or LocalSystem). Test authorizers (`AllowAdmin`, `AllowOwner`) are for unit tests only.
+
+Malformed JSON is answered with `invalid-request`, then the connection closes.
+
+`logs` honors `Follow` and `Since` (see §22). They are not reserved or silently ignored.
+
+Protocol: versioned compact JSON RPC. Do not make CLI output parsing the API.
 
 ---
 
