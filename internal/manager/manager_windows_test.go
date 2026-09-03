@@ -55,9 +55,17 @@ func TestMain(m *testing.M) {
 		recordHelperCount()
 		os.Exit(helperExitCode())
 	case "count-then-sleep":
-		// Count lines before this append. A second Open after Close can
-		// miss the line we just wrote on Windows (sharing / visibility),
-		// which made the 2nd start exit and the unit fail to stay running.
+		// Stay up on the 2nd+ start even if helperCountLines misses the
+		// first line (Windows sharing / visibility). Re-opening after
+		// Close used to make the 2nd start exit; counting before append
+		// is not enough if Stat/Open still sees an empty file. If the
+		// count file already exists, a previous start ran — sleep.
+		path := os.Getenv("WINUNITD_JOB_COUNT")
+		existed := false
+		if path != "" {
+			_, err := os.Stat(path)
+			existed = err == nil
+		}
 		n := recordHelperCountN()
 		sleepAfter := 2
 		if v := os.Getenv("WINUNITD_JOB_SLEEP_AFTER"); v != "" {
@@ -65,7 +73,7 @@ func TestMain(m *testing.M) {
 				sleepAfter = parsed
 			}
 		}
-		if n >= sleepAfter {
+		if existed || n >= sleepAfter {
 			select {}
 		}
 		os.Exit(helperExitCode())
