@@ -283,10 +283,11 @@ RestartSec=1s
 }
 
 // hangJournalLauncher is a fakeLauncher whose stdout never reaches EOF,
-// so journal.Wait blocks until abandoned (issue #68).
+// so journal.Wait blocks until abandoned (issues #68 and #83).
 type hangJournalLauncher struct {
 	fakeLauncher
-	pw *io.PipeWriter
+	pw   *io.PipeWriter
+	last *fakeProc
 }
 
 func (f *hangJournalLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
@@ -309,7 +310,7 @@ func (f *hangJournalLauncher) Start(ctx context.Context, spec runtime.StartSpec)
 		_ = pw.Close()
 		return nil, err
 	}
-	return &fakeProc{
+	p := &fakeProc{
 		name:   spec.Unit,
 		rec:    &f.fakeLauncher,
 		pid:    pid,
@@ -317,7 +318,24 @@ func (f *hangJournalLauncher) Start(ctx context.Context, spec runtime.StartSpec)
 		done:   make(chan struct{}),
 		stdout: io.NopCloser(pr),
 		stderr: io.NopCloser(strings.NewReader("")),
-	}, nil
+	}
+	f.mu.Lock()
+	f.last = p
+	f.mu.Unlock()
+	return p, nil
+}
+
+func (f *hangJournalLauncher) dieLast(code uint32) {
+	f.mu.Lock()
+	p := f.last
+	f.mu.Unlock()
+	if p != nil {
+		p.die(code)
+	}
+}
+
+func (f *hangJournalLauncher) nstarts() int {
+	return len(f.units())
 }
 
 func TestStopUnitReleasesOpLockDuringJournalWait(t *testing.T) {
@@ -375,6 +393,101 @@ TimeoutStopSec=30s
 	if _, err := m.Start(context.Background(), "foo"); err != nil {
 		t.Fatalf("later Start blocked: %v", err)
 	}
+	if launch.pw != nil {
+		_ = launch.pw.Close()
+	}
+}
+
+func TestLaunchUnitOpAbandonsHungJournalAfterSelfExit(t *testing.T) {
+	t.Parallel()
+	launch := &hangJournalLauncher{}
+	m, fk := managerWithFake(t, launch, map[string]string{
+		"foo.service": `
+[Service]
+Type=simple
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+TimeoutStopSec=30s
+`,
+	})
+	if _, err := m.Start(context.Background(), "foo"); err != nil {
+		t.Fatal(err)
+	}
+	launch.dieLast(1)
+	waitCond(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		rt := m.units["foo.service"]
+		return rt != nil && (rt.proc == nil || !rt.proc.Alive())
+	})
+
+	startErr := make(chan error, 1)
+	go func() {
+		_, err := m.Start(context.Background(), "foo")
+		startErr <- err
+	}()
+
+	waitCond(t, func() bool {
+		return fk.WaitingAt(30*time.Second) && launch.nstarts() == 1
+	})
+	select {
+	case err := <-startErr:
+		t.Fatalf("second Start returned before TimeoutStopSec: %v", err)
+	default:
+	}
+
+	fk.Advance(30 * time.Second)
+	select {
+	case err := <-startErr:
+		if err != nil {
+			t.Fatalf("second Start: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("second Start did not return after TimeoutStopSec")
+	}
+
+	unlock, ok := m.ops.tryLock("foo.service")
+	if !ok {
+		t.Fatal("op lock still held after second Start")
+	}
+	unlock()
+	if launch.pw != nil {
+		_ = launch.pw.Close()
+	}
+}
+
+func TestLaunchUnitOpAbandonsHungJournalOnAutoRestart(t *testing.T) {
+	t.Parallel()
+	launch := &hangJournalLauncher{}
+	m, fk := managerWithFake(t, launch, map[string]string{
+		"foo.service": `
+[Unit]
+StartLimitBurst=0
+[Service]
+Type=simple
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+Restart=always
+RestartSec=0
+TimeoutStopSec=30s
+`,
+	})
+	if _, err := m.Start(context.Background(), "foo"); err != nil {
+		t.Fatal(err)
+	}
+	launch.dieLast(1)
+
+	waitCond(t, func() bool {
+		return fk.WaitingAt(30*time.Second) && launch.nstarts() == 1
+	})
+	fk.Advance(30 * time.Second)
+	waitCond(t, func() bool { return launch.nstarts() >= 2 })
+
+	unlock, ok := m.ops.tryLock("foo.service")
+	if !ok {
+		t.Fatal("op lock still held after Restart=always relaunch")
+	}
+	unlock()
 	if launch.pw != nil {
 		_ = launch.pw.Close()
 	}
