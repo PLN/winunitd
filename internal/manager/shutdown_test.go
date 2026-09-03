@@ -9,6 +9,7 @@ import (
 
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/timers"
 )
 
 func TestShutdownStopsAfterOrderedServices(t *testing.T) {
@@ -286,8 +287,9 @@ RestartSec=1s
 // so journal.Wait blocks until abandoned (issues #68 and #83).
 type hangJournalLauncher struct {
 	fakeLauncher
-	pw   *io.PipeWriter
-	last *fakeProc
+	pw    *io.PipeWriter
+	pipes []*io.PipeWriter
+	last  *fakeProc
 }
 
 func (f *hangJournalLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
@@ -300,6 +302,7 @@ func (f *hangJournalLauncher) Start(ctx context.Context, spec runtime.StartSpec)
 	f.mu.Lock()
 	f.starts = append(f.starts, spec)
 	f.pw = pw
+	f.pipes = append(f.pipes, pw)
 	pid := f.pid
 	f.mu.Unlock()
 	if pid == 0 {
@@ -336,6 +339,17 @@ func (f *hangJournalLauncher) dieLast(code uint32) {
 
 func (f *hangJournalLauncher) nstarts() int {
 	return len(f.units())
+}
+
+func (f *hangJournalLauncher) closePipes() {
+	f.mu.Lock()
+	pipes := append([]*io.PipeWriter(nil), f.pipes...)
+	f.mu.Unlock()
+	for _, pw := range pipes {
+		if pw != nil {
+			_ = pw.Close()
+		}
+	}
 }
 
 func TestStopUnitReleasesOpLockDuringJournalWait(t *testing.T) {
@@ -410,9 +424,11 @@ WorkingDirectory=C:\Tools
 TimeoutStopSec=30s
 `,
 	})
+	t.Cleanup(launch.closePipes)
 	if _, err := m.Start(context.Background(), "foo"); err != nil {
 		t.Fatal(err)
 	}
+	assertStopTimeout(t, m, "foo.service", 30*time.Second)
 	launch.dieLast(1)
 	waitCond(t, func() bool {
 		m.mu.Lock()
@@ -427,9 +443,7 @@ TimeoutStopSec=30s
 		startErr <- err
 	}()
 
-	waitCond(t, func() bool {
-		return fk.WaitingAt(30*time.Second) && launch.nstarts() == 1
-	})
+	waitHungLaunchJournal(t, m, fk, launch, "foo.service")
 	select {
 	case err := <-startErr:
 		t.Fatalf("second Start returned before TimeoutStopSec: %v", err)
@@ -451,9 +465,6 @@ TimeoutStopSec=30s
 		t.Fatal("op lock still held after second Start")
 	}
 	unlock()
-	if launch.pw != nil {
-		_ = launch.pw.Close()
-	}
 }
 
 func TestLaunchUnitOpAbandonsHungJournalOnAutoRestart(t *testing.T) {
@@ -472,23 +483,54 @@ RestartSec=0
 TimeoutStopSec=30s
 `,
 	})
+	t.Cleanup(launch.closePipes)
 	if _, err := m.Start(context.Background(), "foo"); err != nil {
 		t.Fatal(err)
 	}
+	assertStopTimeout(t, m, "foo.service", 30*time.Second)
 	launch.dieLast(1)
 
-	waitCond(t, func() bool {
-		return fk.WaitingAt(30*time.Second) && launch.nstarts() == 1
-	})
+	waitHungLaunchJournal(t, m, fk, launch, "foo.service")
 	fk.Advance(30 * time.Second)
-	waitCond(t, func() bool { return launch.nstarts() >= 2 })
+	waitCond(t, func() bool {
+		if launch.nstarts() < 2 {
+			return false
+		}
+		unlock, ok := m.ops.tryLock("foo.service")
+		if !ok {
+			return false
+		}
+		unlock()
+		return true
+	})
+}
 
-	unlock, ok := m.ops.tryLock("foo.service")
-	if !ok {
-		t.Fatal("op lock still held after Restart=always relaunch")
+func assertStopTimeout(t *testing.T, m *Manager, name string, want time.Duration) {
+	t.Helper()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rt := m.units[name]
+	if rt == nil || rt.unit == nil {
+		t.Fatalf("no unit %s", name)
 	}
-	unlock()
-	if launch.pw != nil {
-		_ = launch.pw.Close()
+	if got := stopTimeout(rt.unit); got != want {
+		t.Fatalf("stopTimeout(%s) = %v, want %v", name, got, want)
 	}
+}
+
+func waitHungLaunchJournal(t *testing.T, m *Manager, fk *timers.Fake, launch *hangJournalLauncher, name string) {
+	t.Helper()
+	// launch.Start runs before waitJournal, so the hung relaunch already
+	// counts as a second start while the previous capture is still open.
+	waitCond(t, func() bool {
+		if launch.nstarts() < 2 || !fk.Waiting() {
+			return false
+		}
+		unlock, ok := m.ops.tryLock(name)
+		if ok {
+			unlock()
+			return false
+		}
+		return true
+	})
 }
