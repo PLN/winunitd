@@ -16,6 +16,7 @@ import (
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/runtime/runtimetest"
+	"github.com/PLN/winunitd/internal/version"
 )
 
 func TestRunHelp(t *testing.T) {
@@ -47,6 +48,34 @@ func TestRunHelp(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "--follow") || !strings.Contains(out.String(), "--since") {
 		t.Fatalf("help missing logs flags: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "--version") {
+		t.Fatalf("help missing --version: %s", out.String())
+	}
+}
+
+func TestRunVersion(t *testing.T) {
+	for _, flag := range []string{"--version", "-version"} {
+		var out, errb bytes.Buffer
+		code := run([]string{flag}, &out, &errb)
+		if code != 0 {
+			t.Fatalf("%s exit %d stderr=%s", flag, code, errb.String())
+		}
+		want := "winctl " + version.Version
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("%s stdout=%q want %q", flag, out.String(), want)
+		}
+		if version.Version != "0.1.0-alpha" {
+			t.Fatalf("version.Version = %q, want 0.1.0-alpha", version.Version)
+		}
+	}
+	var out, errb bytes.Buffer
+	code := run([]string{"--user", "--version"}, &out, &errb)
+	if code != 0 {
+		t.Fatalf("--user --version exit %d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "winctl "+version.Version) {
+		t.Fatalf("--user --version stdout=%q", out.String())
 	}
 }
 

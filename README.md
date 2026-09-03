@@ -2,7 +2,7 @@
 
 Declarative Windows unit manager and process supervisor.
 
-Design notes live in [DESIGN.md](DESIGN.md) and are the source of truth.
+Design notes live in [DESIGN.md](DESIGN.md) and are the source of truth. License: [MIT](LICENSE). Copyright Peter Lemmen, 2026.
 
 ## Binaries
 
@@ -15,6 +15,8 @@ Design notes live in [DESIGN.md](DESIGN.md) and are the source of truth.
 Windows is the first-class target (`GOOS=windows`).
 
 ## Status
+
+**0.1.0-alpha** (`winctl --version` / `winunitd --version`). CPUQuota is machine-total % 1–100, not 1–10000 / nCPU (see **Now**).
 
 **Now:** unit file loader, `winctl verify` on a file path (no daemon required), a dependency graph with start transactions, a versioned JSON-RPC control API on `\\.\pipe\winunitd\control` (LocalSystem and Administrators), an SCM host with a daemon-level Job Object for strict ownership, per-unit Job Objects with real CreateProcess, `Restart=` (`no` / `always` / `on-failure` / `on-watchdog`), `[Unit]` `StartLimitIntervalSec=` / `StartLimitBurst=` (defaults 10s / 5; `StartLimitBurst=0` unlimited; burst starts inside the interval fail with reason `start-limit`; explicit `winctl start` resets), enable/targets at boot, a journal store under `<base-dir>\journal\`, an internal timer scheduler (not Task Scheduler), ordered stop on SCM stop / preshutdown / console SIGINT, logged-on per-user managers, lingering, session tracking (`graphical-session.target`), `Type=notify` readiness, `WatchdogSec=` notify heartbeats, `WatchdogMode=tcp` / `http` health checks, `winunit-notify.exe`, per-start invocation IDs (`InvocationID=` on `winctl status`, journal lines, `WINUNIT_INVOCATION_ID`), `Type=scm` SCM proxy units (`ServiceName=` required; `winctl start`/`stop`/`status` map to StartService / StopService / QueryServiceStatusEx), `Type=scheduled-task` Task Scheduler proxy units (`TaskName=` required; `winctl start`/`stop`/`status` map to IRegisteredTask.Run / Stop / State), R1 Job Object limits on the existing per-unit job (`MemoryMax=` job-wide commit cap with `K`/`M`/`G`, `ProcessLimit=` active processes, `PriorityClass=` `idle`/`below-normal`/`normal`/`above-normal`/`high` — not `realtime`), R2 CPU/I/O on that same job (`CPUWeight=` 1–10000 maps to Windows job weight 1–9 as `clamp(1, 9, (CPUWeight + 1110) / 1111)`; `CPUQuota=` `N%` with N in 1–100 is a percentage of total machine CPU and maps to hard-cap `CpuRate = N * 100` (Windows `CpuRate` max 10000; not systemd per-CPU); `CPUWeight=` and `CPUQuota=` cannot both be set; `IoPriority=` `idle`/`low`/`normal`/`high` via `NtSetInformationProcess(ProcessIoPriority)` after job assignment — Job Objects have no I/O-priority class; a failed set fails activation with reason `configuration`; Windows Job Object semantics, not cgroup `cpu.weight` / `cpu.max` / `io.weight`), T1 `.registry` companion units (`[Registry]` `RegistryChanged=HKLM\…` or `HKCU\…`; key+subtree via `RegNotifyChangeKeyValue`; `foo.registry` starts `foo.service` by basename; no `Unit=`; missing key fails the registry unit with reason `configuration`), T2 `.eventlog` companion units (`[EventLog]` `EventLogTrigger=<Channel>:EventID=<uint16>` via `EvtSubscribe`; `foo.eventlog` starts `foo.service` by basename; no `Unit=`; subscribe failure or unknown channel fails the event log unit with reason `configuration`), and P-Path `.path` companion units (`[Path]` `PathChanged=` absolute Windows paths, repeatable OR, and `PathExists=` absolute Windows paths, repeatable AND — a lock versus systemd OR; mix: either may start; `ReadDirectoryChangesW` non-recursive; a file path watches the parent directory and filters by name; `foo.path` starts `foo.service` by basename; no `Unit=`; missing or unwatchable `PathChanged=` fails the path unit with reason `configuration`; missing `PathExists=` waits for creation). Hitting `MemoryMax=` or `ProcessLimit=` fails the unit with reason `resource-limit` on `winctl status`; `Restart=` still applies. `RestartMaxDelaySec=` and `RestartBackoff=` are not parsed. `winctl enable` writes files under `<base-dir>\enabled\<target>\<unit>` (not NTFS symlinks). A fresh daemon start (SCM or console) starts `default.target`, which Wants=`timers.target` so enabled timers arm, and pulls in enabled Wants=/Requires= only. `OnBootSec` is since machine boot; `OnStartupSec` is since this winunitd instance. `winctl daemon-reload` reparses units and rebuilds the graph without dropping live jobs. `winctl list-timers` / `status` show next/last elapse when a timer is active. Calendar `Next` is recomputed after a wall-clock jump (`Engine.ClockChanged`, driven by SCM `SERVICE_CONTROL_TIMECHANGE` and `SERVICE_CONTROL_POWEREVENT` / `PBT_APMRESUMEAUTOMATIC` when running as a service). Console mode has no `WM_TIMECHANGE` window; a 30s poll is the fallback. Manager shutdown stops units in reverse After=/Before= order (`shutdown.target` as the stop root) and then closes the daemon Job Object.
 
@@ -34,12 +36,44 @@ Each unit start (including `Restart=` relaunch) gets a new UUID invocation ID. `
 
 ## Build
 
+Requires Go 1.24 or later (the `go` directive in [go.mod](go.mod)). Windows is the first-class target. There is no MSI or full installer.
+
 ```text
 go test ./...
-go build -o winunitd.exe ./cmd/winunitd
-go build -o winctl.exe ./cmd/winctl
-go build -o winunit-notify.exe ./cmd/winunit-notify
+GOOS=windows go build -o winunitd.exe ./cmd/winunitd
+GOOS=windows go build -o winctl.exe ./cmd/winctl
+GOOS=windows go build -o winunit-notify.exe ./cmd/winunit-notify
 ```
+
+On a Windows machine `GOOS=windows` is implicit (`go build` is enough). From cmd.exe use `set GOOS=windows` before each `go build`; from PowerShell, `$env:GOOS="windows"`. Cross-compiling from Linux/macOS uses the `GOOS=windows` prefix as shown. Tests stay on the host OS (`go test ./...`); `GOOS=windows go test` on a non-Windows host compiles but does not run.
+
+## Install / run
+
+A stranger on Windows, after building the three binaries:
+
+1. Copy `winunitd.exe`, `winctl.exe`, and `winunit-notify.exe` somewhere permanent (PATH is not set by install).
+2. Register the **system daemon as the Windows Service** (existing host path; not an MSI):
+
+```text
+winunitd install
+sc start winunitd
+```
+
+`winunitd install` registers `winunitd` (DisplayName `WinUnit Manager`) as LocalSystem, Automatic (Delayed Start). `sc.exe` starts/stops it. `winunitd uninstall` / `sc stop winunitd` tear it down.
+
+3. Drop unit files under `C:\ProgramData\winunitd\units\` (created on install). Journals and enable links live under that same ProgramData tree (`journal\`, `enabled\`, `runtime\`, `linger\`).
+4. Talk to the system manager with `winctl` over `\\.\pipe\winunitd\control` (LocalSystem and Administrators):
+
+```text
+winctl list-units
+winctl enable foo.service
+winctl start foo.service
+winctl status foo.service
+```
+
+5. Per-user manager: `winctl --user …` on `\\.\pipe\winunitd\user\<SID>\control`. User units live under `%LOCALAPPDATA%\winunitd\units\`. The system manager launches `winunitd --user-manager <SID>` on interactive logon (same binary, not a second SCM service).
+
+Console mode without SCM: `winunitd --base-dir DIR`. See **Windows Service** for Job Objects, boot targets, and linger.
 
 ## Windows Service
 
@@ -71,3 +105,15 @@ Unknown directives are errors. `ExecStart=` must be an absolute Windows path (`S
 `winctl verify foo.service` (a unit name, not a path) talks to the daemon. Path vs unit is by form: a name with no `/`, `\`, or drive prefix is always a unit name, even if a file of that name exists in the current directory. Use `./foo.service`, `.\foo.service`, or `C:\path\foo.service` for a file, or `winctl verify --file foo.service` (`-f`). Mixing unit names and paths in one invocation is a usage error. Other `winctl` commands (`start`, `stop`, `restart`, `status`, `enable`, `disable`, `list-units`, `list-timers`, `logs`, `daemon-reload`, `enable-linger`, `disable-linger`) always use the control pipe. `winctl --user …` and `winctl <command> --user` both use `\\.\pipe\winunitd\user\<SID>\control` for the current user; bare `winctl` stays on the system pipe. Linger admin verbs do not use `--user`.
 
 `winctl status UNIT` exit codes are systemctl-shaped: **0** if the unit is active, **3** if it is loaded but inactive or failed, **4** if it is not loaded. Transport and protocol errors keep their existing non-zero exit (they are not mapped to 3). `winctl status` with no unit (machine status) exits 0 on success. `winctl status --help` lists these codes.
+
+## Unverified
+
+Unit tests and GitHub Actions `go test ./...` on `windows-latest` are not a live production Windows proof. These paths are implemented; they have not been signed off on a real machine in the conditions below. Silence is not verification.
+
+- **Job CPU/I/O** — `CPUWeight=` / `CPUQuota=` Job Object rate control and `IoPriority=` `NtSetInformationProcess` are unit-tested (set + query back). Live throttling and I/O-class effect under load are unverified.
+- **EvtSubscribe** — `.eventlog` subscribe + Application `ReportEvent` tests exist. Production channel rights, Security, and custom logs on a real host are unverified.
+- **ReadDirectoryChangesW** — `.path` watches fire in unit tests on temp directories. Long-lived, network, reparse-point, and volume-unmount behavior is unverified.
+- **Lingering-child journal** — journal wait is bounded by `TimeoutStopSec` (#83) so a child that keeps stdout/stderr open cannot hang the next Start. That linger-and-abandon path on a live Windows host is unverified.
+- **Admin vs non-admin pipe Peer / elevated `winctl --user`** — token Peer and DACL tests exist. A UAC-filtered token versus an elevated token on the user pipe (`winctl --user` from an elevated vs non-elevated prompt) is unverified. CI runners are typically already Administrators.
+- **Live SYSTEM S4U** — `TestSYSTEMLingerTokenDuplicatePrimaryAndCreateProcessAsUser` skips unless LocalSystem (`psexec -s`). GitHub Actions `windows-latest` is not SYSTEM.
+- **SCM TIMECHANGE / POWEREVENT** — the service accepts `SERVICE_CONTROL_TIMECHANGE` and `SERVICE_CONTROL_POWEREVENT` / `PBT_APMRESUMEAUTOMATIC`. Live delivery to a running service (calendar `Next` recompute) is unverified. Console mode has no message window; a 30s poll is the fallback.
