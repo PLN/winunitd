@@ -49,11 +49,6 @@ func DialUser(ctx context.Context, sid string) (net.Conn, error) {
 	return DialPipe(ctx, UserPipeName(sid))
 }
 
-// DefaultAuthorizer denies all peers. Production control uses the Windows named pipe.
-func DefaultAuthorizer() Authorizer {
-	return DenyAll
-}
-
 // CurrentUserSID is only available on Windows.
 func CurrentUserSID() (string, error) {
 	return "", fmt.Errorf("current user SID is only available on Windows")

@@ -64,13 +64,6 @@ func DialUser(ctx context.Context, sid string) (net.Conn, error) {
 	return DialPipe(ctx, UserPipeName(sid))
 }
 
-// DefaultAuthorizer trusts the named-pipe ACL: a successful connect already
-// means the client is LocalSystem, an Administrator, or (on a user pipe)
-// the owning user.
-func DefaultAuthorizer() Authorizer {
-	return AllowAdmin
-}
-
 // CurrentUserSID is the SID of the current process token.
 func CurrentUserSID() (string, error) {
 	var tok windows.Token

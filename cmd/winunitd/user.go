@@ -88,5 +88,5 @@ func serveUser(ctx context.Context, sid, baseDir string, stderr io.Writer) error
 	go runtime.WatchSessions(ctx, ch)
 	go m.WatchGraphicalSession(ctx, ch)
 
-	return protocol.Serve(ctx, lis, m, protocol.DefaultAuthorizer())
+	return protocol.Serve(ctx, lis, m, protocol.UserAuthorizer(sid))
 }
