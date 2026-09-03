@@ -124,6 +124,39 @@ CPUQuota=25
 			wantErr: `invalid CPUQuota "25"`,
 		},
 		{
+			name: "CPUQuota=0%",
+			file: "bad-quota-zero.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+CPUQuota=0%
+`,
+			wantErr: `invalid CPUQuota "0%"`,
+		},
+		{
+			name: "CPUQuota=101%",
+			file: "bad-quota-101.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+CPUQuota=101%
+`,
+			wantErr: `invalid CPUQuota "101%"`,
+		},
+		{
+			name: "CPUQuota=10000%",
+			file: "bad-quota-10000.service",
+			src: `
+[Service]
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+CPUQuota=10000%
+`,
+			wantErr: `invalid CPUQuota "10000%"`,
+		},
+		{
 			name: "CPUWeight+CPUQuota",
 			file: "bad-both.service",
 			src: `

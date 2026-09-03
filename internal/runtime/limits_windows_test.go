@@ -142,6 +142,31 @@ func TestOpenUnitJobWithCPUWeightAndQuotaFails(t *testing.T) {
 	}
 }
 
+func TestOpenUnitJobWithCPURateMax(t *testing.T) {
+	job, err := OpenUnitJobWith(JobLimits{CPURate: 10000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer job.Close()
+	got, err := job.QueryLimits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CPUControlFlags&JobCPURateEnable == 0 || got.CPUControlFlags&JobCPURateHardCap == 0 {
+		t.Fatalf("CPU hard-cap flags = %#x", got.CPUControlFlags)
+	}
+	if got.CPURate != 10000 {
+		t.Fatalf("CPURate = %d, want 10000", got.CPURate)
+	}
+}
+
+func TestOpenUnitJobWithCPURateAboveMaxFails(t *testing.T) {
+	_, err := OpenUnitJobWith(JobLimits{CPURate: 10001})
+	if err == nil {
+		t.Fatal("CPURate 10001 must fail")
+	}
+}
+
 func TestIoPriorityLowMatchesProcess(t *testing.T) {
 	p := startHelperLimits(t, "sleep", unit.TypeSimple, 0, JobLimits{
 		IoPriority:    unit.IoPriorityLowNT,
