@@ -490,31 +490,40 @@ func keepReady(t *testing.T, launch *fakeLauncher, unit string) {
 	t.Helper()
 	// Windows named-pipe addresses are the unit name, so two launches share
 	// the same WINUNIT_NOTIFY_PIPE string. Send READY once per Start, not
-	// once per distinct address.
+	// once per distinct address. A single SendRetry can return nil after
+	// Accept before waitReady is selected (CI #42); resend briefly so a
+	// relaunch is not left Activating (CI #87 TestRestartOnWatchdogRelaunches).
 	sent := 0
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) && sent < 2 {
 		specs := launch.specs()
 		if sent >= len(specs) {
-			goruntime.Gosched()
+			time.Sleep(time.Millisecond)
 			continue
 		}
 		spec := specs[sent]
 		if spec.Unit != unit {
-			goruntime.Gosched()
+			time.Sleep(time.Millisecond)
 			continue
 		}
 		pipe, ok := notify.LookupEnv(spec.Env, notify.EnvNotifyPipe)
 		if !ok || pipe == "" {
-			goruntime.Gosched()
+			time.Sleep(time.Millisecond)
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		err := notify.SendRetry(ctx, pipe, notify.Message{Ready: true})
 		cancel()
 		if err != nil {
-			goruntime.Gosched()
+			time.Sleep(time.Millisecond)
 			continue
+		}
+		retryUntil := time.Now().Add(500 * time.Millisecond)
+		for time.Now().Before(retryUntil) && time.Now().Before(deadline) {
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			_ = notify.SendRetry(ctx, pipe, notify.Message{Ready: true})
+			cancel()
+			time.Sleep(20 * time.Millisecond)
 		}
 		sent++
 	}
