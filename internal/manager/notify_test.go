@@ -77,7 +77,10 @@ TimeoutStartSec=5s
 		errc <- err
 	}()
 	waitCond(t, func() bool { return len(launch.specs()) >= 1 })
-	advanceWait(t, fk, 5*time.Second)
+	// TimeoutStartSec, not the engine's leftover maxWait. advanceWait
+	// only checks fk.Waiting, so -race can Advance before waitReady arms.
+	waitCond(t, func() bool { return fk.WaitingAt(5 * time.Second) })
+	fk.Advance(5 * time.Second)
 	err := waitErr(t, errc)
 	if err == nil {
 		t.Fatal("expected TimeoutStartSec failure")

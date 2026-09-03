@@ -95,7 +95,7 @@ func waitErr(t *testing.T, errc <-chan error) error {
 	select {
 	case err := <-errc:
 		return err
-	case <-time.After(5 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("did not receive error result")
 		return nil
 	}
