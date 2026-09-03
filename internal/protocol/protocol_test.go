@@ -307,6 +307,12 @@ func TestPeerAllowed(t *testing.T) {
 	if (Peer{}).CanLinger() {
 		t.Fatal("empty peer must fail closed for linger")
 	}
+	if (Peer{SID: "S-1-5-21-1-2-3-1001"}).Allowed() {
+		t.Fatal("SID alone must not grant access")
+	}
+	if (Peer{SID: "S-1-5-21-1-2-3-1001"}).CanLinger() {
+		t.Fatal("SID alone must not grant linger")
+	}
 }
 
 func TestControlPipeSDDL(t *testing.T) {
@@ -533,6 +539,138 @@ func TestNonAdminEnableLingerFailsClosed(t *testing.T) {
 	pe, ok = err.(*Error)
 	if !ok || pe.Code != CodePermissionDenied {
 		t.Fatalf("deny-all err = %v", err)
+	}
+}
+
+func TestDefaultAuthorizerDoesNotStampAdministrator(t *testing.T) {
+	t.Parallel()
+	p, err := DefaultAuthorizer()(nil)
+	if p.Administrator || p.LocalSystem || p.Owner {
+		t.Fatalf("DefaultAuthorizer(nil) stamped privileges: %+v (err=%v)", p, err)
+	}
+	if p.Allowed() || p.CanLinger() {
+		t.Fatalf("DefaultAuthorizer(nil) must fail closed: %+v", p)
+	}
+
+	called := false
+	h := HandlerFunc(func(context.Context, string, json.RawMessage) (any, error) {
+		called = true
+		return ListUnitsResult{}, nil
+	})
+	client, stop := serveTest(t, h, DefaultAuthorizer())
+	defer stop()
+	_, callErr := client.ListUnits(context.Background())
+	pe, ok := callErr.(*Error)
+	if !ok || pe.Code != CodePermissionDenied {
+		t.Fatalf("DefaultAuthorizer on a fake listener must deny: %v", callErr)
+	}
+	if called {
+		t.Fatal("handler must not run")
+	}
+}
+
+func TestAuthorizerGatesEveryKnownMethod(t *testing.T) {
+	t.Parallel()
+	for _, name := range Methods {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			called := false
+			h := HandlerFunc(func(context.Context, string, json.RawMessage) (any, error) {
+				called = true
+				return struct{}{}, nil
+			})
+			client, stop := serveTest(t, h, DenyAll)
+			defer stop()
+			err := client.Call(context.Background(), name, map[string]string{}, nil)
+			pe, ok := err.(*Error)
+			if !ok || pe.Code != CodePermissionDenied {
+				t.Fatalf("err = %v", err)
+			}
+			if called {
+				t.Fatal("handler must not run when Authorizer denies")
+			}
+		})
+	}
+}
+
+func TestOwnerMayUseAPIButNotLinger(t *testing.T) {
+	t.Parallel()
+	called := ""
+	h := HandlerFunc(func(ctx context.Context, method string, params json.RawMessage) (any, error) {
+		called = method
+		if method == MethodListUnits {
+			return ListUnitsResult{}, nil
+		}
+		return LingerResult{}, nil
+	})
+	client, stop := serveTest(t, h, AllowOwner)
+	defer stop()
+	if _, err := client.ListUnits(context.Background()); err != nil {
+		t.Fatalf("owner list-units: %v", err)
+	}
+	if called != MethodListUnits {
+		t.Fatalf("called = %q", called)
+	}
+	_, err := client.EnableLinger(context.Background(), "ferdinand")
+	pe, ok := err.(*Error)
+	if !ok || pe.Code != CodePermissionDenied {
+		t.Fatalf("owner linger err = %v", err)
+	}
+	if called != MethodListUnits {
+		t.Fatal("handler must not run for owner linger")
+	}
+}
+
+func TestMalformedJSONInvalidRequestThenClose(t *testing.T) {
+	t.Parallel()
+	called := false
+	h := HandlerFunc(func(context.Context, string, json.RawMessage) (any, error) {
+		called = true
+		return ListUnitsResult{}, nil
+	})
+	conn, stop := serveConn(t, h, AllowAdmin)
+	defer stop()
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+
+	if _, err := conn.Write([]byte("{not-json\n")); err != nil {
+		t.Fatal(err)
+	}
+	var resp Response
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Error == nil || resp.Error.Code != CodeInvalidRequest {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if called {
+		t.Fatal("handler must not run for malformed JSON")
+	}
+	buf := make([]byte, 16)
+	if _, err := conn.Read(buf); err == nil {
+		t.Fatal("connection must close after malformed JSON")
+	}
+}
+
+func TestLogsParamsFollowSinceOnWire(t *testing.T) {
+	t.Parallel()
+	p := LogsParams{Unit: "foo.service", Follow: true, Since: "1h"}
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	if !strings.Contains(s, `"follow":true`) {
+		t.Fatalf("Follow must be on the wire, not ignored: %s", s)
+	}
+	if !strings.Contains(s, `"since":"1h"`) {
+		t.Fatalf("Since must be on the wire, not ignored: %s", s)
+	}
+	var got LogsParams
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Follow || got.Since != "1h" || got.Unit != "foo.service" {
+		t.Fatalf("round-trip = %+v", got)
 	}
 }
 
