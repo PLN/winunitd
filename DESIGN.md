@@ -1300,7 +1300,7 @@ It is not the auth model. `Peer` is derived once at accept from the named-pipe c
 2. Open the client process (`PROCESS_QUERY_LIMITED_INFORMATION`)
 3. Open the process token (`TOKEN_QUERY`)
 4. Token user SID → `Peer.SID`
-5. `CheckTokenMembership` on `BUILTIN\Administrators` → `Peer.Administrator`
+5. `CheckTokenMembership` on `BUILTIN\Administrators` → `Peer.Administrator` (the process token is `DuplicateTokenEx`'d to an impersonation token first; `CheckTokenMembership` does not accept a primary token)
 6. Token user SID `S-1-5-18` → `Peer.LocalSystem`
 7. On a user pipe, token SID matching the pipe owner SID → `Peer.Owner`
 

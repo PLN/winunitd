@@ -64,7 +64,7 @@ func peerFromClientProcess(h windows.Handle, ownerSID string) (Peer, error) {
 	defer windows.CloseHandle(proc)
 
 	var tok windows.Token
-	if err := windows.OpenProcessToken(proc, windows.TOKEN_QUERY, &tok); err != nil {
+	if err := windows.OpenProcessToken(proc, windows.TOKEN_QUERY|windows.TOKEN_DUPLICATE, &tok); err != nil {
 		return Peer{}, err
 	}
 	defer tok.Close()
@@ -83,7 +83,7 @@ func peerFromImpersonation(h windows.Handle, ownerSID string) (Peer, error) {
 	defer windows.RevertToSelf()
 
 	var tok windows.Token
-	if err := windows.OpenThreadToken(windows.CurrentThread(), windows.TOKEN_QUERY, true, &tok); err != nil {
+	if err := windows.OpenThreadToken(windows.CurrentThread(), windows.TOKEN_QUERY|windows.TOKEN_DUPLICATE, true, &tok); err != nil {
 		return Peer{}, err
 	}
 	defer tok.Close()
@@ -110,9 +110,15 @@ func peerFromToken(tok windows.Token, ownerSID string) (Peer, error) {
 	if err != nil {
 		return Peer{}, err
 	}
-	// CheckTokenMembership (Token.IsMember). A UAC-filtered token is
-	// not Administrator: Administrators is deny-only on that token.
-	isAdmin, err := tok.IsMember(adminSID)
+	// CheckTokenMembership requires an impersonation token (a process
+	// primary token fails with ERROR_NO_IMPERSONATION_TOKEN).
+	imp, err := duplicateImpersonation(tok)
+	if err != nil {
+		return Peer{}, err
+	}
+	defer imp.Close()
+	// A UAC-filtered token is not Administrator: Administrators is deny-only.
+	isAdmin, err := imp.IsMember(adminSID)
 	if err != nil {
 		return Peer{}, err
 	}
@@ -122,6 +128,15 @@ func peerFromToken(tok windows.Token, ownerSID string) (Peer, error) {
 		p.Owner = true
 	}
 	return p, nil
+}
+
+func duplicateImpersonation(tok windows.Token) (windows.Token, error) {
+	var imp windows.Token
+	err := windows.DuplicateTokenEx(tok, windows.TOKEN_QUERY, nil, windows.SecurityImpersonation, windows.TokenImpersonation, &imp)
+	if err != nil {
+		return 0, err
+	}
+	return imp, nil
 }
 
 func sidEqual(a, b string) bool {
