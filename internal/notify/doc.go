@@ -15,5 +15,7 @@
 // notify pipe name stays the unit name.
 //
 // The parser and fake TCP listener are GOOS-independent so protocol tests
-// pass on Linux. Production listen/dial use a Windows named pipe.
+// pass on Linux. Production listen/dial use a Windows named pipe
+// (protocol.ListenPipeSDDL: PIPE_REJECT_REMOTE_CLIENTS and
+// first-instance-only, same as the control pipes).
 package notify
