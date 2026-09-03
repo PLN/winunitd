@@ -33,6 +33,12 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(out.String(), "--user") {
 		t.Fatalf("help missing --user: %s", out.String())
 	}
+	if !strings.Contains(out.String(), "before or after the verb") {
+		t.Fatalf("help missing --user placement: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "exit 0 active") {
+		t.Fatalf("help missing status exit codes: %s", out.String())
+	}
 	if !strings.Contains(out.String(), "enable-linger") {
 		t.Fatalf("help missing enable-linger: %s", out.String())
 	}
@@ -695,14 +701,37 @@ WantedBy=default.target
 	out.Reset()
 	errb.Reset()
 	code = runCLIUser([]string{"--user", "status", "graphical-session.target"}, &out, &errb, sysDial, userDial)
-	if code != 0 {
-		t.Fatalf("user status exit %d stderr=%s", code, errb.String())
+	if code != 3 {
+		t.Fatalf("user status exit %d want 3 (inactive); stderr=%s", code, errb.String())
 	}
 	if !strings.Contains(out.String(), "graphical-session.target") {
 		t.Fatalf("user status missing target: %s", out.String())
 	}
 	if !strings.Contains(out.String(), "inactive") {
 		t.Fatalf("linger-without-session status = %s", out.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = runCLIUser([]string{"status", "--user", "graphical-session.target"}, &out, &errb, sysDial, userDial)
+	if code != 3 {
+		t.Fatalf("status --user exit %d want 3; stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "graphical-session.target") {
+		t.Fatalf("status --user missing target: %s", out.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = runCLIUser([]string{"list-units", "--user"}, &out, &errb, sysDial, userDial)
+	if code != 0 {
+		t.Fatalf("list-units --user exit %d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "hermes.service") {
+		t.Fatalf("list-units --user missing hermes: %s", out.String())
+	}
+	if strings.Contains(out.String(), "foo.service") {
+		t.Fatalf("list-units --user must not show system units: %s", out.String())
 	}
 
 	out.Reset()
@@ -726,9 +755,9 @@ WantedBy=default.target
 	}
 	out.Reset()
 	errb.Reset()
-	code = runCLIUser([]string{"--user", "start", "hermes"}, &out, &errb, sysDial, userDial)
+	code = runCLIUser([]string{"start", "hermes", "--user"}, &out, &errb, sysDial, userDial)
 	if code != 0 {
-		t.Fatalf("start exit %d stderr=%s", code, errb.String())
+		t.Fatalf("start --user exit %d stderr=%s", code, errb.String())
 	}
 }
 
@@ -936,6 +965,238 @@ func invocationIDFromStatus(t *testing.T, status string) string {
 	return ""
 }
 
+func TestRunStatusHelp(t *testing.T) {
+	var out, errb bytes.Buffer
+	code := run([]string{"status", "--help"}, &out, &errb)
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	s := out.String()
+	if !strings.Contains(s, "Exit codes") {
+		t.Fatalf("status --help missing exit codes: %s", s)
+	}
+	if !strings.Contains(s, "3  unit is inactive or failed") {
+		t.Fatalf("status --help missing exit 3: %s", s)
+	}
+	if !strings.Contains(s, "4  unit is not loaded") {
+		t.Fatalf("status --help missing exit 4: %s", s)
+	}
+}
+
+func TestStatusExitCode(t *testing.T) {
+	t.Parallel()
+	if got := statusExitCode(nil); got != 0 {
+		t.Fatalf("nil = %d", got)
+	}
+	if got := statusExitCode(&protocol.StatusResult{Machine: &protocol.MachineStatus{State: "running"}}); got != 0 {
+		t.Fatalf("machine = %d", got)
+	}
+	if got := statusExitCode(&protocol.StatusResult{Unit: &protocol.UnitStatus{ActiveState: "active"}}); got != 0 {
+		t.Fatalf("active = %d", got)
+	}
+	for _, st := range []string{"inactive", "failed", "activating", "deactivating"} {
+		if got := statusExitCode(&protocol.StatusResult{Unit: &protocol.UnitStatus{ActiveState: st}}); got != 3 {
+			t.Fatalf("%s = %d, want 3", st, got)
+		}
+	}
+}
+
+func TestCLIStatusExitCodes(t *testing.T) {
+	_, dial, stop := startTestDaemon(t)
+	defer stop()
+
+	var out, errb bytes.Buffer
+	code := runCLI([]string{"status"}, &out, &errb, dial)
+	if code != 0 {
+		t.Fatalf("machine status exit %d stderr=%s", code, errb.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = runCLI([]string{"status", "foo"}, &out, &errb, dial)
+	if code != 3 {
+		t.Fatalf("inactive status exit %d want 3; stderr=%s stdout=%s", code, errb.String(), out.String())
+	}
+	if !strings.Contains(out.String(), "inactive") {
+		t.Fatalf("inactive status stdout=%s", out.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	if code := runCLI([]string{"start", "foo"}, &out, &errb, dial); code != 0 {
+		t.Fatalf("start exit %d stderr=%s", code, errb.String())
+	}
+	out.Reset()
+	errb.Reset()
+	code = runCLI([]string{"status", "foo"}, &out, &errb, dial)
+	if code != 0 {
+		t.Fatalf("active status exit %d want 0; stderr=%s stdout=%s", code, errb.String(), out.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	if code := runCLI([]string{"stop", "foo"}, &out, &errb, dial); code != 0 {
+		t.Fatalf("stop exit %d stderr=%s", code, errb.String())
+	}
+	out.Reset()
+	errb.Reset()
+	code = runCLI([]string{"status", "foo"}, &out, &errb, dial)
+	if code != 3 {
+		t.Fatalf("stopped status exit %d want 3; stderr=%s", code, errb.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = runCLI([]string{"status", "missing.service"}, &out, &errb, dial)
+	if code != 4 {
+		t.Fatalf("not-found status exit %d want 4; stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "not-found") && !strings.Contains(errb.String(), "not loaded") {
+		t.Fatalf("not-found stderr=%s", errb.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = run([]string{"status", "foo"}, &out, &errb)
+	if code == 0 || code == 3 || code == 4 {
+		t.Fatalf("transport error exit %d must not be 0/3/4; stderr=%s", code, errb.String())
+	}
+}
+
+func TestCLIVerifyPathVsUnit(t *testing.T) {
+	_, dial, stop := startTestDaemon(t)
+	defer stop()
+
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	// A cwd file named foo.service must not flip unit-name mode to path mode.
+	if err := os.WriteFile("foo.service", []byte("[Service]\nExecStart=foo.exe\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	okPath := filepath.Join(cwd, "ok.service")
+	if err := os.WriteFile(okPath, []byte(`
+[Service]
+Type=simple
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errb bytes.Buffer
+	code := runCLI([]string{"verify", "foo.service"}, &out, &errb, dial)
+	if code != 0 {
+		t.Fatalf("unit name with cwd file exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "foo.service: verified") {
+		t.Fatalf("unit-name verify stdout=%s", out.String())
+	}
+	if strings.Contains(errb.String(), "absolute path") {
+		t.Fatalf("cwd file was verified as a path: stderr=%s", errb.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = run([]string{"verify", "./ok.service"}, &out, &errb)
+	if code != 0 {
+		t.Fatalf("./ok.service path exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "ok.service: verified") {
+		t.Fatalf("path verify stdout=%s", out.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = run([]string{"verify", "foo.service", "./ok.service"}, &out, &errb)
+	if code != 2 {
+		t.Fatalf("mixed args exit %d want 2; stdout=%s stderr=%s", code, out.String(), errb.String())
+	}
+	if !strings.Contains(errb.String(), "mixed") {
+		t.Fatalf("mixed args stderr=%s", errb.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = run([]string{"verify", "--file", "ok.service"}, &out, &errb)
+	if code != 0 {
+		t.Fatalf("--file ok.service exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "ok.service: verified") {
+		t.Fatalf("--file stdout=%s", out.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = run([]string{"verify", "-f", "foo.service"}, &out, &errb)
+	if code != 1 {
+		t.Fatalf("-f foo.service (invalid cwd file) exit %d want 1; stdout=%s stderr=%s", code, out.String(), errb.String())
+	}
+	if !strings.Contains(errb.String(), "absolute path") {
+		t.Fatalf("-f should verify the cwd file as a path: stderr=%s", errb.String())
+	}
+}
+
+func TestCLIVerifyUserFlagAfterVerb(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "userwatch.service"), []byte(`
+[Service]
+Type=oneshot
+ExecStart=C:\Tools\run-once.exe
+WorkingDirectory=C:\Tools
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	regHKCU := filepath.Join(dir, "userwatch.registry")
+	if err := os.WriteFile(regHKCU, []byte(`
+[Registry]
+RegistryChanged=HKCU\Software\Example
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	code := run([]string{"verify", "--user", regHKCU}, &out, &errb)
+	if code != 0 {
+		t.Fatalf("verify --user path exit %d stdout=%s stderr=%s", code, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "userwatch.registry: verified") {
+		t.Fatalf("stdout=%s", out.String())
+	}
+}
+
+func TestExtractUserFlag(t *testing.T) {
+	t.Parallel()
+	user, rest := extractUserFlag([]string{"--user", "status", "foo"})
+	if !user || strings.Join(rest, " ") != "status foo" {
+		t.Fatalf("before verb: user=%v rest=%v", user, rest)
+	}
+	user, rest = extractUserFlag([]string{"status", "--user", "foo"})
+	if !user || strings.Join(rest, " ") != "status foo" {
+		t.Fatalf("after verb: user=%v rest=%v", user, rest)
+	}
+	user, rest = extractUserFlag([]string{"status", "foo", "--user"})
+	if !user || strings.Join(rest, " ") != "status foo" {
+		t.Fatalf("after args: user=%v rest=%v", user, rest)
+	}
+	user, rest = extractUserFlag([]string{"status", "foo"})
+	if user || strings.Join(rest, " ") != "status foo" {
+		t.Fatalf("no flag: user=%v rest=%v", user, rest)
+	}
+}
+
+func TestIsExplicitPath(t *testing.T) {
+	t.Parallel()
+	for _, a := range []string{"foo.service", "FOO", "bar.timer"} {
+		if isExplicitPath(a) {
+			t.Fatalf("%q should be a unit name", a)
+		}
+	}
+	for _, a := range []string{"./foo.service", `.\foo.service`, `C:\path\foo.service`, "/tmp/foo.service", `D:foo.service`} {
+		if !isExplicitPath(a) {
+			t.Fatalf("%q should be a path", a)
+		}
+	}
+}
+
 func TestCLIVerifyUnitNameOverPipe(t *testing.T) {
 	_, dial, stop := startTestDaemon(t)
 	defer stop()
@@ -956,8 +1217,8 @@ func TestCLIStatusFOOEqualsFoo(t *testing.T) {
 
 	var out, errb bytes.Buffer
 	code := runCLI([]string{"status", "FOO"}, &out, &errb, dial)
-	if code != 0 {
-		t.Fatalf("FOO exit %d stderr=%s", code, errb.String())
+	if code != 3 {
+		t.Fatalf("FOO exit %d want 3 (inactive); stderr=%s", code, errb.String())
 	}
 	if !strings.Contains(out.String(), "foo.service") {
 		t.Fatalf("FOO stdout=%s", out.String())
@@ -967,8 +1228,8 @@ func TestCLIStatusFOOEqualsFoo(t *testing.T) {
 	out.Reset()
 	errb.Reset()
 	code = runCLI([]string{"status", "foo"}, &out, &errb, dial)
-	if code != 0 {
-		t.Fatalf("foo exit %d stderr=%s", code, errb.String())
+	if code != 3 {
+		t.Fatalf("foo exit %d want 3 (inactive); stderr=%s", code, errb.String())
 	}
 	if !strings.Contains(out.String(), "foo.service") {
 		t.Fatalf("foo stdout=%s", out.String())

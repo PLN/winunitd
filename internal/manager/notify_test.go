@@ -53,12 +53,7 @@ TimeoutStartSec=5s
 		return m.stateOfLocked("worker.service") == core.Activating
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := notify.SendRetry(ctx, pipe, notify.Message{Ready: true}); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-errc; err != nil {
+	if err := sendReadyUntilStart(t, pipe, errc); err != nil {
 		t.Fatal(err)
 	}
 	assertState(t, m, "worker.service", core.Active)
@@ -153,17 +148,14 @@ WatchdogSec=1s
 		errc <- err
 	}()
 	pipe := waitNotifyPipe(t, launch, "hb.service")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := notify.SendRetry(ctx, pipe, notify.Message{Ready: true}); err != nil {
-		t.Fatal(err)
-	}
-	if err := waitErr(t, errc); err != nil {
+	if err := sendReadyUntilStart(t, pipe, errc); err != nil {
 		t.Fatal(err)
 	}
 
 	advanceWait(t, fk, 400*time.Millisecond)
 	assertState(t, m, "hb.service", core.Active)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	if err := notify.Send(ctx, pipe, notify.Message{Watchdog: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -195,12 +187,7 @@ Restart=no
 		errc <- err
 	}()
 	pipe := waitNotifyPipe(t, launch, "onlywd.service")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := notify.SendRetry(ctx, pipe, notify.Message{Ready: true}); err != nil {
-		t.Fatal(err)
-	}
-	if err := waitErr(t, errc); err != nil {
+	if err := sendReadyUntilStart(t, pipe, errc); err != nil {
 		t.Fatal(err)
 	}
 	waitCond(t, func() bool {
@@ -233,12 +220,7 @@ Restart=no
 		errc <- err
 	}()
 	pipe := waitNotifyPipe(t, launch, "miss.service")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := notify.SendRetry(ctx, pipe, notify.Message{Ready: true}); err != nil {
-		t.Fatal(err)
-	}
-	if err := waitErr(t, errc); err != nil {
+	if err := sendReadyUntilStart(t, pipe, errc); err != nil {
 		t.Fatal(err)
 	}
 	advanceWait(t, fk, time.Second)
@@ -269,12 +251,7 @@ Restart=no
 		errc <- err
 	}()
 	pipe := waitNotifyPipe(t, launch, "again.service")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := notify.SendRetry(ctx, pipe, notify.Message{Ready: true}); err != nil {
-		t.Fatal(err)
-	}
-	if err := waitErr(t, errc); err != nil {
+	if err := sendReadyUntilStart(t, pipe, errc); err != nil {
 		t.Fatal(err)
 	}
 	assertState(t, m, "again.service", core.Active)
@@ -316,12 +293,7 @@ Restart=no
 		errc <- err
 	}()
 	pipe := waitNotifyPipe(t, launch, "edge.service")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := notify.SendRetry(ctx, pipe, notify.Message{Ready: true}); err != nil {
-		t.Fatal(err)
-	}
-	if err := waitErr(t, errc); err != nil {
+	if err := sendReadyUntilStart(t, pipe, errc); err != nil {
 		t.Fatal(err)
 	}
 	advanceWait(t, fk, time.Second-time.Nanosecond)
@@ -402,12 +374,7 @@ WatchdogSec=30s
 	if !ok || usec != "30000000" {
 		t.Fatalf("WINUNIT_WATCHDOG_USEC = %q ok=%v", usec, ok)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := notify.SendRetry(ctx, pipe, notify.Message{Ready: true}); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-errc; err != nil {
+	if err := sendReadyUntilStart(t, pipe, errc); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -477,6 +444,27 @@ WatchdogSec=2s
 		t.Fatal(err)
 	}
 	assertState(t, m, "cli.service", core.Active)
+}
+
+// sendReadyUntilStart resends READY=1 until Start returns.
+// Windows named-pipe Accept can return from Dial before waitReady is
+// selected; a single SendRetry then looks successful while Start is
+// still blocked (CI #42).
+func sendReadyUntilStart(t *testing.T, pipe string, errc <-chan error) error {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		_ = notify.SendRetry(ctx, pipe, notify.Message{Ready: true})
+		cancel()
+		select {
+		case err := <-errc:
+			return err
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	t.Fatal("did not receive error result")
+	return nil
 }
 
 func waitNotifyPipe(t *testing.T, launch *fakeLauncher, unit string) string {

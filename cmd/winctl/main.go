@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -18,12 +19,14 @@ const usage = `winctl — control interface for winunitd
 Usage:
   winctl [--help]
   winctl [--user] <command> [args]
+  winctl <command> [--user] [args]
 
 Commands:
   start <unit>        Start a unit
   stop <unit>         Stop a unit
   restart <unit>      Restart a unit
   status [unit]       Show machine or unit status
+                      (exit 0 active, 3 inactive/failed, 4 not loaded)
   enable <unit>       Enable a unit
   disable <unit>      Disable a unit
   list-units          List loaded units
@@ -41,21 +44,47 @@ Commands:
 Commands other than verify-on-a-file-path talk to winunitd over
 \\.\pipe\winunitd\control. --user talks to
 \\.\pipe\winunitd\user\<SID>\control for the current user.
-enable-linger / disable-linger always use the system pipe.
+--user is accepted before or after the verb. enable-linger /
+disable-linger always use the system pipe.
 
 Flags:
   --user          Talk to the per-user manager (current user SID)
   -h, --help      Show this help
 `
 
+const statusUsage = `winctl status — show machine or unit status
+
+Usage:
+  winctl status [unit]
+  winctl status [--user] [unit]
+  winctl --user status [unit]
+
+No unit prints machine status. A unit name prints that unit.
+
+Exit codes for unit status (systemctl-shaped):
+  0  unit is active (running, or active oneshot success)
+  3  unit is inactive or failed (loaded but not active)
+  4  unit is not loaded / not found
+
+Transport and protocol errors keep their existing non-zero exit
+(they are not mapped to 3). Machine status (no unit) exits 0 on success.
+`
+
 const verifyUsage = `winctl verify — check unit files without a running daemon, or a loaded unit
 
 Usage:
   winctl verify <path> [<path> ...]
-  winctl verify <unit>
+  winctl verify [--file|-f] <path> [<path> ...]
+  winctl verify <unit> [<unit> ...]
 
 A filesystem path is verified locally (no daemon). A unit name is verified
 through winunitd.
+
+Path vs unit is by form, not by whether a file exists in the current
+directory. A unit name has no "/", "\", or drive prefix (foo.service).
+A path is explicit: ./foo.service, .\foo.service, or C:\path\foo.service.
+--file / -f treats every operand as a path (including a bare foo.service).
+Mixing unit names and paths in one invocation is a usage error.
 
 Unknown directives are errors. ExecStart must be an absolute Windows path
 (SearchPath=no). An omitted WorkingDirectory is a warning; System32 is not
@@ -129,7 +158,7 @@ func runCLIUser(args []string, stdout, stderr io.Writer, dial, userDial func(con
 }
 
 func (c *cli) run(args []string) int {
-	user, rest := splitUserFlag(args)
+	user, rest := extractUserFlag(args)
 	c.user = user
 	args = rest
 
@@ -140,11 +169,14 @@ func (c *cli) run(args []string) int {
 
 	cmd, rest := args[0], args[1:]
 	if len(rest) == 1 && isHelpFlag(rest[0]) {
-		if cmd == "verify" {
+		switch cmd {
+		case "verify":
 			fmt.Fprint(c.stdout, verifyUsage)
-			return 0
+		case "status":
+			fmt.Fprint(c.stdout, statusUsage)
+		default:
+			fmt.Fprint(c.stdout, usage)
 		}
-		fmt.Fprint(c.stdout, usage)
 		return 0
 	}
 
@@ -191,18 +223,19 @@ func isHelpFlag(s string) bool {
 	}
 }
 
-func splitUserFlag(args []string) (user bool, rest []string) {
-	i := 0
-	for i < len(args) {
-		switch args[i] {
-		case "--user":
+// extractUserFlag pulls --user from anywhere in argv (before or after the
+// verb). Duplicate --user is accepted. The flag is not a value for other
+// options (--since --user would lose the since operand).
+func extractUserFlag(args []string) (user bool, rest []string) {
+	rest = make([]string, 0, len(args))
+	for _, a := range args {
+		if a == "--user" {
 			user = true
-			i++
-		default:
-			return user, args[i:]
+			continue
 		}
+		rest = append(rest, a)
 	}
-	return user, nil
+	return user, rest
 }
 
 func (c *cli) call(fn func(context.Context, *protocol.Client) error) error {
@@ -289,16 +322,31 @@ func (c *cli) noArg(args []string, fn func() int) int {
 }
 
 func (c *cli) verify(args []string) int {
-	if len(args) == 0 {
+	va, errMsg := parseVerifyArgs(args)
+	if errMsg == "help" {
+		fmt.Fprint(c.stdout, verifyUsage)
+		return 0
+	}
+	if errMsg != "" {
+		fmt.Fprintf(c.stderr, "winctl verify: %s\n", errMsg)
+		fmt.Fprint(c.stderr, verifyUsage)
+		return 2
+	}
+	if len(va.operands) == 0 {
 		fmt.Fprintln(c.stderr, "winctl verify: unit file path or unit name required")
 		fmt.Fprint(c.stderr, verifyUsage)
 		return 2
 	}
-	if anyLooksLikeFilePath(args) {
-		return runVerify(args, c.user, c.stdout, c.stderr)
+	paths, units, errMsg := classifyVerifyOperands(va.operands, va.fileFlag)
+	if errMsg != "" {
+		fmt.Fprintf(c.stderr, "winctl verify: %s\n", errMsg)
+		return 2
+	}
+	if len(paths) > 0 {
+		return runVerify(paths, c.user, c.stdout, c.stderr)
 	}
 	failed := false
-	for _, name := range args {
+	for _, name := range units {
 		name = unit.NormalizeName(name)
 		var ver *protocol.VerifyResult
 		err := c.call(func(ctx context.Context, cl *protocol.Client) error {
@@ -326,26 +374,53 @@ func (c *cli) verify(args []string) int {
 	return 0
 }
 
-func looksLikeFilePath(arg string) bool {
+type verifyArgs struct {
+	fileFlag bool
+	operands []string
+}
+
+func parseVerifyArgs(args []string) (verifyArgs, string) {
+	var va verifyArgs
+	for _, a := range args {
+		switch {
+		case a == "-h" || a == "-help" || a == "--help" || a == "help":
+			return va, "help"
+		case a == "--file" || a == "-f":
+			va.fileFlag = true
+		case strings.HasPrefix(a, "-"):
+			return va, fmt.Sprintf("unknown flag %q", a)
+		default:
+			va.operands = append(va.operands, a)
+		}
+	}
+	return va, ""
+}
+
+// isExplicitPath reports a verify operand that is a filesystem path by form
+// (slash, backslash, or drive prefix). A bare foo.service is a unit name
+// even if that name exists in the current directory.
+func isExplicitPath(arg string) bool {
 	if strings.ContainsAny(arg, `/\`) {
 		return true
 	}
-	if len(arg) >= 2 && arg[1] == ':' {
-		return true
-	}
-	if _, err := os.Stat(arg); err == nil {
-		return true
-	}
-	return false
+	return len(arg) >= 2 && arg[1] == ':'
 }
 
-func anyLooksLikeFilePath(args []string) bool {
-	for _, a := range args {
-		if looksLikeFilePath(a) {
-			return true
+func classifyVerifyOperands(operands []string, fileFlag bool) (paths, units []string, errMsg string) {
+	if fileFlag {
+		return operands, nil, ""
+	}
+	for _, a := range operands {
+		if isExplicitPath(a) {
+			paths = append(paths, a)
+		} else {
+			units = append(units, a)
 		}
 	}
-	return false
+	if len(paths) > 0 && len(units) > 0 {
+		return nil, nil, "mixed unit names and file paths; use ./name, a drive path, or --file for paths, or pass only unit names"
+	}
+	return paths, units, ""
 }
 
 func formatIssue(iss protocol.Issue) string {
@@ -375,9 +450,38 @@ func (c *cli) status(args []string) int {
 		return err
 	})
 	if err != nil {
+		if protocolCode(err) == protocol.CodeNotFound {
+			fmt.Fprintf(c.stderr, "winctl: %v\n", err)
+			return 4
+		}
 		return c.rpcError(err)
 	}
-	return c.printStatus(st)
+	code := c.printStatus(st)
+	if code != 0 {
+		return code
+	}
+	return statusExitCode(st)
+}
+
+func protocolCode(err error) string {
+	var pe *protocol.Error
+	if errors.As(err, &pe) && pe != nil {
+		return pe.Code
+	}
+	return ""
+}
+
+// statusExitCode is systemctl-shaped for a unit: 0 active, 3 loaded but
+// not active (inactive, failed, activating, deactivating). Machine status
+// is 0. Not-found is handled by the RPC error path (exit 4).
+func statusExitCode(st *protocol.StatusResult) int {
+	if st == nil || st.Unit == nil {
+		return 0
+	}
+	if st.Unit.ActiveState == "active" {
+		return 0
+	}
+	return 3
 }
 
 func (c *cli) listUnits() int {
