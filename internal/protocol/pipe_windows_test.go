@@ -12,8 +12,20 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
 )
+
+func TestDialPipeUsesWinioIdentification(t *testing.T) {
+	t.Parallel()
+	if winio.PipeImpLevel(PipeDialImpLevel) != winio.PipeImpLevelIdentification {
+		t.Fatalf("PipeDialImpLevel = 0x%x, want winio.PipeImpLevelIdentification 0x%x",
+			PipeDialImpLevel, winio.PipeImpLevelIdentification)
+	}
+	if winio.PipeImpLevel(PipeDialImpLevel) == winio.PipeImpLevelAnonymous {
+		t.Fatal("DialPipe must not use PipeImpLevelAnonymous")
+	}
+}
 
 func TestListenPipeRejectsRemoteClients(t *testing.T) {
 	name := fmt.Sprintf(`\\.\pipe\winunitd-flag-%d-%d`, os.Getpid(), time.Now().UnixNano())

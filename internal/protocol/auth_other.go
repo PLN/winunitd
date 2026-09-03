@@ -2,13 +2,19 @@
 
 package protocol
 
-// DefaultAuthorizer denies all peers. Production control uses the Windows named pipe.
-func DefaultAuthorizer() Authorizer {
-	return DenyAll
+import (
+	"fmt"
+	"net"
+)
+
+func impersonatePeerPlatform(conn net.Conn, ownerSID string) (Peer, error) {
+	_ = conn
+	_ = ownerSID
+	return Peer{}, fmt.Errorf("named-pipe impersonation is only available on Windows")
 }
 
-// UserAuthorizer denies all peers. Production control uses the Windows named pipe.
-func UserAuthorizer(ownerSID string) Authorizer {
+func clientProcessPeerPlatform(conn net.Conn, ownerSID string) (Peer, error) {
+	_ = conn
 	_ = ownerSID
-	return DenyAll
+	return Peer{}, fmt.Errorf("named-pipe client process token is only available on Windows")
 }
