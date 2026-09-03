@@ -9,6 +9,7 @@ import (
 
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/timers"
 )
 
 func TestShutdownStopsAfterOrderedServices(t *testing.T) {
@@ -283,10 +284,12 @@ RestartSec=1s
 }
 
 // hangJournalLauncher is a fakeLauncher whose stdout never reaches EOF,
-// so journal.Wait blocks until abandoned (issue #68).
+// so journal.Wait blocks until abandoned (issues #68 and #83).
 type hangJournalLauncher struct {
 	fakeLauncher
-	pw *io.PipeWriter
+	pw    *io.PipeWriter
+	pipes []*io.PipeWriter
+	last  *fakeProc
 }
 
 func (f *hangJournalLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
@@ -299,6 +302,7 @@ func (f *hangJournalLauncher) Start(ctx context.Context, spec runtime.StartSpec)
 	f.mu.Lock()
 	f.starts = append(f.starts, spec)
 	f.pw = pw
+	f.pipes = append(f.pipes, pw)
 	pid := f.pid
 	f.mu.Unlock()
 	if pid == 0 {
@@ -309,7 +313,7 @@ func (f *hangJournalLauncher) Start(ctx context.Context, spec runtime.StartSpec)
 		_ = pw.Close()
 		return nil, err
 	}
-	return &fakeProc{
+	p := &fakeProc{
 		name:   spec.Unit,
 		rec:    &f.fakeLauncher,
 		pid:    pid,
@@ -317,7 +321,35 @@ func (f *hangJournalLauncher) Start(ctx context.Context, spec runtime.StartSpec)
 		done:   make(chan struct{}),
 		stdout: io.NopCloser(pr),
 		stderr: io.NopCloser(strings.NewReader("")),
-	}, nil
+	}
+	f.mu.Lock()
+	f.last = p
+	f.mu.Unlock()
+	return p, nil
+}
+
+func (f *hangJournalLauncher) dieLast(code uint32) {
+	f.mu.Lock()
+	p := f.last
+	f.mu.Unlock()
+	if p != nil {
+		p.die(code)
+	}
+}
+
+func (f *hangJournalLauncher) nstarts() int {
+	return len(f.units())
+}
+
+func (f *hangJournalLauncher) closePipes() {
+	f.mu.Lock()
+	pipes := append([]*io.PipeWriter(nil), f.pipes...)
+	f.mu.Unlock()
+	for _, pw := range pipes {
+		if pw != nil {
+			_ = pw.Close()
+		}
+	}
 }
 
 func TestStopUnitReleasesOpLockDuringJournalWait(t *testing.T) {
@@ -378,4 +410,127 @@ TimeoutStopSec=30s
 	if launch.pw != nil {
 		_ = launch.pw.Close()
 	}
+}
+
+func TestLaunchUnitOpAbandonsHungJournalAfterSelfExit(t *testing.T) {
+	t.Parallel()
+	launch := &hangJournalLauncher{}
+	m, fk := managerWithFake(t, launch, map[string]string{
+		"foo.service": `
+[Service]
+Type=simple
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+TimeoutStopSec=30s
+`,
+	})
+	t.Cleanup(launch.closePipes)
+	if _, err := m.Start(context.Background(), "foo"); err != nil {
+		t.Fatal(err)
+	}
+	assertStopTimeout(t, m, "foo.service", 30*time.Second)
+	launch.dieLast(1)
+	waitCond(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		rt := m.units["foo.service"]
+		return rt != nil && (rt.proc == nil || !rt.proc.Alive())
+	})
+
+	startErr := make(chan error, 1)
+	go func() {
+		_, err := m.Start(context.Background(), "foo")
+		startErr <- err
+	}()
+
+	waitHungLaunchJournal(t, m, fk, launch, "foo.service")
+	select {
+	case err := <-startErr:
+		t.Fatalf("second Start returned before TimeoutStopSec: %v", err)
+	default:
+	}
+
+	fk.Advance(30 * time.Second)
+	select {
+	case err := <-startErr:
+		if err != nil {
+			t.Fatalf("second Start: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("second Start did not return after TimeoutStopSec")
+	}
+
+	unlock, ok := m.ops.tryLock("foo.service")
+	if !ok {
+		t.Fatal("op lock still held after second Start")
+	}
+	unlock()
+}
+
+func TestLaunchUnitOpAbandonsHungJournalOnAutoRestart(t *testing.T) {
+	t.Parallel()
+	launch := &hangJournalLauncher{}
+	m, fk := managerWithFake(t, launch, map[string]string{
+		"foo.service": `
+[Unit]
+StartLimitBurst=0
+[Service]
+Type=simple
+ExecStart=C:\Tools\foo.exe
+WorkingDirectory=C:\Tools
+Restart=always
+RestartSec=0
+TimeoutStopSec=30s
+`,
+	})
+	t.Cleanup(launch.closePipes)
+	if _, err := m.Start(context.Background(), "foo"); err != nil {
+		t.Fatal(err)
+	}
+	assertStopTimeout(t, m, "foo.service", 30*time.Second)
+	launch.dieLast(1)
+
+	waitHungLaunchJournal(t, m, fk, launch, "foo.service")
+	fk.Advance(30 * time.Second)
+	waitCond(t, func() bool {
+		if launch.nstarts() < 2 {
+			return false
+		}
+		unlock, ok := m.ops.tryLock("foo.service")
+		if !ok {
+			return false
+		}
+		unlock()
+		return true
+	})
+}
+
+func assertStopTimeout(t *testing.T, m *Manager, name string, want time.Duration) {
+	t.Helper()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rt := m.units[name]
+	if rt == nil || rt.unit == nil {
+		t.Fatalf("no unit %s", name)
+	}
+	if got := stopTimeout(rt.unit); got != want {
+		t.Fatalf("stopTimeout(%s) = %v, want %v", name, got, want)
+	}
+}
+
+func waitHungLaunchJournal(t *testing.T, m *Manager, fk *timers.Fake, launch *hangJournalLauncher, name string) {
+	t.Helper()
+	// launch.Start runs before waitJournal, so the hung relaunch already
+	// counts as a second start while the previous capture is still open.
+	waitCond(t, func() bool {
+		if launch.nstarts() < 2 || !fk.Waiting() {
+			return false
+		}
+		unlock, ok := m.ops.tryLock(name)
+		if ok {
+			unlock()
+			return false
+		}
+		return true
+	})
 }
