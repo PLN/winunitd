@@ -55,25 +55,23 @@ func TestMain(m *testing.M) {
 		recordHelperCount()
 		os.Exit(helperExitCode())
 	case "count-then-sleep":
-		// Stay up on the 2nd+ start even if helperCountLines misses the
-		// first line (Windows sharing / visibility). Re-opening after
-		// Close used to make the 2nd start exit; counting before append
-		// is not enough if Stat/Open still sees an empty file. If the
-		// count file already exists, a previous start ran — sleep.
+		// First start: O_EXCL create a sibling marker, then exit.
+		// Later starts: marker exists → sleep. Line-count Open/Stat can
+		// miss the first write on Windows (sharing / visibility), which
+		// made the 2nd start exit and start-limit fail the unit.
 		path := os.Getenv("WINUNITD_JOB_COUNT")
-		existed := false
+		first := false
 		if path != "" {
-			_, err := os.Stat(path)
-			existed = err == nil
-		}
-		n := recordHelperCountN()
-		sleepAfter := 2
-		if v := os.Getenv("WINUNITD_JOB_SLEEP_AFTER"); v != "" {
-			if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
-				sleepAfter = parsed
+			f, err := os.OpenFile(path+".first", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+			if err == nil {
+				first = true
+				_, _ = f.Write([]byte("1\n"))
+				_ = f.Sync()
+				_ = f.Close()
 			}
 		}
-		if existed || n >= sleepAfter {
+		_ = recordHelperCountN()
+		if !first {
 			select {}
 		}
 		os.Exit(helperExitCode())
@@ -675,6 +673,8 @@ func startWindowsHelperUnit(t *testing.T, dir, name, serviceBody, helper string,
 		countEnv = fmt.Sprintf("Environment=\"WINUNITD_JOB_COUNT=%s\"\n", countPath)
 	}
 	body := fmt.Sprintf(""+
+		"[Unit]\n"+
+		"StartLimitBurst=0\n"+
 		"[Service]\n"+
 		"%s"+
 		"ExecStart=%s\n"+
