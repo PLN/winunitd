@@ -22,8 +22,15 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: Vet
+        run: go vet ./...
+
       - name: Test
-        run: go test ./...
+        env:
+          CGO_ENABLED: 1
+        # -parallel 1: Windows -race + t.Parallel starves notify/watchdog
+        # goroutines; the first two -race jobs failed on wait timeouts.
+        run: go test -race -parallel 1 ./...
 
       - name: Build
         run: go build ./cmd/winunitd ./cmd/winctl ./cmd/winunit-notify
@@ -42,7 +49,7 @@ jobs:
           cache: false
 
       - name: Test
-        run: go test ./...
+        run: go test -race ./...
 
   compile-linux:
     name: compile (linux, GOOS=windows)

@@ -55,7 +55,9 @@ func managerWithFake(t *testing.T, launch runtime.Launcher, files map[string]str
 
 func waitCond(t *testing.T, ok func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	// 30s: Windows -race + t.Parallel starves manager goroutines; 5s
+	// was enough for plain go test and failed CI #69's first -race job.
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if ok() {
 			return
@@ -95,7 +97,7 @@ func waitErr(t *testing.T, errc <-chan error) error {
 	select {
 	case err := <-errc:
 		return err
-	case <-time.After(5 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("did not receive error result")
 		return nil
 	}

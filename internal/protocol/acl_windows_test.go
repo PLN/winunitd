@@ -16,6 +16,9 @@ import (
 )
 
 func TestWindowsPipeACLDeniesNonAdmin(t *testing.T) {
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		t.Skip("requires an elevated process (UAC-filtered token cannot dial the control pipe)")
+	}
 	name := fmt.Sprintf(`\\.\pipe\winunitd-test-%d-%d`, os.Getpid(), time.Now().UnixNano())
 	lis, err := ListenPipe(name)
 	if err != nil {

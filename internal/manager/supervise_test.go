@@ -140,7 +140,8 @@ RestartSec=1s
 		errc <- err
 	}()
 	waitCond(t, func() bool { return launch.nstarts() >= 1 })
-	advanceWait(t, fk, 5*time.Second)
+	waitCond(t, func() bool { return fk.WaitingAt(5 * time.Second) })
+	fk.Advance(5 * time.Second)
 	if err := waitErr(t, errc); err == nil {
 		t.Fatal("expected TimeoutStartSec failure")
 	}
