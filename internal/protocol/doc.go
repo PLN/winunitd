@@ -14,6 +14,13 @@
 // enable-linger / disable-linger are administrator verbs on the system
 // pipe only.
 //
+// DefaultAuthorizer (system pipe) and UserAuthorizer (user pipe) derive
+// Peer from the named-pipe client token (GetNamedPipeClientProcessId →
+// process token; CheckTokenMembership for Administrators). The DACL is
+// defense-in-depth. A user-pipe client is the connecting user (Owner),
+// not Administrator unless the token is. Test authorizers (AllowAdmin,
+// AllowOwner) are for unit tests only.
+//
 // Transport is newline-delimited compact JSON over a byte stream, so the
 // same codec and handler can run on a Windows named pipe or on a fake
 // net.Listener in tests (no Windows service required).
