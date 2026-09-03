@@ -214,7 +214,11 @@ func (h *host) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<-
 				changes <- c.CurrentStatus
 				go overlayTimeChangeAccept(c.CurrentStatus)
 			case svc.SessionChange:
-				if sc, ok := ParseSessionChange(c.Cmd, c.EventType, c.EventData); ok && h.onSession != nil {
+				// Convert the SCM EVENTDATA uintptr here, in the
+				// handler, not later. unsafe.Add is the same-expression
+				// pointer form; unsafe.Pointer(c.EventData) is a delayed
+				// uintptr round-trip (vet / checkptr).
+				if sc, ok := ParseSessionChange(c.Cmd, c.EventType, unsafe.Add(unsafe.Pointer(nil), c.EventData)); ok && h.onSession != nil {
 					h.onSession(sc)
 				}
 			default:

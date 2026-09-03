@@ -42,7 +42,9 @@ func InteractiveSessions() ([]uint32, error) {
 
 // ParseSessionChange maps an SCM SESSIONCHANGE request to a SessionChange.
 // Disconnect/lock are not logoff. Unknown event types are ignored.
-func ParseSessionChange(cmd svc.Cmd, eventType uint32, eventData uintptr) (SessionChange, bool) {
+// eventData is the SCM EVENTDATA pointer, converted at the handler
+// boundary — not carried as a uintptr and converted later (checkptr).
+func ParseSessionChange(cmd svc.Cmd, eventType uint32, eventData unsafe.Pointer) (SessionChange, bool) {
 	if cmd != svc.SessionChange {
 		return SessionChange{}, false
 	}
@@ -57,11 +59,11 @@ func ParseSessionChange(cmd svc.Cmd, eventType uint32, eventData uintptr) (Sessi
 	}
 }
 
-func sessionIDFromEvent(eventData uintptr) uint32 {
-	if eventData == 0 {
+func sessionIDFromEvent(eventData unsafe.Pointer) uint32 {
+	if eventData == nil {
 		return 0
 	}
-	n := (*windows.WTSSESSION_NOTIFICATION)(unsafe.Pointer(eventData))
+	n := (*windows.WTSSESSION_NOTIFICATION)(eventData)
 	return n.SessionID
 }
 

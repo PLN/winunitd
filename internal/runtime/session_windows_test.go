@@ -12,7 +12,7 @@ import (
 
 func TestParseSessionChangeLogonLogoff(t *testing.T) {
 	n := windows.WTSSESSION_NOTIFICATION{Size: 8, SessionID: 3}
-	ptr := uintptr(unsafe.Pointer(&n))
+	ptr := unsafe.Pointer(&n)
 
 	sc, ok := ParseSessionChange(svc.SessionChange, windows.WTS_SESSION_LOGON, ptr)
 	if !ok || !sc.Logon || sc.SessionID != 3 {

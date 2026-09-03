@@ -22,8 +22,13 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: Vet
+        run: go vet ./...
+
       - name: Test
-        run: go test ./...
+        env:
+          CGO_ENABLED: 1
+        run: go test -race ./...
 
       - name: Build
         run: go build ./cmd/winunitd ./cmd/winctl ./cmd/winunit-notify
@@ -42,7 +47,7 @@ jobs:
           cache: false
 
       - name: Test
-        run: go test ./...
+        run: go test -race ./...
 
   compile-linux:
     name: compile (linux, GOOS=windows)

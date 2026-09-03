@@ -118,17 +118,25 @@ func controlDaemonIdentity(tok windows.Token) (ok bool, owner string, err error)
 	return isAdmin, owner, nil
 }
 
+// tokenOwner is TOKEN_OWNER { PSID Owner }. Same shape as
+// golang.org/x/sys/windows.Tokenuser: cast the GetTokenInformation
+// buffer, then read the SID pointer. Do not reconstruct the pointer
+// from a uintptr (checkptr).
+type tokenOwner struct {
+	Owner *windows.SID
+}
+
 func tokenOwnerSID(tok windows.Token) (*windows.SID, error) {
 	n := uint32(256)
 	for {
 		buf := make([]byte, n)
 		err := windows.GetTokenInformation(tok, windows.TokenOwner, &buf[0], uint32(len(buf)), &n)
 		if err == nil {
-			p := *(*uintptr)(unsafe.Pointer(&buf[0]))
-			if p == 0 {
+			owner := (*tokenOwner)(unsafe.Pointer(&buf[0])).Owner
+			if owner == nil {
 				return nil, fmt.Errorf("token owner SID is nil")
 			}
-			return (*windows.SID)(unsafe.Pointer(p)).Copy()
+			return owner.Copy()
 		}
 		if err != windows.ERROR_INSUFFICIENT_BUFFER {
 			return nil, err
