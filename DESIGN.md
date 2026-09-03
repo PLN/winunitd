@@ -583,9 +583,14 @@ User scope:
 
 ```powershell
 winctl --user status
+winctl status --user
 winctl --user enable hermes.service
 winctl --user start hermes.service
 ```
+
+`--user` is accepted before or after the verb. Both talk to the per-user pipe.
+
+`winctl status UNIT` exit codes are systemctl-shaped: 0 active, 3 inactive or failed (loaded but not active), 4 not loaded. Transport/protocol errors keep their existing non-zero exit.
 
 Machine/user ambiguity should be explicit.
 
