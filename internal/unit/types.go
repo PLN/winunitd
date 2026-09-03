@@ -143,8 +143,10 @@ func WindowsCPUWeight(n uint32) uint32 {
 	return w
 }
 
-// WindowsCPURate maps CPUQuota= N% to JOBOBJECT CpuRate (hundredths of a
-// percent): CpuRate = N * 100.
+// WindowsCPURate maps CPUQuota= N% (N in 1–100, percentage of total machine
+// CPU) to JOBOBJECT CpuRate (hundredths of a percent): CpuRate = N * 100.
+// A passing parse yields 100–10000; Windows CpuRate max is 10000. This
+// function does not clamp.
 func WindowsCPURate(percent uint32) uint32 {
 	return percent * 100
 }
@@ -216,7 +218,8 @@ type ServiceSpec struct {
 	PriorityClass PriorityClass
 	// CPUWeight is the unit-file integer 1–10000 (not the Windows 1–9 weight).
 	CPUWeight uint32
-	// CPUQuota is N from CPUQuota=N% (1–10000). CpuRate = N * 100.
+	// CPUQuota is N from CPUQuota=N% (1–100, % of total machine CPU).
+	// CpuRate = N * 100 (max 10000).
 	CPUQuota   uint32
 	IoPriority IoPriority
 
