@@ -21,6 +21,17 @@
 // not Administrator unless the token is. Test authorizers (AllowAdmin,
 // AllowOwner) are for unit tests only.
 //
+// ListenPipe / ListenPipeSDDL create every winunitd named pipe (system
+// control, user control, notify) with PIPE_REJECT_REMOTE_CLIENTS and
+// first-instance-only (FILE_FLAG_FIRST_PIPE_INSTANCE / NT FILE_CREATE).
+// A name that is already taken fails closed.
+//
+// DialDefault verifies the server process is LocalSystem or
+// Administrators (token owner SID, token user LocalSystem, or
+// CheckTokenMembership). DialUser verifies the server token user SID is
+// that user-manager identity. Mismatch is a squat: the connection is
+// closed and no RPC is sent. DialPipe does not check (notify / tests).
+//
 // Transport is newline-delimited compact JSON over a byte stream, so the
 // same codec and handler can run on a Windows named pipe or on a fake
 // net.Listener in tests (no Windows service required).
