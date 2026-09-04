@@ -38,7 +38,7 @@ func helperMode() string {
 func TestMain(m *testing.M) {
 	switch helperMode() {
 	case "sleep":
-		select {}
+		waitForHelperStop()
 	case "print":
 		fmt.Println(os.Getenv("WINUNITD_JOB_PRINT"))
 		_ = os.Stdout.Sync()
@@ -46,11 +46,11 @@ func TestMain(m *testing.M) {
 			fmt.Fprintln(os.Stderr, msg)
 			_ = os.Stderr.Sync()
 		}
-		select {}
+		waitForHelperStop()
 	case "print-invocation":
 		fmt.Println(os.Getenv("WINUNIT_INVOCATION_ID"))
 		_ = os.Stdout.Sync()
-		select {}
+		waitForHelperStop()
 	case "exit":
 		recordHelperCount()
 		os.Exit(helperExitCode())
@@ -72,7 +72,7 @@ func TestMain(m *testing.M) {
 		}
 		_ = recordHelperCountN()
 		if !first {
-			select {}
+			waitForHelperStop()
 		}
 		os.Exit(helperExitCode())
 	case "spawn":
@@ -86,7 +86,7 @@ func TestMain(m *testing.M) {
 			fmt.Fprintf(os.Stderr, "spawn: %v\n", err)
 			os.Exit(1)
 		}
-		select {}
+		waitForHelperStop()
 	case "notify-ready":
 		if d := os.Getenv("WINUNITD_NOTIFY_DELAY"); d != "" {
 			if n, err := strconv.Atoi(d); err == nil && n > 0 {
@@ -97,9 +97,9 @@ func TestMain(m *testing.M) {
 			fmt.Fprintf(os.Stderr, "notify-ready: %v\n", err)
 			os.Exit(1)
 		}
-		select {}
+		waitForHelperStop()
 	case "notify-never":
-		select {}
+		waitForHelperStop()
 	case "notify-watchdog":
 		if err := sendNotifyFromEnv(notify.Message{Ready: true}); err != nil {
 			fmt.Fprintf(os.Stderr, "notify-watchdog ready: %v\n", err)
@@ -150,7 +150,7 @@ func TestMain(m *testing.M) {
 				}
 			}()
 		}
-		select {}
+		waitForHelperStop()
 	case "alloc":
 		var held [][]byte
 		for {
@@ -169,7 +169,7 @@ func TestMain(m *testing.M) {
 			CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW,
 		}
 		_ = cmd.Start()
-		select {}
+		waitForHelperStop()
 	case "spawn-exit":
 		cmd := exec.Command(os.Args[0], winunitdHelperArgPrefix+"sleep")
 		cmd.Env = append(os.Environ(), "WINUNITD_JOB_HELPER=sleep")
@@ -192,6 +192,14 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
+}
+
+// Keep a timer pending: a bare select {} makes non-race helper binaries
+// terminate with Go's deadlock detector instead of waiting to be killed.
+func waitForHelperStop() {
+	for {
+		time.Sleep(time.Hour)
+	}
 }
 
 func recordHelperCount() {
