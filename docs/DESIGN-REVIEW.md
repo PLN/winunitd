@@ -2,6 +2,8 @@
 
 Reviewed September 4, 2026 at `b13fa16`. This is an assessment and proposal, not an adopted specification or a claim that the findings have been fixed. Source references are relative to this document. The MSI plan remains a separate implementation roadmap.
 
+September 5 follow-up: the [roadmap](../ROADMAP.md), [Design v2](../DESIGN.md), and [milestones](MILESTONES.md) now adopt this review's direction. The assessment below remains historical evidence; its original design-document references refer to [revision 1](archive/DESIGN-v1.md). Adoption does not fix the reported runtime defects.
+
 The concept is sound. I would build a Windows-native application supervisor with familiar systemd concepts, and keep much of this foundation. I would start with substantially less functionality and make process ownership, lifecycle transitions, shutdown, and Windows identity the first deliverables. I would keep Go today; a language rewrite would address little of the risk found here.
 
 ## 1. What product is worth building?

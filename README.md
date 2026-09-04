@@ -2,11 +2,11 @@
 
 Declarative Windows unit manager and process supervisor.
 
-Design notes in [DESIGN.md](DESIGN.md) are the source of truth. License: [MIT](LICENSE). Copyright PLN, 2026.
+The [roadmap](ROADMAP.md), [Design v2](DESIGN.md), and [implementation milestones](docs/MILESTONES.md) define the next iteration. They specify target behavior; the current alpha and its limitations are described below. License: [MIT](LICENSE). Copyright PLN, 2026.
 
 The [MSI installer plan](docs/MSI-INSTALLER-PLAN.md) covers packaging, service readiness, upgrades, rollback, signing, and migration from existing installations. No MSI is shipped yet.
 
-The [architecture review](docs/DESIGN-REVIEW.md) assesses the design, systemd compatibility, Windows integration, and release priorities. Its recommendations are proposals; the reproduced findings are not yet fixed.
+The [architecture review](docs/DESIGN-REVIEW.md) records the evidence behind this direction. The roadmap adopts its priorities; the reproduced findings are not yet fixed. The [archived first design](docs/archive/DESIGN-v1.md) preserves section references in existing source comments.
 
 ## Binaries
 
@@ -24,7 +24,7 @@ Windows is the first-class target (`GOOS=windows`).
 
 Implemented today: unit loader, dependency graph and start transactions, JSON-RPC control API, SCM host, Job Objects, restart policies, enable/targets at boot, journal, internal timers, ordered stop, per-user managers and lingering, `Type=notify` / watchdog, `Type=scm` and `Type=scheduled-task` proxies, Job Object resource limits, and `.registry` / `.eventlog` / `.path` companions. Details below.
 
-**Later:** ExecStop / CTRL_BREAK / WM_CLOSE, GUI attach, SessionPolicy, LoadCredential, WatchdogMode=window — see [DESIGN.md](DESIGN.md).
+**Planned in this iteration:** lifecycle ownership fixes, a single coordinator, versioned unit semantics, ExecStop, qualified user launching, durable scheduling, and MSI servicing. **Deferred:** CTRL_BREAK / WM_CLOSE, GUI attach, SessionPolicy, arbitrary credential brokering, and WatchdogMode=window — see [ROADMAP.md](ROADMAP.md).
 
 ## Build
 
