@@ -6,6 +6,8 @@ Design notes in [DESIGN.md](DESIGN.md) are the source of truth. License: [MIT](L
 
 The [MSI installer plan](docs/MSI-INSTALLER-PLAN.md) covers packaging, service readiness, upgrades, rollback, signing, and migration from existing installations. No MSI is shipped yet.
 
+The [architecture review](docs/DESIGN-REVIEW.md) assesses the design, systemd compatibility, Windows integration, and release priorities. Its recommendations are proposals; the reproduced findings are not yet fixed.
+
 ## Binaries
 
 | Binary | Role |
