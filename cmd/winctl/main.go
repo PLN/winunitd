@@ -562,6 +562,9 @@ func (c *cli) logs(args []string) int {
 		if got.Cursor != "" {
 			cursor = got.Cursor
 		}
+		if got.More {
+			continue
+		}
 		if !la.follow {
 			return 0
 		}

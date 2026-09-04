@@ -165,13 +165,15 @@ type LogsParams struct {
 }
 
 // LogsResult is a snapshot of stored journal entries (DESIGN.md §22).
-// Cursor is passed back on the next poll when following. LogEntry is the
+// Cursor is passed back on the next page when More is true, or the next
+// poll when following. LogEntry is the
 // v=2 journal record (severity / session / user SID may be empty on
 // historical v=1 lines).
 type LogsResult struct {
 	Unit    string     `json:"unit"`
 	Entries []LogEntry `json:"entries"`
 	Cursor  string     `json:"cursor,omitempty"`
+	More    bool       `json:"more,omitempty"` // fetch the next page using Cursor
 }
 
 // LogEntry is one journal line (DESIGN.md §22). Writers emit v=2 with

@@ -525,11 +525,15 @@ func (m *Manager) Logs(p protocol.LogsParams) (*protocol.LogsResult, error) {
 		since = t
 	}
 
+	more := false
 	collect := func() ([]protocol.LogEntry, string, error) {
 		if js == nil {
 			return []protocol.LogEntry{}, p.Cursor, nil
 		}
-		got, cursor, err := js.Query(name, since, p.Cursor)
+		// Entry JSON is a conservative bound for LogEntry (which omits empty
+		// fields). Reserve space below the 1 MiB RPC limit for the envelope.
+		got, cursor, hasMore, err := js.QueryPage(name, since, p.Cursor, (1<<20)-4096)
+		more = hasMore
 		if err != nil {
 			return nil, cursor, err
 		}
@@ -578,7 +582,7 @@ func (m *Manager) Logs(p protocol.LogsParams) (*protocol.LogsResult, error) {
 	if entries == nil {
 		entries = []protocol.LogEntry{}
 	}
-	return &protocol.LogsResult{Unit: name, Entries: entries, Cursor: cursor}, nil
+	return &protocol.LogsResult{Unit: name, Entries: entries, Cursor: cursor, More: more}, nil
 }
 
 // Verify re-reads a loaded unit file (daemon-side; path verify stays in winctl).

@@ -64,12 +64,20 @@ func (m *Manager) Disable(name string) (*protocol.EnableResult, error) {
 	name = core.NormalizeName(rt.unit.Name)
 	m.mu.Unlock()
 
-	_ = filepath.WalkDir(m.cfg.EnabledDir(), func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+	walkErr := filepath.WalkDir(m.cfg.EnabledDir(), func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if d.IsDir() {
 			return nil
 		}
 		if core.NormalizeName(d.Name()) == name {
-			_ = os.Remove(path)
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
 		}
 		return nil
 	})
@@ -84,9 +92,10 @@ func (m *Manager) Disable(name string) (*protocol.EnableResult, error) {
 	if err := m.rebuildGraphWithLinksLocked(links); err != nil {
 		return nil, protocol.ErrFailed(err.Error())
 	}
-	rt.enabled = false
-	rt.targets = nil
-	return &protocol.EnableResult{Unit: name, Enabled: false}, nil
+	if walkErr != nil {
+		return nil, protocol.ErrFailed(walkErr.Error())
+	}
+	return &protocol.EnableResult{Unit: name, Enabled: rt.enabled, Targets: rt.targets}, nil
 }
 
 func uniqueTargets(targets []string) []string {

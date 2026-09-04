@@ -516,8 +516,16 @@ func (s *Store) Read(unit string) ([]Entry, error) {
 // lock is released before the scan. The current file is append-only, so
 // reading it unlocked is safe; capture/append wait only for the flush.
 func (s *Store) Query(unit string, since time.Time, cursor string) ([]Entry, string, error) {
+	entries, next, _, err := s.QueryPage(unit, since, cursor, 0)
+	return entries, next, err
+}
+
+// QueryPage bounds the sum of JSON-encoded Entry sizes (including separators).
+// A zero budget is unlimited. The cursor always follows the last returned
+// entry; more indicates that another entry was found beyond the page budget.
+func (s *Store) QueryPage(unit string, since time.Time, cursor string, maxBytes int) ([]Entry, string, bool, error) {
 	if s == nil {
-		return nil, cursor, nil
+		return nil, cursor, false, nil
 	}
 	unit = canonicalUnit(unit)
 
@@ -528,11 +536,12 @@ func (s *Store) Query(unit string, since time.Time, cursor string) ([]Entry, str
 		}
 		f.mu.Unlock()
 	}
-	return s.scan(unit, since, cursor)
+	return s.scan(unit, since, cursor, maxBytes)
 }
 
-func (s *Store) scan(unit string, since time.Time, cursor string) ([]Entry, string, error) {
+func (s *Store) scan(unit string, since time.Time, cursor string, maxBytes int) ([]Entry, string, bool, error) {
 	var out []Entry
+	used := 0
 	next := cursor
 	past := cursor == ""
 	wantID, wantN := parseCursor(cursor)
@@ -556,7 +565,7 @@ func (s *Store) scan(unit string, since time.Time, cursor string) ([]Entry, stri
 			if out == nil {
 				out = []Entry{}
 			}
-			return out, next, err
+			return out, next, false, err
 		}
 		sc := bufio.NewScanner(f)
 		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -603,6 +612,21 @@ func (s *Store) scan(unit string, since time.Time, cursor string) ([]Entry, stri
 					continue
 				}
 			}
+			if maxBytes > 0 {
+				raw, err := json.Marshal(e)
+				if err != nil {
+					_ = f.Close()
+					return out, next, false, err
+				}
+				if used+len(raw)+1 > maxBytes {
+					_ = f.Close()
+					if len(out) == 0 {
+						return out, next, false, fmt.Errorf("journal entry exceeds log response budget")
+					}
+					return out, next, true, nil
+				}
+				used += len(raw) + 1
+			}
 			out = append(out, e)
 			next = formatCursor(id, seen[id])
 		}
@@ -612,13 +636,13 @@ func (s *Store) scan(unit string, since time.Time, cursor string) ([]Entry, stri
 			if out == nil {
 				out = []Entry{}
 			}
-			return out, next, scanErr
+			return out, next, false, scanErr
 		}
 	}
 	if out == nil {
 		out = []Entry{}
 	}
-	return out, next, nil
+	return out, next, false, nil
 }
 
 func (s *Store) idFor(e Entry) string {
