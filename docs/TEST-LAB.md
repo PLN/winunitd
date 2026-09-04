@@ -1,6 +1,6 @@
 # Windows qualification lab
 
-September 5, 2026. Implementation plan for R0.4 and the R4–R8 acceptance lanes in [MILESTONES.md](MILESTONES.md). Infrastructure discovery established an available three-node Proxmox cluster, shared image storage, working administrative access, and an existing Gitea instance with online Windows/Linux build runners. No registered VM templates were found. Provisioning and CI integration remain pending.
+September 5, 2026. Implementation plan for R0.4 and the R4–R8 acceptance lanes in [MILESTONES.md](MILESTONES.md). Infrastructure discovery established an available three-node Proxmox cluster, shared image storage, working administrative access, and an existing Gitea instance with online Windows/Linux build runners. A first Windows Server 2025 Core evaluation guest has been provisioned for supervised smoke testing. Maintained templates, the controller, and CI integration remain pending.
 
 Private inventory, endpoints, VM IDs, key paths, and credentials belong in the operator's infrastructure workspace. They must not enter project workflows, committed test results, or guest images. This document is intentionally portable to another installation.
 
@@ -67,9 +67,42 @@ Store detailed private logs locally with retention limits. Publish only sanitize
 ## Bring-up work packages
 
 - R0.4a: inventory/access/media discovery — performed; private evidence recorded separately.
-- R0.4b: allocate isolated pool/network and restricted controller identity — pending.
-- R0.4c: create and validate reproducible Windows baselines — pending.
+- R0.4b: allocate isolated pool/network and restricted controller identity — pool allocated; isolated network and restricted identity pending.
+- R0.4c: create and validate reproducible Windows baselines — first Server Core evaluation guest deployed; reproducible maintained baselines pending.
 - R0.4d: implement controller run records, guest handshakes, collection, cleanup and orphan reconciliation — pending.
-- R0.4e: connect trusted Gitea dispatch/artifact flow and prove the first reboot smoke — pending.
+- R0.4e: connect trusted Gitea dispatch/artifact flow and prove the first reboot smoke — supervised local reboot smoke passed; Gitea integration pending.
 
-R0 remains planned until all of its milestone gates are met. No infrastructure resources were created during discovery.
+R0 remains planned until all of its milestone gates are met. Discovery itself created no resources; subsequent supervised bring-up allocated a dedicated pool and one evaluation guest. The first guest uses the existing network with Windows Firewall enabled, not the planned isolated CI network. Do not expose it to arbitrary repository jobs or treat it as a maintained template.
+
+## First provisioning observations
+
+The initial guest uses official Windows Server 2025 Standard Evaluation media, WIM index 1 (Server Core), build 26100.32230. It has four vCPUs, 8 GiB RAM, an 80 GiB sparse SATA disk, UEFI with enrolled Microsoft keys, and an emulated Intel NIC. These conservative device choices let Windows Setup run without injecting storage/network drivers. Future baselines should explicitly qualify their chosen VirtIO devices.
+
+An unattended answer file partitioned a newly allocated empty disk with `WillWipeDisk=false`. A separate temporary ISO carried the answer file, binaries, VirtIO serial driver, and guest-agent MSI. Follow the site's VMID/MAC/DHCP convention before first boot and verify the resulting address inside Windows. Never infer an available VMID from a single node's guest list; check the cluster.
+
+The VirtIO serial driver installed during the specialize pass, but the guest-agent MSI from VirtIO 0.1.285 failed with MSI 1603 / error 1722 in its VSS `RegisterCom` action. The same MSI installed successfully after Windows Setup finished. Schedule guest-agent installation after setup in the reproducible builder; fail and retain diagnostics if installation fails. The first bring-up used authenticated, encrypted WinRM to diagnose and complete this step, then verified guest-agent execution as SYSTEM.
+
+Evaluation activation succeeded without a subscription key. Record each guest's actual expiry and rebuild or retire it before expiry; snapshots do not extend evaluation rights. Detach installation media and remove generated credential-bearing answer files and bootstrap ISOs after setup. Keep the administrator credential only in the private operator secret store.
+
+## First smoke evidence — September 5, 2026
+
+Source: `0bcc83b5cfcb6690a66e3318969cdd299f0e0125`, built locally with Go 1.27.0. Guest-side SHA256 checks matched the transferred artifacts:
+
+| Artifact | SHA256 |
+| --- | --- |
+| winunitd.exe | `c5db278f8c2bfe4bb222dc914096992dc7a09cab0f53ea83ee2ecb974a62de7e` |
+| winctl.exe | `a93756f75a85733d38f1a28560ac58271b6f9e9df1ea0038cd99db16e2f75feb` |
+| Official evaluation ISO | `7b052573ba7894c9924e3e87ba732ccd354d18cb75a883efa9b900ea125bfd51` |
+
+The ISO digest identifies the downloaded bytes; it was not compared against a separately published Microsoft checksum. Media was downloaded from the [Microsoft Evaluation Center](https://www.microsoft.com/en-us/evalcenter/download-windows-server-2025) through its official HTTPS redirect.
+
+Passed on Server Core build 26100.32230:
+
+- Guest-agent command execution verified as `NT AUTHORITY\SYSTEM`.
+- Current CLI service installation registered winunitd as LocalSystem with automatic delayed startup.
+- Fixture verification, enable/start, active status, journal output, stop, absence of the stopped process, and second start.
+- Normal guest reboot changed the boot timestamp; delayed SCM startup launched the enabled fixture with a new invocation ID and exactly one process in session 0. Observed first post-reboot output was about 132 seconds after boot.
+- Journal output was available from both boots.
+- Explicit SCM stop removed the fixture process. Logs and unit files were collected outside the guest before shutdown.
+
+The guest is retained powered off, with host autostart disabled, for follow-up work. It is not a generalized template. Private scripts, complete logs, activation expiry, and resource ownership are recorded in the operator workspace. This supervised smoke does not establish repeatable CI provisioning, current patch compliance, standard-user/session behavior, runtime fault recovery, MSI servicing, or release qualification.
