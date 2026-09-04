@@ -4,6 +4,8 @@ Declarative Windows unit manager and process supervisor.
 
 Design notes in [DESIGN.md](DESIGN.md) are the source of truth. License: [MIT](LICENSE). Copyright PLN, 2026.
 
+The [MSI installer plan](docs/MSI-INSTALLER-PLAN.md) covers packaging, service readiness, upgrades, rollback, signing, and migration from existing installations. No MSI is shipped yet.
+
 ## Binaries
 
 | Binary | Role |
@@ -186,6 +188,8 @@ winctl logs UNIT [--follow] [--since <when>]
 ```
 
 `--since` is a lower bound (RFC3339, `YYYY-MM-DD`, Go duration such as `1h`, or `1 hour ago`); a bad value is an error. `--follow` polls new lines with a cursor over the existing `logs` RPC (no streaming). `--boot` is not implemented.
+
+Log responses are paginated below the 1 MiB RPC limit. `winctl logs` reads every page, including without `--follow`. API clients should request the returned `cursor` while `more` is true. A single entry too large for a response returns an explicit error.
 
 ## User managers and linger
 
