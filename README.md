@@ -132,6 +132,8 @@ Each unit start (including `Restart=` relaunch) gets a new UUID. `winctl status`
 
 `Type=notify` stays activating until the unit writes `READY=1` on `WINUNIT_NOTIFY_PIPE` (`\\.\pipe\winunitd\notify\<unit>`), or `TimeoutStartSec` fires. `NotifyAccess=main` only. Scripts send `READY` / `WATCHDOG` / `STATUS` with `winunit-notify.exe`.
 
+The current alpha notify transport sends a `WINUNITD-NOTIFY/1` line from the server before the client writes its payload. Clients must read this acceptance banner before sending and closing, preventing a short-lived Windows pipe connection from being discarded before acceptance. The banner is not a readiness acknowledgement. Upgrade `winunit-notify.exe` and the daemon together: older daemons do not send it, so the current helper will time out against them. Custom clients should adopt the handshake; legacy write-only clients retain the early-disconnect risk.
+
 | Mode | Behavior |
 | --- | --- |
 | `WatchdogMode=notify` (default with `WatchdogSec=`) | Injects `WINUNIT_WATCHDOG_USEC`; missed heartbeat fails the unit |

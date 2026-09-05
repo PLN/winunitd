@@ -462,9 +462,9 @@ func sendWatchdogUntilArmed(t *testing.T, pipe string, fk *timers.Fake) {
 }
 
 // sendReadyUntilStart resends READY=1 until Start returns.
-// Windows named-pipe Accept can return from Dial before waitReady is
-// selected; a single SendRetry then looks successful while Start is
-// still blocked (CI #42).
+// This repeated sender supports lifecycle tests that race stop/relaunch.
+// The transport acceptance handshake now protects individual short-lived
+// sends; waitReady also retains readiness received before it starts waiting.
 func sendReadyUntilStart(t *testing.T, pipe string, errc <-chan error) error {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
@@ -505,9 +505,8 @@ func keepReady(t *testing.T, launch *fakeLauncher, unit string) {
 	t.Helper()
 	// Windows named-pipe addresses are the unit name, so two launches share
 	// the same WINUNIT_NOTIFY_PIPE string. Send READY once per Start, not
-	// once per distinct address. A single SendRetry can return nil after
-	// Accept before waitReady is selected (CI #42); resend briefly so a
-	// relaunch is not left Activating (CI #87 TestRestartOnWatchdogRelaunches).
+	// once per distinct address. Resend across the lifecycle test's
+	// stop/relaunch boundary so each invocation receives readiness.
 	sent := 0
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) && sent < 2 {

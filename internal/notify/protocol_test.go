@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -108,4 +109,98 @@ func TestFakeListenerRoundTrip(t *testing.T) {
 		}
 	}
 	t.Fatalf("ready=%v status=%q watchdog=%v", sawReady, status, sawWD)
+}
+
+func TestServeAcceptCancellationClosesIdleClient(t *testing.T) {
+	lis, err := ListenTCP()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lis.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	accepted := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ServeAccept(ctx, lis, func(int) bool { close(accepted); return true }, func(Message) {})
+	}()
+	conn, err := Dial(ctx, lis.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	select {
+	case <-accepted:
+	case <-time.After(time.Second):
+		t.Fatal("client not accepted")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("notification shutdown blocked by idle client")
+	}
+}
+
+func TestSendWaitsForAcceptance(t *testing.T) {
+	lis, err := ListenTCP()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lis.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Send(ctx, lis.Addr(), Message{Ready: true}) }()
+	conn, err := lis.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(time.Second))
+	select {
+	case err := <-done:
+		t.Fatalf("sender returned before server acceptance: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if _, err := io.WriteString(conn, acceptanceBanner); err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "READY=1\n" {
+		t.Fatalf("payload = %q", body)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSendCancellationWithoutAcceptance(t *testing.T) {
+	lis, err := ListenTCP()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lis.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Send(ctx, lis.Addr(), Message{Ready: true}) }()
+	conn, err := lis.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("canceled send succeeded without acceptance")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("send ignored cancellation while waiting for acceptance")
+	}
 }

@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 )
@@ -66,12 +67,21 @@ func (l *tcpListener) Close() error {
 
 // ServeAccept loops Accept until the listener is closed and delivers
 // parsed messages. access, if non-nil, may reject a connection (NotifyAccess).
+// Cancellation closes the listener and accepted connections so idle clients
+// cannot prevent shutdown. Returning also cancels outstanding client reads.
 func ServeAccept(ctx context.Context, lis Listener, access func(pid int) bool, emit func(Message)) {
 	if lis == nil || emit == nil {
 		return
 	}
 	var wg sync.WaitGroup
 	defer wg.Wait()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stopListener := context.AfterFunc(ctx, func() { _ = lis.Close() })
+	defer stopListener()
 	for {
 		if ctx != nil && ctx.Err() != nil {
 			return
@@ -88,6 +98,11 @@ func ServeAccept(ctx context.Context, lis Listener, access func(pid int) bool, e
 		go func(c Conn) {
 			defer wg.Done()
 			defer c.Close()
+			stopRead := context.AfterFunc(ctx, func() { _ = c.Close() })
+			defer stopRead()
+			if _, err := io.WriteString(c, acceptanceBanner); err != nil {
+				return
+			}
 			_ = ReadLines(c, emit)
 		}(c)
 	}

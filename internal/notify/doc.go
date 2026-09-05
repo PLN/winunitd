@@ -6,6 +6,12 @@
 //
 //	\\.\pipe\winunitd\notify\<unit-id>
 //
+// Before writing, clients read the server's "WINUNITD-NOTIFY/1\n" acceptance
+// banner. This prevents a short-lived Windows client from disconnecting before
+// the pipe connection is accepted. The banner confirms transport acceptance,
+// not that the payload was processed or the unit became ready. The current
+// helper requires a matching daemon; older daemons do not send this banner.
+//
 // Environment injected into the unit process:
 //
 //	WINUNIT_NOTIFY_PIPE

@@ -9,7 +9,13 @@ import (
 	"time"
 )
 
-// Send writes one notify payload and closes the connection.
+// acceptanceBanner confirms that the server has accepted the connection. In
+// particular, a Windows pipe client must not close before ConnectNamedPipe
+// finishes or the listener can discard the connection with ERROR_NO_DATA.
+const acceptanceBanner = "WINUNITD-NOTIFY/1\n"
+
+// Send waits for server acceptance, writes one notify payload, and closes the
+// connection. Acceptance is not an acknowledgement of application readiness.
 func Send(ctx context.Context, addr string, msg Message) error {
 	body := Format(msg)
 	if body == "" {
@@ -23,8 +29,17 @@ func Send(ctx context.Context, addr string, msg Message) error {
 		return err
 	}
 	defer conn.Close()
+	stopClose := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopClose()
 	if d, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(d)
+	}
+	banner := make([]byte, len(acceptanceBanner))
+	if _, err := io.ReadFull(conn, banner); err != nil {
+		return fmt.Errorf("notify acceptance: %w", err)
+	}
+	if string(banner) != acceptanceBanner {
+		return fmt.Errorf("unsupported notify acceptance banner")
 	}
 	_, err = io.WriteString(conn, body)
 	return err
