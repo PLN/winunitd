@@ -3,6 +3,7 @@
 package pathwatch
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -33,6 +34,8 @@ type existsWatch struct {
 	target string
 	ch     chan struct{}
 
+	opMu     sync.Mutex // serializes opening, replacement, and cleanup
+	pending  []Watch    // replaced watches whose close failed
 	mu       sync.Mutex
 	closed   bool
 	inner    Watch
@@ -82,18 +85,26 @@ func (w *existsWatch) C() <-chan struct{} { return w.ch }
 
 func (w *existsWatch) Close() error {
 	w.mu.Lock()
-	if w.closed {
-		w.mu.Unlock()
-		return nil
-	}
 	w.closed = true
-	inner := w.inner
-	w.inner = nil
 	w.mu.Unlock()
-	if inner != nil {
-		return inner.Close()
+	w.opMu.Lock()
+	defer w.opMu.Unlock()
+	w.mu.Lock()
+	if w.inner != nil {
+		w.pending = append(w.pending, w.inner)
+		w.inner = nil
 	}
-	return nil
+	w.mu.Unlock()
+	var failed []Watch
+	var errs []error
+	for _, watch := range w.pending {
+		if err := watch.Close(); err != nil {
+			failed = append(failed, watch)
+			errs = append(errs, err)
+		}
+	}
+	w.pending = failed
+	return errors.Join(errs...)
 }
 
 func (w *existsWatch) loop() {
@@ -136,6 +147,11 @@ func (w *existsWatch) loop() {
 }
 
 func (w *existsWatch) rearm(dir, filter string) bool {
+	w.opMu.Lock()
+	defer w.opMu.Unlock()
+	if w.isClosed() || len(w.pending) != 0 {
+		return false
+	}
 	if dir == "" {
 		var err error
 		dir, filter, err = resolveExistsWatch(w.target)
@@ -147,21 +163,18 @@ func (w *existsWatch) rearm(dir, filter string) bool {
 	if err != nil {
 		return false
 	}
-	if w.isClosed() {
-		_ = next.Close()
-		return false
-	}
-	old := w.swapInner(next, dir, filter)
-	if old != nil {
-		_ = old.Close()
-	}
-	return true
+	return w.replaceInner(next, dir, filter)
 }
 
 // rearmCloser opens the next existing intermediate directory toward the
 // target without walking/statting the full path. CreateFile on a missing
 // next component is a no-op stay.
 func (w *existsWatch) rearmCloser() bool {
+	w.opMu.Lock()
+	defer w.opMu.Unlock()
+	if w.isClosed() || len(w.pending) != 0 {
+		return false
+	}
 	dir, filter := w.watchSnapshot()
 	if isTargetLeafWatch(w.target, dir, filter) {
 		return true
@@ -175,13 +188,8 @@ func (w *existsWatch) rearmCloser() bool {
 		if err != nil {
 			return true
 		}
-		if w.isClosed() {
-			_ = next.Close()
+		if !w.replaceInner(next, nextDir, nextFilter) {
 			return false
-		}
-		old := w.swapInner(next, nextDir, nextFilter)
-		if old != nil {
-			_ = old.Close()
 		}
 		dir, filter = nextDir, nextFilter
 	}
@@ -206,6 +214,9 @@ func (w *existsWatch) isClosed() bool {
 func (w *existsWatch) getInner() Watch {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.closed {
+		return nil
+	}
 	return w.inner
 }
 
@@ -215,14 +226,27 @@ func (w *existsWatch) watchSnapshot() (dir, filter string) {
 	return w.watchDir, w.filter
 }
 
-func (w *existsWatch) swapInner(inner Watch, dir, filter string) Watch {
+// replaceInner requires opMu. Every successfully opened watch remains owned,
+// including one opened while Close was waiting for this operation.
+func (w *existsWatch) replaceInner(inner Watch, dir, filter string) bool {
 	w.mu.Lock()
-	defer w.mu.Unlock()
+	if w.closed {
+		w.pending = append(w.pending, inner)
+		w.mu.Unlock()
+		return false
+	}
 	old := w.inner
 	w.inner = inner
 	w.watchDir = dir
 	w.filter = filter
-	return old
+	w.mu.Unlock()
+	if old != nil {
+		if err := old.Close(); err != nil {
+			w.pending = append(w.pending, old)
+			return false
+		}
+	}
+	return true
 }
 
 func resolveExistsWatch(raw string) (dir, filter string, err error) {

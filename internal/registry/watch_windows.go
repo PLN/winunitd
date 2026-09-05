@@ -17,9 +17,11 @@ const notifyFilter = windows.REG_NOTIFY_CHANGE_NAME |
 	windows.REG_NOTIFY_CHANGE_SECURITY
 
 type winWatch struct {
-	key   registry.Key
-	event windows.Handle
-	ch    chan struct{}
+	closeMu sync.Mutex
+	done    chan struct{}
+	key     registry.Key
+	event   windows.Handle
+	ch      chan struct{}
 
 	mu     sync.Mutex
 	closed bool
@@ -50,8 +52,10 @@ func OpenWatch(key Key) (Watch, error) {
 		key:   k,
 		event: ev,
 		ch:    make(chan struct{}, 1),
+		done:  make(chan struct{}),
 	}
 	if err := w.arm(); err != nil {
+		close(w.done)
 		_ = w.Close()
 		return nil, err
 	}
@@ -62,16 +66,31 @@ func OpenWatch(key Key) (Watch, error) {
 func (w *winWatch) C() <-chan struct{} { return w.ch }
 
 func (w *winWatch) Close() error {
+	w.closeMu.Lock()
+	defer w.closeMu.Unlock()
 	w.mu.Lock()
-	if w.closed {
-		w.mu.Unlock()
-		return nil
-	}
 	w.closed = true
 	w.mu.Unlock()
-	_ = windows.SetEvent(w.event)
-	_ = w.key.Close()
-	_ = windows.CloseHandle(w.event)
+	if w.event != 0 {
+		if err := windows.SetEvent(w.event); err != nil {
+			return fmt.Errorf("wake registry watch: %w", err)
+		}
+	}
+	// The waiter and rearm operation must leave before their handles close.
+	// Closing a handle while WaitForSingleObject is pending is undefined.
+	<-w.done
+	if w.key != 0 {
+		if err := w.key.Close(); err != nil {
+			return fmt.Errorf("close registry key: %w", err)
+		}
+		w.key = 0
+	}
+	if w.event != 0 {
+		if err := windows.CloseHandle(w.event); err != nil {
+			return fmt.Errorf("close registry event: %w", err)
+		}
+		w.event = 0
+	}
 	return nil
 }
 
@@ -86,6 +105,7 @@ func (w *winWatch) arm() error {
 }
 
 func (w *winWatch) loop() {
+	defer close(w.done)
 	defer close(w.ch)
 	for {
 		if w.isClosed() {

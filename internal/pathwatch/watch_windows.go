@@ -30,11 +30,13 @@ const (
 )
 
 type winWatch struct {
-	dir    windows.Handle
-	event  windows.Handle
-	filter string // basename; empty means any change in the directory
-	mask   uint32
-	ch     chan struct{}
+	closeMu sync.Mutex
+	done    chan struct{}
+	dir     windows.Handle
+	event   windows.Handle
+	filter  string // basename; empty means any change in the directory
+	mask    uint32
+	ch      chan struct{}
 
 	mu        sync.Mutex
 	closed    bool
@@ -103,6 +105,7 @@ func openDirWatchNotify(watchDir, filter string, mask uint32) (Watch, error) {
 		mask:   mask,
 		ch:     make(chan struct{}, 1),
 		armed:  armed,
+		done:   make(chan struct{}),
 	}
 	go w.loop()
 	// Return only after ReadDirectoryChangesW is pending so a create
@@ -114,17 +117,31 @@ func openDirWatchNotify(watchDir, filter string, mask uint32) (Watch, error) {
 func (w *winWatch) C() <-chan struct{} { return w.ch }
 
 func (w *winWatch) Close() error {
+	w.closeMu.Lock()
+	defer w.closeMu.Unlock()
 	w.mu.Lock()
-	if w.closed {
-		w.mu.Unlock()
-		return nil
-	}
 	w.closed = true
 	w.mu.Unlock()
-	_ = windows.CancelIoEx(w.dir, nil)
-	_ = windows.SetEvent(w.event)
-	_ = windows.CloseHandle(w.dir)
-	_ = windows.CloseHandle(w.event)
+	if w.dir != 0 {
+		if err := windows.CancelIoEx(w.dir, nil); err != nil && !errors.Is(err, windows.ERROR_NOT_FOUND) {
+			return fmt.Errorf("cancel directory watch: %w", err)
+		}
+	}
+	// Cancellation requests completion; it does not itself finish the read.
+	// Keep its OVERLAPPED, buffer, directory, and event alive until the loop exits.
+	<-w.done
+	if w.dir != 0 {
+		if err := windows.CloseHandle(w.dir); err != nil {
+			return fmt.Errorf("close watched directory: %w", err)
+		}
+		w.dir = 0
+	}
+	if w.event != 0 {
+		if err := windows.CloseHandle(w.event); err != nil {
+			return fmt.Errorf("close directory watch event: %w", err)
+		}
+		w.event = 0
+	}
 	return nil
 }
 
@@ -137,11 +154,16 @@ func (w *winWatch) noteArmed() {
 }
 
 func (w *winWatch) loop() {
+	defer close(w.done)
 	defer close(w.ch)
 	defer w.noteArmed()
 	buf := make([]byte, notifyBufSize)
 	for {
-		if w.isClosed() {
+		// Serialize arming with Close so a new read cannot start after its
+		// cancellation request has already inspected the directory handle.
+		w.mu.Lock()
+		if w.closed {
+			w.mu.Unlock()
 			return
 		}
 		var ov windows.Overlapped
@@ -156,15 +178,21 @@ func (w *winWatch) loop() {
 			&ov,
 			0,
 		)
+		w.mu.Unlock()
 		w.noteArmed()
 		if err != nil && !errors.Is(err, windows.ERROR_IO_PENDING) {
 			return
 		}
-		if _, waitErr := windows.WaitForSingleObject(w.event, windows.INFINITE); waitErr != nil || w.isClosed() {
-			return
+		_, waitErr := windows.WaitForSingleObject(w.event, windows.INFINITE)
+		if waitErr != nil {
+			_ = windows.CancelIoEx(w.dir, &ov)
 		}
 		var n uint32
-		if err := windows.GetOverlappedResult(w.dir, &ov, &n, false); err != nil {
+		err = windows.GetOverlappedResult(w.dir, &ov, &n, true)
+		if waitErr != nil || w.isClosed() {
+			return
+		}
+		if err != nil {
 			if w.isClosed() {
 				return
 			}

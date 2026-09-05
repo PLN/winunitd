@@ -39,10 +39,13 @@ var (
 )
 
 type winSub struct {
-	id         uintptr
-	sub        windows.Handle
-	ch         chan struct{}
-	queryUTF16 []uint16
+	closeMu     sync.Mutex
+	channelOnce sync.Once
+	closeNative func(windows.Handle) error // nil uses EvtClose; injectable failure tests
+	id          uintptr
+	sub         windows.Handle
+	ch          chan struct{}
+	queryUTF16  []uint16
 
 	mu     sync.Mutex
 	closed bool
@@ -98,16 +101,25 @@ func OpenSubscribe(t Trigger) (Subscription, error) {
 func (s *winSub) C() <-chan struct{} { return s.ch }
 
 func (s *winSub) Close() error {
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
 	s.mu.Lock()
-	already := s.closed
 	s.closed = true
 	s.mu.Unlock()
 	unregisterSub(s.id)
-	// EvtClose waits for in-flight callbacks; do not hold s.mu.
-	evtClose(s.sub)
-	if !already {
-		close(s.ch)
+	s.channelOnce.Do(func() { close(s.ch) })
+	if s.sub == 0 {
+		return nil
 	}
+	// EvtClose waits for callbacks; holding s.mu here would deadlock them.
+	closeNative := s.closeNative
+	if closeNative == nil {
+		closeNative = evtClose
+	}
+	if err := closeNative(s.sub); err != nil {
+		return err
+	}
+	s.sub = 0
 	return nil
 }
 
@@ -133,7 +145,7 @@ func (s *winSub) fail() {
 	s.closed = true
 	s.mu.Unlock()
 	unregisterSub(s.id)
-	close(s.ch)
+	s.channelOnce.Do(func() { close(s.ch) })
 }
 
 func (s *winSub) isClosed() bool {
@@ -177,11 +189,18 @@ func unregisterSub(id uintptr) {
 	subMu.Unlock()
 }
 
-func evtClose(h windows.Handle) {
+func evtClose(h windows.Handle) error {
 	if h == 0 {
-		return
+		return nil
 	}
-	_, _, _ = procEvtClose.Call(uintptr(h))
+	r0, _, err := procEvtClose.Call(uintptr(h))
+	if r0 == 0 {
+		if err == nil || err == windows.ERROR_SUCCESS {
+			return fmt.Errorf("EvtClose failed")
+		}
+		return fmt.Errorf("EvtClose: %w", err)
+	}
+	return nil
 }
 
 func mapSubscribeErr(err error, t Trigger) error {

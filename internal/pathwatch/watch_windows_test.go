@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -361,5 +362,95 @@ func TestWindowsOpenExistsWatchAncestorIgnoresSibling(t *testing.T) {
 	}
 	if got := n.Load() - before; got > 1 {
 		t.Fatalf("stats after target create = %d, want ≤1", got)
+	}
+}
+
+func TestDirectoryCloseRetainsProtectedHandles(t *testing.T) {
+	for _, fault := range []string{"directory", "event"} {
+		t.Run(fault, func(t *testing.T) {
+			watch, err := openDirWatch(t.TempDir(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			w := watch.(*winWatch)
+			t.Cleanup(func() { _ = w.Close() })
+			h := w.dir
+			if fault == "event" {
+				h = w.event
+			}
+			const protectFromClose = 0x2
+			if err := windows.SetHandleInformation(h, protectFromClose, protectFromClose); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = windows.SetHandleInformation(h, protectFromClose, 0) })
+			if err := w.Close(); err == nil {
+				t.Fatal("protected close reported success")
+			}
+			select {
+			case <-w.done:
+			default:
+				t.Fatal("close returned before pending directory read finished")
+			}
+			retained := w.dir
+			if fault == "event" {
+				retained = w.event
+			}
+			if retained != h {
+				t.Fatal("failed close discarded handle")
+			}
+			if err := windows.SetHandleInformation(h, protectFromClose, 0); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.Close(); err != nil {
+				t.Fatal("close retry", err)
+			}
+			if w.dir != 0 || w.event != 0 {
+				t.Fatal("retry retained handles")
+			}
+		})
+	}
+}
+
+func TestDirectoryConcurrentCloseWhileRearming(t *testing.T) {
+	dir := t.TempDir()
+	watch, err := openDirWatch(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := watch.(*winWatch)
+	defer w.Close()
+	stop, written := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(written)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_ = os.WriteFile(filepath.Join(dir, "noise.txt"), []byte("change"), 0600)
+		}
+	}()
+	defer func() { close(stop); <-written }()
+	var wg sync.WaitGroup
+	errs := make(chan error, 16)
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); errs <- w.Close() }()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	select {
+	case <-w.done:
+	default:
+		t.Fatal("directory read still running")
+	}
+	if w.dir != 0 || w.event != 0 {
+		t.Fatal("concurrent close left handles")
 	}
 }

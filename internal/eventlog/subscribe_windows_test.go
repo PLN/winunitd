@@ -3,8 +3,11 @@
 package eventlog
 
 import (
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -106,4 +109,79 @@ func testEventID(t *testing.T) uint16 {
 
 func applicationTrigger(id uint16) string {
 	return fmt.Sprintf("Application:EventID=%d", id)
+}
+
+func TestSubscriptionCloseRetainsFailureAndSerializesRetry(t *testing.T) {
+	failure := errors.New("injected EvtClose failure")
+	var calls atomic.Int32
+	s := &winSub{sub: 42, ch: make(chan struct{}, 1)}
+	s.closeNative = func(windows.Handle) error {
+		if calls.Add(1) == 1 {
+			return failure
+		}
+		return nil
+	}
+	id := registerSub(s)
+	if err := s.Close(); !errors.Is(err, failure) {
+		t.Fatalf("close result: %v", err)
+	}
+	if s.sub != 42 {
+		t.Fatal("failed EvtClose discarded handle")
+	}
+	if _, ok := <-s.C(); ok {
+		t.Fatal("failed close kept event admission open")
+	}
+	evtSubscribeCallback(evtSubscribeActionDeliver, id, 0)
+	var wg sync.WaitGroup
+	errs := make(chan error, 16)
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); errs <- s.Close() }()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if s.sub != 0 || calls.Load() != 2 {
+		t.Fatal("concurrent retries duplicated native close or lost handle")
+	}
+}
+
+func TestSubscriptionCallbackFailureAndCloseShareChannelClosure(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		s := &winSub{ch: make(chan struct{}, 1)}
+		id := registerSub(s)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); evtSubscribeCallback(evtSubscribeActionError, id, 0) }()
+		go func() { defer wg.Done(); _ = s.Close() }()
+		wg.Wait()
+		if _, ok := <-s.C(); ok {
+			t.Fatal("channel still open")
+		}
+	}
+}
+
+func TestSubscriptionNativeCloseIsIdempotent(t *testing.T) {
+	tr, err := ParseTrigger("Application:EventID=4242")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := OpenSubscribe(tr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal("repeated native close", err)
+	}
+	if s.(*winSub).sub != 0 {
+		t.Fatal("successful native close retained handle")
+	}
 }
