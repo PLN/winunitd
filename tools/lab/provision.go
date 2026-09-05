@@ -17,18 +17,19 @@ import (
 )
 
 type runRecord struct {
-	Schema       int       `json:"schema"`
-	ID           string    `json:"id"`
-	Node         string    `json:"node"`
-	Pool         string    `json:"pool"`
-	VMID         int       `json:"vmid"`
-	Marker       string    `json:"marker"`
-	Created      time.Time `json:"created"`
-	State        string    `json:"state"`
-	OSISO        string    `json:"os_iso"`
-	BootstrapISO string    `json:"bootstrap_iso"`
-	Commit       string    `json:"commit,omitempty"`
-	ArchiveHash  string    `json:"archive_sha256,omitempty"`
+	Schema        int       `json:"schema"`
+	ID            string    `json:"id"`
+	Node          string    `json:"node"`
+	Pool          string    `json:"pool"`
+	VMID          int       `json:"vmid"`
+	Marker        string    `json:"marker"`
+	Created       time.Time `json:"created"`
+	State         string    `json:"state"`
+	OSISO         string    `json:"os_iso"`
+	BootstrapISO  string    `json:"bootstrap_iso"`
+	Commit        string    `json:"commit,omitempty"`
+	ArchiveHash   string    `json:"archive_sha256,omitempty"`
+	MediaDetached bool      `json:"media_detached,omitempty"`
 }
 
 func createGuest(a *api, c config, vmid int, osISO, bootstrapISO string) error {
@@ -103,7 +104,7 @@ func createGuest(a *api, c config, vmid int, osISO, bootstrapISO string) error {
 	}
 	args := map[string]any{
 		"vmid": vmid, "pool": c.Pool, "name": fmt.Sprintf("lab-%d", vmid), "description": r.Marker,
-		"cores": 4, "memory": 8192, "cpu": "x86-64-v3", "machine": "q35", "ostype": "win11", "bios": "ovmf", "onboot": false, "agent": "enabled=1",
+		"cores": 4, "memory": 8192, "cpu": "x86-64-v3", "machine": "q35", "ostype": "win11", "bios": "ovmf", "onboot": false, "localtime": false, "agent": "enabled=1",
 		"efidisk0": c.Storage + ":0,efitype=4m,pre-enrolled-keys=1", "tpmstate0": c.Storage + ":0,version=v2.0",
 		"sata0": c.Storage + ":80", "sata1": osISO + ",media=cdrom", "sata2": bootstrapISO + ",media=cdrom",
 		"boot": "order=sata0;sata1", "net0": "e1000=" + mac.String() + ",bridge=" + c.Bridge + ",firewall=1",

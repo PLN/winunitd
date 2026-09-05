@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 )
 
 func TestOwnershipRejectsReusedGuestAndDrift(t *testing.T) {
-	for _, scenario := range []string{"owned", "reused-id", "other-pool", "other-node", "other-network", "missing-record"} {
+	for _, scenario := range []string{"owned", "reused-id", "other-pool", "other-node", "other-network", "extra-network", "missing-record"} {
 		t.Run(scenario, func(t *testing.T) {
 			c := config{Node: "lab", Pool: "test", Bridge: "isolated", FirstVMID: 200, LastVMID: 209, StateDir: t.TempDir()}
 			r := runRecord{Schema: 1, ID: "0123456789abcdef0123456789abcdef", Node: c.Node, Pool: c.Pool, VMID: 200}
@@ -21,7 +22,8 @@ func TestOwnershipRejectsReusedGuestAndDrift(t *testing.T) {
 			}
 			a := testAPI(t, func(w http.ResponseWriter, req *http.Request) {
 				if req.Method != http.MethodGet {
-					t.Fatal("ownership check mutated guest")
+					t.Error("ownership check mutated guest")
+					return
 				}
 				var data any
 				switch req.URL.Path {
@@ -43,7 +45,11 @@ func TestOwnershipRejectsReusedGuestAndDrift(t *testing.T) {
 					if scenario == "other-network" {
 						bridge = "prod"
 					}
-					data = map[string]string{"description": marker, "net0": "e1000=02:00:00:00:00:01,bridge=" + bridge + ",firewall=1"}
+					vm := map[string]string{"description": marker, "net0": "e1000=02:00:00:00:00:01,bridge=" + bridge + ",firewall=1"}
+					if scenario == "extra-network" {
+						vm["net1"] = "bridge=prod"
+					}
+					data = vm
 				default:
 					t.Errorf("unexpected endpoint")
 				}
@@ -54,6 +60,52 @@ func TestOwnershipRejectsReusedGuestAndDrift(t *testing.T) {
 				t.Fatalf("ownership outcome: %v", err)
 			}
 		})
+	}
+}
+
+func TestDetachRequiresLiveConfigurationRemoval(t *testing.T) {
+	for _, pending := range []bool{false, true} {
+		c := config{Node: "lab", Pool: "test", Bridge: "isolated", FirstVMID: 200, LastVMID: 209, StateDir: t.TempDir()}
+		r := runRecord{Schema: 1, ID: "0123456789abcdef0123456789abcdef", Node: "lab", Pool: "test", VMID: 200, State: "ready", OSISO: "test:iso/windows.iso", BootstrapISO: "test:iso/bootstrap.iso"}
+		r.Marker = "winunitd-lab-run:" + r.ID
+		path := filepath.Join(c.StateDir, r.ID+".json")
+		if err := saveRecord(path, r); err != nil {
+			t.Fatal(err)
+		}
+		changed := false
+		a := testAPI(t, func(w http.ResponseWriter, req *http.Request) {
+			var data any
+			if req.URL.Path == "/api2/json/pools/test" {
+				data = map[string]any{"members": []map[string]any{{"vmid": 200, "node": "lab"}}}
+			} else if req.Method == http.MethodPut {
+				changed = true
+			} else {
+				vm := map[string]string{"description": r.Marker, "net0": "bridge=isolated", "digest": "fixture"}
+				if !changed || pending {
+					vm["sata1"] = r.OSISO + ",media=cdrom"
+					vm["sata2"] = r.BootstrapISO + ",media=cdrom"
+				}
+				if changed && req.URL.Query().Get("current") != "1" {
+					t.Error("live configuration was not requested")
+				}
+				data = vm
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+		})
+		err := detachMedia(a, c, 200)
+		if (err != nil) != pending {
+			t.Fatalf("pending=%v: %v", pending, err)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(raw, &r); err != nil {
+			t.Fatal(err)
+		}
+		if r.MediaDetached == pending {
+			t.Fatal("persisted detached claim disagrees with live configuration")
+		}
 	}
 }
 

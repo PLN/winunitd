@@ -97,6 +97,11 @@ func smokeArchive(dir, commit string) ([]byte, error) {
 }
 
 func smokeGuest(a *api, c config, vmid int, dir, commit string) error {
+	if _, err := os.Stat(filepath.Join(c.StateDir, "maintenance.lock")); err == nil {
+		return fmt.Errorf("maintenance network gate is active; disconnect and verify it before qualification")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	archive, err := smokeArchive(dir, commit)
 	if err != nil {
 		return err

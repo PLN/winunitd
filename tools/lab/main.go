@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"time"
 )
@@ -44,7 +45,7 @@ func run() error {
 	commit := flag.String("commit", "", "full reviewed source commit for artifact admission")
 	flag.Parse()
 	if *file == "" || flag.NArg() != 1 {
-		return fmt.Errorf("usage: lab -config PRIVATE_FILE [options] probe|create|wait|smoke")
+		return fmt.Errorf("usage: lab -config PRIVATE_FILE [options] probe|create|wait|smoke|detach|retire")
 	}
 	f, err := os.Open(*file)
 	if err != nil {
@@ -65,6 +66,21 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	if flag.Arg(0) != "probe" {
+		if !filepath.IsAbs(c.StateDir) || *vmid < c.FirstVMID || *vmid > c.LastVMID || c.FirstVMID < 100 {
+			return fmt.Errorf("private state directory and valid guest range required")
+		}
+		if err := os.MkdirAll(c.StateDir, 0700); err != nil {
+			return err
+		}
+		lockPath := filepath.Join(c.StateDir, fmt.Sprintf("vm-%d.lock", *vmid))
+		lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil {
+			return fmt.Errorf("guest operation locked; inspect private controller state")
+		}
+		defer os.Remove(lockPath)
+		defer lock.Close()
+	}
 	if flag.Arg(0) == "create" {
 		return createGuest(a, c, *vmid, *osISO, *bootstrapISO)
 	}
@@ -73,6 +89,12 @@ func run() error {
 	}
 	if flag.Arg(0) == "smoke" {
 		return smokeGuest(a, c, *vmid, *artifacts, *commit)
+	}
+	if flag.Arg(0) == "detach" {
+		return detachMedia(a, c, *vmid)
+	}
+	if flag.Arg(0) == "retire" {
+		return retireGuest(a, c, *vmid)
 	}
 	if flag.Arg(0) != "probe" {
 		return fmt.Errorf("unknown lab command")

@@ -85,8 +85,28 @@ Additional private configuration fields are `storage`, `bridge`, `mac_prefix`, `
 - `create`, with `-vmid`, `-os-iso`, and `-bootstrap-iso`: allocate a fresh guest, persist a random ownership marker before allocation, enforce a two-running-guest limit, and boot setup. Media volume names are limited to dedicated storage. Initial boot key delivery is bounded; that automation still needs a fresh end-to-end repeat after its addition.
 - `wait`, with `-vmid`: check pool/node/network and matching ownership record, then await post-setup SYSTEM readiness. It cannot reset an active scenario to ready.
 - `smoke`, with `-vmid`, `-artifacts`, and a full `-commit`: reject dirty/wrong-target builds, verify all binary sizes/hashes, transfer bounded chunks, verify guest-side hashes, exercise SCM/unit operations, reboot, check a new invocation and exactly one session-0 process, stop SCM, and collect private evidence.
+- `detach`, with `-vmid`: remove only recorded installation media, using the configuration digest, then verify the **current** configuration. Proxmox may defer removal until a power cycle; a pending edit is not a detached ISO. Delete credential-bearing images only after live removal is verified.
+- `retire`, with `-vmid`: require completed setup/scenario and detached media, reject extra devices, foreign storage/VM disks, hooks, and retained snapshots, request bounded normal shutdown, recheck ownership, and remove the guest. Verify pool and disk removal before marking it retired. Real-VM retirement qualification is still pending.
 
-The state directory is private controller storage, not a public artifact directory. A crashed admission lock requires inspection; do not blindly delete it or treat an unmatched old record as authority over a reused VM ID. Failed scenarios remain available for diagnosis. This is a supervised controller prototype: distributed admission, automatic retirement, orphan reconciliation, complete failure-log collection, baseline hash admission, and trusted CI dispatch are still required before unattended operation.
+The state directory is private controller storage, not a public artifact directory. CLI operations serialize per guest; provisioning also takes a pool admission lock. A crashed lock requires inspection; do not blindly delete it or treat an unmatched old record as authority over a reused VM ID. Failed scenarios remain available for diagnosis. This is a supervised controller prototype: distributed admission, expiry/orphan reconciliation, complete failure-log collection, and baseline hash admission are still required before unattended operation.
+
+### Maintenance and qualification boundary
+
+Temporary maintenance routing is operated outside the build runner. The first implementation uses a dedicated Linux network namespace, a lab-side veth, a NAT uplink, and namespace-local firewall rules. It permits public HTTP/HTTPS, explicit public DNS, and time synchronization, while denying forwarding to private/reserved networks and unsolicited inbound traffic. A two-hour timer disconnects it. Host-global forwarding/firewall settings remain unchanged. Public HTTPS and denial of the private host management port were verified from Windows; the complete network boundary and automatic expiry still need regression coverage.
+
+Create `maintenance.lock` in the private controller state directory before enabling this gateway. The smoke command refuses that gate and also rejects guest IPv4/IPv6 default routes. Verify gateway removal and remove maintenance routes before clearing the gate. Shared-runner jobs never receive gateway or Proxmox credentials.
+
+`assets/maintain.ps1` is a supervised SYSTEM preparation script using the Windows Update Agent API. It verifies activation, records license status/expiry, selects nonoptional software updates, excludes feature upgrades, and records per-update results and reboot requirements. The operator reconnects after required reboots and repeats the scan before declaring a patched baseline. Raw logs remain private; no source update or signing credential enters the guest.
+
+Explicitly use UTC for both Windows and the virtual RTC (`localtime=false`). The first fresh runs exposed a two-hour host-local RTC/guest-UTC mismatch. Their lifecycle observations remain recorded, but they are not time-sensitive qualification evidence. Guest Windows Time synchronization was subsequently verified; new recipes use the explicit RTC setting.
+
+### Trusted Gitea artifact experiment
+
+A separate private build-control branch dispatches an explicitly reviewed full source commit, checks out that exact commit with no persisted Git credentials, uses the pinned compiler/build entry point, and uploads only the binaries and manifest. Build-control configuration and deployment endpoints stay in the operator workspace. No automatic GitHub mirroring or release publication is configured.
+
+For source `8da951a54d39dd5f0fe460fe935cde8a5dcc070c`, the downloaded Gitea/Linux cross-build artifact passed its manifest checks and all three binaries matched GitHub's native Windows artifact byte-for-byte. The controller still needs to consume this Gitea artifact in the next VM smoke.
+
+The inherited v3 artifact workflow uploaded successfully but its artifacts were absent from the REST listing. The upstream v4 action rejected the non-GitHub server. The private workflow now pins the [Gitea-recommended compatibility action](https://blog.gitea.com/release-of-1.22.0/) at `ChristopherHX/gitea-upload-artifact@81f940d004763f986ba3582c007fd842dd5cb0d7`; its patch against upstream parent `694cdabd8bdb0f10b2cea11669e1bf5453eed0a6` removes the unsupported-server check. That upload was listed and downloaded through the API. Keep this compatibility dependency under review separately from GitHub's upstream action pin.
 
 ## First provisioning observations
 

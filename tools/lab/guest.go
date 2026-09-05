@@ -41,14 +41,18 @@ func ownedGuest(ctx context.Context, a *api, c config, vmid int) (runRecord, str
 	if !found {
 		return zero, "", fmt.Errorf("guest not in configured pool/node")
 	}
-	var vm struct {
-		Description string `json:"description"`
-		Net0        string `json:"net0"`
-	}
+	var vm map[string]any
 	if err := a.call(ctx, http.MethodGet, fmt.Sprintf("/nodes/%s/qemu/%d/config", c.Node, vmid), nil, &vm); err != nil {
 		return zero, "", err
 	}
-	if !strings.Contains(","+vm.Net0+",", ",bridge="+c.Bridge+",") {
+	net0, _ := vm["net0"].(string)
+	description, _ := vm["description"].(string)
+	for key := range vm {
+		if key != "net0" && regexp.MustCompile(`^net[0-9]+$`).MatchString(key) {
+			return zero, "", fmt.Errorf("guest has an unexpected network interface")
+		}
+	}
+	if !strings.Contains(","+net0+",", ",bridge="+c.Bridge+",") {
 		return zero, "", fmt.Errorf("guest network ownership drift")
 	}
 	files, err := filepath.Glob(filepath.Join(c.StateDir, "*.json"))
@@ -67,7 +71,7 @@ func ownedGuest(ctx context.Context, a *api, c config, vmid int) (runRecord, str
 		if err := json.Unmarshal(data, &r); err != nil {
 			return zero, "", fmt.Errorf("invalid private run record")
 		}
-		if r.Schema == 1 && r.VMID == vmid && r.Node == c.Node && r.Pool == c.Pool && r.Marker == vm.Description && r.Marker == "winunitd-lab-run:"+r.ID && len(r.ID) == 32 {
+		if r.Schema == 1 && r.VMID == vmid && r.Node == c.Node && r.Pool == c.Pool && r.Marker == description && r.Marker == "winunitd-lab-run:"+r.ID && len(r.ID) == 32 {
 			return r, path, nil
 		}
 	}
@@ -81,6 +85,60 @@ func powershellEncoded(script string) string {
 		binary.LittleEndian.PutUint16(data[2*i:], u)
 	}
 	return base64.StdEncoding.EncodeToString(data)
+}
+
+func detachMedia(a *api, c config, vmid int) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	r, path, err := ownedGuest(ctx, a, c, vmid)
+	if err != nil {
+		return err
+	}
+	if r.State != "ready" && r.State != "smoke-passed" {
+		return fmt.Errorf("media removal requires completed setup/scenario")
+	}
+	endpoint := fmt.Sprintf("/nodes/%s/qemu/%d/config", c.Node, vmid)
+	var vm map[string]any
+	if err := a.call(ctx, http.MethodGet, endpoint, nil, &vm); err != nil {
+		return err
+	}
+	var remove []string
+	for device, expected := range map[string]string{"sata1": r.OSISO, "sata2": r.BootstrapISO} {
+		value, exists := vm[device]
+		if !exists {
+			continue
+		}
+		text, ok := value.(string)
+		if !ok || strings.Split(text, ",")[0] != expected || !strings.Contains(","+text+",", ",media=cdrom,") {
+			return fmt.Errorf("installation media ownership drift")
+		}
+		remove = append(remove, device)
+	}
+	if len(remove) != 0 {
+		args := map[string]any{"delete": strings.Join(remove, ","), "boot": "order=sata0", "digest": vm["digest"]}
+		if err := a.callJSON(ctx, http.MethodPut, endpoint, args, nil); err != nil {
+			return err
+		}
+	}
+	var current map[string]any
+	if err := a.call(ctx, http.MethodGet, endpoint, url.Values{"current": {"1"}}, &current); err != nil {
+		return err
+	}
+	for _, device := range []string{"sata1", "sata2"} {
+		if _, exists := current[device]; exists {
+			r.MediaDetached = false
+			if err := saveRecord(path, r); err != nil {
+				return err
+			}
+			return fmt.Errorf("media removal is pending; power-cycle the guest and retry before deleting its ISO")
+		}
+	}
+	r.MediaDetached = true
+	if err := saveRecord(path, r); err != nil {
+		return err
+	}
+	fmt.Println("Owned installation media detached; remove private credential-bearing ISO separately.")
+	return nil
 }
 
 func guestExec(ctx context.Context, a *api, c config, vmid int, script string) (string, error) {

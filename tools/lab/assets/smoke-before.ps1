@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -ne 'S-1-5-18') { throw 'Expected SYSTEM' }
 if (Get-Service winunitd -ErrorAction SilentlyContinue) { throw 'Fresh guest required: service already exists' }
+if (Get-NetRoute -DestinationPrefix @('0.0.0.0/0', '::/0') -ErrorAction SilentlyContinue) { throw 'Disconnect maintenance routing before qualification' }
 Set-Location C:\winunitd-lab
 Start-Transcript C:\winunitd-lab\smoke-before-reboot.log
 Get-FileHash .\winunitd.exe, .\winctl.exe
