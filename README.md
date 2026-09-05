@@ -187,7 +187,7 @@ Internal scheduler (not Task Scheduler). `OnBootSec` is since machine boot; `OnS
 
 stdout/stderr are stored under `<base-dir>\journal\<encoded-unit>.log` (system: `C:\ProgramData\winunitd\journal\`; user: `%LOCALAPPDATA%\winunitd\journal\`). Current file capped at 10 MiB with 3 rotated generations (`.log.1` … `.log.3`). Filenames percent-encode Windows-forbidden characters. The writer timer-flushes; `Sync` runs on unit exit, daemon shutdown, and rotate — not per line.
 
-Records are JSON lines with `v=2` (`severity`, `session`, `userSid`, plus timestamp/unit/pid/stream/message/invocationId). Severity from stream: stdout→`info`, stderr→`err`. Readers accept mixed `v=1`+`v=2` and do not rewrite old lines.
+Records are JSON lines with `v=3` (`continuation`, `partial`, `severity`, `session`, `userSid`, plus timestamp/unit/pid/stream/message/invocationId). Captured stdout/stderr messages are split at UTF-8 boundaries into fragments of at most 64 KiB; JSON escaping can expand the stored record. `continuation=true` joins the preceding fragment for the same invocation and stream; `partial=true` means the fragment has no terminating newline, including an unterminated final line. These fields are also exposed by the logs API. Severity from stream: stdout→`info`, stderr→`err`. Readers accept mixed `v=1`/`v=2`/`v=3` and do not rewrite old lines. Older readers may display fragments as separate lines. Slow-storage isolation and dropped-output reporting remain unfinished.
 
 ```text
 winctl logs UNIT [--follow] [--since <when>]

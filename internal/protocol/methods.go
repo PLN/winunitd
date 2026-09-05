@@ -176,8 +176,8 @@ type LogsResult struct {
 	More    bool       `json:"more,omitempty"` // fetch the next page using Cursor
 }
 
-// LogEntry is one journal line (DESIGN.md §22). Writers emit v=2 with
-// severity, session, and userSid. v=1 lines decode with those fields empty.
+// LogEntry is one journal fragment. Continuation and Partial expose v=3
+// fragment boundaries; older records default these fields to false.
 type LogEntry struct {
 	Timestamp    string `json:"timestamp,omitempty"`
 	Unit         string `json:"unit,omitempty"`
@@ -188,6 +188,8 @@ type LogEntry struct {
 	Severity     string `json:"severity,omitempty"`
 	Session      string `json:"session,omitempty"`
 	UserSID      string `json:"userSid,omitempty"`
+	Continuation bool   `json:"continuation,omitempty"`
+	Partial      bool   `json:"partial,omitempty"`
 }
 
 // DaemonReloadParams is the body for daemon-reload.

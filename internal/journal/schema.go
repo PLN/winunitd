@@ -1,10 +1,11 @@
 package journal
 
 // FormatVersion is the on-disk journal record version (DESIGN.md §22, §53).
-// Writers emit v=2. Readers accept mixed files: v=1 lines decode with
+// Writers emit v=3, adding continuation/partial fragment metadata.
+// Readers accept mixed files: v=1 lines decode with
 // empty severity / session / user SID; v=2 carries those fields. Old
 // files are not rewritten.
-const FormatVersion = 2
+const FormatVersion = 3
 
 // Severity values stored on v=2 lines. Mapped from stream at write
 // (stdout → info, stderr → err). There is no unit-file severity API.

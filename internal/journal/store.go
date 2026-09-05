@@ -55,8 +55,9 @@ type Store struct {
 	onEntryID func()
 }
 
-// Entry is one journal line (DESIGN.md §22). v=2 adds Severity, Session,
-// and UserSID. v=1 lines decode with those fields empty.
+// Entry is one journal fragment. v=2 adds Severity, Session, and UserSID.
+// v=3 adds Continuation (follows a fragment on the same invocation/stream)
+// and Partial (no terminating newline). Older records default these to false.
 type Entry struct {
 	Timestamp    time.Time
 	Unit         string
@@ -67,6 +68,8 @@ type Entry struct {
 	Severity     string
 	Session      string
 	UserSID      string
+	Continuation bool
+	Partial      bool
 }
 
 type record struct {
@@ -80,6 +83,8 @@ type record struct {
 	Severity     string `json:"severity"`
 	Session      string `json:"session"`
 	UserSID      string `json:"userSid"`
+	Continuation bool   `json:"continuation,omitempty"`
+	Partial      bool   `json:"partial,omitempty"`
 }
 
 type unitFile struct {
@@ -264,29 +269,21 @@ func (s *Store) capture(unit string, pid int, inv string, origin Origin, stream 
 	if r == nil {
 		return
 	}
-	br := bufio.NewReader(r)
-	for {
-		line, err := br.ReadString('\n')
-		if line != "" {
-			msg := strings.TrimRight(line, "\r\n")
-			if msg != "" {
-				s.append(Entry{
-					Timestamp:    time.Now().UTC(),
-					Unit:         unit,
-					PID:          pid,
-					Stream:       stream,
-					Message:      msg,
-					InvocationID: inv,
-					Severity:     SeverityFromStream(stream),
-					Session:      origin.Session,
-					UserSID:      origin.UserSID,
-				})
-			}
-		}
-		if err != nil {
-			return
-		}
-	}
+	captureFragments(r, func(msg string, continuation, partial bool) {
+		s.append(Entry{
+			Timestamp:    time.Now().UTC(),
+			Unit:         unit,
+			PID:          pid,
+			Stream:       stream,
+			Message:      msg,
+			InvocationID: inv,
+			Severity:     SeverityFromStream(stream),
+			Session:      origin.Session,
+			UserSID:      origin.UserSID,
+			Continuation: continuation,
+			Partial:      partial,
+		})
+	})
 }
 
 func (s *Store) append(e Entry) {
@@ -308,6 +305,8 @@ func (s *Store) append(e Entry) {
 		Severity:     e.Severity,
 		Session:      e.Session,
 		UserSID:      e.UserSID,
+		Continuation: e.Continuation,
+		Partial:      e.Partial,
 	}
 	raw, err := json.Marshal(rec)
 	if err != nil {
@@ -680,6 +679,8 @@ func decodeRecord(line []byte) (Entry, bool) {
 		Severity:     rec.Severity,
 		Session:      rec.Session,
 		UserSID:      rec.UserSID,
+		Continuation: rec.Continuation,
+		Partial:      rec.Partial,
 	}
 	if rec.Timestamp != "" {
 		if t, err := time.Parse(time.RFC3339Nano, rec.Timestamp); err == nil {

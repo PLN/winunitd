@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestEncodeDecodeV2(t *testing.T) {
+func TestEncodeDecodeCurrentVersion(t *testing.T) {
 	t.Parallel()
 	s := testStore(t)
 	ts := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
@@ -35,8 +35,8 @@ func TestEncodeDecodeV2(t *testing.T) {
 	if err := json.Unmarshal([]byte(line), &rec); err != nil {
 		t.Fatalf("decode wire: %v\n%s", err, line)
 	}
-	if rec.V != 2 {
-		t.Fatalf("v = %d, want 2", rec.V)
+	if rec.V != FormatVersion {
+		t.Fatalf("v = %d, want %d", rec.V, FormatVersion)
 	}
 	if rec.Severity != SeverityInfo || rec.Session != "3" || rec.UserSID != "S-1-5-21-1-2-3-1001" {
 		t.Fatalf("v=2 fields = %+v", rec)
@@ -69,7 +69,7 @@ func TestEncodeDecodeV2(t *testing.T) {
 			t.Fatalf("v=2 line missing %s: %s", k, lines[1])
 		}
 	}
-	if rec2["v"] != float64(2) {
+	if rec2["v"] != float64(FormatVersion) {
 		t.Fatalf("v = %v", rec2["v"])
 	}
 	if rec2["severity"] != SeverityErr {
