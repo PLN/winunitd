@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -476,5 +477,133 @@ func TestUserHostShutdownJoinsPendingKill(t *testing.T) {
 	unblock()
 	if err := h.Shutdown(context.Background()); err != nil {
 		t.Fatal("shutdown retry", err)
+	}
+}
+
+func TestUserHostRejectsTokenAfterLogoff(t *testing.T) {
+	for _, reuse := range []bool{false, true} {
+		t.Run(fmt.Sprint("reuse=", reuse), func(t *testing.T) {
+			h, starts, _ := testUserHost(t, map[uint32]string{1: testSIDB}, nil)
+			query := h.cfg.QueryToken
+			entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(release) }) }
+			defer unblock()
+			var calls atomic.Int32
+			h.cfg.QueryToken = func(id uint32) (*runtime.UserToken, error) {
+				if calls.Add(1) == 1 {
+					close(entered)
+					<-release
+					return &runtime.UserToken{Info: runtime.UserInfo{SID: testSIDA}}, nil
+				}
+				return query(id)
+			}
+			go func() { h.Logon(1); close(done) }()
+			select {
+			case <-entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("token lookup did not enter")
+			}
+			h.Logoff(1)
+			if reuse {
+				h.Logon(1)
+			}
+			unblock()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("stale lookup did not finish")
+			}
+			if h.Alive(testSIDA) {
+				t.Fatal("stale token launched a user manager")
+			}
+			want := int32(0)
+			if reuse {
+				want = 1
+				if !h.Alive(testSIDB) {
+					t.Fatal("stale lookup displaced the new session")
+				}
+			}
+			if starts.Load() != want {
+				t.Fatalf("starts=%d want=%d", starts.Load(), want)
+			}
+			h.mu.Lock()
+			pending := len(h.sessionRequests)
+			h.mu.Unlock()
+			if pending != 0 {
+				t.Fatal("completed token requests retained")
+			}
+		})
+	}
+}
+
+func TestUserHostLogoffDuringLaunchCleansLateProcess(t *testing.T) {
+	h, _, _ := testUserHost(t, map[uint32]string{1: testSIDA}, nil)
+	entered, release, loggedOn, loggedOff := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	p := &fakeUserMgr{sid: testSIDA}
+	p.alive.Store(true)
+	h.cfg.Start = func(runtime.UserManagerSpec) (runtime.UserManagerProc, error) {
+		close(entered)
+		<-release
+		return p, nil
+	}
+	go func() { h.Logon(1); close(loggedOn) }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("launch did not enter")
+	}
+	go func() { h.Logoff(1); close(loggedOff) }()
+	waitCond(t, func() bool { h.mu.Lock(); defer h.mu.Unlock(); return len(h.sessions) == 0 })
+	unblock()
+	for _, done := range []chan struct{}{loggedOn, loggedOff} {
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("session operation did not finish")
+		}
+	}
+	if p.Alive() || h.ManagerCount() != 0 {
+		t.Fatal("late launch survived logoff")
+	}
+	if p.kills.Load() != 1 {
+		t.Fatal("late launch cleanup was duplicated")
+	}
+}
+
+func TestUserHostRejectsLingerTokenAfterDisable(t *testing.T) {
+	h, store := testLingerHost(t)
+	rec := runtime.LingerRecord{SID: testSIDA, Name: "alice"}
+	if err := store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	h.cfg.LingerToken = func(runtime.LingerRecord) (*runtime.UserToken, error) {
+		close(entered)
+		<-release
+		return &runtime.UserToken{Info: runtime.UserInfo{SID: testSIDA}}, nil
+	}
+	done := make(chan error, 1)
+	go func() { done <- h.startLinger(rec) }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("linger token lookup did not enter")
+	}
+	if _, err := h.DisableLinger(testSIDA); err != nil {
+		t.Fatal(err)
+	}
+	unblock()
+	if err := waitErr(t, done); err == nil {
+		t.Fatal("disabled linger launch reported success")
+	}
+	if h.ManagerCount() != 0 {
+		t.Fatal("late linger token launched a manager")
 	}
 }

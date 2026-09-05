@@ -34,14 +34,16 @@ type UserHostConfig struct {
 // First interactive logon starts the manager. Last logoff kills it
 // unless the user is lingering.
 type UserHost struct {
-	closed   bool
-	ops      unitOps
-	stops    stopSet
-	cfg      UserHostConfig
-	store    *LingerStore
-	mu       sync.Mutex
-	bySID    map[string]*userInstance
-	sessions map[uint32]string // session ID -> SID
+	closed             bool
+	ops                unitOps
+	stops              stopSet
+	cfg                UserHostConfig
+	store              *LingerStore
+	mu                 sync.Mutex
+	bySID              map[string]*userInstance
+	sessions           map[uint32]string // session ID -> SID
+	sessionRequests    map[uint32]uint64
+	nextSessionRequest uint64
 }
 
 type userInstance struct {
@@ -77,9 +79,10 @@ func NewUserHost(cfg UserHostConfig) *UserHost {
 		}
 	}
 	h := &UserHost{
-		cfg:      cfg,
-		bySID:    make(map[string]*userInstance),
-		sessions: make(map[uint32]string),
+		cfg:             cfg,
+		bySID:           make(map[string]*userInstance),
+		sessions:        make(map[uint32]string),
+		sessionRequests: make(map[uint32]uint64),
 	}
 	if cfg.LingerDir != "" {
 		h.store = OpenLingerStore(cfg.LingerDir)
@@ -151,9 +154,32 @@ func (h *UserHost) Logon(sessionID uint32) {
 	if h == nil {
 		return
 	}
+	// Register the request before token lookup, which can outlive logoff or
+	// another logon that reuses the same session ID.
+	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		return
+	}
+	h.nextSessionRequest++
+	request := h.nextSessionRequest
+	h.sessionRequests[sessionID] = request
+	h.mu.Unlock()
+	defer func() {
+		h.mu.Lock()
+		if h.sessionRequests[sessionID] == request {
+			delete(h.sessionRequests, sessionID)
+		}
+		h.mu.Unlock()
+	}()
+	current := func() bool { return h.sessionRequests[sessionID] == request }
 	tok, err := h.cfg.QueryToken(sessionID)
 	if err != nil {
 		h.cfg.Logf("session %d: %v", sessionID, err)
+		return
+	}
+	if tok == nil {
+		h.cfg.Logf("session %d: missing user token", sessionID)
 		return
 	}
 	defer tok.Close()
@@ -167,14 +193,14 @@ func (h *UserHost) Logon(sessionID uint32) {
 	}
 
 	h.mu.Lock()
-	if h.closed {
+	if h.closed || !current() {
 		h.mu.Unlock()
 		return
 	}
 	h.sessions[sessionID] = sid
 	h.mu.Unlock()
 
-	if err := h.ensureRunning(sid, tok); err != nil {
+	if err := h.ensureRunning(sid, tok, current); err != nil {
 		h.cfg.Logf("start user manager %s: %v", sid, err)
 		return
 	}
@@ -196,6 +222,7 @@ func (h *UserHost) Logoff(sessionID uint32) {
 	}
 	h.mu.Lock()
 	sid := h.sessions[sessionID]
+	delete(h.sessionRequests, sessionID)
 	delete(h.sessions, sessionID)
 	h.mu.Unlock()
 	if sid == "" {
@@ -342,16 +369,17 @@ func (h *UserHost) startLinger(rec runtime.LingerRecord) error {
 			h.cfg.Logf("linger token for %s via %s", rec.SID, tok.Source)
 		}
 	}
-	return h.ensureRunning(rec.SID, tok)
+	return h.ensureRunning(rec.SID, tok, func() bool { return h.lingeringLocked(rec.SID) })
 }
 
-func (h *UserHost) ensureRunning(sid string, tok *runtime.UserToken) error {
+// stillWanted is evaluated only while h.mu is held.
+func (h *UserHost) ensureRunning(sid string, tok *runtime.UserToken, stillWanted func() bool) error {
 	unlock := h.ops.lock(sid)
 	defer unlock()
 	h.mu.Lock()
-	if h.closed {
+	if h.closed || !stillWanted() {
 		h.mu.Unlock()
-		return fmt.Errorf("user host is shutting down or closed")
+		return fmt.Errorf("user manager launch is no longer requested")
 	}
 	inst := h.bySID[sid]
 	if inst != nil && inst.uncertain {
@@ -371,9 +399,9 @@ func (h *UserHost) ensureRunning(sid string, tok *runtime.UserToken) error {
 	// Publish the accepted launch before leaving the lock for process creation.
 	// Shutdown includes this placeholder even though no process exists yet.
 	h.mu.Lock()
-	if h.closed {
+	if h.closed || !stillWanted() {
 		h.mu.Unlock()
-		return fmt.Errorf("user host is shutting down or closed")
+		return fmt.Errorf("user manager launch is no longer requested")
 	}
 	inst = &userInstance{sid: sid}
 	h.bySID[sid] = inst
@@ -388,7 +416,7 @@ func (h *UserHost) ensureRunning(sid string, tok *runtime.UserToken) error {
 	proc, err := h.cfg.Start(spec)
 	h.mu.Lock()
 	inst.proc = proc
-	closed := h.closed
+	superseded := h.closed || !stillWanted()
 	if proc == nil {
 		delete(h.bySID, sid)
 	} else if err != nil {
@@ -402,8 +430,8 @@ func (h *UserHost) ensureRunning(sid string, tok *runtime.UserToken) error {
 	if proc == nil {
 		return fmt.Errorf("user manager launcher returned no process")
 	}
-	if closed {
-		return errors.Join(fmt.Errorf("user manager launch superseded by shutdown"), h.killUserInstance(context.Background(), sid, inst))
+	if superseded {
+		return errors.Join(fmt.Errorf("user manager launch superseded"), h.killUserInstance(context.Background(), sid, inst))
 	}
 	return nil
 }
@@ -515,6 +543,7 @@ func (h *UserHost) Shutdown(ctx context.Context) error {
 		sids = append(sids, sid)
 	}
 	h.sessions = make(map[uint32]string)
+	h.sessionRequests = make(map[uint32]uint64)
 	h.mu.Unlock()
 	var result error
 	for _, sid := range sids {
