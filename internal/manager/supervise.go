@@ -198,9 +198,22 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 
 	proc, err := m.launch.Start(ctx, spec)
 	if err != nil {
+		if proc != nil {
+			// The launcher could not finish cleanup after process creation.
+			// This operation retains the record, and the unit lock excludes a
+			// replacement. Preserve ownership even if stop/close overtook it.
+			m.mu.Lock()
+			rt := m.units[name]
+			rt.proc = proc
+			rt.stopUncertain = true
+			rt.err = err.Error()
+			m.mu.Unlock()
+			m.journal.SetOrigin(m.journalOrigin())
+			m.journal.Attach(name, proc.PID(), inv, proc.Stdout(), proc.Stderr())
+		}
 		m.closeNotify(name)
 		var st *runtime.ExitStatus
-		if errors.As(err, &st) {
+		if proc == nil && errors.As(err, &st) {
 			m.maybeRestart(name, classifyWait(err), svc)
 		}
 		return err

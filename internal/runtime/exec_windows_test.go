@@ -636,3 +636,49 @@ func TestStopRetriesProtectedProcessHandleClose(t *testing.T) {
 		t.Fatal("stop retry after confirmed exit failed", err)
 	}
 }
+
+func TestFailedStartTransfersUnfinishedCleanup(t *testing.T) {
+	const handleFlagProtectFromClose = 0x00000002
+	p := startHelper(t, "sleep", unit.TypeSimple, 0).(*winProc)
+	h := p.process
+	t.Cleanup(func() {
+		p.mu.Lock()
+		owned := p.process == h
+		p.mu.Unlock()
+		if owned {
+			_ = windows.SetHandleInformation(h, handleFlagProtectFromClose, 0)
+			_ = p.Stop(time.Second)
+		}
+	})
+	if err := windows.SetHandleInformation(h, handleFlagProtectFromClose, handleFlagProtectFromClose); err != nil {
+		t.Fatal(err)
+	}
+	owned, err := failedProcessStart(p, context.Canceled)
+	if owned != p || !errors.Is(err, context.Canceled) {
+		t.Fatal("failed start lost cleanup ownership or original error")
+	}
+	if err := windows.SetHandleInformation(h, handleFlagProtectFromClose, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := owned.Stop(time.Second); err != nil {
+		t.Fatal("cleanup retry", err)
+	}
+}
+
+func TestStopCleansProcessNotAssignedToUnitJob(t *testing.T) {
+	p := startHelper(t, "sleep", unit.TypeSimple, 0).(*winProc)
+	original := p.job
+	defer original.Close()
+	empty, err := OpenUnitJob()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.job = empty
+	p.unassigned = true
+	if err := p.Stop(time.Second); err != nil {
+		t.Fatal("unassigned process cleanup", err)
+	}
+	if p.Alive() {
+		t.Fatal("unassigned process survived cleanup")
+	}
+}

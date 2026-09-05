@@ -35,6 +35,8 @@ type winProc struct {
 	mu            sync.Mutex
 	pid           int
 	process       windows.Handle
+	thread        windows.Handle
+	unassigned    bool
 	job           *UnitJob
 	stdout        *os.File
 	stderr        *os.File
@@ -67,25 +69,30 @@ func (l *winLauncher) Start(ctx context.Context, spec StartSpec) (Process, error
 		ch <- outcome{p, err}
 	}()
 
-	var p *winProc
 	select {
 	case <-ctx.Done():
 		o := <-ch
-		if o.p != nil {
-			_ = o.p.Stop(0)
-		}
-		if o.err != nil {
-			return nil, o.err
-		}
-		return nil, fmt.Errorf("TimeoutStartSec exceeded: %w", ctx.Err())
+		return failedProcessStart(o.p, errors.Join(o.err, fmt.Errorf("TimeoutStartSec exceeded: %w", ctx.Err())))
 	case o := <-ch:
-		if o.err != nil {
-			return nil, o.err
+		if err := ctx.Err(); err != nil {
+			return failedProcessStart(o.p, errors.Join(o.err, err))
 		}
-		p = o.p
+		if o.err != nil {
+			return failedProcessStart(o.p, o.err)
+		}
+		return o.p, nil
 	}
+}
 
-	return p, nil
+// A failed launch may still own a process or handles. Transfer that ownership
+// alongside the error when cleanup cannot finish; never hide it behind nil.
+func failedProcessStart(p *winProc, cause error) (Process, error) {
+	if p != nil {
+		if err := p.Stop(2 * time.Second); err != nil {
+			return p, errors.Join(cause, fmt.Errorf("launch cleanup: %w", err))
+		}
+	}
+	return nil, cause
 }
 
 func (l *winLauncher) create(spec StartSpec) (*winProc, error) {
@@ -201,54 +208,32 @@ func (l *winLauncher) create(spec StartSpec) (*winProc, error) {
 		return nil, fmt.Errorf("CreateProcess %s: %w", spec.Argv[0], err)
 	}
 
-	if err := job.Assign(pi.Process); err != nil {
-		_ = windows.TerminateProcess(pi.Process, 1)
-		_ = windows.CloseHandle(pi.Thread)
-		_ = windows.CloseHandle(pi.Process)
-		_ = windows.CloseHandle(stdoutR)
-		_ = windows.CloseHandle(stderrR)
-		_ = job.Close()
-		return nil, err
+	p := &winProc{
+		pid: int(pi.ProcessId), process: pi.Process, thread: pi.Thread,
+		job: job, unassigned: true,
+		stdout: os.NewFile(uintptr(stdoutR), spec.Unit+"-stdout"),
+		stderr: os.NewFile(uintptr(stderrR), spec.Unit+"-stderr"),
 	}
+	if err := job.Assign(pi.Process); err != nil {
+		return p, err
+	}
+	p.unassigned = false
 	if spec.Limits.IoPrioritySet {
 		if err := setProcessIoPriority(pi.Process, spec.Limits.IoPriority); err != nil {
-			_ = windows.TerminateProcess(pi.Process, 1)
-			_ = windows.CloseHandle(pi.Thread)
-			_ = windows.CloseHandle(pi.Process)
-			_ = windows.CloseHandle(stdoutR)
-			_ = windows.CloseHandle(stderrR)
-			_ = job.Close()
-			return nil, err
+			return p, err
 		}
 	}
 	if err := assignDaemonPID(l.daemon, int(pi.ProcessId)); err != nil {
-		_ = windows.TerminateProcess(pi.Process, 1)
-		_ = windows.CloseHandle(pi.Thread)
-		_ = windows.CloseHandle(pi.Process)
-		_ = windows.CloseHandle(stdoutR)
-		_ = windows.CloseHandle(stderrR)
-		_ = job.Close()
-		return nil, err
+		return p, err
 	}
-
 	if _, err := windows.ResumeThread(pi.Thread); err != nil {
-		_ = windows.TerminateProcess(pi.Process, 1)
-		_ = windows.CloseHandle(pi.Thread)
-		_ = windows.CloseHandle(pi.Process)
-		_ = windows.CloseHandle(stdoutR)
-		_ = windows.CloseHandle(stderrR)
-		_ = job.Close()
-		return nil, fmt.Errorf("ResumeThread: %w", err)
+		return p, fmt.Errorf("ResumeThread: %w", err)
 	}
-	_ = windows.CloseHandle(pi.Thread)
-
-	return &winProc{
-		pid:     int(pi.ProcessId),
-		process: pi.Process,
-		job:     job,
-		stdout:  os.NewFile(uintptr(stdoutR), spec.Unit+"-stdout"),
-		stderr:  os.NewFile(uintptr(stderrR), spec.Unit+"-stderr"),
-	}, nil
+	if err := windows.CloseHandle(pi.Thread); err != nil {
+		return p, fmt.Errorf("close initial thread: %w", err)
+	}
+	p.thread = 0
+	return p, nil
 }
 
 func makeStdPipe() (r, w windows.Handle, err error) {
@@ -431,6 +416,11 @@ func (p *winProc) Stop(timeout time.Duration) error {
 		return nil
 	}
 	if !p.stopConfirmed {
+		if p.unassigned && p.Alive() {
+			if err := windows.TerminateProcess(p.process, 1); err != nil {
+				return fmt.Errorf("terminate unassigned process: %w", err)
+			}
+		}
 		if p.job != nil {
 			if err := p.job.Kill(); err != nil {
 				return err
@@ -472,7 +462,7 @@ func (p *winProc) closeHandles() error {
 		p.mu.Unlock()
 		return nil
 	}
-	job, h, stdout, stderr := p.job, p.process, p.stdout, p.stderr
+	job, h, thread, stdout, stderr := p.job, p.process, p.thread, p.stdout, p.stderr
 	p.mu.Unlock()
 
 	// Stop/Close serialize on stopMu. Publish each released handle only after
@@ -482,13 +472,26 @@ func (p *winProc) closeHandles() error {
 			return err
 		}
 	}
-	if h != 0 {
-		if err := windows.CloseHandle(h); err != nil {
-			return fmt.Errorf("close process: %w", err)
+	if thread != 0 {
+		if err := windows.CloseHandle(thread); err != nil {
+			return fmt.Errorf("close initial thread: %w", err)
 		}
 		p.mu.Lock()
-		p.process = 0
+		p.thread = 0
 		p.mu.Unlock()
+	}
+	if h != 0 {
+		// Wait duplicates this handle under mu. Keep closure and publication
+		// atomic so it cannot duplicate a closed/reused numeric handle.
+		p.mu.Lock()
+		err := windows.CloseHandle(h)
+		if err == nil {
+			p.process = 0
+		}
+		p.mu.Unlock()
+		if err != nil {
+			return fmt.Errorf("close process: %w", err)
+		}
 	}
 	if stdout != nil {
 		if err := stdout.Close(); err != nil && !errors.Is(err, os.ErrClosed) {

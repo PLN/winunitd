@@ -343,3 +343,44 @@ func TestLateLaunchCleanupFailureRetainsOwnership(t *testing.T) {
 		})
 	}
 }
+
+type partialStartLauncher struct{ failedStopLauncher }
+
+func (l *partialStartLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
+	p, err := l.failedStopLauncher.Start(ctx, spec)
+	if err != nil {
+		return p, err
+	}
+	return p, errors.New("injected launch failure with unfinished cleanup")
+}
+
+func TestFailedLaunchRetainsReturnedProcess(t *testing.T) {
+	const name = "partial-start.service"
+	l := &partialStartLauncher{}
+	m := managerWith(t, l, map[string]string{name: "[Service]\nExecStart=C:\\Tools\\worker.exe\nRestart=always\n"})
+	if _, err := m.Start(context.Background(), name); err == nil {
+		t.Fatal("failed launch reported success")
+	}
+	p := l.proc
+	t.Cleanup(func() { p.fail.Store(false); _ = p.Process.Stop(time.Second) })
+	m.mu.Lock()
+	rt := m.units[name]
+	retained := rt.proc == p && rt.stopUncertain
+	m.mu.Unlock()
+	if !retained || !p.Alive() {
+		t.Fatal("failed launch discarded its returned process")
+	}
+	if _, err := m.Status(name); err != nil {
+		t.Fatal("failed launch lost status", err)
+	}
+	if _, err := m.Start(context.Background(), name); err == nil {
+		t.Fatal("replacement admitted with unresolved launch cleanup")
+	}
+	if len(l.specs()) != 1 {
+		t.Fatal("failed launch created a replacement")
+	}
+	p.fail.Store(false)
+	if _, err := m.Stop(name); err != nil {
+		t.Fatal("cleanup retry", err)
+	}
+}

@@ -122,6 +122,8 @@ func waitProcessListEmpty(ctx context.Context, query func() ([]int, error)) erro
 
 // Launcher starts a unit into its own Job Object and returns without waiting
 // for oneshot completion. Callers attach output before waiting for exit.
+// A non-nil process returned with an error still transfers ownership: cleanup
+// failed, and the caller must retain it for a Stop retry.
 type Launcher interface {
 	Start(ctx context.Context, spec StartSpec) (Process, error)
 }
