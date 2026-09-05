@@ -19,6 +19,7 @@ import (
 )
 
 func TestWindowsLingerBootNoSessionAndLogoff(t *testing.T) {
+	pipeName := newTestUserPipe()
 	sid, err := protocol.CurrentUserSID()
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +62,7 @@ func TestWindowsLingerBootNoSessionAndLogoff(t *testing.T) {
 		Start: func(spec runtime.UserManagerSpec) (runtime.UserManagerProc, error) {
 			args := runtime.UserManagerArgs(spec.SID, spec.ExtraArgs)
 			cmd := exec.Command(spec.Exe, args...)
-			cmd.Env = append(append([]string{}, spec.Env...), "WINUNITD_TEST_DAEMON=1")
+			cmd.Env = append(append([]string{}, spec.Env...), "WINUNITD_TEST_DAEMON=1", "WINUNITD_TEST_USER_PIPE="+pipeName)
 			cmd.Stdout = logf
 			cmd.Stderr = logf
 			if err := cmd.Start(); err != nil {
@@ -101,7 +102,7 @@ func TestWindowsLingerBootNoSessionAndLogoff(t *testing.T) {
 		Start: func(spec runtime.UserManagerSpec) (runtime.UserManagerProc, error) {
 			args := runtime.UserManagerArgs(spec.SID, spec.ExtraArgs)
 			cmd := exec.Command(spec.Exe, args...)
-			cmd.Env = append(append([]string{}, spec.Env...), "WINUNITD_TEST_DAEMON=1")
+			cmd.Env = append(append([]string{}, spec.Env...), "WINUNITD_TEST_DAEMON=1", "WINUNITD_TEST_USER_PIPE="+pipeName)
 			cmd.Stdout = logf
 			cmd.Stderr = logf
 			if err := cmd.Start(); err != nil {
@@ -133,7 +134,7 @@ func TestWindowsLingerBootNoSessionAndLogoff(t *testing.T) {
 	}
 
 	userDial := func(ctx context.Context) (net.Conn, error) {
-		return protocol.DialUser(ctx, sid)
+		return protocol.DialPipe(ctx, pipeName)
 	}
 	waitUserPipe(t, userDial)
 

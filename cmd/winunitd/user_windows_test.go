@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -33,9 +34,47 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	if os.Getenv("WINUNITD_TEST_DAEMON") == "1" {
+		name := os.Getenv("WINUNITD_TEST_USER_PIPE")
+		if !strings.HasPrefix(name, testUserPipePrefix) || len(name) == len(testUserPipePrefix) || len(os.Args) < 3 || os.Args[1] != "--user-manager" {
+			fmt.Fprintln(os.Stderr, "test daemon requires an isolated user endpoint and user-manager mode")
+			os.Exit(2)
+		}
+		listenUserControl = func(sid string) (net.Listener, error) {
+			sddl, err := protocol.UserPipeSDDL(sid)
+			if err != nil {
+				return nil, err
+			}
+			return protocol.ListenPipeSDDL(name, sddl)
+		}
 		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 	}
 	os.Exit(m.Run())
+}
+
+const testUserPipePrefix = `\\.\pipe\winunitd-test\user\`
+
+func newTestUserPipe() string {
+	return testUserPipePrefix + rand.Text()
+}
+
+func TestTestDaemonRejectsProductionEndpoints(t *testing.T) {
+	for _, name := range []string{"", protocol.DefaultPipeName, protocol.UserPipeName("S-1-5-21-1-2-3-1001"), testUserPipePrefix} {
+		t.Run(fmt.Sprintf("endpoint-%d", len(name)), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			base := t.TempDir()
+			cmd := exec.CommandContext(ctx, os.Args[0], "--user-manager", "S-1-5-21-1-2-3-1001", "--base-dir", base)
+			cmd.Env = append(os.Environ(), "WINUNITD_TEST_DAEMON=1", "WINUNITD_TEST_USER_PIPE="+name)
+			out, err := cmd.CombinedOutput()
+			if err == nil || cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != 2 || !strings.Contains(string(out), "requires an isolated user endpoint") {
+				t.Fatalf("unsafe endpoint was not rejected: %v: %s", err, out)
+			}
+			entries, err := os.ReadDir(base)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("rejected daemon performed setup: entries=%v, error=%v", entries, err)
+			}
+		})
+	}
 }
 
 type execUserProc struct {
@@ -74,6 +113,7 @@ func (p *execUserProc) Wait(ctx context.Context) error {
 }
 
 func TestWindowsUserManagerOneshotEnableStartAndLogoff(t *testing.T) {
+	pipeName := newTestUserPipe()
 	sid, err := protocol.CurrentUserSID()
 	if err != nil {
 		t.Fatal(err)
@@ -148,7 +188,7 @@ WorkingDirectory=C:\Tools
 		Start: func(spec runtime.UserManagerSpec) (runtime.UserManagerProc, error) {
 			args := runtime.UserManagerArgs(spec.SID, spec.ExtraArgs)
 			cmd := exec.Command(spec.Exe, args...)
-			cmd.Env = append(append([]string{}, spec.Env...), "WINUNITD_TEST_DAEMON=1")
+			cmd.Env = append(append([]string{}, spec.Env...), "WINUNITD_TEST_DAEMON=1", "WINUNITD_TEST_USER_PIPE="+pipeName)
 			cmd.Stdout = logf
 			cmd.Stderr = logf
 			if err := cmd.Start(); err != nil {
@@ -171,7 +211,7 @@ WorkingDirectory=C:\Tools
 	}
 
 	userDial := func(ctx context.Context) (net.Conn, error) {
-		return protocol.DialUser(ctx, sid)
+		return protocol.DialPipe(ctx, pipeName)
 	}
 	waitUserPipe(t, userDial)
 
@@ -230,7 +270,7 @@ WorkingDirectory=C:\Tools
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if _, err := protocol.DialUser(ctx, sid); err == nil {
+	if _, err := userDial(ctx); err == nil {
 		t.Fatal("user control pipe should be gone after logoff")
 	}
 }

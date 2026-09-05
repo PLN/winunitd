@@ -14,6 +14,7 @@ import (
 )
 
 func TestPeerFromTokenNonAdmin(t *testing.T) {
+	requireNonSystemTokenFixture(t)
 	var tok windows.Token
 	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_DUPLICATE|windows.TOKEN_QUERY, &tok); err != nil {
 		t.Fatal(err)
@@ -77,6 +78,7 @@ func TestPeerFromTokenOwnerMatch(t *testing.T) {
 }
 
 func TestDefaultAuthorizerNamedPipePeer(t *testing.T) {
+	requireElevatedControlPipe(t)
 	name := fmt.Sprintf(`\\.\pipe\winunitd-auth-%d-%d`, os.Getpid(), time.Now().UnixNano())
 	lis, err := ListenPipe(name)
 	if err != nil {
@@ -190,6 +192,7 @@ func TestUserAuthorizerMarksOwner(t *testing.T) {
 }
 
 func TestNamedPipePeerPrefersImpersonation(t *testing.T) {
+	requireElevatedControlPipe(t)
 	name := fmt.Sprintf(`\\.\pipe\winunitd-imp-%d-%d`, os.Getpid(), time.Now().UnixNano())
 	lis, err := ListenPipe(name)
 	if err != nil {
@@ -245,6 +248,7 @@ func TestNamedPipePeerPrefersImpersonation(t *testing.T) {
 }
 
 func TestNamedPipePeerPIDFallback(t *testing.T) {
+	requireElevatedControlPipe(t)
 	name := fmt.Sprintf(`\\.\pipe\winunitd-pidfb-%d-%d`, os.Getpid(), time.Now().UnixNano())
 	lis, err := ListenPipe(name)
 	if err != nil {

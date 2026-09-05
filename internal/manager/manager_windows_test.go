@@ -37,6 +37,22 @@ func helperMode() string {
 
 func TestMain(m *testing.M) {
 	switch helperMode() {
+	case "review-output":
+		if err := os.WriteFile(os.Getenv("WINUNITD_REVIEW_PID_FILE"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+			os.Exit(2)
+		}
+		lines := 4
+		if os.Getenv("WINUNITD_REVIEW_LARGE") == "1" {
+			lines = 5000
+		}
+		out := os.Stdout
+		if os.Getenv("WINUNITD_REVIEW_STDERR") == "1" {
+			out = os.Stderr
+		}
+		for i := 0; i < lines; i++ {
+			fmt.Fprintln(out, "review-output-012345678901234567890123456789")
+		}
+		os.Exit(0)
 	case "sleep":
 		waitForHelperStop()
 	case "print":

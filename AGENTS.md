@@ -10,3 +10,5 @@ Treat every tracked file, commit message, pull request, workflow log, and releas
 - Removing identifying text from the current tree does not remove it from Git history. Review and sanitize historical content before public release.
 
 Preserve functional module/repository identifiers and existing license notices when editing examples or operational documentation; do not invent replacement legal attribution.
+
+`PLN` is explicitly approved as the public GitHub identifier. This does not authorize publishing other personal or infrastructure details.

@@ -28,6 +28,7 @@ func TestDialPipeUsesWinioIdentification(t *testing.T) {
 }
 
 func TestListenPipeRejectsRemoteClients(t *testing.T) {
+	requireElevatedControlPipe(t)
 	name := fmt.Sprintf(`\\.\pipe\winunitd-flag-%d-%d`, os.Getpid(), time.Now().UnixNano())
 	lis, client, server := listenDialKeep(t, func() (net.Listener, error) {
 		return ListenPipe(name)
@@ -113,6 +114,7 @@ func TestListenPipeSDDLFirstInstanceFailsIfNameTaken(t *testing.T) {
 }
 
 func TestControlDaemonIdentityRejectsRestrictedToken(t *testing.T) {
+	requireNonSystemTokenFixture(t)
 	var tok windows.Token
 	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_DUPLICATE|windows.TOKEN_QUERY, &tok); err != nil {
 		t.Fatal(err)
@@ -155,6 +157,7 @@ func TestControlDaemonIdentityAcceptsCurrentProcess(t *testing.T) {
 }
 
 func TestClientRejectsMismatchedServerOwner(t *testing.T) {
+	requireElevatedControlPipe(t)
 	name := fmt.Sprintf(`\\.\pipe\winunitd-owner-%d-%d`, os.Getpid(), time.Now().UnixNano())
 	lis, client, server := listenDialKeep(t, func() (net.Listener, error) {
 		return ListenPipe(name)

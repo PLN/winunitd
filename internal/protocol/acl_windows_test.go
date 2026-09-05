@@ -15,7 +15,26 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+func requireElevatedControlPipe(t *testing.T) {
+	t.Helper()
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		t.Skip("requires elevated/SYSTEM qualification: production control-pipe ACL denies this token")
+	}
+}
+
+func requireNonSystemTokenFixture(t *testing.T) {
+	t.Helper()
+	sid, err := CurrentUserSID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sid == "S-1-5-18" {
+		t.Skip("requires a user-token qualification lane: disabling Administrators does not remove LocalSystem identity")
+	}
+}
+
 func TestWindowsPipeACLDeniesNonAdmin(t *testing.T) {
+	requireNonSystemTokenFixture(t)
 	if !windows.GetCurrentProcessToken().IsElevated() {
 		t.Skip("requires an elevated process (UAC-filtered token cannot dial the control pipe)")
 	}

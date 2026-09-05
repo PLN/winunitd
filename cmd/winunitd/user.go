@@ -10,6 +10,10 @@ import (
 	"github.com/PLN/winunitd/internal/runtime"
 )
 
+// Tests replace this factory only inside their test-binary subprocesses.
+// Production has no environment or command-line endpoint override.
+var listenUserControl = protocol.ListenUserControl
+
 // serveUser runs this process as a per-user manager for sid (same binary,
 // not an SCM service). Units load from %LOCALAPPDATA%\winunitd\units\.
 func serveUser(ctx context.Context, sid, baseDir string, stderr io.Writer) error {
@@ -77,12 +81,12 @@ func serveUser(ctx context.Context, sid, baseDir string, stderr io.Writer) error
 		fmt.Fprintf(stderr, "winunitd: %s: %v\n", manager.GraphicalSessionTarget, err)
 	}
 
-	lis, err := protocol.ListenUserControl(sid)
+	lis, err := listenUserControl(sid)
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
 	defer lis.Close()
-	fmt.Fprintf(stderr, "winunitd: user manager %s loaded %d units, listening on %s\n", sid, rel.Loaded, protocol.UserPipeName(sid))
+	fmt.Fprintf(stderr, "winunitd: user manager %s loaded %d units, listening on %s\n", sid, rel.Loaded, lis.Addr())
 
 	ch := make(chan runtime.SessionChange, 32)
 	go runtime.WatchSessions(ctx, ch)
