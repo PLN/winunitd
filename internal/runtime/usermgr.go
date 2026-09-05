@@ -29,6 +29,8 @@ type UserManagerProc interface {
 	PID() int
 	SID() string
 	Alive() bool
+	// Kill confirms process-tree exit before releasing handles; failures retain
+	// ownership for retry.
 	Kill() error
 	Wait(ctx context.Context) error
 }

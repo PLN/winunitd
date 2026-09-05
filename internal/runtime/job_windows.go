@@ -162,8 +162,13 @@ func (j *DaemonJob) Closed() bool {
 }
 
 func jobPIDs(h windows.Handle) []int {
+	ids, _ := queryJobPIDs(h)
+	return ids
+}
+
+func queryJobPIDs(h windows.Handle) ([]int, error) {
 	if h == 0 {
-		return nil
+		return nil, fmt.Errorf("job handle is closed")
 	}
 	buf := make([]byte, 8+8*8)
 	for {
@@ -180,18 +185,18 @@ func jobPIDs(h windows.Handle) []int {
 			continue
 		}
 		if err != nil {
-			return nil
+			return nil, err
 		}
 		n := *(*uint32)(unsafe.Pointer(&buf[4]))
 		if n == 0 {
-			return nil
+			return nil, nil
 		}
 		ids := unsafe.Slice((*uintptr)(unsafe.Pointer(&buf[8])), int(n))
 		out := make([]int, len(ids))
 		for i, id := range ids {
 			out[i] = int(id)
 		}
-		return out
+		return out, nil
 	}
 }
 

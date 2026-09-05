@@ -283,3 +283,90 @@ func TestUserManagerWaitCancelDoesNotPoll(t *testing.T) {
 		t.Fatal("helper exited during cancelled Wait")
 	}
 }
+
+func TestUserManagerKillFailureRetainsHandles(t *testing.T) {
+	for _, fault := range []string{"terminate", "wait"} {
+		t.Run(fault, func(t *testing.T) {
+			tok := testUserToken(t)
+			proc, err := StartUserManager(UserManagerSpec{
+				SID: tok.Info.SID, Token: tok, Exe: testAbs(t),
+				Env:       helperEnv("WINUNITD_JOB_HELPER=sleep"),
+				ExtraArgs: []string{winunitdHelperArgPrefix + "sleep"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := proc.(*userMgrProc)
+			job, process := p.job, p.process
+			t.Cleanup(func() { p.job, p.process = job, process; _ = p.Kill() })
+			if fault == "terminate" {
+				p.job = &DaemonJob{handle: windows.InvalidHandle}
+			} else {
+				p.process = 0
+			}
+			if err := p.Kill(); err == nil {
+				t.Fatal("failed user-manager cleanup reported success")
+			}
+			p.mu.Lock()
+			closed := p.closed
+			p.mu.Unlock()
+			if closed || job.Closed() {
+				t.Fatal("failed user-manager cleanup discarded handles")
+			}
+			p.job, p.process = job, process
+			if err := p.Kill(); err != nil {
+				t.Fatal("cleanup retry failed", err)
+			}
+			if p.Alive() || !job.Closed() {
+				t.Fatal("successful cleanup retained live process or job handle")
+			}
+		})
+	}
+}
+
+func TestUserManagerKillConfirmsDescendantExit(t *testing.T) {
+	tok := testUserToken(t)
+	proc, err := StartUserManager(UserManagerSpec{
+		SID: tok.Info.SID, Token: tok, Exe: testAbs(t),
+		Env:       helperEnv("WINUNITD_JOB_HELPER=spawn"),
+		ExtraArgs: []string{winunitdHelperArgPrefix + "spawn"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := proc.(*userMgrProc)
+	defer p.Kill()
+	var child windows.Handle
+	deadline := time.Now().Add(5 * time.Second)
+	for child == 0 && time.Now().Before(deadline) {
+		p.job.mu.Lock()
+		ids, err := queryJobPIDs(p.job.handle)
+		p.job.mu.Unlock()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, pid := range ids {
+			if pid != p.PID() {
+				child, err = windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))
+				if err != nil {
+					t.Fatal(err)
+				}
+				break
+			}
+		}
+		if child == 0 {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if child == 0 {
+		t.Fatal("user-manager helper did not create a descendant")
+	}
+	defer windows.CloseHandle(child)
+	if err := p.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	state, err := windows.WaitForSingleObject(child, 0)
+	if err != nil || state != windows.WAIT_OBJECT_0 {
+		t.Fatalf("descendant still running after Kill: wait=%d err=%v", state, err)
+	}
+}

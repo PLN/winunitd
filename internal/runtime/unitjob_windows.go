@@ -3,6 +3,7 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -27,6 +28,8 @@ type jobAssociateCompletionPort struct {
 // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE and without BREAKAWAY_OK /
 // SILENT_BREAKAWAY_OK, so children cannot leave the job (DESIGN.md §5.2).
 type UnitJob struct {
+	stopMu  sync.Mutex
+	exits   jobExitSet
 	mu      sync.Mutex
 	handle  windows.Handle
 	iocp    windows.Handle
@@ -145,34 +148,7 @@ func (j *UnitJob) PIDs() ([]int, error) {
 	if j.handle == 0 {
 		return nil, fmt.Errorf("unit job is closed")
 	}
-	buf := make([]byte, 8+8*8)
-	for {
-		var retlen uint32
-		err := windows.QueryInformationJobObject(
-			j.handle,
-			windows.JobObjectBasicProcessIdList,
-			uintptr(unsafe.Pointer(&buf[0])),
-			uint32(len(buf)),
-			&retlen,
-		)
-		if err == windows.ERROR_MORE_DATA {
-			buf = make([]byte, len(buf)*2)
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		n := *(*uint32)(unsafe.Pointer(&buf[4]))
-		if n == 0 {
-			return nil, nil
-		}
-		ids := unsafe.Slice((*uintptr)(unsafe.Pointer(&buf[8])), int(n))
-		out := make([]int, len(ids))
-		for i, id := range ids {
-			out[i] = int(id)
-		}
-		return out, nil
-	}
+	return queryJobPIDs(j.handle)
 }
 
 // Kill terminates every process in the job.
@@ -180,10 +156,15 @@ func (j *UnitJob) Kill() error {
 	if j == nil {
 		return nil
 	}
+	j.stopMu.Lock()
+	defer j.stopMu.Unlock()
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.handle == 0 {
 		return nil
+	}
+	if err := j.exits.prepare(j.handle); err != nil {
+		return err
 	}
 	if err := windows.TerminateJobObject(j.handle, 1); err != nil {
 		return fmt.Errorf("terminate unit job: %w", err)
@@ -197,20 +178,24 @@ func (j *UnitJob) Close() error {
 	if j == nil {
 		return nil
 	}
+	j.stopMu.Lock()
+	defer j.stopMu.Unlock()
+	if err := j.exits.close(); err != nil {
+		return err
+	}
 	j.mu.Lock()
-	h := j.handle
-	iocp := j.iocp
-	j.handle = 0
-	j.iocp = 0
-	j.mu.Unlock()
-	if iocp != 0 {
-		_ = windows.CloseHandle(iocp)
+	defer j.mu.Unlock()
+	if j.iocp != 0 {
+		if err := windows.CloseHandle(j.iocp); err != nil {
+			return fmt.Errorf("close job completion port: %w", err)
+		}
+		j.iocp = 0
 	}
-	if h == 0 {
-		return nil
-	}
-	if err := windows.CloseHandle(h); err != nil {
-		return fmt.Errorf("close unit job: %w", err)
+	if j.handle != 0 {
+		if err := windows.CloseHandle(j.handle); err != nil {
+			return fmt.Errorf("close unit job: %w", err)
+		}
+		j.handle = 0
 	}
 	return nil
 }
@@ -448,4 +433,13 @@ func isProcessInJob(process, job windows.Handle) (bool, error) {
 		return false, fmt.Errorf("IsProcessInJob failed")
 	}
 	return in != 0, nil
+}
+
+func (j *UnitJob) waitStopped(ctx context.Context) error {
+	j.stopMu.Lock()
+	defer j.stopMu.Unlock()
+	if err := j.exits.wait(ctx); err != nil {
+		return err
+	}
+	return waitJobEmpty(ctx, j)
 }

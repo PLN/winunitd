@@ -30,15 +30,17 @@ func newLauncher(daemon *DaemonJob) Launcher {
 }
 
 type winProc struct {
-	mu       sync.Mutex
-	pid      int
-	process  windows.Handle
-	job      *UnitJob
-	stdout   *os.File
-	stderr   *os.File
-	closed   bool
-	exitCode uint32
-	exited   bool
+	stopMu        sync.Mutex
+	stopConfirmed bool // guarded by stopMu
+	mu            sync.Mutex
+	pid           int
+	process       windows.Handle
+	job           *UnitJob
+	stdout        *os.File
+	stderr        *os.File
+	closed        bool
+	exitCode      uint32
+	exited        bool
 }
 
 func (l *winLauncher) Start(ctx context.Context, spec StartSpec) (Process, error) {
@@ -420,68 +422,93 @@ func (p *winProc) Stop(timeout time.Duration) error {
 	if p == nil {
 		return nil
 	}
+	p.stopMu.Lock()
+	defer p.stopMu.Unlock()
 	p.mu.Lock()
 	closed := p.closed
 	p.mu.Unlock()
 	if closed {
 		return nil
 	}
-	if p.job != nil {
-		if err := p.job.Kill(); err != nil {
-			return err
+	if !p.stopConfirmed {
+		if p.job != nil {
+			if err := p.job.Kill(); err != nil {
+				return err
+			}
 		}
-	}
-	if timeout <= 0 {
-		timeout = 2 * time.Second
-	}
-	waitCtx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	if err := p.wait(waitCtx); err != nil {
-		var exited *ExitStatus
-		if !errors.As(err, &exited) {
-			return err
+		if timeout <= 0 {
+			timeout = 2 * time.Second
 		}
+		waitCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		if err := p.wait(waitCtx); err != nil {
+			var exited *ExitStatus
+			if !errors.As(err, &exited) {
+				return err
+			}
+		}
+		if p.job != nil {
+			if err := p.job.waitStopped(waitCtx); err != nil {
+				return err
+			}
+		}
+		p.stopConfirmed = true
 	}
-	if err := waitJobEmpty(waitCtx, p.job); err != nil {
-		return err
-	}
-	return p.Close()
+	return p.closeHandles()
 }
 
 func (p *winProc) Close() error {
 	if p == nil {
 		return nil
 	}
+	p.stopMu.Lock()
+	defer p.stopMu.Unlock()
+	return p.closeHandles()
+}
+
+func (p *winProc) closeHandles() error {
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
 		return nil
 	}
-	p.closed = true
-	job := p.job
-	h := p.process
-	p.process = 0
-	stdout := p.stdout
-	stderr := p.stderr
-	p.stdout = nil
-	p.stderr = nil
+	job, h, stdout, stderr := p.job, p.process, p.stdout, p.stderr
 	p.mu.Unlock()
 
-	// Do not hold p.mu while closing the job or pipes. watch's Wait
-	// records exit under p.mu, and journal capture reads these pipes.
-	// C2 teardown (launchUnit eviction) runs Close concurrently with Wait.
+	// Stop/Close serialize on stopMu. Publish each released handle only after
+	// successful closure, leaving any unfinished release available for retry.
 	if job != nil {
-		_ = job.Close()
+		if err := job.Close(); err != nil {
+			return err
+		}
 	}
 	if h != 0 {
-		_ = windows.CloseHandle(h)
+		if err := windows.CloseHandle(h); err != nil {
+			return fmt.Errorf("close process: %w", err)
+		}
+		p.mu.Lock()
+		p.process = 0
+		p.mu.Unlock()
 	}
 	if stdout != nil {
-		_ = stdout.Close()
+		if err := stdout.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+			return err
+		}
+		p.mu.Lock()
+		p.stdout = nil
+		p.mu.Unlock()
 	}
 	if stderr != nil {
-		_ = stderr.Close()
+		if err := stderr.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+			return err
+		}
+		p.mu.Lock()
+		p.stderr = nil
+		p.mu.Unlock()
 	}
+	p.mu.Lock()
+	p.closed = true
+	p.mu.Unlock()
 	return nil
 }
 

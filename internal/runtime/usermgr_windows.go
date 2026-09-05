@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -15,12 +16,15 @@ import (
 )
 
 type userMgrProc struct {
-	mu      sync.Mutex
-	sid     string
-	pid     int
-	process windows.Handle
-	job     *DaemonJob
-	closed  bool
+	exits      jobExitSet
+	killMu     sync.Mutex
+	terminated bool // guarded by killMu; complete process-tree exit confirmed
+	mu         sync.Mutex
+	sid        string
+	pid        int
+	process    windows.Handle
+	job        *DaemonJob
+	closed     bool
 }
 
 // StartUserManager launches winunitd --user-manager <SID> as the user
@@ -228,15 +232,61 @@ func (p *userMgrProc) Kill() error {
 	if p == nil {
 		return nil
 	}
+	p.killMu.Lock()
+	defer p.killMu.Unlock()
+	p.mu.Lock()
+	closed, process := p.closed, p.process
+	p.mu.Unlock()
+	if closed {
+		return nil
+	}
+	// This is the dedicated child-manager job, never the system daemon's job.
+	// Retain its handle until termination and all descendants are confirmed.
 	if p.job != nil {
-		_ = p.job.Close()
+		p.job.mu.Lock()
+		defer p.job.mu.Unlock()
 	}
-	if p.Alive() && p.pid > 0 {
-		_ = terminatePIDHandle(p.pid)
+	if !p.terminated {
+		if p.job != nil {
+			if p.job.handle == 0 {
+				return fmt.Errorf("user manager job is closed before exit confirmation")
+			}
+			if err := p.exits.prepare(p.job.handle); err != nil {
+				return err
+			}
+			if err := windows.TerminateJobObject(p.job.handle, 1); err != nil {
+				return fmt.Errorf("terminate user manager job: %w", err)
+			}
+		} else if err := windows.TerminateProcess(process, 1); err != nil {
+			return fmt.Errorf("terminate user manager: %w", err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := p.Wait(ctx); err != nil {
+			var exited *ExitStatus
+			if !errors.As(err, &exited) {
+				return err
+			}
+		}
+		if p.job != nil {
+			if err := p.exits.wait(ctx); err != nil {
+				return err
+			}
+			if err := waitProcessListEmpty(ctx, func() ([]int, error) { return queryJobPIDs(p.job.handle) }); err != nil {
+				return err
+			}
+		}
+		p.terminated = true
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = p.Wait(ctx)
+	if err := p.exits.close(); err != nil {
+		return err
+	}
+	if p.job != nil && p.job.handle != 0 {
+		if err := windows.CloseHandle(p.job.handle); err != nil {
+			return fmt.Errorf("close user manager job: %w", err)
+		}
+		p.job.handle = 0
+	}
 	return p.closeHandles()
 }
 
@@ -276,10 +326,12 @@ func (p *userMgrProc) closeHandles() error {
 	if p.closed {
 		return nil
 	}
-	p.closed = true
 	if p.process != 0 {
-		_ = windows.CloseHandle(p.process)
+		if err := windows.CloseHandle(p.process); err != nil {
+			return fmt.Errorf("close user manager process: %w", err)
+		}
 		p.process = 0
 	}
+	p.closed = true
 	return nil
 }

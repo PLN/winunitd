@@ -525,3 +525,114 @@ func TestWaitCancelDoesNotCloseWaitedHandle(t *testing.T) {
 		t.Fatalf("exit code still STILL_ACTIVE (%d)", code)
 	}
 }
+
+func TestStopClosesJobAdmissionBeforeExitCapture(t *testing.T) {
+	p := startHelper(t, "sleep", unit.TypeSimple, 0).(*winProc)
+	j := p.job
+	j.stopMu.Lock()
+	j.mu.Lock()
+	err := j.exits.prepare(j.handle)
+	j.mu.Unlock()
+	j.stopMu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Alive() {
+		t.Fatal("closing admission terminated the existing process")
+	}
+	other := startHelper(t, "sleep", unit.TypeSimple, 0).(*winProc)
+	if err := j.Assign(other.process); err == nil {
+		t.Fatal("job admitted another process after exit snapshot")
+	}
+	if err := p.Stop(time.Second); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCapturedProcessExitDeadlineRetainsHandle(t *testing.T) {
+	p := startHelper(t, "sleep", unit.TypeSimple, 0).(*winProc)
+	var dup windows.Handle
+	if err := windows.DuplicateHandle(windows.CurrentProcess(), p.process, windows.CurrentProcess(), &dup, 0, false, windows.DUPLICATE_SAME_ACCESS); err != nil {
+		t.Fatal(err)
+	}
+	s := jobExitSet{ready: true, handles: map[int]windows.Handle{p.pid: dup}}
+	defer s.close()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := s.wait(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("pending process exit wait = %v", err)
+	}
+	state, err := windows.WaitForSingleObject(dup, 0)
+	if err != nil || state != uint32(windows.WAIT_TIMEOUT) {
+		t.Fatal("deadline closed or signaled a live process handle")
+	}
+	if err := p.Stop(time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.wait(context.Background()); err != nil {
+		t.Fatal("exit confirmation retry", err)
+	}
+}
+
+func TestUnitJobCloseFailureRetainsHandle(t *testing.T) {
+	const handleFlagProtectFromClose = 0x00000002
+	j, err := OpenUnitJob()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := j.handle
+	t.Cleanup(func() {
+		if j.handle == h {
+			_ = windows.SetHandleInformation(h, handleFlagProtectFromClose, 0)
+			_ = j.Close()
+		}
+	})
+	if err := windows.SetHandleInformation(h, handleFlagProtectFromClose, handleFlagProtectFromClose); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Close(); err == nil {
+		t.Fatal("protected job handle close reported success")
+	}
+	if j.handle != h {
+		t.Fatal("failed close discarded the handle")
+	}
+	if err := windows.SetHandleInformation(h, handleFlagProtectFromClose, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Close(); err != nil {
+		t.Fatal("close retry failed", err)
+	}
+}
+
+func TestStopRetriesProtectedProcessHandleClose(t *testing.T) {
+	const handleFlagProtectFromClose = 0x00000002
+	p := startHelper(t, "sleep", unit.TypeSimple, 0).(*winProc)
+	h := p.process
+	t.Cleanup(func() {
+		p.mu.Lock()
+		owned := p.process == h
+		p.mu.Unlock()
+		if owned {
+			_ = windows.SetHandleInformation(h, handleFlagProtectFromClose, 0)
+			_ = p.Stop(time.Second)
+		}
+	})
+	if err := windows.SetHandleInformation(h, handleFlagProtectFromClose, handleFlagProtectFromClose); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Stop(time.Second); err == nil {
+		t.Fatal("protected process handle close reported success")
+	}
+	p.mu.Lock()
+	retained := !p.closed && p.process == h
+	p.mu.Unlock()
+	if !retained {
+		t.Fatal("failed close lost process handle")
+	}
+	if err := windows.SetHandleInformation(h, handleFlagProtectFromClose, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Stop(time.Second); err != nil {
+		t.Fatal("stop retry after confirmed exit failed", err)
+	}
+}

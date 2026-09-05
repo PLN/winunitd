@@ -91,16 +91,21 @@ type Process interface {
 	Close() error
 }
 
-// waitJobEmpty confirms that no assigned process remains before handles are
-// released. A query failure is uncertainty, not evidence of an empty job.
+// waitJobEmpty verifies that no process remains listed in the job. Callers
+// must also wait on captured process handles: list removal can precede signaling.
+// A query failure is uncertainty, not evidence of an empty job.
 func waitJobEmpty(ctx context.Context, job Job) error {
 	if job == nil {
 		return nil
 	}
+	return waitProcessListEmpty(ctx, job.PIDs)
+}
+
+func waitProcessListEmpty(ctx context.Context, query func() ([]int, error)) error {
 	tick := time.NewTicker(10 * time.Millisecond)
 	defer tick.Stop()
 	for {
-		ids, err := job.PIDs()
+		ids, err := query()
 		if err != nil {
 			return fmt.Errorf("confirm unit job exit: %w", err)
 		}
