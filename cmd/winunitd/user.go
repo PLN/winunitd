@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -16,7 +17,9 @@ var listenUserControl = protocol.ListenUserControl
 
 // serveUser runs this process as a per-user manager for sid (same binary,
 // not an SCM service). Units load from %LOCALAPPDATA%\winunitd\units\.
-func serveUser(ctx context.Context, sid, baseDir string, stderr io.Writer) error {
+func serveUser(ctx context.Context, sid, baseDir string, stderr io.Writer) (serveErr error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	if !protocol.ValidSID(sid) {
 		return fmt.Errorf("invalid SID %q", sid)
 	}
@@ -44,7 +47,11 @@ func serveUser(ctx context.Context, sid, baseDir string, stderr io.Writer) error
 	}
 	daemonJob = job
 	if err := job.AssignSelf(); err != nil {
-		fmt.Fprintf(stderr, "winunitd: assign user manager job: %v\n", err)
+		closeErr := job.Close()
+		if closeErr == nil {
+			daemonJob = nil
+		}
+		return errors.Join(fmt.Errorf("assign user manager job: %w", err), closeErr)
 	}
 
 	m, err := manager.New(manager.Config{
@@ -57,11 +64,13 @@ func serveUser(ctx context.Context, sid, baseDir string, stderr io.Writer) error
 		},
 	})
 	if err != nil {
-		_ = job.Close()
-		daemonJob = nil
-		return err
+		closeErr := job.Close()
+		if closeErr == nil {
+			daemonJob = nil
+		}
+		return errors.Join(err, closeErr)
 	}
-	defer finish(m, job, nil, stderr)
+	defer func() { cancel(); serveErr = errors.Join(serveErr, finish(m, job, nil, stderr)) }()
 
 	rel, err := m.Reload()
 	if err != nil {

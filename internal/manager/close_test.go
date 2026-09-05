@@ -88,3 +88,55 @@ func TestManagerCloseRetainsFailedWatch(t *testing.T) {
 		t.Fatal("failed close retry did not finish")
 	}
 }
+
+func TestShutdownDeadlineJoinsBlockedNotificationClose(t *testing.T) {
+	const name = "notify-close.service"
+	m := managerWith(t, &fakeLauncher{}, map[string]string{name: "[Service]\nExecStart=C:\\Tools\\worker.exe\nTimeoutStopSec=30s\n"})
+	if _, err := m.Start(context.Background(), name); err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	nrt := &notifyRuntime{cancel: func() {}, done: make(chan struct{}), serveDone: release}
+	m.mu.Lock()
+	m.units[name].notify = nrt
+	proc := m.units[name].proc
+	m.mu.Unlock()
+	var first *stopAttempt
+	for i := 0; i < 3; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		err := m.Shutdown(ctx)
+		cancel()
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("shutdown result: %v", err)
+		}
+		m.stops.mu.Lock()
+		pending := m.stops.pending[stopKey{shutdown: m}]
+		m.stops.mu.Unlock()
+		if pending == nil {
+			t.Fatal("deadline discarded pending shutdown")
+		}
+		if first == nil {
+			first = pending
+		} else if pending != first {
+			t.Fatal("retry duplicated blocked shutdown")
+		}
+	}
+	m.mu.Lock()
+	retained := m.units[name].proc == proc && m.units[name].stopUncertain
+	m.mu.Unlock()
+	if !retained {
+		t.Fatal("pending control close lost process ownership")
+	}
+	unblock()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := m.Shutdown(ctx); err != nil {
+		t.Fatal("shutdown retry inherited expired context", err)
+	}
+	if proc.Alive() {
+		t.Fatal("shutdown retry left process alive")
+	}
+}

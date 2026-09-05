@@ -12,6 +12,7 @@ import (
 
 type stopKey struct {
 	manager    *Manager
+	shutdown   *Manager
 	proc       runtime.Process
 	user       runtime.UserManagerProc
 	nativeKind string

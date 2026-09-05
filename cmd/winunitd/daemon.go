@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,21 +19,29 @@ import (
 // winunitd.exe (DESIGN.md §42, §66).
 var daemonJob *runtime.DaemonJob
 
-func serve(ctx context.Context, baseDir string, stderr io.Writer, sessions chan runtime.SessionChange, clock <-chan struct{}) error {
+func serve(ctx context.Context, baseDir string, stderr io.Writer, sessions chan runtime.SessionChange, clock <-chan struct{}) (serveErr error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	job, err := runtime.OpenDaemonJob()
 	if err != nil {
 		return err
 	}
 	daemonJob = job
 	if err := job.AssignSelf(); err != nil {
-		fmt.Fprintf(stderr, "winunitd: assign daemon job: %v\n", err)
+		closeErr := job.Close()
+		if closeErr == nil {
+			daemonJob = nil
+		}
+		return errors.Join(fmt.Errorf("assign daemon job: %w", err), closeErr)
 	}
 
 	m, err := manager.New(manager.Config{BaseDir: baseDir, Daemon: job})
 	if err != nil {
-		_ = job.Close()
-		daemonJob = nil
-		return err
+		closeErr := job.Close()
+		if closeErr == nil {
+			daemonJob = nil
+		}
+		return errors.Join(err, closeErr)
 	}
 
 	exe, err := os.Executable()
@@ -49,7 +58,7 @@ func serve(ctx context.Context, baseDir string, stderr io.Writer, sessions chan 
 		LingerDir: filepath.Join(baseDir, "linger"),
 		Logf:      logf,
 	})
-	defer finish(m, job, host, stderr)
+	defer func() { cancel(); serveErr = errors.Join(serveErr, finish(m, job, host, stderr)) }()
 
 	rel, err := m.Reload()
 	if err != nil {
@@ -87,20 +96,36 @@ func serve(ctx context.Context, baseDir string, stderr io.Writer, sessions chan 
 	return protocol.Serve(ctx, lis, ctrl, protocol.DefaultAuthorizer())
 }
 
-func finish(m *manager.Manager, job *runtime.DaemonJob, host *manager.UserHost, stderr io.Writer) {
-	if host != nil {
-		host.Close()
-	}
-	if err := m.Shutdown(context.Background()); err != nil {
-		fmt.Fprintf(stderr, "winunitd: shutdown: %v\n", err)
-	}
-	m.Close()
-	if job != nil {
-		if err := job.Close(); err != nil {
-			fmt.Fprintf(stderr, "winunitd: close daemon job: %v\n", err)
+func finish(m *manager.Manager, job *runtime.DaemonJob, host *manager.UserHost, stderr io.Writer) error {
+	ctx, cancel := context.WithTimeout(context.Background(), runtime.PreshutdownTimeout)
+	defer cancel()
+	return finishContext(ctx, m, job, host, stderr)
+}
+
+// All shutdown phases share the SCM stop window. Expiration is a failure;
+// unfinished native operations retain ownership until completion or process exit.
+func finishContext(ctx context.Context, m *manager.Manager, job *runtime.DaemonJob, host *manager.UserHost, stderr io.Writer) error {
+	var result error
+	record := func(phase string, err error) {
+		if err != nil {
+			wrapped := fmt.Errorf("%s: %w", phase, err)
+			fmt.Fprintf(stderr, "winunitd: %v\n", wrapped)
+			result = errors.Join(result, wrapped)
 		}
 	}
-	daemonJob = nil
+	if host != nil {
+		record("user host shutdown", host.Shutdown(ctx))
+	}
+	record("shutdown", m.Shutdown(ctx))
+	record("close manager", m.CloseContext(ctx))
+	if job != nil {
+		err := job.CloseContext(ctx)
+		record("close daemon job", err)
+		if err == nil && daemonJob == job {
+			daemonJob = nil
+		}
+	}
+	return errors.Join(result, ctx.Err())
 }
 
 func watchClock(ctx context.Context, m *manager.Manager, clock <-chan struct{}) {

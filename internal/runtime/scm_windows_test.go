@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -291,5 +292,34 @@ func TestHostStopPendingWaitHintAndCheckPoint(t *testing.T) {
 	}
 	if !sawBump {
 		t.Fatal("CheckPoint must increment during ordered stop")
+	}
+}
+
+func TestHostPreservesFailureJoinedWithCancellation(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		h := &host{run: func(ctx context.Context) error {
+			<-ctx.Done()
+			if failed {
+				return errors.Join(ctx.Err(), errors.New("injected shutdown failure"))
+			}
+			return ctx.Err()
+		}}
+		requests := make(chan svc.ChangeRequest, 1)
+		requests <- svc.ChangeRequest{Cmd: svc.Stop}
+		changes := make(chan svc.Status, 64)
+		type result struct {
+			specific bool
+			code     uint32
+		}
+		done := make(chan result, 1)
+		go func() { specific, code := h.Execute(nil, requests, changes); done <- result{specific, code} }()
+		select {
+		case got := <-done:
+			if got.specific != failed || (got.code != 0) != failed {
+				t.Fatalf("failed=%v result=%+v", failed, got)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("SCM shutdown did not return")
+		}
 	}
 }

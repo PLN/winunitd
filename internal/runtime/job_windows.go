@@ -19,9 +19,10 @@ import (
 //
 // Per-unit jobs nest under this job on modern Windows (M5).
 type DaemonJob struct {
-	exits  jobExitSet
-	mu     sync.Mutex
-	handle windows.Handle
+	closeWait daemonCloseWait
+	exits     jobExitSet
+	mu        sync.Mutex
+	handle    windows.Handle
 }
 
 // OpenDaemonJob creates an unnamed job with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE.

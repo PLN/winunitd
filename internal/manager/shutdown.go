@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync/atomic"
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
@@ -33,11 +34,37 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	m.closed = true
 	for _, rt := range m.units {
 		rt.stopping = true
+		// Publish uncertainty before an outer deadline can return while the
+		// stop pass is still blocked in a control/resource close.
+		if rt.proc != nil || (rt.unit != nil && rt.state != core.Inactive && (scmServiceName(rt.unit) != "" || scheduledTaskName(rt.unit) != "")) {
+			rt.stopUncertain = true
+		}
 		if rt.startCancel != nil {
 			rt.startCancel()
 		}
 		rt.cancelRestart()
 	}
+	m.mu.Unlock()
+	for {
+		var ownsPass atomic.Bool
+		err := m.stops.wait(ctx, m.clock(), stopKey{shutdown: m}, 0, func() error {
+			ownsPass.Store(true)
+			return m.shutdownPass(ctx)
+		})
+		// A retry can first join an older pass whose caller expired while
+		// native teardown was pending. Once joined, retry under this caller's
+		// live context. A failure from our own pass is returned unchanged.
+		if ctx.Err() == nil && !ownsPass.Load() && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
+			continue
+		}
+		return err
+	}
+}
+
+// A shutdown pass can be inside an uncancellable listener/scheduler close.
+// Callers retain one pass after their deadline and join it on retry.
+func (m *Manager) shutdownPass(ctx context.Context) error {
+	m.mu.Lock()
 	g := m.graph
 	roots := m.shutdownRootsLocked()
 	m.mu.Unlock()

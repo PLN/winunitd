@@ -4,7 +4,6 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"syscall"
 	"time"
@@ -204,7 +203,7 @@ func (h *host) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<-
 	for {
 		select {
 		case err := <-errc:
-			if err != nil && !errors.Is(err, context.Canceled) {
+			if err != nil && !IsCancellation(err) {
 				return true, 1
 			}
 			return false, 0
@@ -244,7 +243,7 @@ func (h *host) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<-
 					for {
 						select {
 						case err := <-errc:
-							if err != nil && !errors.Is(err, context.Canceled) {
+							if err != nil && !IsCancellation(err) {
 								return true, 1
 							}
 							return false, 0

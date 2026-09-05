@@ -153,7 +153,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
-		if err := serveUser(ctx, *userSID, dir, stderr); err != nil && ctx.Err() == nil {
+		if err := serveUser(ctx, *userSID, dir, stderr); err != nil && !runtime.IsCancellation(err) {
 			fmt.Fprintf(stderr, "winunitd: %v\n", err)
 			return 1
 		}
@@ -191,7 +191,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	ch := make(chan runtime.SessionChange, 32)
-	if err := serve(ctx, *baseDir, stderr, ch, nil); err != nil && ctx.Err() == nil {
+	if err := serve(ctx, *baseDir, stderr, ch, nil); err != nil && !runtime.IsCancellation(err) {
 		fmt.Fprintf(stderr, "winunitd: %v\n", err)
 		return 1
 	}

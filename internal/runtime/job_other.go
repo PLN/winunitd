@@ -11,8 +11,9 @@ import (
 // Linux. Strict ownership (KILL_ON_JOB_CLOSE) is implemented and tested in
 // job_windows.go / job_windows_test.go.
 type DaemonJob struct {
-	mu     sync.Mutex
-	closed bool
+	closeWait daemonCloseWait
+	mu        sync.Mutex
+	closed    bool
 }
 
 // OpenDaemonJob returns a stub job.
