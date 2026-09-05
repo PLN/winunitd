@@ -7,13 +7,50 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/PLN/winunitd/internal/journal"
 	"github.com/PLN/winunitd/internal/protocol"
 )
 
 // The original review reproductions now run as required regressions.
+
+func TestWindowsOneshotNoNewlineFragments(t *testing.T) {
+	for _, stream := range []string{"stdout", "stderr"} {
+		t.Run(stream, func(t *testing.T) {
+			dir := t.TempDir()
+			body := fmt.Sprintf("Type=oneshot\nTimeoutStartSec=5s\nEnvironment=\"WINUNITD_REVIEW_PID_FILE=%s\"\nEnvironment=WINUNITD_REVIEW_NO_NEWLINE=1\n", filepath.Join(dir, "fixture.pid"))
+			if stream == "stderr" {
+				body += "Environment=WINUNITD_REVIEW_STDERR=1\n"
+			}
+			m := startWindowsHelperUnit(t, dir, "review.service", body, "review-output", 0, "")
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if _, err := m.Start(ctx, "review.service"); err != nil {
+				t.Fatal(err)
+			}
+			logs, err := m.Logs(protocol.LogsParams{Unit: "review.service"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(logs.Entries) != 3 || logs.More {
+				t.Fatalf("entries=%d more=%v", len(logs.Entries), logs.More)
+			}
+			var text strings.Builder
+			for i, e := range logs.Entries {
+				if e.Stream != stream || !e.Partial || e.Continuation != (i > 0) || len(e.Message) > journal.MaxCaptureFragment {
+					t.Fatalf("invalid fragment %d", i)
+				}
+				text.WriteString(e.Message)
+			}
+			if text.String() != strings.Repeat("x", journal.MaxCaptureFragment*2+1) {
+				t.Fatal("oneshot output lost bytes")
+			}
+		})
+	}
+}
 
 func TestReviewReproReloadKeepsLiveUnit(t *testing.T) {
 	for _, change := range []string{"delete", "invalid"} {

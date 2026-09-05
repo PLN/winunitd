@@ -349,6 +349,11 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 		LoadState:   "loaded",
 		ActiveState: m.stateOfLocked(name).String(),
 	}
+	stats := m.journal.CaptureStats(name)
+	st.LogDroppedRecords = stats.DroppedRecords
+	st.LogDroppedBytes = stats.DroppedBytes
+	st.LogStorageErrors = stats.StorageErrors
+	st.LogLastStorageError = stats.LastStorageError
 	if rt != nil {
 		if rt.unavailable {
 			st.LoadState = "unavailable"

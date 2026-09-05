@@ -49,6 +49,10 @@ func TestMain(m *testing.M) {
 		if os.Getenv("WINUNITD_REVIEW_STDERR") == "1" {
 			out = os.Stderr
 		}
+		if os.Getenv("WINUNITD_REVIEW_NO_NEWLINE") == "1" {
+			fmt.Fprint(out, strings.Repeat("x", journal.MaxCaptureFragment*2+1))
+			os.Exit(0)
+		}
 		for i := 0; i < lines; i++ {
 			fmt.Fprintln(out, "review-output-012345678901234567890123456789")
 		}

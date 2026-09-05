@@ -38,11 +38,20 @@ type Store struct {
 	keep       int
 	flushEvery time.Duration
 
-	mu     sync.Mutex
-	closed bool
-	files  map[string]*unitFile
-	capWG  map[string]*sync.WaitGroup
-	origin Origin
+	mu          sync.Mutex
+	closed      bool
+	files       map[string]*unitFile
+	capWG       map[string]*sync.WaitGroup
+	origin      Origin
+	queueMu     sync.Mutex
+	writeQueue  chan captureWrite
+	writerDone  chan struct{}
+	writerErr   error
+	queueClosed bool
+	queuedBytes int64
+	dropped     map[string]CaptureStats
+	syncPending map[string]*journalSync
+	syncSlots   chan struct{}
 
 	// onOpen / onSync / onScan / onEntryID are test hooks (nil in production).
 	// onOpen fires after a successful OpenFile; onSync fires immediately
@@ -107,14 +116,21 @@ func Open(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	return &Store{
-		dir:        dir,
-		maxSize:    DefaultMaxSize,
-		keep:       DefaultKeep,
-		flushEvery: DefaultFlushEvery,
-		files:      make(map[string]*unitFile),
-		capWG:      make(map[string]*sync.WaitGroup),
-	}, nil
+	s := &Store{
+		dir:         dir,
+		maxSize:     DefaultMaxSize,
+		keep:        DefaultKeep,
+		flushEvery:  DefaultFlushEvery,
+		files:       make(map[string]*unitFile),
+		capWG:       make(map[string]*sync.WaitGroup),
+		writeQueue:  make(chan captureWrite, captureQueueRecords),
+		writerDone:  make(chan struct{}),
+		dropped:     make(map[string]CaptureStats),
+		syncPending: make(map[string]*journalSync),
+		syncSlots:   make(chan struct{}, 4),
+	}
+	go s.writeCaptures()
+	return s, nil
 }
 
 // Dir is the journal root (<base-dir>\journal).
@@ -148,9 +164,35 @@ func (s *Store) snapshotOrigin() Origin {
 // Close flushes and Syncs every open unit file, then closes them.
 // Further Append/Attach writes are dropped. Safe to call more than once.
 func (s *Store) Close() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return s.CloseContext(ctx)
+}
+
+// CloseContext bounds waiting for the journal writer. A timed-out writer
+// retains its file ownership and finishes cleanup if storage recovers.
+func (s *Store) CloseContext(ctx context.Context) error {
 	if s == nil {
 		return nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.queueMu.Lock()
+	if !s.queueClosed {
+		s.queueClosed = true
+		close(s.writeQueue)
+	}
+	s.queueMu.Unlock()
+	select {
+	case <-s.writerDone:
+		return s.writerErr
+	case <-ctx.Done():
+		return fmt.Errorf("journal close: %w", ctx.Err())
+	}
+}
+
+func (s *Store) closeFiles() error {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -165,14 +207,17 @@ func (s *Store) Close() error {
 
 	var err error
 	for _, f := range files {
-		if e := f.close(); e != nil && err == nil {
-			err = e
+		if e := f.close(); e != nil {
+			s.storageError(f.unit, e)
+			if err == nil {
+				err = e
+			}
 		}
 	}
 	return err
 }
 
-// Attach writes stdout and stderr to the unit's journal file, tagging
+// Attach queues stdout and stderr for the unit's journal file, tagging
 // each line with invocationID (DESIGN.md §22, §24) and v=2 fields
 // (severity from stream; session and user SID from SetOrigin). Empty
 // invocationID is replaced with a new ID so isolated journal use still
@@ -189,14 +234,14 @@ func (s *Store) Attach(unit string, pid int, invocationID string, stdout, stderr
 		invocationID = NewInvocationID()
 	}
 	origin := s.snapshotOrigin()
-	done := s.beginCapture(unit)
+	group := s.beginCapture(unit)
 	go func() {
-		defer done()
-		s.capture(unit, pid, invocationID, origin, "stdout", stdout)
+		defer group.wg.Done()
+		s.capture(unit, pid, invocationID, origin, "stdout", stdout, group)
 	}()
 	go func() {
-		defer done()
-		s.capture(unit, pid, invocationID, origin, "stderr", stderr)
+		defer group.wg.Done()
+		s.capture(unit, pid, invocationID, origin, "stderr", stderr, group)
 	}()
 }
 
@@ -209,7 +254,7 @@ func (s *Store) Wait(unit string) {
 
 // WaitContext is Wait with a deadline. If ctx fires first, the hung
 // capture group is abandoned so a later Wait/Attach is not blocked
-// (stopUnit TimeoutStopSec; issue #68). Returns false on timeout.
+// (stopUnit TimeoutStopSec; issue #68). Returns false on timeout or sync error.
 func (s *Store) WaitContext(ctx context.Context, unit string) bool {
 	return s.waitCaptures(ctx, unit, true)
 }
@@ -226,8 +271,7 @@ func (s *Store) waitCaptures(ctx context.Context, unit string, abandonOnCancel b
 	wg := s.capWG[unit]
 	s.mu.Unlock()
 	if wg == nil {
-		s.syncUnit(unit)
-		return true
+		return s.syncUnitContext(ctx, unit)
 	}
 	done := make(chan struct{})
 	go func() {
@@ -236,8 +280,7 @@ func (s *Store) waitCaptures(ctx context.Context, unit string, abandonOnCancel b
 	}()
 	select {
 	case <-done:
-		s.syncUnit(unit)
-		return true
+		return s.syncUnitContext(ctx, unit)
 	case <-ctx.Done():
 		if abandonOnCancel {
 			s.mu.Lock()
@@ -246,31 +289,31 @@ func (s *Store) waitCaptures(ctx context.Context, unit string, abandonOnCancel b
 			}
 			s.mu.Unlock()
 		}
-		s.syncUnit(unit)
 		return false
 	}
 }
 
-func (s *Store) beginCapture(unit string) func() {
+func (s *Store) beginCapture(unit string) *captureGroup {
 	unit = canonicalUnit(unit)
 	s.mu.Lock()
 	prev := s.capWG[unit]
-	wg := new(sync.WaitGroup)
+	group := new(captureGroup)
+	wg := &group.wg
 	wg.Add(2)
 	s.capWG[unit] = wg
 	s.mu.Unlock()
 	if prev != nil {
 		prev.Wait()
 	}
-	return wg.Done
+	return group
 }
 
-func (s *Store) capture(unit string, pid int, inv string, origin Origin, stream string, r io.Reader) {
+func (s *Store) capture(unit string, pid int, inv string, origin Origin, stream string, r io.Reader, group *captureGroup) {
 	if r == nil {
 		return
 	}
 	captureFragments(r, func(msg string, continuation, partial bool) {
-		s.append(Entry{
+		s.enqueue(Entry{
 			Timestamp:    time.Now().UTC(),
 			Unit:         unit,
 			PID:          pid,
@@ -282,13 +325,13 @@ func (s *Store) capture(unit string, pid int, inv string, origin Origin, stream 
 			UserSID:      origin.UserSID,
 			Continuation: continuation,
 			Partial:      partial,
-		})
+		}, group)
 	})
 }
 
-func (s *Store) append(e Entry) {
+func (s *Store) append(e Entry) error {
 	if s == nil || e.Unit == "" {
-		return
+		return nil
 	}
 	e.Unit = canonicalUnit(e.Unit)
 	if e.Severity == "" {
@@ -310,15 +353,15 @@ func (s *Store) append(e Entry) {
 	}
 	raw, err := json.Marshal(rec)
 	if err != nil {
-		return
+		return err
 	}
 	raw = append(raw, '\n')
 
 	f := s.file(e.Unit)
 	if f == nil {
-		return
+		return fmt.Errorf("journal closed")
 	}
-	f.write(raw)
+	return f.write(raw)
 }
 
 func (s *Store) file(unit string) *unitFile {
@@ -343,15 +386,15 @@ func (s *Store) file(unit string) *unitFile {
 	return f
 }
 
-func (u *unitFile) write(raw []byte) {
+func (u *unitFile) write(raw []byte) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.closed {
-		return
+		return fmt.Errorf("journal file closed")
 	}
 	if u.f == nil {
 		if err := u.openLocked(); err != nil {
-			return
+			return err
 		}
 	}
 	max := u.store.maxSize
@@ -360,15 +403,16 @@ func (u *unitFile) write(raw []byte) {
 	}
 	if u.size > 0 && u.size+int64(len(raw)) > max {
 		if err := u.rotateLocked(); err != nil {
-			return
+			return err
 		}
 	}
 	n, err := u.w.Write(raw)
 	if err != nil {
-		return
+		return err
 	}
 	u.size += int64(n)
 	u.scheduleFlushLocked()
+	return nil
 }
 
 func (u *unitFile) openLocked() error {
@@ -405,7 +449,7 @@ func (u *unitFile) scheduleFlushLocked() {
 		if u.closed {
 			return
 		}
-		_ = u.flushLocked()
+		u.store.storageError(u.unit, u.flushLocked())
 	})
 }
 
@@ -475,17 +519,17 @@ func (u *unitFile) close() error {
 	return err
 }
 
-func (s *Store) syncUnit(unit string) {
+func (s *Store) syncUnit(unit string) error {
 	f := s.fileExisting(unit)
 	if f == nil {
-		return
+		return nil
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.closed {
-		return
+		return nil
 	}
-	_ = f.syncLocked()
+	return f.syncLocked()
 }
 
 func (s *Store) fileExisting(unit string) *unitFile {
