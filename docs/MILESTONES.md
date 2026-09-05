@@ -43,6 +43,8 @@ R1.3 pending stop follow-up: manager stop retries now join an outstanding adapte
 
 R1.3 health failure follow-up: watchdog and readiness-timeout cleanup now use shared stop attempts, preserve unresolved process ownership, and suppress restart on cleanup failure. Watchdog cleanup closes the prior notify/watchdog controls and releases the operation lock before restarting. Fault-injection regressions and the full local race suite pass. Late-launch disposal and shutdown still require the remaining ownership work.
 
+R1.3 descendant confirmation follow-up: the Windows stop adapter now verifies that the Job Object process list is empty before closing handles. Query failures and deadlines preserve ownership for retry. A real child-process test requires exit to be observable immediately when Stop returns; controlled queries cover failure and delayed exit. The full local race suite and vet pass. CI exposed ambiguous fake-clock waits in readiness/activation tests; these now use distinct deadlines and passed 50 focused repetitions. Latest CI confirmation remains pending.
+
 Exit gate: real-process tests cover deletion, invalid replacement, recreation while an old invocation lives, large stdout/stderr, no-newline output, exit-before-attach, and failed termination. The previously reproduced failures now pass required regression tests. Race tests and cleanup assertions pass; no owned process becomes unreachable through status/stop and no ambiguous termination is reported as successful.
 
 ## R2 — Authoritative lifecycle coordinator

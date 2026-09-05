@@ -69,7 +69,7 @@ func TestNotifyTimeoutStartWithoutReadyFails(t *testing.T) {
 Type=notify
 ExecStart=C:\App\late.exe
 WorkingDirectory=C:\App
-TimeoutStartSec=5s
+TimeoutStartSec=7s
 `,
 	})
 	errc := make(chan error, 1)
@@ -80,8 +80,9 @@ TimeoutStartSec=5s
 	waitCond(t, func() bool { return len(launch.specs()) >= 1 })
 	// TimeoutStartSec, not the engine's leftover maxWait. advanceWait
 	// only checks fk.Waiting, so -race can Advance before waitReady arms.
-	waitCond(t, func() bool { return fk.WaitingAt(5 * time.Second) })
-	fk.Advance(5 * time.Second)
+	// Keep readiness distinct from the default 5s journal/stop deadline.
+	waitCond(t, func() bool { return fk.WaitingAt(7 * time.Second) })
+	fk.Advance(7 * time.Second)
 	err := waitErr(t, errc)
 	if err == nil {
 		t.Fatal("expected TimeoutStartSec failure")

@@ -341,17 +341,43 @@ func TestStopKillsUnitJobTree(t *testing.T) {
 	p := startHelper(t, "spawn", unit.TypeSimple, 0)
 	line := readLine(t, p.Stdout(), 5*time.Second)
 	child := parseChildPID(t, line)
+	childHandle, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(child))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(childHandle)
 	if err := p.Stop(5 * time.Second); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if !processAlive(p.PID()) && !processAlive(child) {
+	state, err := windows.WaitForSingleObject(childHandle, 0)
+	if err != nil || state != windows.WAIT_OBJECT_0 {
+		t.Fatalf("child not exited when Stop returned: wait=%d err=%v", state, err)
+	}
+}
+
+func TestKilledJobEmptiesBeforeProcessHandleClose(t *testing.T) {
+	p := startHelper(t, "spawn", unit.TypeSimple, 0)
+	_ = parseChildPID(t, readLine(t, p.Stdout(), 5*time.Second))
+	if err := p.Job().Kill(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = p.Wait(ctx)
+	for {
+		ids, err := p.Job().PIDs()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(ids) == 0 {
 			return
 		}
-		time.Sleep(20 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			t.Fatalf("job retains %d process IDs with exited main handle open", len(ids))
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
-	t.Fatalf("tree still alive after Stop parent=%v child=%v", processAlive(p.PID()), processAlive(child))
 }
 
 func TestCreateProcessWithLoopbackListenerKeepsHelperAlive(t *testing.T) {

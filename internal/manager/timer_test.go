@@ -268,7 +268,7 @@ WorkingDirectory=C:\Tools
 `,
 		"foo.timer": `
 [Timer]
-OnUnitActiveSec=5s
+OnUnitActiveSec=7s
 `,
 	})
 	if _, err := m.Start(context.Background(), "foo.timer"); err != nil {
@@ -280,7 +280,9 @@ OnUnitActiveSec=5s
 	if _, err := m.Start(context.Background(), "foo.service"); err != nil {
 		t.Fatal(err)
 	}
-	advanceWait(t, fk, 5*time.Second)
+	// Wait for the activation timer, not an outstanding 5s cleanup deadline.
+	waitCond(t, func() bool { return fk.WaitingAt(7 * time.Second) })
+	fk.Advance(7 * time.Second)
 	waitCond(t, func() bool { return launch.nstarts() >= 2 })
 	if n := launch.nstarts(); n != 2 {
 		t.Fatalf("starts = %d, want 2", n)

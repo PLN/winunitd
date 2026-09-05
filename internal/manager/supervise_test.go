@@ -127,7 +127,7 @@ StartLimitBurst=0
 Type=notify
 ExecStart=C:\App\late.exe
 WorkingDirectory=C:\App
-TimeoutStartSec=5s
+TimeoutStartSec=7s
 Restart=always
 RestartSec=1s
 `,
@@ -140,8 +140,9 @@ RestartSec=1s
 		errc <- err
 	}()
 	waitCond(t, func() bool { return launch.nstarts() >= 1 })
-	waitCond(t, func() bool { return fk.WaitingAt(5 * time.Second) })
-	fk.Advance(5 * time.Second)
+	// Keep readiness distinct from the default 5s journal/stop deadline.
+	waitCond(t, func() bool { return fk.WaitingAt(7 * time.Second) })
+	fk.Advance(7 * time.Second)
 	if err := waitErr(t, errc); err == nil {
 		t.Fatal("expected TimeoutStartSec failure")
 	}

@@ -86,9 +86,33 @@ type Process interface {
 	// ExitCode is the main-process exit after Wait has observed it.
 	ExitCode() (code uint32, exited bool)
 	// Stop kills the unit job (whole tree) and waits up to timeout for the
-	// main process to exit.
+	// main process and all assigned descendants to exit before closing handles.
 	Stop(timeout time.Duration) error
 	Close() error
+}
+
+// waitJobEmpty confirms that no assigned process remains before handles are
+// released. A query failure is uncertainty, not evidence of an empty job.
+func waitJobEmpty(ctx context.Context, job Job) error {
+	if job == nil {
+		return nil
+	}
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		ids, err := job.PIDs()
+		if err != nil {
+			return fmt.Errorf("confirm unit job exit: %w", err)
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("wait for unit job exit: %w", ctx.Err())
+		case <-tick.C:
+		}
+	}
 }
 
 // Launcher starts a unit into its own Job Object and returns without waiting

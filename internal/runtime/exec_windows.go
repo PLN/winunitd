@@ -442,6 +442,9 @@ func (p *winProc) Stop(timeout time.Duration) error {
 			return err
 		}
 	}
+	if err := waitJobEmpty(waitCtx, p.job); err != nil {
+		return err
+	}
 	return p.Close()
 }
 
