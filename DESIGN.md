@@ -111,7 +111,7 @@ Readiness gates dependent startup. Liveness controls recovery after activation. 
 
 ## 8. Windows identities and privileged boundaries
 
-Maintain a per-SID user-host record containing eligible sessions, selected token source, generation, manager process, recovery budget, and stopping state. Reconcile logon/logoff and process-exit events through that record. Relaunch with a fresh suitable token, bounded backoff, and cancellation checks. Only users admitted by the configured interactive-user policy and explicit linger records qualify; record that admission policy in R4.
+Maintain a per-SID user-host record containing eligible sessions, selected token source, generation, manager process, recovery budget, and stopping state. Reconcile logon/logoff and process-exit events through that record. Relaunch with a fresh suitable token, bounded backoff, and cancellation checks. Interactive admission defaults to administrator-enabled users. An optional administrator-selected mode delegates admission to the presence of user unit files; explicit per-SID disable takes precedence. File presence admits the user manager, not arbitrary workload activation or headless linger. Apply the [user admission policy](docs/USER-ADMISSION.md), including bounded probes, revocation, and independent explicit linger grants.
 
 Distinguish interactive-token background operation from headless boot-time linger. A later logon does not silently replace a running linger manager's identity/environment. Record the chosen mode; an explicit manager restart is required to adopt a new mode. Unsupported credential requirements fail visibly rather than weakening authentication.
 
