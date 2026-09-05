@@ -12,9 +12,12 @@ try {
 		if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path }
 	}
 	'activation' | Set-Content (Join-Path $base 'maintenance-phase.txt')
-	& cscript.exe //Nologo "$env:SystemRoot\System32\slmgr.vbs" /ato | Set-Content (Join-Path $base 'activation.log')
-	if ($LASTEXITCODE) { throw 'Evaluation activation command failed' }
 	$license = @(Get-CimInstance SoftwareLicensingProduct -Filter "ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f'" | Where-Object { $_.PartialProductKey -and $_.LicenseStatus -eq 1 })
+	if ($license.Count -ne 1) {
+		& cscript.exe //Nologo "$env:SystemRoot\System32\slmgr.vbs" /ato | Set-Content (Join-Path $base 'activation.log')
+		if ($LASTEXITCODE) { throw 'Evaluation activation command failed' }
+		$license = @(Get-CimInstance SoftwareLicensingProduct -Filter "ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f'" | Where-Object { $_.PartialProductKey -and $_.LicenseStatus -eq 1 })
+	}
 	if ($license.Count -ne 1) { throw 'Expected one activated Windows evaluation license' }
 	$license | Select-Object Name, LicenseStatus, GracePeriodRemaining, EvaluationEndDate | ConvertTo-Json | Set-Content (Join-Path $base 'license.json')
 	'searching' | Set-Content (Join-Path $base 'maintenance-phase.txt')
