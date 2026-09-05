@@ -41,7 +41,7 @@ R1 must remove the opt-in gate when the desired-behavior assertions pass, streng
 
 ## Qualification evidence
 
-Toolchain used: Go 1.27.0, Windows amd64. Compiler/action pinning remains R0.1 work.
+Toolchain used for the evidence below: Go 1.27.0, Windows amd64. Subsequent compiler/action pinning and updated-dependency results are recorded separately in [BUILDING.md](BUILDING.md).
 
 - Local `go vet ./...` passed.
 - Local `go test -race -parallel 1 ./... -timeout 180s` passed under the ordinary development token. Elevated-only cases and known failing reproductions were explicitly skipped; this is not full privileged coverage.
@@ -54,4 +54,4 @@ Private raw output and identity details are retained outside this repository. Th
 
 ## Remaining R0 work
 
-Pin and document compiler/actions and vulnerability checks; turn supervised VM bring-up into a repeatable controller with isolated networking and explicit identity lanes; perform the WiX/service-servicing packaging spike. R0 closure still requires all milestone exit gates and maintainer acceptance.
+Finish CI qualification of the pinned builds; turn supervised VM bring-up into a repeatable controller with isolated networking and explicit identity lanes; perform the [WiX/service-servicing packaging spike](PACKAGING-SPIKE.md). R0 closure still requires all milestone exit gates and maintainer acceptance.

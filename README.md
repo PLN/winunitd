@@ -6,6 +6,8 @@ The [roadmap](ROADMAP.md), [Design v2](DESIGN.md), and [implementation milestone
 
 The [MSI installer plan](docs/MSI-INSTALLER-PLAN.md) covers packaging, service readiness, upgrades, rollback, signing, and migration from existing installations. No MSI is shipped yet.
 
+Use the [pinned build and maintenance workflow](docs/BUILDING.md) for qualification artifacts and their source/hash manifests.
+
 The [architecture review](docs/DESIGN-REVIEW.md) records the evidence behind this direction. The roadmap adopts its priorities; the reproduced findings are not yet fixed. The [archived first design](docs/archive/DESIGN-v1.md) preserves section references in existing source comments.
 
 ## Binaries

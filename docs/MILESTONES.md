@@ -12,11 +12,11 @@ Do not change existing pilot ownership merely to run tests. Use isolated endpoin
 
 Status: in progress. Dependencies: none. Outcome: a safe, repeatable way to prove subsequent work. Initial implementation and qualification evidence: [R0 baseline](R0-BASELINE.md).
 
-- [ ] **R0.1 Toolchain:** pin a supported patched Go compiler separately from minimum language compatibility; record local/CI/build metadata; pin action revisions and define update/vulnerability-check policy.
+- [ ] **R0.1 Toolchain:** compiler, action revisions, artifact metadata, and vulnerability/update policy are implemented; local vet, race tests, scanner, and repeat builds pass. CI qualification is pending. See [build policy and evidence](BUILDING.md).
 - [x] **R0.2 Isolation:** prevent integration tests from connecting to the real system/user manager; give fixtures dedicated endpoint/data namespaces and bounded process cleanup. Implemented in `15ccd9d`; test-daemon endpoint guards and isolated user-manager scenarios pass.
 - [x] **R0.3 Review reproductions:** retain opt-in failing reproductions for reload ownership and large-output oneshots with small-output controls. Recorded in `15ccd9d`; deletion/invalid replacement and large stdout/stderr reproduce the defects, small-output controls pass, independent cleanup completes. R1 converts them into passing required regressions.
 - [ ] **R0.4 Windows harness:** implement the [qualification lab plan](TEST-LAB.md) for disposable VM setup and evidence collection for SCM, SYSTEM, standard users, sessions, reboot, and installer failure injection. A first Server 2025 Core evaluation deployment and supervised SYSTEM/SCM/reboot smoke passed with source and artifact identities recorded. Reproducible baselines, isolated networking, controller, CI integration, and broader scenarios remain pending.
-- [ ] **R0.5 Packaging spike:** pin WiX/SDK candidates and applicable terms; prototype advanced service settings and rollback-aware long-stop behavior using a fixture service. Record helper strategy and observed MSI constraints.
+- [ ] **R0.5 Packaging spike:** [candidates, terms, and experiment](PACKAGING-SPIKE.md) are recorded; a usage-terms decision is pending before SDK adoption. Prototype advanced service settings and rollback-aware long-stop behavior using a fixture service. Record helper strategy and observed MSI constraints.
 
 Exit gate: supported builds and existing isolated test lanes pass; the two review defects are reproducible without touching Hermes; VM provisioning/smoke and packaging-spike evidence can be repeated. Runtime defects remain open for R1. This milestone does not qualify the application for installation.
 
