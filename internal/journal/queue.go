@@ -69,7 +69,8 @@ func (s *Store) syncUnitContext(ctx context.Context, unit string) bool {
 // CaptureStats counts fragments rejected by queue admission or a write error.
 // Bytes count normalized UTF-8 message bytes, excluding line endings/metadata.
 // Counters are cumulative for this store lifetime across both unit streams.
-// Flush/sync errors may lose previously buffered data beyond these drop counts.
+// Unwritten records retained after a flush failure are counted only if close
+// abandons them. Sync failures and external file damage can lose additional data.
 type CaptureStats struct {
 	DroppedRecords   uint64
 	DroppedBytes     uint64

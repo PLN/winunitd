@@ -97,15 +97,18 @@ type record struct {
 }
 
 type unitFile struct {
-	mu     sync.Mutex
-	unit   string
-	path   string
-	store  *Store
-	f      *os.File
-	w      *bufio.Writer
-	size   int64
-	timer  *time.Timer
-	closed bool
+	mu         sync.Mutex
+	unit       string
+	path       string
+	store      *Store
+	f          *os.File
+	w          *recordBuffer
+	size       int64
+	timer      *time.Timer
+	closed     bool
+	writeErr   error
+	retryDelay time.Duration
+	retryAt    time.Time
 }
 
 // Open creates dir if needed and returns a store rooted there.
@@ -361,7 +364,7 @@ func (s *Store) append(e Entry) error {
 	if f == nil {
 		return fmt.Errorf("journal closed")
 	}
-	return f.write(raw)
+	return f.write(raw, len(e.Message))
 }
 
 func (s *Store) file(unit string) *unitFile {
@@ -386,7 +389,7 @@ func (s *Store) file(unit string) *unitFile {
 	return f
 }
 
-func (u *unitFile) write(raw []byte) error {
+func (u *unitFile) write(raw []byte, messageBytes int) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.closed {
@@ -394,6 +397,14 @@ func (u *unitFile) write(raw []byte) error {
 	}
 	if u.f == nil {
 		if err := u.openLocked(); err != nil {
+			return err
+		}
+	}
+	if u.writeErr != nil {
+		if time.Now().Before(u.retryAt) {
+			return u.writeErr
+		}
+		if err := u.flushLocked(); err != nil {
 			return err
 		}
 	}
@@ -406,11 +417,11 @@ func (u *unitFile) write(raw []byte) error {
 			return err
 		}
 	}
-	n, err := u.w.Write(raw)
-	if err != nil {
+	if err := u.w.append(raw, messageBytes); err != nil {
+		u.writeFailureLocked(err)
 		return err
 	}
-	u.size += int64(n)
+	u.size += int64(len(raw))
 	u.scheduleFlushLocked()
 	return nil
 }
@@ -429,7 +440,7 @@ func (u *unitFile) openLocked() error {
 		u.store.storageError(u.unit, fmt.Errorf("recovered journal record boundary after interrupted write"))
 	}
 	u.f = f
-	u.w = bufio.NewWriter(f)
+	u.w = &recordBuffer{writer: f}
 	u.size = size
 	if u.store.onOpen != nil {
 		u.store.onOpen()
@@ -445,22 +456,49 @@ func (u *unitFile) scheduleFlushLocked() {
 	if every <= 0 {
 		every = DefaultFlushEvery
 	}
-	u.timer = time.AfterFunc(every, func() {
+	if retry := time.Until(u.retryAt); retry > every {
+		every = retry
+	}
+	var scheduled *time.Timer
+	scheduled = time.AfterFunc(every, func() {
 		u.mu.Lock()
 		defer u.mu.Unlock()
+		if u.timer != scheduled {
+			return
+		}
 		u.timer = nil
 		if u.closed {
 			return
 		}
 		u.store.storageError(u.unit, u.flushLocked())
 	})
+	u.timer = scheduled
 }
 
 func (u *unitFile) flushLocked() error {
 	if u.w == nil {
 		return nil
 	}
-	return u.w.Flush()
+	err := u.w.Flush()
+	if err != nil {
+		u.writeFailureLocked(err)
+	} else {
+		u.writeErr = nil
+		u.retryDelay = 0
+		u.retryAt = time.Time{}
+	}
+	return err
+}
+
+func (u *unitFile) writeFailureLocked(err error) {
+	u.writeErr = err
+	u.retryDelay = min(max(time.Second, u.retryDelay*2), 30*time.Second)
+	u.retryAt = time.Now().Add(u.retryDelay)
+	if u.timer != nil {
+		u.timer.Stop()
+		u.timer = nil
+	}
+	u.scheduleFlushLocked()
 }
 
 func (u *unitFile) syncLocked() error {
@@ -512,6 +550,15 @@ func (u *unitFile) close() error {
 		u.timer = nil
 	}
 	err := u.syncLocked()
+	if err != nil && u.w != nil {
+		records, messageBytes := u.w.pendingLoss()
+		u.store.queueMu.Lock()
+		stats := u.store.dropped[u.unit]
+		stats.DroppedRecords += records
+		stats.DroppedBytes += messageBytes
+		u.store.dropped[u.unit] = stats
+		u.store.queueMu.Unlock()
+	}
 	if u.f != nil {
 		if e := u.f.Close(); e != nil && err == nil {
 			err = e

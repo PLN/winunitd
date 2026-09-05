@@ -58,10 +58,16 @@ After evidence collection, guarded retirement verified removal of the disposable
 
 This qualification covers the CLI-installed service and runtime behavior. It does not qualify a production MSI, standard-user/session transitions, or all supported Windows baselines.
 
+## Buffered write recovery
+
+The writer now retains complete accepted records and the exact unwritten suffix after a partial disk write. Pending data is bounded per file to a 4 KiB batch or one oversized serialized record; the capture queue limits remain separate. New records for a failed file are rejected while a single scheduled flush retries with 1 to 30 second backoff. Recovery does not require new workload output or reopening the store. Failed close counts any pending records it abandons, including records partly written to disk.
+
+Five repeated disk-full recovery/close tests and twenty short-write repetitions verify automatic recovery without new output, exact suffix continuation without duplicates, subsequent records, and pending-loss accounting. Full local race tests and vet validate integration. This is injected-storage evidence; the LTSC VM results above precede this change. Actual volume exhaustion and CI confirmation remain pending.
+
 ## Remaining qualification
 
 - Accepted notification-client connection cleanup and post-allocation open failures still need failure-injection qualification.
 - Post-allocation failures inside watcher open adapters need an explicit ownership contract.
 - Windows identity/session scenarios and broader installer qualification remain open.
-- Journal qualification still needs real-volume exhaustion, buffered-writer recovery without reopening, aggregate overload fairness, read-path stalls, and lifecycle admission bounds.
+- Journal qualification still needs real-volume exhaustion, aggregate overload fairness, read-path stalls, and lifecycle admission bounds.
 - Immutable configuration revisions and stale-event handling remain R2 work; service stop semantics remain R3 work.
