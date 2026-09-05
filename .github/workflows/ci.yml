@@ -44,6 +44,10 @@ jobs:
       - name: Vulnerability check
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 
+      - name: Maintenance transaction tests
+        shell: powershell
+        run: ./tools/maintenance/hermes-pilot-tests.ps1
+
       - name: Build
         run: go run ./tools/build
 

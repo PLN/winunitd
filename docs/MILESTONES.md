@@ -71,6 +71,8 @@ Status: planned. Dependencies: R2, R3. Outcome: real Windows identities and sess
 
 Initial R4.2 admission implementation reads protected machine policy, defaults to explicit admission, probes unit-file presence under a duplicated user token with bounded workers, and rejects stale admission results. Existing sessions and policy are reconciled every ten seconds. Portable/native regressions cover revocation, independent linger grants, directory presence, junction rejection, token identity, and deadline ownership. Administrative CLI/installer controls, complete recovery coordination, and real SYSTEM/session evidence remain pending; this does not close R4 or its dependencies.
 
+An [external maintenance helper](../tools/maintenance/README.md) now covers the existing interactive Hermes pilot. Native testing includes injected pre-update failure/recovery, offline updater planning, a real application update with retained backups, disabled legacy-task restoration, listener ancestry, and an unchanged Windows Task Scheduler process. This is operator tooling for the pilot; it does not implement the system daemon's R4.3 maintenance barrier or qualify MSI upgrades.
+
 Exit gate: disposable VM evidence includes genuine LocalSystem session-0 launch into a standard user's session, existing-session reconciliation, multiple sessions for one SID, separate users, manager crash, rapid logon/logoff, shutdown during launch, profile/environment cases, and explicit linger behavior. One manager per SID and no post-stop resurrection hold. Unsupported modes fail visibly. No hosted-admin-only evidence is accepted as a substitute.
 
 ## R5 — Durable timers and operational diagnostics
