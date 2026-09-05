@@ -119,8 +119,7 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 		return core.ErrSkipped
 	}
 	if u.Kind == unit.KindTimer {
-		m.armTimer(u)
-		return nil
+		return m.armTimer(u)
 	}
 	if u.Kind == unit.KindRegistry {
 		return m.armRegistry(u)

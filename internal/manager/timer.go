@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
@@ -25,7 +26,7 @@ func (m *Manager) onTimerElapsed(name string) {
 	}
 	ld := m.units[name]
 	activated := ""
-	if ld != nil && ld.unit != nil && ld.unit.Timer != nil {
+	if ld != nil && !ld.unavailable && !m.closed && ld.unit != nil && ld.unit.Timer != nil {
 		activated = ld.unit.Timer.Unit
 	}
 	m.mu.Unlock()
@@ -38,11 +39,18 @@ func (m *Manager) onTimerElapsed(name string) {
 	}
 }
 
-func (m *Manager) armTimer(u *unit.Unit) {
+func (m *Manager) armTimer(u *unit.Unit) error {
 	if m == nil || m.engine == nil || u == nil || u.Timer == nil {
-		return
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rt := m.units[u.Name]
+	if rt == nil || rt.unavailable || m.closed {
+		return fmt.Errorf("timer %q is unavailable or manager is closed", u.Name)
 	}
 	m.engine.Arm(timerSpec(u))
+	return nil
 }
 
 func timerSpec(u *unit.Unit) timers.Spec {
@@ -70,7 +78,7 @@ func (m *Manager) syncTimersLocked() {
 	keep := make(map[string]bool)
 	var toArm []*unit.Unit
 	for name, ld := range m.units {
-		if ld == nil || ld.unit == nil || ld.unit.Kind != unit.KindTimer {
+		if ld == nil || ld.unavailable || ld.unit == nil || ld.unit.Kind != unit.KindTimer {
 			continue
 		}
 		if m.stateOfLocked(name) != core.Active {

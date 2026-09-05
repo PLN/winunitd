@@ -68,10 +68,10 @@ func (m *Manager) installHub(name string, opened []watchIO, cancel context.Cance
 	rt := &watchRuntime{cancel: cancel, watches: opened, existsSatisfied: existsSatisfied}
 	m.mu.Lock()
 	unitRT := m.units[name]
-	if unitRT == nil {
+	if unitRT == nil || unitRT.unavailable || m.closed {
 		m.mu.Unlock()
 		rt.stop()
-		return fmt.Errorf("unit %q is not loaded", name)
+		return fmt.Errorf("unit %q is unavailable or manager is closed", name)
 	}
 	if existing := unitRT.hub; existing != nil {
 		unitRT.hub = nil
@@ -145,7 +145,7 @@ func (m *Manager) syncHubsLocked() {
 		}
 		switch rt.unit.Kind {
 		case unit.KindRegistry, unit.KindEventLog, unit.KindPath:
-			if rt.state == core.Active {
+			if rt.state == core.Active && !rt.unavailable {
 				keep[name] = true
 			}
 		}
@@ -181,7 +181,7 @@ func (m *Manager) startHubCompanion(name string, companion func(*unit.Unit) stri
 		return
 	}
 	rt := m.units[name]
-	if rt == nil || rt.hub == nil {
+	if rt == nil || rt.hub == nil || rt.unavailable || m.closed {
 		m.mu.Unlock()
 		return
 	}
