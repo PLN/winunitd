@@ -3,9 +3,11 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sync"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -17,6 +19,7 @@ import (
 //
 // Per-unit jobs nest under this job on modern Windows (M5).
 type DaemonJob struct {
+	exits  jobExitSet
 	mu     sync.Mutex
 	handle windows.Handle
 }
@@ -130,27 +133,73 @@ func (j *DaemonJob) Close() error {
 		return nil
 	}
 	j.mu.Lock()
+	defer j.mu.Unlock()
 	h := j.handle
-	j.handle = 0
-	j.mu.Unlock()
 	if h == 0 {
 		return nil
 	}
-
 	inSelf, err := isProcessInJob(windows.CurrentProcess(), h)
-	if err == nil && inSelf {
+	if err != nil {
+		return fmt.Errorf("query daemon job before close: %w", err)
+	}
+	if inSelf {
+		// Stop admission and retain handles before terminating descendants.
+		// Never terminate this daemon or a process selected by a reused PID.
 		self := os.Getpid()
-		for _, pid := range jobPIDs(h) {
-			if pid == self {
+		access := uint32(windows.SYNCHRONIZE | windows.PROCESS_TERMINATE | windows.PROCESS_QUERY_LIMITED_INFORMATION)
+		if err := j.exits.prepareExcept(h, access, self); err != nil {
+			return err
+		}
+		for _, process := range j.exits.handles {
+			state, err := windows.WaitForSingleObject(process, 0)
+			if err != nil {
+				return fmt.Errorf("query daemon child exit: %w", err)
+			}
+			if state == windows.WAIT_OBJECT_0 {
 				continue
 			}
-			_ = terminatePIDHandle(pid)
+			member, err := isProcessInJob(process, h)
+			if err != nil {
+				return fmt.Errorf("verify daemon child membership: %w", err)
+			}
+			if !member {
+				return fmt.Errorf("captured process is no longer a daemon job member")
+			}
+			if err := windows.TerminateProcess(process, 1); err != nil {
+				return fmt.Errorf("terminate daemon child: %w", err)
+			}
 		}
-		_ = clearKillOnClose(h)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := j.exits.wait(ctx); err != nil {
+			return err
+		}
+		if err := waitProcessListEmpty(ctx, func() ([]int, error) {
+			ids, err := queryJobPIDs(h)
+			if err != nil {
+				return nil, err
+			}
+			var children []int
+			for _, pid := range ids {
+				if pid != self {
+					children = append(children, pid)
+				}
+			}
+			return children, nil
+		}); err != nil {
+			return err
+		}
+		if err := j.exits.close(); err != nil {
+			return err
+		}
+		if err := clearKillOnClose(h); err != nil {
+			return fmt.Errorf("clear daemon kill-on-close: %w", err)
+		}
 	}
 	if err := windows.CloseHandle(h); err != nil {
 		return fmt.Errorf("close daemon job: %w", err)
 	}
+	j.handle = 0
 	return nil
 }
 
@@ -162,11 +211,6 @@ func (j *DaemonJob) Closed() bool {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return j.handle == 0
-}
-
-func jobPIDs(h windows.Handle) []int {
-	ids, _ := queryJobPIDs(h)
-	return ids
 }
 
 func queryJobPIDs(h windows.Handle) ([]int, error) {
@@ -203,23 +247,15 @@ func queryJobPIDs(h windows.Handle) ([]int, error) {
 	}
 }
 
-func terminatePIDHandle(pid int) error {
-	if pid <= 0 {
-		return fmt.Errorf("invalid pid %d", pid)
-	}
-	h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(pid))
-	if err != nil {
+func clearKillOnClose(h windows.Handle) error {
+	var info windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+	if err := windows.QueryInformationJobObject(h, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info)), nil); err != nil {
 		return err
 	}
-	defer windows.CloseHandle(h)
-	return windows.TerminateProcess(h, 1)
-}
-
-func clearKillOnClose(h windows.Handle) error {
-	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{
-		BasicLimitInformation: windows.JOBOBJECT_BASIC_LIMIT_INFORMATION{
-			LimitFlags: 0,
-		},
+	info.BasicLimitInformation.LimitFlags &^= windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+	if info.BasicLimitInformation.LimitFlags&windows.JOB_OBJECT_LIMIT_JOB_TIME != 0 {
+		info.BasicLimitInformation.LimitFlags &^= windows.JOB_OBJECT_LIMIT_JOB_TIME
+		info.BasicLimitInformation.LimitFlags |= windows.JOB_OBJECT_LIMIT_PRESERVE_JOB_TIME
 	}
 	_, err := windows.SetInformationJobObject(
 		h,
@@ -235,8 +271,8 @@ func (j *DaemonJob) killOnCloseEnabled() (bool, error) {
 		return false, fmt.Errorf("daemon job is closed")
 	}
 	j.mu.Lock()
+	defer j.mu.Unlock()
 	h := j.handle
-	j.mu.Unlock()
 	if h == 0 {
 		return false, fmt.Errorf("daemon job is closed")
 	}
@@ -259,8 +295,8 @@ func (j *DaemonJob) inheritDup() (windows.Handle, error) {
 		return 0, fmt.Errorf("daemon job is closed")
 	}
 	j.mu.Lock()
+	defer j.mu.Unlock()
 	h := j.handle
-	j.mu.Unlock()
 	if h == 0 {
 		return 0, fmt.Errorf("daemon job is closed")
 	}

@@ -20,6 +20,12 @@ type jobExitSet struct {
 }
 
 func (s *jobExitSet) prepare(job windows.Handle) error {
+	return s.prepareExcept(job, windows.SYNCHRONIZE, 0)
+}
+
+// prepareExcept supports a daemon contained in its own job. Its own process
+// must not be captured for termination or waited on during shutdown.
+func (s *jobExitSet) prepareExcept(job windows.Handle, access uint32, except int) error {
 	if s.ready {
 		return nil
 	}
@@ -49,19 +55,22 @@ func (s *jobExitSet) prepare(job windows.Handle) error {
 		s.handles = make(map[int]windows.Handle)
 	}
 	for _, pid := range ids {
+		if pid == except {
+			continue
+		}
 		if _, held := s.handles[pid]; held {
 			continue
 		}
-		h, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))
+		h, err := windows.OpenProcess(access, false, uint32(pid))
 		if err == windows.ERROR_INVALID_PARAMETER {
 			continue // process has already exited and its PID no longer exists
 		}
 		if err != nil {
 			return fmt.Errorf("capture job process exit: %w", err)
 		}
-		// These handles are only waited on; termination targets the job,
-		// never a reopened PID. Concurrent PID reuse can conservatively delay
-		// confirmation, but cannot cause an unrelated process to be killed.
+		// Unit termination targets the job. Daemon shutdown must verify
+		// membership on this captured handle before individual termination;
+		// PID reuse must never select an unrelated process for termination.
 		s.handles[pid] = h
 	}
 	s.ready = true

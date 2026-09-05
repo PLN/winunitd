@@ -295,3 +295,106 @@ func TestLaunchRejectsUnownedDaemonJob(t *testing.T) {
 		}
 	})
 }
+
+func TestDaemonSelfCloseConfirmsChildrenAndRetainsFailures(t *testing.T) {
+	for _, fault := range []string{"none", "query", "terminate", "captured-close", "job-close"} {
+		t.Run(fault, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, testAbs(t), "-test.run=^TestDaemonSelfCloseHelper$")
+			cmd.Env = append(helperEnv(), "WINUNITD_SELF_CLOSE_TEST="+fault)
+			cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("isolated daemon close: %v\n%s", err, output)
+			}
+		})
+	}
+}
+
+func TestDaemonSelfCloseHelper(t *testing.T) {
+	fault := os.Getenv("WINUNITD_SELF_CLOSE_TEST")
+	if fault == "" {
+		return
+	}
+	job, err := OpenDaemonJob()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := job.AssignSelf(); err != nil {
+		t.Fatal(err)
+	}
+	// From here onward any fatal failure exits this isolated process; the
+	// retained kill-on-close job supplies independent child cleanup.
+	sleeper := startSleepHelper(t, nil)
+	pid := sleeper.Process.Pid
+	child, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(child)
+	original := job.handle
+	const protectFromClose = 0x2
+	var protected windows.Handle
+	switch fault {
+	case "query":
+		job.handle = windows.InvalidHandle
+	case "terminate", "captured-close":
+		access := uint32(windows.SYNCHRONIZE | windows.PROCESS_QUERY_LIMITED_INFORMATION)
+		if fault == "captured-close" {
+			access |= windows.PROCESS_TERMINATE
+		}
+		if err := job.exits.prepareExcept(original, access, os.Getpid()); err != nil {
+			t.Fatal(err)
+		}
+		if fault == "captured-close" {
+			protected = job.exits.handles[pid]
+		}
+	case "job-close":
+		protected = original
+	}
+	if protected != 0 {
+		if err := windows.SetHandleInformation(protected, protectFromClose, protectFromClose); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err = job.Close()
+	if fault != "none" {
+		if err == nil || job.Closed() {
+			t.Fatalf("cleanup failure discarded ownership: %v", err)
+		}
+		job.handle = original
+		if fault != "job-close" {
+			armed, err := job.killOnCloseEnabled()
+			if err != nil || !armed {
+				t.Fatalf("failure disarmed crash cleanup: armed=%v err=%v", armed, err)
+			}
+		}
+		if protected != 0 {
+			if err := windows.SetHandleInformation(protected, protectFromClose, 0); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if fault == "terminate" {
+			h, err := windows.OpenProcess(windows.SYNCHRONIZE|windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_TERMINATE, false, uint32(pid))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := windows.CloseHandle(job.exits.handles[pid]); err != nil {
+				t.Fatal(err)
+			}
+			job.exits.handles[pid] = h
+		}
+		err = job.Close()
+	}
+	if err != nil {
+		t.Fatal("close retry", err)
+	}
+	if !job.Closed() {
+		t.Fatal("successful close retained job handle")
+	}
+	state, err := windows.WaitForSingleObject(child, 0)
+	if err != nil || state != windows.WAIT_OBJECT_0 {
+		t.Fatalf("child exit unconfirmed: wait=%d err=%v", state, err)
+	}
+	waitDone(t, sleeper, time.Second)
+}
