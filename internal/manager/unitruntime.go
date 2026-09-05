@@ -29,6 +29,7 @@ type unitRuntime struct {
 	restartCancel context.CancelFunc
 	stopping      bool
 	terminated    bool
+	stopUncertain bool
 	invocation    string
 	hub           *watchRuntime
 	err           string

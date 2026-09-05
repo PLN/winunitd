@@ -219,6 +219,44 @@ func TestOneshotReturnsBeforeCompletion(t *testing.T) {
 	}
 }
 
+func TestStopWaitFailurePreservesProcessHandle(t *testing.T) {
+	p := startHelper(t, "sleep", unit.TypeSimple, 0).(*winProc)
+	job := p.job
+	// A no-op job cannot terminate the process; the wait must time out.
+	p.job = &UnitJob{}
+	t.Cleanup(func() { p.job = job; _ = p.Stop(time.Second) })
+	if err := p.Stop(20 * time.Millisecond); err == nil {
+		t.Fatal("unconfirmed process exit reported success")
+	}
+	if !p.Alive() {
+		t.Fatal("failed stop closed the process handle")
+	}
+	p.job = job
+	if err := p.Stop(time.Second); err != nil {
+		t.Fatal("retry failed", err)
+	}
+	if p.Alive() {
+		t.Fatal("retry left process alive")
+	}
+}
+
+func TestStopKillFailurePreservesProcessHandle(t *testing.T) {
+	p := startHelper(t, "sleep", unit.TypeSimple, 0).(*winProc)
+	job := p.job
+	p.job = &UnitJob{handle: windows.InvalidHandle}
+	t.Cleanup(func() { p.job = job; _ = p.Stop(time.Second) })
+	if err := p.Stop(time.Second); err == nil {
+		t.Fatal("job termination error was ignored")
+	}
+	if !p.Alive() {
+		t.Fatal("failed kill discarded the live process handle")
+	}
+	p.job = job
+	if err := p.Stop(time.Second); err != nil {
+		t.Fatal("retry failed", err)
+	}
+}
+
 func TestStdoutStderrAttached(t *testing.T) {
 	p := startHelper(t, "hello", unit.TypeSimple, 0)
 	line := readLine(t, p.Stdout(), 5*time.Second)

@@ -420,15 +420,28 @@ func (p *winProc) Stop(timeout time.Duration) error {
 	if p == nil {
 		return nil
 	}
+	p.mu.Lock()
+	closed := p.closed
+	p.mu.Unlock()
+	if closed {
+		return nil
+	}
 	if p.job != nil {
-		_ = p.job.Kill()
+		if err := p.job.Kill(); err != nil {
+			return err
+		}
 	}
 	if timeout <= 0 {
 		timeout = 2 * time.Second
 	}
 	waitCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	_ = p.wait(waitCtx)
+	if err := p.wait(waitCtx); err != nil {
+		var exited *ExitStatus
+		if !errors.As(err, &exited) {
+			return err
+		}
+	}
 	return p.Close()
 }
 

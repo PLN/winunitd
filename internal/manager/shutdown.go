@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -148,7 +149,7 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 		record.operations--
 		m.mu.Unlock()
 	}(rt)
-	proc := rt.takeProc()
+	proc := rt.proc
 	rt.stopping = true
 	rt.gen++
 	stopGen := rt.gen
@@ -189,8 +190,21 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 		stopErr = m.stopTask(ctx, taskName, timeout)
 		cancel()
 	} else if proc != nil {
-		_ = m.stopProcess(proc, timeout)
+		stopErr = m.stopProcess(proc, timeout)
+		if stopErr == nil && proc.Alive() {
+			stopErr = fmt.Errorf("process remains alive after stop")
+		}
 	}
+	// Publish uncertainty before releasing the operation lock: a queued Start
+	// must not replace a process whose termination has not been confirmed.
+	m.mu.Lock()
+	if rt := m.units[name]; rt != nil && rt.sameOp(stopGen, proc) {
+		rt.stopUncertain = stopErr != nil
+		if stopErr == nil && rt.proc == proc {
+			rt.proc = nil
+		}
+	}
+	m.mu.Unlock()
 	// Release the per-unit op lock before journal.Wait so a hung
 	// capture cannot block later Start/Stop (issue #68).
 	release()

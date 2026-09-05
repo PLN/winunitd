@@ -49,6 +49,10 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 		m.mu.Unlock()
 		return nil
 	}
+	if rt.stopUncertain {
+		m.mu.Unlock()
+		return fmt.Errorf("unit %q termination is unconfirmed; retry stop before starting", name)
+	}
 	// Bump gen only for a real launch. A redundant Start on a live
 	// process must not invalidate the running watchdog (issue #23).
 	if live := rt.proc; live != nil && live.Alive() {
@@ -233,9 +237,13 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 		m.mu.Unlock()
 		if err != nil {
 			stopErr := m.stopProcess(proc, stopTimeout(u))
+			if stopErr == nil && proc.Alive() {
+				stopErr = fmt.Errorf("process remains alive after stop")
+			}
 			m.mu.Lock()
 			if rt := m.units[name]; rt != nil && rt.proc == proc {
 				rt.terminated = true
+				rt.stopUncertain = stopErr != nil
 			}
 			m.mu.Unlock()
 			go m.watch(name, proc)
@@ -247,6 +255,11 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 		// Drain the final bytes before watch closes the process's pipe handles.
 		if job := proc.Job(); job != nil {
 			if err := job.Kill(); err != nil {
+				m.mu.Lock()
+				if rt := m.units[name]; rt != nil && rt.proc == proc {
+					rt.stopUncertain = true
+				}
+				m.mu.Unlock()
 				return err
 			}
 		}
@@ -483,7 +496,7 @@ func (m *Manager) subOfLocked(name string) core.Substate {
 
 func (m *Manager) reapFailedLocked() {
 	for _, rt := range m.units {
-		if rt == nil || rt.state != core.Failed || rt.proc == nil {
+		if rt == nil || rt.state != core.Failed || rt.proc == nil || rt.stopUncertain {
 			continue
 		}
 		proc := rt.takeProc()
