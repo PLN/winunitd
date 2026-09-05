@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -41,8 +42,9 @@ func (h *watchRuntime) stopAsync() {
 	go h.stop()
 }
 
-func closeWatchers(ws []watchIO) {
+func closeWatchers(ws []watchIO) error {
 	var wg sync.WaitGroup
+	errs := make(chan error, len(ws))
 	for _, w := range ws {
 		if w == nil {
 			continue
@@ -50,10 +52,16 @@ func closeWatchers(ws []watchIO) {
 		wg.Add(1)
 		go func(w watchIO) {
 			defer wg.Done()
-			_ = w.Close()
+			errs <- w.Close()
 		}(w)
 	}
 	wg.Wait()
+	close(errs)
+	var result error
+	for err := range errs {
+		result = errors.Join(result, err)
+	}
+	return result
 }
 
 func toWatchIO[W watchIO](ws []W) []watchIO {

@@ -3,7 +3,9 @@ package manager
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -41,6 +43,7 @@ type Manager struct {
 	session        sync.Mutex // serializes graphical-session.target start/stop
 	ops            unitOps    // per-unit start/stop/restart (issue #24)
 	stops          stopSet
+	closePending   []unitTeardown
 }
 
 // New creates a manager. Reload must be called to load units.
@@ -130,12 +133,39 @@ func New(cfg Config) (*Manager, error) {
 // is admitted after Close returns; an already accepted launch still owns its
 // completion and cleanup. Shutdown drains those launches before Close.
 func (m *Manager) Close() {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultStopTimeout)
+	defer cancel()
+	if err := m.CloseContext(ctx); err != nil {
+		log.Printf("winunitd: close manager: %v", err)
+	}
+}
+
+// CloseContext bounds the wait for background controls and journal closure.
+// A pending close keeps its handles and worker; retries join that same pass.
+// Process shutdown remains the caller's responsibility through Shutdown.
+func (m *Manager) CloseContext(ctx context.Context) error {
 	if m == nil {
-		return
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	m.mu.Lock()
 	m.closed = true
-	tds := make([]unitTeardown, 0, len(m.units))
+	for _, rt := range m.units {
+		if rt.startCancel != nil {
+			rt.startCancel()
+		}
+		rt.cancelRestart()
+	}
+	m.mu.Unlock()
+	return m.stops.wait(ctx, m.clock(), stopKey{manager: m}, 0, m.closePass)
+}
+
+func (m *Manager) closePass() error {
+	m.mu.Lock()
+	tds := m.closePending
+	m.closePending = nil
 	for _, rt := range m.units {
 		tds = append(tds, rt.detachAsync())
 	}
@@ -143,15 +173,24 @@ func (m *Manager) Close() {
 	for _, td := range tds {
 		td.cancelNonblocking()
 	}
+	var result error
+	var pending []unitTeardown
 	for _, td := range tds {
-		td.closeBlocking()
+		if err := td.closeBlocking(); err != nil {
+			result = errors.Join(result, err)
+			pending = append(pending, td)
+		}
 	}
+	m.mu.Lock()
+	m.closePending = pending
+	m.mu.Unlock()
 	if m.engine != nil {
 		m.engine.Stop()
 	}
 	if m.journal != nil {
-		_ = m.journal.Close()
+		result = errors.Join(result, m.journal.Close())
 	}
+	return result
 }
 
 // Handle implements protocol.Handler.

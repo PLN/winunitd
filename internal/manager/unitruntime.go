@@ -132,13 +132,14 @@ func (td unitTeardown) cancelNonblocking() {
 	}
 }
 
-func (td unitTeardown) closeBlocking() {
+func (td unitTeardown) closeBlocking() error {
 	if td.notify != nil {
 		td.notify.Close()
 	}
 	if td.hub != nil {
-		closeWatchers(td.hub.watches)
+		return closeWatchers(td.hub.watches)
 	}
+	return nil
 }
 
 func (m *Manager) runtimeLocked(name string) *unitRuntime {

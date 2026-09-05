@@ -11,6 +11,7 @@ import (
 )
 
 type stopKey struct {
+	manager    *Manager
 	proc       runtime.Process
 	user       runtime.UserManagerProc
 	nativeKind string
