@@ -137,7 +137,7 @@ func (td unitTeardown) closeBlocking() error {
 		td.notify.Close()
 	}
 	if td.hub != nil {
-		return closeWatchers(td.hub.watches)
+		return td.hub.stop()
 	}
 	return nil
 }

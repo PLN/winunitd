@@ -182,7 +182,7 @@ func (m *Manager) closePass() error {
 		}
 	}
 	m.mu.Lock()
-	m.closePending = pending
+	m.closePending = append(m.closePending, pending...)
 	m.mu.Unlock()
 	if m.engine != nil {
 		m.engine.Stop()

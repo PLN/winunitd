@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/PLN/winunitd/internal/core"
@@ -16,7 +17,9 @@ func (m *Manager) armEventLog(u *unit.Unit) error {
 	if len(u.EventLog.Triggers) == 0 {
 		return fmt.Errorf("%s: EventLogTrigger is required", core.ReasonConfiguration)
 	}
-	m.disarmHub(u.Name)
+	if err := m.disarmHub(u.Name); err != nil {
+		return err
+	}
 
 	open := m.evtOpen
 	if open == nil {
@@ -28,8 +31,8 @@ func (m *Manager) armEventLog(u *unit.Unit) error {
 		s, err := open(tr)
 		if err != nil {
 			cancel()
-			closeWatchers(toWatchIO(opened))
-			return fmt.Errorf("%s: %w", core.ReasonConfiguration, err)
+			cleanupErr := m.disposeHub(u.Name, &watchRuntime{watches: toWatchIO(opened)})
+			return errors.Join(fmt.Errorf("%s: %w", core.ReasonConfiguration, err), cleanupErr)
 		}
 		opened = append(opened, s)
 	}

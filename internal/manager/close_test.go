@@ -3,16 +3,147 @@ package manager
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/pathwatch"
 )
 
 type controlledCloseWatch struct {
 	calls   atomic.Int32
 	fail    atomic.Bool
 	release <-chan struct{}
+}
+
+func TestWatchStopFailureRetainsReloadRouting(t *testing.T) {
+	const name = "cleanup.path"
+	m := managerWith(t, &fakeLauncher{}, map[string]string{
+		name[:len(name)-len(".path")] + ".service": "[Service]\nExecStart=C:\\Tools\\worker.exe\n",
+		name: "[Path]\nPathChanged=C:\\Data\\incoming\n"})
+	w := &controlledCloseWatch{}
+	w.fail.Store(true)
+	m.mu.Lock()
+	if m.units[name] == nil {
+		m.mu.Unlock()
+		t.Fatal("fixture unit not loaded")
+	}
+	m.units[name].hub = &watchRuntime{watches: []watchIO{w}}
+	m.units[name].state = core.Active
+	m.mu.Unlock()
+	if _, err := m.stopUnit(name); err == nil {
+		t.Fatal("failed watch stop reported success")
+	}
+	if err := os.Remove(filepath.Join(m.cfg.UnitsDir(), name)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	rt := m.units[name]
+	retained := rt != nil && rt.hub != nil && rt.stopUncertain && rt.unavailable
+	m.mu.Unlock()
+	if !retained {
+		t.Fatal("reload lost failed watch stop routing")
+	}
+	if _, err := m.Start(context.Background(), name); err == nil {
+		t.Fatal("start admitted unresolved cleanup")
+	}
+	w.fail.Store(false)
+	if _, err := m.stopUnit(name); err != nil {
+		// Reload may already own a close that observed the injected failure.
+		// Joining that attempt reports its result; the next retry is fresh.
+		if _, err := m.stopUnit(name); err != nil {
+			t.Fatal("fresh stop retry", err)
+		}
+	}
+	m.mu.Lock()
+	retained = m.units[name].hub != nil || m.units[name].stopUncertain
+	m.mu.Unlock()
+	if retained {
+		t.Fatal("successful retry retained watch ownership")
+	}
+}
+
+func TestWatchStopDeadlineJoinsPendingClose(t *testing.T) {
+	const name = "pending.path"
+	m := managerWith(t, &fakeLauncher{}, map[string]string{
+		name[:len(name)-len(".path")] + ".service": "[Service]\nExecStart=C:\\Tools\\worker.exe\n",
+		name: "[Path]\nPathChanged=C:\\Data\\incoming\n"})
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	w := &controlledCloseWatch{release: release}
+	m.mu.Lock()
+	if m.units[name] == nil {
+		m.mu.Unlock()
+		t.Fatal("fixture unit not loaded")
+	}
+	m.units[name].hub = &watchRuntime{watches: []watchIO{w}}
+	m.units[name].state = core.Active
+	m.mu.Unlock()
+	for i := 0; i < 3; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		_, err := m.stopUnitWithContext(ctx, name)
+		cancel()
+		if err == nil {
+			t.Fatal("blocked watch stop reported success")
+		}
+	}
+	if w.calls.Load() != 1 {
+		t.Fatal("retry duplicated pending native close")
+	}
+	unblock()
+	if _, err := m.stopUnit(name); err != nil {
+		t.Fatal("stop retry", err)
+	}
+	if w.calls.Load() != 1 {
+		t.Fatal("completed watch closed again")
+	}
+}
+
+func TestPartialWatchOpenRetainsFailedCleanup(t *testing.T) {
+	const name = "partial.path"
+	m := managerWith(t, &fakeLauncher{}, map[string]string{
+		name[:len(name)-len(".path")] + ".service": "[Service]\nExecStart=C:\\Tools\\worker.exe\n",
+		name: "[Path]\nPathChanged=C:\\Data\\first\nPathChanged=C:\\Data\\second\n"})
+	w := &controlledCloseWatch{}
+	w.fail.Store(true)
+	var opens int
+	m.pathOpen = func(pathwatch.Spec) (pathwatch.Watch, error) {
+		opens++
+		if opens == 1 {
+			return w, nil
+		}
+		return nil, errors.New("injected open failure")
+	}
+	if _, err := m.Start(context.Background(), name); err == nil {
+		t.Fatal("partial open reported success")
+	}
+	m.mu.Lock()
+	retained := m.units[name].hub != nil && m.units[name].stopUncertain
+	m.mu.Unlock()
+	if !retained {
+		t.Fatal("partial open discarded failed cleanup")
+	}
+	if _, err := m.Start(context.Background(), name); err == nil {
+		t.Fatal("partial cleanup allowed replacement")
+	}
+	w.fail.Store(false)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := m.CloseContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if w.calls.Load() != 2 {
+		t.Fatal("manager close did not retry partial open cleanup")
+	}
 }
 
 func (w *controlledCloseWatch) C() <-chan struct{} { return nil }

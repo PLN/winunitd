@@ -11,6 +11,7 @@ import (
 )
 
 type stopKey struct {
+	hub        *watchRuntime
 	manager    *Manager
 	shutdown   *Manager
 	proc       runtime.Process

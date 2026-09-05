@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/PLN/winunitd/internal/core"
@@ -16,7 +17,9 @@ func (m *Manager) armPath(u *unit.Unit) error {
 	if len(u.PathWatch.Changed) == 0 && len(u.PathWatch.Exists) == 0 {
 		return fmt.Errorf("%s: PathChanged or PathExists is required", core.ReasonConfiguration)
 	}
-	m.disarmHub(u.Name)
+	if err := m.disarmHub(u.Name); err != nil {
+		return err
+	}
 
 	open := m.pathOpen
 	if open == nil {
@@ -33,8 +36,8 @@ func (m *Manager) armPath(u *unit.Unit) error {
 		w, err := open(spec)
 		if err != nil {
 			cancel()
-			closeWatchers(toWatchIO(opened))
-			return fmt.Errorf("%s: %w", core.ReasonConfiguration, err)
+			cleanupErr := m.disposeHub(u.Name, &watchRuntime{watches: toWatchIO(opened)})
+			return errors.Join(fmt.Errorf("%s: %w", core.ReasonConfiguration, err), cleanupErr)
 		}
 		opened = append(opened, w)
 		changed = append(changed, w)
@@ -44,8 +47,8 @@ func (m *Manager) armPath(u *unit.Unit) error {
 		w, err := existsOpen(spec)
 		if err != nil {
 			cancel()
-			closeWatchers(toWatchIO(opened))
-			return fmt.Errorf("%s: %w", core.ReasonConfiguration, err)
+			cleanupErr := m.disposeHub(u.Name, &watchRuntime{watches: toWatchIO(opened)})
+			return errors.Join(fmt.Errorf("%s: %w", core.ReasonConfiguration, err), cleanupErr)
 		}
 		opened = append(opened, w)
 		existsWatches = append(existsWatches, w)
@@ -55,8 +58,8 @@ func (m *Manager) armPath(u *unit.Unit) error {
 		ok, err := m.pathExistsAll(u.PathWatch.Exists)
 		if err != nil {
 			cancel()
-			closeWatchers(toWatchIO(opened))
-			return fmt.Errorf("%s: %w", core.ReasonConfiguration, err)
+			cleanupErr := m.disposeHub(u.Name, &watchRuntime{watches: toWatchIO(opened)})
+			return errors.Join(fmt.Errorf("%s: %w", core.ReasonConfiguration, err), cleanupErr)
 		}
 		satisfied = ok
 	}

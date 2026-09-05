@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/unit"
@@ -20,26 +21,26 @@ type watchIO interface {
 // and path all store this on unitRuntime.hub so close/fail/disarm/sync
 // share one path (issue #67).
 type watchRuntime struct {
+	closeMu         sync.Mutex
 	cancel          context.CancelFunc
 	watches         []watchIO
 	existsSatisfied bool
 }
 
-func (h *watchRuntime) stop() {
+func (h *watchRuntime) stop() error {
 	if h == nil {
-		return
+		return nil
 	}
+	h.closeMu.Lock()
+	defer h.closeMu.Unlock()
 	if h.cancel != nil {
 		h.cancel()
 	}
-	closeWatchers(h.watches)
-}
-
-func (h *watchRuntime) stopAsync() {
-	if h == nil {
-		return
+	if err := closeWatchers(h.watches); err != nil {
+		return err
 	}
-	go h.stop()
+	h.watches = nil
+	return nil
 }
 
 func closeWatchers(ws []watchIO) error {
@@ -76,14 +77,9 @@ func (m *Manager) installHub(name string, opened []watchIO, cancel context.Cance
 	rt := &watchRuntime{cancel: cancel, watches: opened, existsSatisfied: existsSatisfied}
 	m.mu.Lock()
 	unitRT := m.units[name]
-	if unitRT == nil || unitRT.unavailable || m.closed {
+	if unitRT == nil || unitRT.unavailable || m.closed || unitRT.hub != nil {
 		m.mu.Unlock()
-		rt.stop()
-		return fmt.Errorf("unit %q is unavailable or manager is closed", name)
-	}
-	if existing := unitRT.hub; existing != nil {
-		unitRT.hub = nil
-		existing.stopAsync()
+		return errors.Join(fmt.Errorf("unit %q is unavailable, already watched, or manager is closed", name), m.disposeHub(name, rt))
 	}
 	unitRT.hub = rt
 	m.mu.Unlock()
@@ -121,28 +117,88 @@ func (m *Manager) failHub(name string, err error) {
 		return
 	}
 	h := rt.hub
-	rt.hub = nil
+	rt.stopUncertain = true
 	if rt.state == core.Active || rt.state == core.Activating {
 		if rt.step(core.EventStartFailed) {
 			rt.err = err.Error()
 		}
 	}
 	m.mu.Unlock()
-	h.stop()
+	_ = m.closeHub(context.Background(), name, h, defaultStopTimeout)
 }
 
-func (m *Manager) disarmHub(name string) {
+func (m *Manager) disarmHub(name string) error {
+	return m.disarmHubContext(context.Background(), name, defaultStopTimeout)
+}
+
+func (m *Manager) disarmHubContext(ctx context.Context, name string, timeout time.Duration) error {
 	if m == nil {
-		return
+		return nil
 	}
 	m.mu.Lock()
 	var h *watchRuntime
 	if rt := m.units[name]; rt != nil {
 		h = rt.hub
-		rt.hub = nil
+		if h != nil {
+			rt.stopUncertain = true
+		}
 	}
 	m.mu.Unlock()
-	h.stop()
+	return m.closeHub(ctx, name, h, timeout)
+}
+
+func (m *Manager) closeHub(ctx context.Context, name string, h *watchRuntime, timeout time.Duration) error {
+	if h == nil {
+		return nil
+	}
+	if h.cancel != nil {
+		h.cancel()
+	}
+	err := m.stops.wait(ctx, m.clock(), stopKey{hub: h}, timeout, h.stop)
+	m.mu.Lock()
+	if rt := m.units[name]; rt != nil && rt.hub == h {
+		if err == nil {
+			rt.hub = nil
+			rt.stopUncertain = false
+		} else {
+			rt.stopUncertain = true
+			rt.err = fmt.Sprintf("watch cleanup: %v", err)
+		}
+	}
+	m.mu.Unlock()
+	return err
+}
+
+// disposeHub keeps partial opens on their unit for stop retry when possible.
+// Rejected groups without a unit owner remain in manager close ownership.
+func (m *Manager) disposeHub(name string, h *watchRuntime) error {
+	m.mu.Lock()
+	if rt := m.units[name]; rt != nil && rt.hub == nil && !m.closed {
+		rt.hub = h
+		rt.stopUncertain = true
+		m.mu.Unlock()
+		return m.closeHub(context.Background(), name, h, defaultStopTimeout)
+	}
+	m.mu.Unlock()
+	if h.cancel != nil {
+		h.cancel()
+	}
+	m.mu.Lock()
+	m.closePending = append(m.closePending, unitTeardown{hub: h})
+	m.mu.Unlock()
+	err := m.stops.wait(context.Background(), m.clock(), stopKey{hub: h}, defaultStopTimeout, h.stop)
+	if err == nil {
+		m.mu.Lock()
+		kept := m.closePending[:0]
+		for _, td := range m.closePending {
+			if td.hub != h {
+				kept = append(kept, td)
+			}
+		}
+		m.closePending = kept
+		m.mu.Unlock()
+	}
+	return err
 }
 
 func (m *Manager) syncHubsLocked() {
@@ -158,7 +214,11 @@ func (m *Manager) syncHubsLocked() {
 			}
 		}
 	}
-	var stale []*watchRuntime
+	type staleHub struct {
+		name string
+		hub  *watchRuntime
+	}
+	var stale []staleHub
 	for name, rt := range m.units {
 		if rt == nil || rt.hub == nil {
 			continue
@@ -166,12 +226,15 @@ func (m *Manager) syncHubsLocked() {
 		if keep[name] {
 			continue
 		}
-		stale = append(stale, rt.hub)
-		rt.hub = nil
+		stale = append(stale, staleHub{name, rt.hub})
+		rt.stopUncertain = true
+		if rt.hub.cancel != nil {
+			rt.hub.cancel()
+		}
 	}
 	go func() {
 		for _, h := range stale {
-			h.stop()
+			_ = m.closeHub(context.Background(), h.name, h.hub, defaultStopTimeout)
 		}
 	}()
 }
@@ -189,7 +252,7 @@ func (m *Manager) startHubCompanion(name string, companion func(*unit.Unit) stri
 		return
 	}
 	rt := m.units[name]
-	if rt == nil || rt.hub == nil || rt.unavailable || m.closed {
+	if rt == nil || rt.hub == nil || rt.stopUncertain || rt.unavailable || m.closed {
 		m.mu.Unlock()
 		return
 	}

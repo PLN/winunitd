@@ -167,7 +167,7 @@ func (m *Manager) replaceLocked(units []*unit.Unit, g *core.Graph, links map[str
 // also leave an uncertain external outcome, so only Inactive permits removal.
 // Caller holds m.mu.
 func (rt *unitRuntime) retainWithoutConfig() bool {
-	if rt.proc != nil || rt.operations != 0 || rt.stopUncertain {
+	if rt.proc != nil || rt.hub != nil || rt.operations != 0 || rt.stopUncertain {
 		return true
 	}
 	native := scmServiceName(rt.unit) != "" || scheduledTaskName(rt.unit) != ""

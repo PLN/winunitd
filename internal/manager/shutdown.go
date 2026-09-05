@@ -224,11 +224,10 @@ func (m *Manager) stopUnitWithContext(ctx context.Context, name string) (*protoc
 	if kind == unit.KindTimer && m.engine != nil {
 		m.engine.Disarm(name)
 	}
-	if kind == unit.KindRegistry || kind == unit.KindEventLog || kind == unit.KindPath {
-		m.disarmHub(name)
-	}
-
 	var stopErr error
+	if kind == unit.KindRegistry || kind == unit.KindEventLog || kind == unit.KindPath {
+		stopErr = m.disarmHubContext(ctx, name, timeout)
+	}
 	if scmName != "" {
 		ctx, cancel := m.clockTimeout(ctx, timeout)
 		stopErr = m.stopSCM(ctx, scmName, timeout)
