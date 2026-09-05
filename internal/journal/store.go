@@ -416,14 +416,17 @@ func (u *unitFile) write(raw []byte) error {
 }
 
 func (u *unitFile) openLocked() error {
-	f, err := os.OpenFile(u.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(u.path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}
-	st, err := f.Stat()
-	size := int64(0)
-	if err == nil {
-		size = st.Size()
+	size, repaired, err := repairJournalTail(f)
+	if err != nil {
+		_ = f.Close()
+		return err
+	}
+	if repaired {
+		u.store.storageError(u.unit, fmt.Errorf("recovered journal record boundary after interrupted write"))
 	}
 	u.f = f
 	u.w = bufio.NewWriter(f)

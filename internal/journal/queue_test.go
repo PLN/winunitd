@@ -109,3 +109,40 @@ func TestSyncStallHonorsWaitAndCloseDeadlines(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestNoisyInvocationLeavesRecordCapacityForAnotherUnit(t *testing.T) {
+	s := testStore(t)
+	blocked, release := make(chan struct{}), make(chan struct{})
+	var once, opened sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	s.onOpen = func() { opened.Do(func() { close(blocked); <-release }) }
+	noisy := &captureGroup{}
+	for i := 0; i < captureQueueRecords*2; i++ {
+		s.enqueue(Entry{Unit: "noisy.service", Message: "x", InvocationID: "noisy-invocation"}, noisy)
+	}
+	select {
+	case <-blocked:
+	case <-time.After(time.Second):
+		t.Fatal("writer did not block")
+	}
+	quiet := &captureGroup{}
+	s.enqueue(Entry{Unit: "quiet.service", Message: "important", InvocationID: "quiet-invocation"}, quiet)
+	if s.CaptureStats("noisy.service").DroppedRecords == 0 {
+		t.Fatal("noisy invocation escaped record budget")
+	}
+	if s.CaptureStats("quiet.service").DroppedRecords != 0 || quiet.records.Load() != 1 {
+		t.Fatal("noisy invocation crowded out another unit")
+	}
+	if noisy.records.Load() > invocationQueueRecords {
+		t.Fatal("invocation exceeded record cap")
+	}
+	unblock()
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := s.Read("quiet.service")
+	if err != nil || len(entries) != 1 || entries[0].Message != "important" {
+		t.Fatalf("quiet record not preserved: entries=%+v err=%v", entries, err)
+	}
+}

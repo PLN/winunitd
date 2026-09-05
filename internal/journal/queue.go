@@ -7,12 +7,14 @@ import (
 )
 
 const captureQueueRecords = 16384
+const invocationQueueRecords = 12288
 const captureQueueBytes = 16 << 20
 const invocationQueueBytes = 4 << 20
 
 type captureGroup struct {
-	wg    sync.WaitGroup
-	bytes atomic.Int64
+	wg      sync.WaitGroup
+	bytes   atomic.Int64
+	records atomic.Int64
 }
 
 type captureWrite struct {
@@ -100,7 +102,7 @@ func (s *Store) enqueue(e Entry, group *captureGroup) {
 	n := int64(len(e.Message))
 	s.queueMu.Lock()
 	defer s.queueMu.Unlock()
-	if s.queueClosed || s.queuedBytes+n > captureQueueBytes || group.bytes.Load()+n > invocationQueueBytes || len(s.writeQueue) == cap(s.writeQueue) {
+	if s.queueClosed || s.queuedBytes+n > captureQueueBytes || group.bytes.Load()+n > invocationQueueBytes || group.records.Load() >= invocationQueueRecords || len(s.writeQueue) == cap(s.writeQueue) {
 		stats := s.dropped[e.Unit]
 		stats.DroppedRecords++
 		stats.DroppedBytes += uint64(n)
@@ -109,6 +111,7 @@ func (s *Store) enqueue(e Entry, group *captureGroup) {
 	}
 	s.queuedBytes += n
 	group.bytes.Add(n)
+	group.records.Add(1)
 	group.wg.Add(1)
 	s.writeQueue <- captureWrite{entry: e, group: group}
 }
@@ -129,6 +132,7 @@ func (s *Store) writeCaptures() {
 		s.queuedBytes -= n
 		s.queueMu.Unlock()
 		work.group.bytes.Add(-n)
+		work.group.records.Add(-1)
 		work.group.wg.Done()
 	}
 	s.writerErr = s.closeFiles()
