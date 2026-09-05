@@ -39,6 +39,8 @@ The reload cases retain an independent process/job reference for cleanup even af
 
 R1 must remove the opt-in gate when the desired-behavior assertions pass, strengthen output-content and edge-case coverage, and make these required regressions.
 
+R1 follow-up: the reload ownership cases now run unconditionally and pass, including status/log/stop access, recreation of the file without replacing the live process, and refusal to relaunch after stopping an unavailable unit. A delayed-launch regression also passes. The table above records the original baseline defects; the large-output oneshot cases still require opt-in and remain unfixed.
+
 ## Qualification evidence
 
 Toolchain used for the evidence below: Go 1.27.0, Windows amd64. Subsequent compiler/action pinning and updated-dependency results are recorded separately in [BUILDING.md](BUILDING.md).

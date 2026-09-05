@@ -139,6 +139,12 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 		return nil, err
 	}
 	name = rt.unit.Name
+	rt.operations++
+	defer func(record *unitRuntime) {
+		m.mu.Lock()
+		record.operations--
+		m.mu.Unlock()
+	}(rt)
 	proc := rt.takeProc()
 	rt.stopping = true
 	rt.gen++

@@ -55,6 +55,16 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 		m.mu.Unlock()
 		return nil
 	}
+	if rt.unavailable {
+		m.mu.Unlock()
+		return fmt.Errorf("unit %q has no valid configuration; reload a valid unit before starting", name)
+	}
+	rt.operations++
+	defer func(record *unitRuntime) {
+		m.mu.Lock()
+		record.operations--
+		m.mu.Unlock()
+	}(rt)
 	if !autoRestart {
 		rt.stopping = false
 		rt.gen++
@@ -375,7 +385,7 @@ func (m *Manager) maybeRestart(name string, kind core.ExitKind, svc *unit.Servic
 	}
 	m.mu.Lock()
 	rt := m.units[name]
-	if m.closed || rt == nil || rt.stopping {
+	if m.closed || rt == nil || rt.stopping || rt.unavailable {
 		m.mu.Unlock()
 		return
 	}
@@ -387,7 +397,7 @@ func (m *Manager) maybeRestart(name string, kind core.ExitKind, svc *unit.Servic
 func (m *Manager) beginRestart(name string, gen uint64, delay time.Duration) {
 	m.mu.Lock()
 	rt := m.units[name]
-	if m.closed || rt == nil || rt.stopping || rt.gen != gen {
+	if m.closed || rt == nil || rt.stopping || rt.unavailable || rt.gen != gen {
 		m.mu.Unlock()
 		return
 	}

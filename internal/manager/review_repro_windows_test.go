@@ -9,10 +9,12 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/PLN/winunitd/internal/protocol"
 )
 
-// These deliberately assert the desired behavior and fail on the reviewed
-// baseline. Opt in explicitly; R1 removes the gate once the defects are fixed.
+// Still-failing review reproductions require explicit opt-in. Fixed cases
+// run unconditionally as permanent regressions.
 func requireReviewRepro(t *testing.T) {
 	t.Helper()
 	if os.Getenv("WINUNITD_REVIEW_REPRO") != "1" {
@@ -21,7 +23,6 @@ func requireReviewRepro(t *testing.T) {
 }
 
 func TestReviewReproReloadKeepsLiveUnit(t *testing.T) {
-	requireReviewRepro(t)
 	for _, change := range []string{"delete", "invalid"} {
 		t.Run(change, func(t *testing.T) {
 			dir := t.TempDir()
@@ -42,6 +43,10 @@ func TestReviewReproReloadKeepsLiveUnit(t *testing.T) {
 				_ = proc.Close()
 			})
 			path := filepath.Join(dir, "units", "review.service")
+			original, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
 			var err error
 			if change == "delete" {
 				err = os.Remove(path)
@@ -67,10 +72,42 @@ func TestReviewReproReloadKeepsLiveUnit(t *testing.T) {
 			} else if status.Unit == nil || status.Unit.ActiveState != "active" {
 				t.Errorf("live unit status = %+v", status)
 			}
+			if status != nil && status.Unit != nil && status.Unit.LoadState != "unavailable" {
+				t.Errorf("missing valid configuration not visible: %+v", status.Unit)
+			}
+			if _, err := m.Logs(protocol.LogsParams{Unit: "review.service"}); err != nil {
+				t.Errorf("live unit became unreachable through logs: %v", err)
+			}
+			// Restoring the same name must reuse the live invocation.
+			if err := os.WriteFile(path, original, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.Reload(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.Start(ctx, "review.service"); err != nil {
+				t.Fatal(err)
+			}
+			m.mu.Lock()
+			same := m.procOfLocked("review.service") == proc
+			m.mu.Unlock()
+			if !same {
+				t.Fatal("restored unit replaced its live process")
+			}
+			// Make it unavailable again before proving stop still works.
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.Reload(); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := m.Stop("review.service"); err != nil {
 				t.Errorf("live unit became unreachable through stop: %v", err)
 			} else if proc.Alive() {
 				t.Error("successful stop left fixture alive")
+			}
+			if _, err := m.Start(ctx, "review.service"); err == nil {
+				t.Error("stopped unit without valid configuration started again")
 			}
 		})
 	}

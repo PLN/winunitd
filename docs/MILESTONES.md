@@ -22,9 +22,9 @@ Exit gate: supported builds and existing isolated test lanes pass; the two revie
 
 ## R1 — Ownership, output, and failure containment
 
-Status: planned. Dependencies: R0. Outcome: urgent correctness fixes in the existing implementation before structural refactoring.
+Status: in progress alongside remaining supervised R0 qualification. Dependencies for closure: R0. Outcome: urgent correctness fixes in the existing implementation before structural refactoring.
 
-- [ ] **R1.1 Reload:** retain live runtime/invocation records when files disappear or become invalid; keep status/log/stop access; prohibit duplicate replacement. Preserve the last accepted configuration on invalid replacement.
+- [ ] **R1.1 Reload:** process ownership fix implemented; live processes and in-flight start/stop calls retain their records and last accepted configuration when files disappear or become invalid. Status reports `LoadState=unavailable`; status/log/stop remain accessible, automatic restarts are suppressed, and a new process requires valid reloaded configuration. Required Windows regressions cover deletion, invalid replacement, recreation without duplicate launch, and stop; a controlled delayed-launch test covers reload before process creation returns. Local full race suite and vet pass. Native proxy/trigger coverage and CI confirmation remain before closing this work package.
 - [ ] **R1.2 Activation:** separate process creation from oneshot completion; drain stdout/stderr before waiting for readiness/exit; guarantee cleanup on timeout and launch failure.
 - [ ] **R1.3 Stop results:** propagate stop/kill/wait failures; retain ownership until termination is confirmed; reject relaunch when termination is uncertain. Keep current forced-stop behavior explicitly documented until R3.
 - [ ] **R1.4 Capture bounds:** cap/chunk unfinished lines and bound buffering; define behavior for slow/full storage without blocking child output indefinitely.

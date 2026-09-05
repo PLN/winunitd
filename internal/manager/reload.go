@@ -10,11 +10,10 @@ import (
 	"github.com/PLN/winunitd/internal/unit"
 )
 
-// Reload reparses unit files, rebuilds the graph, and preserves process
-// instances by keeping the whole unitRuntime for units that remain
-// (DESIGN.md §33). Enable files under enabled/<target>/<unit> become
-// extra Wants= on those targets. Parse and directory reads happen
-// outside m.mu; the map swap is under the lock (issue #26).
+// Reload reparses unit files and rebuilds the graph. Live processes and
+// in-flight lifecycle operations retain their runtime record even if the
+// configuration disappears. Parse and directory reads happen outside m.mu;
+// graph construction and the runtime map swap share the lock.
 func (m *Manager) Reload() (*protocol.DaemonReloadResult, error) {
 	loaded, result, err := m.parseUnitDir()
 	if err != nil {
@@ -23,16 +22,30 @@ func (m *Manager) Reload() (*protocol.DaemonReloadResult, error) {
 
 	loaded = mergeBuiltins(loaded, m.cfg.UserScope)
 	links := m.readEnabledLinks()
-	graphUnits := withEnabledWants(loaded, links)
+	m.mu.Lock()
+	// Retained configurations keep stop/dependency planning possible even when
+	// the latest directory no longer supplies a valid unit. Start admission is
+	// checked against the runtime record, not merely graph membership.
+	graphUnits := append([]*unit.Unit(nil), loaded...)
+	accepted := make(map[string]bool, len(loaded))
+	for _, u := range loaded {
+		accepted[core.NormalizeName(u.Name)] = true
+	}
+	for name, rt := range m.units {
+		if !accepted[name] && (rt.proc != nil || rt.operations != 0) {
+			graphUnits = append(graphUnits, rt.unit)
+		}
+	}
+	graphUnits = withEnabledWants(graphUnits, links)
 	g, err := core.Build(graphUnits)
 	if err != nil {
+		m.mu.Unlock()
 		return nil, protocol.ErrFailed(err.Error())
 	}
 	if c := g.OrderingCycle(); c != nil {
 		result.Cycle = c.Error()
 	}
 
-	m.mu.Lock()
 	dropped := m.replaceLocked(loaded, g, links)
 	m.mu.Unlock()
 	for _, td := range dropped {
@@ -117,6 +130,7 @@ func (m *Manager) replaceLocked(units []*unit.Unit, g *core.Graph, links map[str
 		}
 		targets := enabledTargetsFrom(links, name)
 		rt.unit = u
+		rt.unavailable = false
 		rt.enabled = len(targets) > 0
 		rt.targets = targets
 		next[name] = rt
@@ -126,15 +140,22 @@ func (m *Manager) replaceLocked(units []*unit.Unit, g *core.Graph, links map[str
 		if keep[name] {
 			continue
 		}
+		if rt.proc != nil || rt.operations != 0 {
+			rt.unavailable = true
+			rt.enabled = false
+			rt.targets = nil
+			rt.cancelRestart()
+			next[name] = rt
+			continue
+		}
 		td := rt.detachAsync()
 		td.cancelNonblocking()
 		dropped = append(dropped, td)
 	}
 	m.units = next
 	m.graph = g
-	// Running jobs stay on the kept unitRuntime. Vanished units are not
-	// stopped (DESIGN.md §33); their restart timers are cancelled above
-	// so a mid-delay drop cannot relaunch or leave SubAutoRestart.
+	// Live and in-flight records survive independently of configuration files.
+	// Unowned vanished units are dropped and their async controls cancelled.
 	m.syncTimersLocked()
 	m.syncHubsLocked()
 	return dropped

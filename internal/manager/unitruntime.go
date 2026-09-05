@@ -13,9 +13,11 @@ import (
 // unitRuntime is all per-unit manager state. Removing a name from
 // Manager.units tears this down in one place (issue #26).
 type unitRuntime struct {
-	unit    *unit.Unit
-	enabled bool
-	targets []string
+	unit        *unit.Unit
+	enabled     bool
+	targets     []string
+	unavailable bool // latest reload has no valid configuration for this record
+	operations  int  // in-flight lifecycle calls retain the record across reload
 
 	state         core.State
 	sub           core.Substate

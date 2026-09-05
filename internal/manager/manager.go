@@ -350,6 +350,9 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 		ActiveState: m.stateOfLocked(name).String(),
 	}
 	if rt != nil {
+		if rt.unavailable {
+			st.LoadState = "unavailable"
+		}
 		st.Enabled = rt.enabled
 		if rt.unit != nil {
 			st.Description = rt.unit.Description
