@@ -462,9 +462,13 @@ TimeoutStopSec=30s
 		t.Fatal("second Start did not return after TimeoutStopSec")
 	}
 
-	unlock, ok := m.ops.tryLock("foo.service")
-	if !ok {
-		t.Fatal("op lock still held after second Start")
+	// A late exit watcher can briefly acquire the same lock after Start
+	// returns. Require bounded acquisition, not an idle lock at one instant.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	unlock, err := m.ops.lockContext(ctx, "foo.service")
+	if err != nil {
+		t.Fatalf("op lock did not become available: %v", err)
 	}
 	unlock()
 }

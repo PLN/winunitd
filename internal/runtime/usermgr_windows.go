@@ -53,11 +53,6 @@ func StartUserManager(spec UserManagerSpec) (UserManagerProc, error) {
 		}
 		return nil, errors.Join(err, job.Close())
 	}
-	if spec.Daemon != nil {
-		if err := assignDaemonPID(spec.Daemon, p.pid); err != nil {
-			return failedUserManagerStart(p, err)
-		}
-	}
 	return p, nil
 }
 
@@ -201,6 +196,11 @@ func createUserManager(tok windows.Token, spec UserManagerSpec, job *DaemonJob) 
 	p := &userMgrProc{
 		sid: spec.SID, pid: int(pi.ProcessId), process: pi.Process,
 		thread: pi.Thread, job: job, unassigned: true,
+	}
+	// Attach the outer job first; each unit/user job must remain a sibling
+	// under it, rather than making the daemon job a child of the first unit.
+	if err := assignDaemonProcess(spec.Daemon, pi.Process); err != nil {
+		return p, err
 	}
 	if err := job.Assign(pi.Process); err != nil {
 		return p, err

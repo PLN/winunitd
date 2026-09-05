@@ -1,8 +1,6 @@
 package runtime
 
 import (
-	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -29,11 +27,8 @@ func TestAssignDaemonPIDDoesNotSwallowClosed(t *testing.T) {
 	if err == nil {
 		t.Fatal("closed daemon job must surface AssignPID error")
 	}
-	if errors.Is(err, errAlreadyInJob) {
-		t.Fatal("closed job is not nesting-denied")
-	}
-	if !strings.Contains(err.Error(), "not already-in-job/nesting") {
-		t.Fatalf("non-nesting error must be returned, not swallowed: %v", err)
+	if !strings.Contains(err.Error(), "daemon job assign") {
+		t.Fatalf("assignment error must be returned: %v", err)
 	}
 }
 
@@ -48,20 +43,9 @@ func TestAssignDaemonPIDInvalidPID(t *testing.T) {
 	if err == nil {
 		t.Fatal("pid 0 must fail")
 	}
-	if errors.Is(err, errAlreadyInJob) {
-		t.Fatal("invalid pid is not nesting-denied")
-	}
 	err = assignDaemonPID(j, -1)
 	if err == nil {
 		t.Fatal("negative pid must fail")
-	}
-}
-
-func TestAssignDaemonPIDIgnoresAlreadyInJob(t *testing.T) {
-	t.Parallel()
-	wrapped := fmt.Errorf("assign pid 4 to daemon job: %w", errAlreadyInJob)
-	if !errors.Is(wrapped, errAlreadyInJob) {
-		t.Fatal("sentinel must unwrap")
 	}
 }
 

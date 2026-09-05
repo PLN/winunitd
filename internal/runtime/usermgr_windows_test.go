@@ -435,3 +435,40 @@ func TestUserManagerKillCleansUnassignedProcess(t *testing.T) {
 		t.Fatal("unassigned process cleanup did not finish")
 	}
 }
+
+func TestUserManagersShareOuterJobWithoutSharingChildJob(t *testing.T) {
+	outer, err := OpenDaemonJob()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer outer.Close()
+	tok := testUserToken(t)
+	var procs []UserManagerProc
+	defer func() {
+		for _, p := range procs {
+			_ = p.Kill()
+		}
+	}()
+	for i := 0; i < 2; i++ {
+		p, err := StartUserManager(UserManagerSpec{
+			SID: tok.Info.SID, Token: tok, Exe: testAbs(t), Daemon: outer,
+			ExtraArgs: []string{winunitdHelperArgPrefix + "sleep"}, Env: helperEnv("WINUNITD_JOB_HELPER=sleep"),
+		})
+		if p != nil {
+			procs = append(procs, p)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		member, err := isProcessInJob(p.(*userMgrProc).process, outer.handle)
+		if err != nil || !member {
+			t.Fatalf("outer job membership=%v err=%v", member, err)
+		}
+	}
+	if err := procs[0].Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if !procs[1].Alive() {
+		t.Fatal("stopping one user manager killed its sibling")
+	}
+}

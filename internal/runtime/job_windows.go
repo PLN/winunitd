@@ -3,7 +3,6 @@
 package runtime
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -58,26 +57,13 @@ func (j *DaemonJob) AssignPID(pid int) error {
 	if pid <= 0 {
 		return fmt.Errorf("invalid pid %d", pid)
 	}
-	access := uint32(windows.PROCESS_SET_QUOTA | windows.PROCESS_TERMINATE)
+	access := uint32(windows.PROCESS_SET_QUOTA | windows.PROCESS_TERMINATE | windows.PROCESS_QUERY_LIMITED_INFORMATION)
 	h, err := windows.OpenProcess(access, false, uint32(pid))
 	if err != nil {
 		return fmt.Errorf("open process %d: %w", pid, err)
 	}
 	defer windows.CloseHandle(h)
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if j.handle == 0 {
-		return fmt.Errorf("daemon job is closed")
-	}
-	if err := windows.AssignProcessToJobObject(j.handle, h); err != nil {
-		// ERROR_ACCESS_DENIED is already-in-job / nesting refused on
-		// Windows that do not allow nested jobs.
-		if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
-			return errAlreadyInJob
-		}
-		return fmt.Errorf("assign pid %d to daemon job: %w", pid, err)
-	}
-	return nil
+	return j.Assign(h)
 }
 
 // Assign attaches an already-open process handle to the daemon job.
@@ -94,10 +80,27 @@ func (j *DaemonJob) Assign(process windows.Handle) error {
 	if j.handle == 0 {
 		return fmt.Errorf("daemon job is closed")
 	}
+	// Access denied can also mean a permissions or nesting failure. Only an
+	// explicit membership result proves that assignment is already satisfied.
+	member, err := isProcessInJob(process, j.handle)
+	if err != nil {
+		return fmt.Errorf("query daemon job membership: %w", err)
+	}
+	if member {
+		return nil
+	}
 	if err := windows.AssignProcessToJobObject(j.handle, process); err != nil {
 		return fmt.Errorf("assign process to daemon job: %w", err)
 	}
 	return nil
+}
+
+// assignDaemonProcess uses the creation handle while the child is suspended.
+func assignDaemonProcess(j *DaemonJob, process windows.Handle) error {
+	if j == nil {
+		return nil
+	}
+	return j.Assign(process)
 }
 
 // AssignSelf assigns the current process so future children inherit the job

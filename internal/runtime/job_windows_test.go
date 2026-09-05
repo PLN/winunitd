@@ -179,7 +179,7 @@ func TestKillDaemonTearsDownJob(t *testing.T) {
 	waitDone(t, sleeper, 5*time.Second)
 }
 
-func TestAssignDaemonPIDIgnoresAlreadyInJobWindows(t *testing.T) {
+func TestAssignDaemonPIDVerifiesExistingMembership(t *testing.T) {
 	sleeper := startSleepHelper(t, nil)
 	job, err := OpenDaemonJob()
 	if err != nil {
@@ -190,7 +190,7 @@ func TestAssignDaemonPIDIgnoresAlreadyInJobWindows(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := assignDaemonPID(job, sleeper.Process.Pid); err != nil {
-		t.Fatalf("already-in-job must be ignored: %v", err)
+		t.Fatalf("verified membership must succeed: %v", err)
 	}
 }
 
@@ -202,8 +202,8 @@ func TestAssignDaemonPIDDoesNotIgnoreOpenProcessDenied(t *testing.T) {
 	t.Cleanup(func() { _ = job.Close() })
 	// Pid 4 is the System process; OpenProcess typically ACCESS_DENIED.
 	err = assignDaemonPID(job, 4)
-	if errors.Is(err, errAlreadyInJob) {
-		t.Fatal("OpenProcess ACCESS_DENIED must not be treated as already-in-job")
+	if err == nil {
+		t.Fatal("System process assignment unexpectedly succeeded")
 	}
 }
 
@@ -226,6 +226,72 @@ func TestStartFailsWhenDaemonJobClosed(t *testing.T) {
 		_ = p.Stop(time.Second)
 	}
 	if err == nil {
-		t.Fatal("Start must fail when daemon AssignPID is not already-in-job")
+		t.Fatal("Start must fail when daemon job assignment fails")
 	}
+}
+
+func queryOnlyDaemonJob(t *testing.T) *DaemonJob {
+	t.Helper()
+	job, err := OpenDaemonJob()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = job.Close() })
+	var h windows.Handle
+	if err := windows.DuplicateHandle(windows.CurrentProcess(), job.handle,
+		windows.CurrentProcess(), &h, 0x0004 /* JOB_OBJECT_QUERY */, false, 0); err != nil {
+		t.Fatal(err)
+	}
+	limited := &DaemonJob{handle: h}
+	t.Cleanup(func() { _ = limited.Close() })
+	return limited
+}
+
+func TestAssignDaemonRejectsUnverifiedAccessDenied(t *testing.T) {
+	job := queryOnlyDaemonJob(t)
+	sleeper := startSleepHelper(t, nil)
+	err := assignDaemonPID(job, sleeper.Process.Pid)
+	if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		t.Fatalf("assignment without assign rights: %v", err)
+	}
+	member, err := isProcessInJob(windows.CurrentProcess(), job.handle)
+	if err != nil || member {
+		t.Fatalf("unexpected test-parent membership: member=%v err=%v", member, err)
+	}
+}
+
+func TestLaunchRejectsUnownedDaemonJob(t *testing.T) {
+	t.Run("unit", func(t *testing.T) {
+		job := queryOnlyDaemonJob(t)
+		proc, err := NewLauncher(job).Start(context.Background(), StartSpec{
+			Unit: "unowned.service", Type: unit.TypeSimple,
+			Argv: []string{testAbs(t), winunitdHelperArgPrefix + "sleep"}, Env: helperEnv("WINUNITD_JOB_HELPER=sleep"),
+		})
+		if proc != nil {
+			t.Cleanup(func() { _ = proc.Stop(time.Second) })
+		}
+		if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			t.Fatalf("unowned launch result: %v", err)
+		}
+		if proc != nil {
+			t.Fatal("failed unit launch did not finish cleanup")
+		}
+	})
+	t.Run("user", func(t *testing.T) {
+		job := queryOnlyDaemonJob(t)
+		tok := testUserToken(t)
+		proc, err := StartUserManager(UserManagerSpec{
+			SID: tok.Info.SID, Token: tok, Exe: testAbs(t), Daemon: job,
+			ExtraArgs: []string{winunitdHelperArgPrefix + "sleep"}, Env: helperEnv("WINUNITD_JOB_HELPER=sleep"),
+		})
+		if proc != nil {
+			t.Cleanup(func() { _ = proc.Kill() })
+		}
+		if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			t.Fatalf("unowned launch result: %v", err)
+		}
+		if proc != nil {
+			t.Fatal("failed user launch did not finish cleanup")
+		}
+	})
 }

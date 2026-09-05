@@ -214,6 +214,11 @@ func (l *winLauncher) create(spec StartSpec) (*winProc, error) {
 		stdout: os.NewFile(uintptr(stdoutR), spec.Unit+"-stdout"),
 		stderr: os.NewFile(uintptr(stderrR), spec.Unit+"-stderr"),
 	}
+	// Attach the outer job first; each unit/user job must remain a sibling
+	// under it, rather than making the daemon job a child of the first unit.
+	if err := assignDaemonProcess(l.daemon, pi.Process); err != nil {
+		return p, err
+	}
 	if err := job.Assign(pi.Process); err != nil {
 		return p, err
 	}
@@ -222,9 +227,6 @@ func (l *winLauncher) create(spec StartSpec) (*winProc, error) {
 		if err := setProcessIoPriority(pi.Process, spec.Limits.IoPriority); err != nil {
 			return p, err
 		}
-	}
-	if err := assignDaemonPID(l.daemon, int(pi.ProcessId)); err != nil {
-		return p, err
 	}
 	if _, err := windows.ResumeThread(pi.Thread); err != nil {
 		return p, fmt.Errorf("ResumeThread: %w", err)
