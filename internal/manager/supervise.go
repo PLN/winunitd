@@ -378,9 +378,8 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 	rt := m.units[name]
 	if rt == nil || rt.proc != proc {
 		m.mu.Unlock()
-		// No longer the live proc: still close what we were given if
-		// launchUnit (or another owner) has not already (issue #25).
-		teardownJob(proc)
+		// Ownership only moves after confirmed cleanup. A stale watcher must
+		// not repeat termination/handle closure after another operation did it.
 		return
 	}
 	if rt.stopUncertain {

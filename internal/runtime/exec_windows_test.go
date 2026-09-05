@@ -240,6 +240,37 @@ func TestStopWaitFailurePreservesProcessHandle(t *testing.T) {
 	}
 }
 
+func TestStopJobQueryFailurePreservesProcessHandle(t *testing.T) {
+	p := startHelper(t, "sleep", unit.TypeSimple, 0).(*winProc)
+	job := p.job
+	if err := job.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = p.Wait(ctx)
+	if p.Alive() {
+		t.Fatal("main process did not exit")
+	}
+	// This job's Kill is a no-op, but querying its process list fails. Main
+	// process exit alone must not allow Stop to discard the remaining handles.
+	p.job = &UnitJob{}
+	t.Cleanup(func() { p.job = job; _ = p.Stop(time.Second) })
+	if err := p.Stop(time.Second); err == nil {
+		t.Fatal("failed job query reported confirmed termination")
+	}
+	p.mu.Lock()
+	retained := !p.closed && p.process != 0
+	p.mu.Unlock()
+	if !retained {
+		t.Fatal("failed job query discarded process handle")
+	}
+	p.job = job
+	if err := p.Stop(time.Second); err != nil {
+		t.Fatal("retry failed", err)
+	}
+}
+
 func TestStopKillFailurePreservesProcessHandle(t *testing.T) {
 	p := startHelper(t, "sleep", unit.TypeSimple, 0).(*winProc)
 	job := p.job

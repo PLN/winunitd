@@ -15,10 +15,8 @@ import (
 	"github.com/PLN/winunitd/internal/runtime"
 )
 
-// TestLaunchUnitEvictsDeadProcOwnsJobTeardown forces the issue #25 window:
-// Alive() is false, watch is still blocked in Wait, and an immediate Start
-// evicts the unreaped proc. The evictor must job.Kill() and Close; watch's
-// later early return must still Close (idempotent).
+// A start that overtakes the exited invocation's watcher must finish cleanup
+// before installing a replacement. The delayed watcher cannot repeat cleanup.
 func TestLaunchUnitEvictsDeadProcOwnsJobTeardown(t *testing.T) {
 	t.Parallel()
 	launch := newHoldExitLauncher()
@@ -75,7 +73,10 @@ Restart=no
 	}
 
 	first.releaseWait()
-	waitCond(t, func() bool { return first.closedCount() >= 2 })
+	m.watch("tree.service", first)
+	if got := first.closedCount(); got != 1 {
+		t.Fatalf("stale watcher repeated cleanup: closes=%d", got)
+	}
 	assertState(t, m, "tree.service", core.Active)
 }
 
