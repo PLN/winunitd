@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
@@ -96,6 +97,9 @@ func (m *Manager) stopSCM(ctx context.Context, serviceName string, timeout time.
 	if m.scm == nil {
 		return fmt.Errorf("SCM client is not configured")
 	}
-	_, err := m.scm.Stop(ctx, serviceName, timeout)
-	return err
+	key := stopKey{nativeKind: "scm", nativeName: strings.ToLower(serviceName)}
+	return m.awaitStop(ctx, key, timeout, func() error {
+		_, err := m.scm.Stop(ctx, serviceName, timeout)
+		return err
+	})
 }

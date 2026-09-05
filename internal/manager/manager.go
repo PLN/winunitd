@@ -41,7 +41,7 @@ type Manager struct {
 	session        sync.Mutex // serializes graphical-session.target start/stop
 	ops            unitOps    // per-unit start/stop/restart (issue #24)
 	stopMu         sync.Mutex
-	stopAttempts   map[runtime.Process]*processStopAttempt
+	stopAttempts   map[stopKey]*stopAttempt
 }
 
 // New creates a manager. Reload must be called to load units.

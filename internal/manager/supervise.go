@@ -669,7 +669,13 @@ func stopTimeout(u *unit.Unit) time.Duration {
 	return defaultStopTimeout
 }
 
-type processStopAttempt struct {
+type stopKey struct {
+	proc       runtime.Process
+	nativeKind string
+	nativeName string
+}
+
+type stopAttempt struct {
 	done chan struct{}
 	err  error
 }
@@ -685,21 +691,30 @@ func (m *Manager) stopProcessContext(ctx context.Context, proc runtime.Process, 
 	if proc == nil {
 		return nil
 	}
+	return m.awaitStop(ctx, stopKey{proc: proc}, timeout, func() error { return proc.Stop(timeout) })
+}
+
+// awaitStop bounds the caller's wait while retaining a single pending adapter
+// operation per process or native target, including calls blocked inside the OS.
+func (m *Manager) awaitStop(ctx context.Context, key stopKey, timeout time.Duration, stop func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// A caller deadline does not cancel an adapter call already inside the OS.
-	// Keep one attempt per process; retries join it instead of closing handles
+	// Keep one attempt per target; retries join it instead of closing handles
 	// concurrently or accumulating another blocked Stop goroutine each time.
 	m.stopMu.Lock()
 	if m.stopAttempts == nil {
-		m.stopAttempts = make(map[runtime.Process]*processStopAttempt)
+		m.stopAttempts = make(map[stopKey]*stopAttempt)
 	}
-	attempt := m.stopAttempts[proc]
+	attempt := m.stopAttempts[key]
 	if attempt == nil {
-		attempt = &processStopAttempt{done: make(chan struct{})}
-		m.stopAttempts[proc] = attempt
-		go func(a *processStopAttempt) {
-			a.err = proc.Stop(timeout)
+		attempt = &stopAttempt{done: make(chan struct{})}
+		m.stopAttempts[key] = attempt
+		go func(a *stopAttempt) {
+			a.err = stop()
 			m.stopMu.Lock()
-			delete(m.stopAttempts, proc)
+			delete(m.stopAttempts, key)
 			m.stopMu.Unlock()
 			close(a.done)
 		}(attempt)

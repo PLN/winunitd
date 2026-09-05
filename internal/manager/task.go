@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
@@ -96,6 +97,9 @@ func (m *Manager) stopTask(ctx context.Context, taskName string, timeout time.Du
 	if m.tasks == nil {
 		return fmt.Errorf("Task Scheduler client is not configured")
 	}
-	_, err := m.tasks.Stop(ctx, taskName, timeout)
-	return err
+	key := stopKey{nativeKind: "task", nativeName: strings.ToLower(taskName)}
+	return m.awaitStop(ctx, key, timeout, func() error {
+		_, err := m.tasks.Stop(ctx, taskName, timeout)
+		return err
+	})
 }
