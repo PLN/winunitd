@@ -64,7 +64,7 @@ Exit gate: conformance tests cover startup, explicit stop, restart, natural exit
 Status: planned. Dependencies: R2, R3. Outcome: real Windows identities and session transitions behave as designed.
 
 - [ ] **R4.1 Launch context:** select and implement a SYSTEM-to-user process launch mechanism that obeys cross-session handle rules. Obtain the target user's profile/environment/known folders; exclude arbitrary broker environment; track profile and token lifetime.
-- [ ] **R4.2 User host:** define interactive-user admission; reconcile sessions and manager exits; acquire fresh tokens on bounded recovery; cancel in-flight launch/recovery on logoff, disable-linger, and shutdown.
+- [ ] **R4.2 User host:** resolve the [interactive user admission proposal](USER-ADMISSION.md); reconcile sessions and manager exits; acquire fresh tokens on bounded recovery; cancel in-flight launch/recovery on logoff, admission changes, disable-linger, and shutdown.
 - [ ] **R4.3 SCM/maintenance:** report readiness after listener/coordinator initialization; keep diagnostics available when workload configuration is invalid; implement a global maintenance barrier with one deadline across user managers and system units.
 - [ ] **R4.4 Security:** verify pipe ownership/DACL/token checks, UAC-filtered users, cross-user rejection, protected privileged paths, reparse-point handling, and no unintended inherited handles.
 - [ ] **R4.5 Linger modes:** qualify explicit headless S4U behavior and its credential limitations. Any unqualified optional credential-store mode remains disabled/experimental and is excluded from supported release claims.

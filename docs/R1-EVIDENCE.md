@@ -86,6 +86,8 @@ Ten race-enabled repetitions cover four stalled scans outliving their callers, r
 
 ## Remaining qualification
 
+Five aggregate-pressure repetitions filled the 16 MiB shared queue using five independent capture groups while storage was stalled. Each group stayed within 4 MiB, quiet-unit loss was counted, all queued bytes drained after recovery, and subsequent quiet output persisted. This confirms the current drop-new policy's limit: several noisy invocations can crowd out a quiet one at total saturation. The single-invocation cap is not a per-unit fairness guarantee.
+
 - Windows identity/session scenarios and broader installer qualification remain open.
 - Journal qualification still needs aggregate overload fairness and lifecycle admission bounds; actual volume exhaustion passed on Server Core and injected read stalls preserve bounded worker admission.
 - Immutable configuration revisions and stale-event handling remain R2 work; service stop semantics remain R3 work.
