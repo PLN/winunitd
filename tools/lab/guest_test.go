@@ -6,8 +6,50 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestGuestFailurePreservesPrivateDiagnostics(t *testing.T) {
+	for _, scenario := range []string{"exit", "signal", "stdout-truncated", "stderr-truncated"} {
+		t.Run(scenario, func(t *testing.T) {
+			c := config{Node: "lab", StateDir: t.TempDir()}
+			a := testAPI(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					_, _ = w.Write([]byte(`{"data":{"pid":42}}`))
+					return
+				}
+				status := map[string]any{"exited": 1, "exitcode": 0, "out-data": "private stdout", "err-data": "private stderr"}
+				switch scenario {
+				case "exit":
+					status["exitcode"] = 1
+				case "signal":
+					status["signal"] = 9
+				case "stdout-truncated":
+					status["out-truncated"] = 1
+				case "stderr-truncated":
+					status["err-truncated"] = true
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": status})
+			})
+			out, err := guestExec(context.Background(), a, c, 200, "fixture command")
+			if err == nil || out != "" || strings.Contains(err.Error(), "private stdout") || strings.Contains(err.Error(), "private stderr") {
+				t.Fatalf("failure escaped private diagnostics: %q, %v", out, err)
+			}
+			files, err := filepath.Glob(filepath.Join(c.StateDir, "guest-failure-*.json"))
+			if err != nil || len(files) != 1 {
+				t.Fatal("private diagnostic missing")
+			}
+			raw, err := os.ReadFile(files[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(raw), "private stdout") || !strings.Contains(string(raw), "private stderr") || strings.Contains(string(raw), "fixture command") {
+				t.Fatal("diagnostic omitted output or stored command text")
+			}
+		})
+	}
+}
 
 func TestOwnershipRejectsReusedGuestAndDrift(t *testing.T) {
 	for _, scenario := range []string{"owned", "reused-id", "other-pool", "other-node", "other-network", "extra-network", "missing-record"} {

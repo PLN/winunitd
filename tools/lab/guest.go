@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -154,17 +155,23 @@ func guestExec(ctx context.Context, a *api, c config, vmid int, script string) (
 	}
 	for {
 		var status struct {
-			Exited    int    `json:"exited"`
-			ExitCode  int    `json:"exitcode"`
-			Output    string `json:"out-data"`
-			Truncated int    `json:"out-truncated"`
+			Exited         int             `json:"exited"`
+			ExitCode       int             `json:"exitcode"`
+			Signal         int             `json:"signal,omitempty"`
+			Output         string          `json:"out-data"`
+			Error          string          `json:"err-data"`
+			Truncated      json.RawMessage `json:"out-truncated,omitempty"`
+			ErrorTruncated json.RawMessage `json:"err-truncated,omitempty"`
 		}
 		if err := a.call(ctx, http.MethodGet, endpoint+"exec-status", url.Values{"pid": {strconv.Itoa(started.PID)}}, &status); err != nil {
 			return "", err
 		}
 		if status.Exited != 0 {
-			if status.ExitCode != 0 || status.Truncated != 0 {
-				return "", fmt.Errorf("guest command failed or output was truncated")
+			if status.ExitCode != 0 || status.Signal != 0 || outputTruncated(status.Truncated) || outputTruncated(status.ErrorTruncated) {
+				if err := saveGuestFailure(c, vmid, started.PID, script, status); err != nil {
+					return "", fmt.Errorf("guest command failed; private diagnostics could not be saved")
+				}
+				return "", fmt.Errorf("guest command failed or output was truncated; diagnostics saved in private controller state")
 			}
 			return status.Output, nil
 		}
@@ -174,6 +181,31 @@ func guestExec(ctx context.Context, a *api, c config, vmid int, script string) (
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+// Proxmox versions may encode flags as JSON booleans or integers.
+// Unknown representations fail closed rather than accepting incomplete evidence.
+func outputTruncated(raw json.RawMessage) bool {
+	return len(raw) != 0 && string(raw) != "false" && string(raw) != "0" && string(raw) != "null"
+}
+
+func saveGuestFailure(c config, vmid, pid int, script string, status any) error {
+	if !filepath.IsAbs(c.StateDir) {
+		return fmt.Errorf("private state directory required")
+	}
+	data, err := json.MarshalIndent(map[string]any{
+		"schema": 1, "vmid": vmid, "pid": pid, "captured": time.Now().UTC(),
+		"command_sha256": fmt.Sprintf("%x", sha256.Sum256([]byte(script))), "status": status,
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(c.StateDir, "guest-failure-*.json")
+	if err != nil {
+		return err
+	}
+	_, writeErr := f.Write(data)
+	return errors.Join(writeErr, f.Close())
 }
 
 func waitGuest(a *api, c config, vmid int) error {

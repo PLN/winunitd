@@ -141,7 +141,7 @@ Verified desktop media:
 | Windows 11 Enterprise 25H2 en-US x64 | `a61adeab895ef5a4db436e0a7011c92a2ff17bb0357f58b13bbc4062e535e7b9` |
 | Windows 11 Enterprise LTSC 2024 en-US x64 | `67cec5865eaa037a72ddc633a717a10a2bed50778862267223ddb9c60ef5da68` |
 
-Both digests match the [Microsoft verification PDF](https://cdn-dynmedia-1.microsoft.com/is/content/microsoftcorp/microsoft/bade/documents/products-and-services/en-us/owned-and-operated/Verify-Download-Win11-Enterprise.pdf) linked from the [Evaluation Center downloads](https://www.microsoft.com/en-us/evalcenter/download-windows-11-enterprise). Enterprise 25H2 is downloaded but has not yet run the smoke.
+Both digests match the [Microsoft verification PDF](https://cdn-dynmedia-1.microsoft.com/is/content/microsoftcorp/microsoft/bade/documents/products-and-services/en-us/owned-and-operated/Verify-Download-Win11-Enterprise.pdf) linked from the [Evaluation Center downloads](https://www.microsoft.com/en-us/evalcenter/download-windows-11-enterprise). Enterprise 25H2 was still pending at that checkpoint; its subsequent smoke is recorded in the trusted Gitea artifact experiment above.
 
 ### Original supervised bring-up
 
@@ -175,3 +175,9 @@ Passed on Server Core build 26100.32230:
 - Explicit SCM stop removed the fixture process. Logs and unit files were collected outside the guest before shutdown.
 
 The guest is retained powered off, with host autostart disabled, for follow-up work. It is not a generalized template. Private scripts, complete logs, activation expiry, and resource ownership are recorded in the operator workspace. This supervised smoke does not establish repeatable CI provisioning, current patch compliance, standard-user/session behavior, runtime fault recovery, MSI servicing, or release qualification.
+
+## R1 follow-up qualification
+
+The exact `40ce624` GitHub Windows artifact passed SYSTEM service installation, reboot recovery, SCM stop, and additional output/reload/notify regressions on a disposable copy of the maintained Enterprise LTSC Evaluation baseline. See [R1 qualification evidence](R1-EVIDENCE.md#offline-ltsc-system-qualification) for source and fixture identities, results, and limits. Baseline copying and cleanup preparation were supervised; this does not establish generalized-image or unattended clone provisioning.
+
+The smoke fixture now supplies its own PowerShell execution-policy argument. Failed or truncated guest commands save stdout, stderr, exit/signal status, and command hash in the private controller state directory; console errors do not include guest output or the command body. Both boolean and integer truncation flags are handled, including stderr truncation. This preserves actionable diagnostics without publishing guest data.

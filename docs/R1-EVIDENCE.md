@@ -18,7 +18,7 @@ Native watcher close retries retain failed handles and drain outstanding waits/r
 
 ## Validation
 
-All GitHub CI lanes passed for `2371a54`. Full local race tests with CI flags and vet cover unit/native cleanup, real-child storage stalls, and failed launch ownership. Focused repetitions include 100 timer activations, ten shutdown/native-stop deadline scenarios, and five real-child storage stalls. The timer/readiness regressions distinguish their fake-clock deadlines from cleanup deadlines.
+All GitHub CI lanes passed for `40ce624`. Full local race tests with CI flags and vet cover unit/native cleanup, real-child storage stalls, and failed launch ownership. Focused repetitions include 100 timer activations, ten shutdown/native-stop deadline scenarios, and five real-child storage stalls. The timer/readiness regressions distinguish their fake-clock deadlines from cleanup deadlines.
 
 An early-child-exit regression exposed that an empty job list (and zero active-process count) can precede process-handle signaling; exit capture now closes admission before enumeration and retains synchronization handles across retries. Twenty focused Windows repetitions and protected-handle tests verify termination confirmation, close failures, and retry.
 
@@ -34,9 +34,29 @@ Five journal repetitions cover partial disk-full/short-write failures, preservat
 
 Native registry, Event Log, and directory watchers now serialize close retries and retain failed handles. Registry close drains its waiter; directory close waits for canceled overlapped reads before releasing buffers and handles. PathExists retains failed replaced watches and watches opened during close. Protected-handle, concurrent-close, callback-failure, and replacement-ownership regressions pass, along with the full local race suite and vet.
 
-Twenty repeated manager tests cover failed watch stop retained across reload, pending-close deadlines, and partial-open failure blocking replacement. A retry can join an already pending failure; a subsequent fresh attempt is tested separately. CI confirmation for the manager watcher changes remains pending. These results are implementation progress, not milestone closure or installation qualification.
+Twenty repeated manager tests cover failed watch stop retained across reload, pending-close deadlines, and partial-open failure blocking replacement. A retry can join an already pending failure; a subsequent fresh attempt is tested separately. These results are implementation progress, not milestone closure or installation qualification.
 
-Notification listeners now serialize cancellation and close, propagate failures through explicit stop, launch/readiness cleanup, ordinary exit, watchdog failure, and manager close, and retain failed ownership for retry. Ten repeated tests cover these failures, concurrent close waiting for server exit, and deadlines joining the pending listener close. Full local race tests and vet pass. CI confirmation for this change remains pending.
+Notification listeners now serialize cancellation and close, propagate failures through explicit stop, launch/readiness cleanup, ordinary exit, watchdog failure, and manager close, and retain failed ownership for retry. Ten repeated tests cover these failures, concurrent close waiting for server exit, and deadlines joining the pending listener close. Full local race tests and vet pass. All CI lanes passed for this change in `40ce624`.
+
+## Offline LTSC SYSTEM qualification
+
+A disposable full copy of the maintained Windows 11 Enterprise LTSC Evaluation baseline, build **26100.9168**, passed the service smoke and [runtime regression script](../tools/lab/assets/runtime-checks.ps1) as **SYSTEM**, with Secure Boot enabled and no default route. The retained source baseline was unchanged. This was a baseline copy, not a fresh installation or a generalized template.
+
+The guest consumed the exact native Windows artifact from GitHub run `33975217055`, source `40ce62439e9b75cdb040c9c693493bae75d10955`. All three binary hashes matched the Linux cross-build manifest. The runtime script SHA256 was `7faf7efe78ee0b73e954492492e8a4f2cd5cef9461dbb607c486594983d6f153`; private results record both identities.
+
+Passed scenarios:
+
+- CLI service installation, enable/start, status/logs, explicit stop, and second start.
+- Automatic recovery after reboot with a new invocation and exactly one SYSTEM fixture process; SCM stop left no fixture process.
+- Oneshot capture of all 5,000 stdout and 5,000 stderr records, plus 131,073 unterminated output bytes across journal fragments.
+- Deletion of a live unit definition with retained status, logs, invocation, and stop routing; recreation launched a new invocation.
+- Ten notify-ready/start/stop/reopen cycles, followed by SCM cleanup with no surviving runtime fixture.
+
+The initial smoke exposed a harness assumption: its PowerShell fixture relied on ambient execution policy. The daemon correctly logged the rejected script launches and reached its start limit. Fixtures now pass `-ExecutionPolicy Bypass` explicitly to their own PowerShell processes. Machine policy was not changed. The failed attempt's evidence was preserved before the clean rerun.
+
+After evidence collection, guarded retirement verified removal of the disposable guest and its disks. The retained baselines remained stopped.
+
+This qualification covers the CLI-installed service and runtime behavior. It does not qualify a production MSI, standard-user/session transitions, or all supported Windows baselines.
 
 ## Remaining qualification
 
