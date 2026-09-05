@@ -45,7 +45,7 @@ func run() error {
 	commit := flag.String("commit", "", "full reviewed source commit for artifact admission")
 	flag.Parse()
 	if *file == "" || flag.NArg() != 1 {
-		return fmt.Errorf("usage: lab -config PRIVATE_FILE [options] probe|create|wait|smoke|detach|retire")
+		return fmt.Errorf("usage: lab -config PRIVATE_FILE [options] probe|create|wait|smoke|detach|retire|reconcile")
 	}
 	f, err := os.Open(*file)
 	if err != nil {
@@ -65,6 +65,9 @@ func run() error {
 	a, err := newAPI(c.APIOrigin, c.CAFile, c.TokenFile)
 	if err != nil {
 		return err
+	}
+	if flag.Arg(0) == "reconcile" {
+		return reconcile(a, c)
 	}
 	if flag.Arg(0) != "probe" {
 		if !filepath.IsAbs(c.StateDir) || *vmid < c.FirstVMID || *vmid > c.LastVMID || c.FirstVMID < 100 {

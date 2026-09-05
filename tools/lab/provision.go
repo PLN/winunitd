@@ -24,6 +24,7 @@ type runRecord struct {
 	VMID          int       `json:"vmid"`
 	Marker        string    `json:"marker"`
 	Created       time.Time `json:"created"`
+	Expires       time.Time `json:"expires"`
 	State         string    `json:"state"`
 	OSISO         string    `json:"os_iso"`
 	BootstrapISO  string    `json:"bootstrap_iso"`
@@ -98,6 +99,7 @@ func createGuest(a *api, c config, vmid int, osISO, bootstrapISO string) error {
 	}
 	id := hex.EncodeToString(idBytes)
 	r := runRecord{Schema: 1, ID: id, Node: c.Node, Pool: c.Pool, VMID: vmid, Marker: "winunitd-lab-run:" + id, Created: time.Now().UTC(), State: "allocating", OSISO: osISO, BootstrapISO: bootstrapISO}
+	r.Expires = r.Created.Add(24 * time.Hour)
 	recordPath := filepath.Join(c.StateDir, id+".json")
 	if err := saveRecord(recordPath, r); err != nil {
 		return err
