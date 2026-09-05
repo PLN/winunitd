@@ -62,12 +62,20 @@ This qualification covers the CLI-installed service and runtime behavior. It doe
 
 The writer now retains complete accepted records and the exact unwritten suffix after a partial disk write. Pending data is bounded per file to a 4 KiB batch or one oversized serialized record; the capture queue limits remain separate. New records for a failed file are rejected while a single scheduled flush retries with 1 to 30 second backoff. Recovery does not require new workload output or reopening the store. Failed close counts any pending records it abandons, including records partly written to disk.
 
-Five repeated disk-full recovery/close tests and twenty short-write repetitions verify automatic recovery without new output, exact suffix continuation without duplicates, subsequent records, and pending-loss accounting. Full local race tests and vet validate integration. This is injected-storage evidence; the LTSC VM results above precede this change. Actual volume exhaustion and CI confirmation remain pending.
+Five repeated disk-full recovery/close tests and twenty short-write repetitions verify automatic recovery without new output, exact suffix continuation without duplicates, subsequent records, and pending-loss accounting. Full local race tests and vet validate integration. GitHub run `33976191703` passed for source `181472e01c9e9d2d4e5b2925bb401fabf0daf847`.
+
+### Actual volume exhaustion
+
+An offline disposable copy of the Server Core evaluation baseline, build `26100.33296`, passed `TestDisposableVolumeDiskFullRecovery` as SYSTEM. The fixture created a separate 64 MiB NTFS virtual disk, filled it with real writes until Windows returned a native disk-full error, and freed only its owned filler file. The journal recovered its pending record without a new write, query, wait, or store reopen; the rejected record was counted, subsequent output persisted, and no records were duplicated. The test passed in 2.16 seconds. Volume detachment and test-process exit were verified afterward.
+
+The test binary used source `181472e01c9e9d2d4e5b2925bb401fabf0daf847` plus the new opt-in test, compiled locally without the race detector. Its SHA256 was `3ced8890bdd4fec7fce93c9d5e2f6398518f59c38267836f7aaad03d9d1ce139`; test-source SHA256 was `85a3f3467c10399d7c92e902da9e7ea7dbad29b626363a50fcf080f9ea340a38`. The executed `tools/lab/assets/journal-pressure.ps1` SHA256 was `360447dbf4a16d247f592f1acc2e1989f9eeba01e6f42a05de4d58471dcb7051`. Raw results and the initial fixture argument-parsing failure remain private. This qualifies the journal storage path on that baseline, not a complete service or installer scenario.
+
+To reproduce, compile the journal package with `go test -c -trimpath`, put `journal.test.exe` on fixture CD media, and run `journal-pressure.ps1 -DisposableLab` as SYSTEM in an offline disposable Windows guest. Ordinary test runs skip the volume test unless `WINUNITD_TEST_JOURNAL_VOLUME` is set; the test also requires a separate 16-128 MiB volume labeled `winunitd-test`. A skipped run is not qualification.
 
 ## Remaining qualification
 
 - Accepted notification-client connection cleanup and post-allocation open failures still need failure-injection qualification.
 - Post-allocation failures inside watcher open adapters need an explicit ownership contract.
 - Windows identity/session scenarios and broader installer qualification remain open.
-- Journal qualification still needs real-volume exhaustion, aggregate overload fairness, read-path stalls, and lifecycle admission bounds.
+- Journal qualification still needs aggregate overload fairness, read-path stalls, and lifecycle admission bounds; actual volume exhaustion has passed on Server Core.
 - Immutable configuration revisions and stale-event handling remain R2 work; service stop semantics remain R3 work.
