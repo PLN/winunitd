@@ -1,6 +1,6 @@
 # Revision 2 implementation milestones
 
-September 5, 2026. Implements [ROADMAP.md](../ROADMAP.md) and [Design v2](../DESIGN.md). Every milestone below is **planned**; documentation adoption does not complete implementation. Work-package IDs are suitable issue-title prefixes. This file defines repository milestones; no GitHub milestone objects or implementation issues have been created by this documentation change.
+September 5, 2026. Implements [ROADMAP.md](../ROADMAP.md) and [Design v2](../DESIGN.md). R0 is **in progress**; later milestones remain planned. Documentation adoption does not complete implementation. Work-package IDs are suitable issue-title prefixes. This file defines repository milestones; no GitHub milestone objects or implementation issues have been created by this documentation change.
 
 ## Acceptance rules
 
@@ -10,11 +10,11 @@ Do not change existing pilot ownership merely to run tests. Use isolated endpoin
 
 ## R0 — Reproducible baseline and qualification harness
 
-Status: planned. Dependencies: none. Outcome: a safe, repeatable way to prove subsequent work.
+Status: in progress. Dependencies: none. Outcome: a safe, repeatable way to prove subsequent work. Initial implementation and qualification evidence: [R0 baseline](R0-BASELINE.md).
 
 - [ ] **R0.1 Toolchain:** pin a supported patched Go compiler separately from minimum language compatibility; record local/CI/build metadata; pin action revisions and define update/vulnerability-check policy.
-- [ ] **R0.2 Isolation:** prevent integration tests from connecting to the real system/user manager; give fixtures dedicated endpoint/data namespaces and bounded process cleanup.
-- [ ] **R0.3 Review reproductions:** retain opt-in failing reproductions for reload ownership and large-output oneshots with small-output controls. Record baseline failure signatures; R1 converts them into passing required regressions. Do not disguise them as passing functionality tests.
+- [x] **R0.2 Isolation:** prevent integration tests from connecting to the real system/user manager; give fixtures dedicated endpoint/data namespaces and bounded process cleanup. Implemented in `15ccd9d`; test-daemon endpoint guards and isolated user-manager scenarios pass.
+- [x] **R0.3 Review reproductions:** retain opt-in failing reproductions for reload ownership and large-output oneshots with small-output controls. Recorded in `15ccd9d`; deletion/invalid replacement and large stdout/stderr reproduce the defects, small-output controls pass, independent cleanup completes. R1 converts them into passing required regressions.
 - [ ] **R0.4 Windows harness:** implement the [qualification lab plan](TEST-LAB.md) for disposable VM setup and evidence collection for SCM, SYSTEM, standard users, sessions, reboot, and installer failure injection. A first Server 2025 Core evaluation deployment and supervised SYSTEM/SCM/reboot smoke passed with source and artifact identities recorded. Reproducible baselines, isolated networking, controller, CI integration, and broader scenarios remain pending.
 - [ ] **R0.5 Packaging spike:** pin WiX/SDK candidates and applicable terms; prototype advanced service settings and rollback-aware long-stop behavior using a fixture service. Record helper strategy and observed MSI constraints.
 

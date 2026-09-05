@@ -23,7 +23,7 @@ Feature expansion is paused through the stabilization milestones. Existing trigg
 
 ## Milestone sequence
 
-All implementation milestones start **planned**. Their IDs are stable work-tracking identifiers, not release versions or deadlines. Preparation may overlap; completion requires the listed predecessors and the detailed exit gates.
+R0 is **in progress**; the remaining implementation milestones are **planned**. Their IDs are stable work-tracking identifiers, not release versions or deadlines. Preparation may overlap; completion requires the listed predecessors and the detailed exit gates. See the milestones for completed work packages and qualification evidence.
 
 | ID | Outcome | Depends on | Completion signal |
 | --- | --- | --- | --- |
