@@ -6,7 +6,7 @@ This roadmap adopts the direction of the [architecture review](docs/DESIGN-REVIE
 
 ## Product objective
 
-Provide a dependable Windows-native supervisor for cooperating background applications: declarative configuration, process-tree ownership, ordered lifecycle operations, recovery, user execution, and useful diagnostics. The first end-to-end acceptance workload is Hermes on dev.
+Provide a dependable Windows-native supervisor for cooperating background applications: declarative configuration, process-tree ownership, ordered lifecycle operations, recovery, user execution, and useful diagnostics. The first end-to-end acceptance workload is Hermes on the dev machine.
 
 Keep Go, the portable core and Windows adapters, one SCM system manager, per-user managers, Job Objects, local named pipes, INI units, and the three existing executables. Evolve the current implementation incrementally. Windows retains responsibility for boot, sessions, security, and native service ownership.
 
@@ -34,7 +34,7 @@ All implementation milestones start **planned**. Their IDs are stable work-track
 | R4 | Qualified Windows identities and managers | R2, R3 | Real SCM/SYSTEM/user launches, environment, crash recovery, logoff, and bounded maintenance verified |
 | R5 | Durable scheduling and operational diagnostics | R2, R3 | Timer crash policy, bounded resource use, storage errors, structured status, and daemon diagnostics verified |
 | R6 | Serviceable internal MSI | R3, R4, R5 | Clean install, repair, retained-data uninstall, N-1 upgrade, and injected rollback pass in disposable VMs |
-| R7 | Hermes migrated and exercised | R6 | dev uses MSI/SCM ownership; reboot, crash recovery, upgrade, and rollback checks pass; pilot soak recorded |
+| R7 | Hermes migrated and exercised | R6 | The dev machine uses MSI/SCM ownership; reboot, crash recovery, upgrade, and rollback checks pass; pilot soak recorded |
 | R8 | Public release and supply-chain verification | R7 | Public-readiness review complete; signing provider integrated; final signed MSI, attestations, and immutable release verified |
 
 R0 packaging research may proceed alongside runtime stabilization. R4 and R5 may proceed independently once their predecessors close. R8 provider research and public-source preparation may start earlier, but do not waive release gates. No date is promised until the Windows qualification work establishes a reliable estimate.

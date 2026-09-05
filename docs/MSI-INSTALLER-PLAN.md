@@ -1,6 +1,6 @@
 # MSI installer plan
 
-Status: implementation plan, not a shipped installer. Reviewed September 4, 2026 against the repository and the dev Hermes pilot.
+Status: implementation plan, not a shipped installer. Reviewed September 4, 2026 against the repository and the Hermes pilot on the dev machine.
 
 Aligned September 5, 2026 with [ROADMAP.md](../ROADMAP.md), [Design v2](../DESIGN.md), and [R0–R8 milestones](MILESTONES.md). This document owns packaging details; the roadmap owns sequencing and release gates. The former M0–M5 sequence is mapped below for historical references.
 
@@ -16,7 +16,7 @@ Initial qualification targets: Windows 11 x64 and Windows Server 2022/2025 x64, 
 
 | Item | First-release behavior |
 | --- | --- |
-| Product | WinUnit Manager; publisher PLN; MIT license and dependency notices |
+| Product | WinUnit Manager; project publisher metadata to be finalized before release; MIT license and dependency notices |
 | Binaries | `ProgramFiles64Folder\winunitd\bin\`: `winunitd.exe`, `winctl.exe`, `winunit-notify.exe` |
 | Documentation | Installed license, quick start, example units in a documentation directory; examples are not enabled |
 | Machine data | `CommonAppDataFolder\winunitd\`: `units`, `enabled`, `journal`, `runtime`, `linger`, plus daemon diagnostics |
@@ -86,9 +86,9 @@ Keep mutable files outside file components. Repair must not overwrite units, res
 
 ## Migrating the Hermes pilot and manual installs
 
-The MSI is generic; it must not contain the pilot user's SID, profile path, Hermes credentials, Python runtime, or SeaShell installation.
+The MSI is generic; it must not contain the pilot user's SID, profile path, Hermes credentials, Python runtime, or local automation runtime.
 
-Provide a separate explicit migration command/script with discovery and dry-run output. For dev it will:
+Provide a separate explicit migration command/script with discovery and dry-run output. For the dev machine it will:
 
 1. Export task definitions and snapshot the unit/enable configuration and source locations.
 2. Verify target units under the user identity, retain Hermes's existing home, and preserve the WebUI guardian behavior.
@@ -107,7 +107,7 @@ An unrelated pre-existing SCM service named `winunitd`, unmanaged binary path, o
 | R1–R5 (former M1 runtime work) | Ownership, lifecycle coordinator, compatibility, Windows identities, maintenance, diagnostics, isolated tests | All runtime milestone gates pass; no retry during stop/upgrade |
 | R6.1 / R6.4 (former M2) | Package project, version metadata, files, ACLs, PATH, service/event source, quiet install, repair, uninstall | Fresh offline install/repair/uninstall; retained user state |
 | R6.2–R6.5 (former M3) | Major upgrades, rollback, conflicts, explicit format and pilot migration | N-1 and failed-upgrade tests with running system/user workloads |
-| R7 (former M5) | Migrate dev from Task Scheduler to MSI/SCM ownership | Reboot, logon/logoff, crash, repair, upgrade, rollback, and recorded soak |
+| R7 (former M5) | Migrate the dev machine from Task Scheduler to MSI/SCM ownership | Reboot, logon/logoff, crash, repair, upgrade, rollback, and recorded soak |
 | R8 (former M4) | Public readiness; SignPath or fallback; signed payload/MSI, attestations, checksums, immutable release | Provider integrated; downloaded signatures/provenance verified; all release gates pass |
 
 Suggested repository layout: `packaging/wix/`, `packaging/resources/`, `scripts/build-release.ps1`, `tests/installer/`, `docs/INSTALLATION.md`, and a separate `.github/workflows/release.yml`. Keep host-specific pilot artifacts out of the repository. Create implementation issues from these milestones when work begins; this document itself does not claim they are implemented.
@@ -118,7 +118,7 @@ Keep the repository private while the runtime and installation basics are being 
 
 **Investigate SignPath Foundation first once the project is public.** Its free OSS signing program is the preferred option to evaluate, not an assumed entitlement or an enrollment already completed. The published conditions include an actively maintained, documented, already-released OSS project and verifiable reputation. Confirm how a clearly labeled unsigned preview can satisfy the existing-release requirement before making signed public installation releases a dependency. See the [application](https://signpath.org/apply) and [program conditions](https://signpath.org/terms).
 
-For the SignPath evaluation, record licensing/dependency eligibility, verifiable CI artifact origin, enforced executable metadata, MFA, signing roles, and manual release approval. Prepare the required public code-signing/privacy policy. The Foundation certificate identifies **SignPath Foundation** as publisher; verify the resulting Windows publisher display and explain its relationship to winunitd and the package's PLN publisher metadata. Admission remains discretionary. These are future enrollment tasks, not claims of current compliance. See [SignPath conditions](https://signpath.org/terms).
+For the SignPath evaluation, record licensing/dependency eligibility, verifiable CI artifact origin, enforced executable metadata, MFA, signing roles, and manual release approval. Prepare the required public code-signing/privacy policy. The Foundation certificate identifies **SignPath Foundation** as publisher; verify the resulting Windows publisher display and explain its relationship to winunitd and the package's project publisher metadata. Admission remains discretionary. These are future enrollment tasks, not claims of current compliance. See [SignPath conditions](https://signpath.org/terms).
 
 Keep the release scripts independent of the chosen signing provider. If SignPath is unavailable or its conditions do not fit, evaluate Microsoft Artifact Signing for an eligible identity or another trusted CA's managed signing service. Authenticode does not require a Microsoft developer registration. As reviewed September 4, 2026, Microsoft's public-trust service supports EU organizations but individual applicants only in the US and Canada; recheck eligibility and pricing before selecting a provider. No purchase is planned yet. See [Microsoft signing options](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options).
 
@@ -146,4 +146,4 @@ Required acceptance cases:
 - Uninstall while busy, preservation of both users' and machine data, removal of only owned PATH/registry/service resources, and a working reinstall over retained data.
 - Conflicting manual/pilot installs, hostile/reparse-point data directories, and the Hermes migration/rollback with its authentication and health checks retained.
 
-Packaging prototypes may be built during R0–R5. The installable internal MSI candidate requires R6 and its runtime prerequisites. Replacing dev's working pilot is R7; a public installation release requires R8 after pilot qualification. See [milestone gates and legacy mapping](MILESTONES.md).
+Packaging prototypes may be built during R0–R5. The installable internal MSI candidate requires R6 and its runtime prerequisites. Replacing the dev machine's working pilot is R7; a public installation release requires R8 after pilot qualification. See [milestone gates and legacy mapping](MILESTONES.md).

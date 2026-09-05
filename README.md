@@ -2,7 +2,7 @@
 
 Declarative Windows unit manager and process supervisor.
 
-The [roadmap](ROADMAP.md), [Design v2](DESIGN.md), and [implementation milestones](docs/MILESTONES.md) define the next iteration. They specify target behavior; the current alpha and its limitations are described below. License: [MIT](LICENSE). Copyright PLN, 2026.
+The [roadmap](ROADMAP.md), [Design v2](DESIGN.md), and [implementation milestones](docs/MILESTONES.md) define the next iteration. They specify target behavior; the current alpha and its limitations are described below. License and copyright notice: [MIT](LICENSE).
 
 The [MSI installer plan](docs/MSI-INSTALLER-PLAN.md) covers packaging, service readiness, upgrades, rollback, signing, and migration from existing installations. No MSI is shipped yet.
 

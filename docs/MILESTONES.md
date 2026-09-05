@@ -93,7 +93,7 @@ Exit gate: publish a versioned internal MSI candidate, checksums/build manifest,
 
 ## R7 — Hermes pilot replacement and soak
 
-Status: planned. Dependencies: R6. Outcome: dev's real workload demonstrates the installation/runtime contract.
+Status: planned. Dependencies: R6. Outcome: the dev machine's real workload demonstrates the installation/runtime contract.
 
 - [ ] **R7.1 Preflight:** inventory actual tasks/processes, exported configuration, owner identity, health endpoints, authentication, ports, and rollback assets. Keep host-specific values outside source control.
 - [ ] **R7.2 Handoff:** stop/disable competing launchers, migrate configuration explicitly, install the MSI service, and verify one owner for each gateway/dashboard/web interface process tree.
@@ -106,7 +106,7 @@ Exit gate: all three components meet their health/authentication checks under MS
 
 Status: planned. Dependencies for release: R7. Public-source/provider preparation may begin earlier under roadmap policy.
 
-- [ ] **R8.1 Public readiness:** review source history and release inputs for credentials/host artifacts; complete behavior, installation, recovery, support, license, and security-reporting documentation. Record qualified platforms/modes. Source visibility changes remain a separate action.
+- [ ] **R8.1 Public readiness:** review source history and release inputs for credentials, personal names, real machine names, internal addresses, and host artifacts; sanitize historical content before making the repository public. Complete behavior, installation, recovery, support, license, and security-reporting documentation. Record qualified platforms/modes. Source visibility changes remain a separate action.
 - [ ] **R8.2 Provider:** investigate/apply to SignPath Foundation once eligible; record terms, roles, MFA, manual signing approval, required policy, verifiable build origin, and Windows publisher display. If not accepted, select an eligible alternative. Do not claim acceptance before enrollment succeeds.
 - [ ] **R8.3 Pipeline:** build with pinned tools/actions in a protected release workflow; sign/timestamp payloads, assemble/sign MSI, verify payload/package signatures, then hash and attest final bytes. Protect signing authority from untrusted PR execution.
 - [ ] **R8.4 Publish/verify:** assemble complete draft assets, publish an immutable release, and independently verify the downloaded MSI, attestations, checksums, and clean-machine installation. Document reputation warnings without promising they disappear.
