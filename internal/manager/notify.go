@@ -142,22 +142,113 @@ func (r *notifyRuntime) onMessage(msg notify.Message) {
 // A failed close remains retryable; a successful close is never repeated.
 type notifyCloseListener struct {
 	notify.Listener
+	mu      sync.Mutex
+	closed  bool
+	stateMu sync.Mutex
+	closing bool
+	accepts sync.WaitGroup
+	clients map[*notifyOwnedConn]struct{}
+}
+
+func (l *notifyCloseListener) Accept() (notify.Conn, error) {
+	l.stateMu.Lock()
+	if l.closing {
+		l.stateMu.Unlock()
+		return nil, net.ErrClosed
+	}
+	l.accepts.Add(1)
+	l.stateMu.Unlock()
+	defer l.accepts.Done()
+	c, err := l.Listener.Accept()
+	if c == nil {
+		return nil, err
+	}
+	owned := &notifyOwnedConn{Conn: c, owner: l}
+	l.stateMu.Lock()
+	if l.clients == nil {
+		l.clients = make(map[*notifyOwnedConn]struct{})
+	}
+	l.clients[owned] = struct{}{}
+	l.stateMu.Unlock()
+	if err != nil {
+		return nil, errors.Join(err, owned.Close())
+	}
+	return owned, nil
+}
+
+type notifyOwnedConn struct {
+	notify.Conn
+	owner  *notifyCloseListener
 	mu     sync.Mutex
 	closed bool
+}
+
+func (c *notifyOwnedConn) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil
+	}
+	if err := c.Conn.Close(); err != nil && !onlyNetClosed(err) {
+		return err
+	}
+	c.closed = true
+	c.owner.stateMu.Lock()
+	delete(c.owner.clients, c)
+	c.owner.stateMu.Unlock()
+	return nil
+}
+
+// A joined cleanup failure must not be hidden by one already-closed leaf.
+func onlyNetClosed(err error) bool {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		children := joined.Unwrap()
+		if len(children) == 0 {
+			return false
+		}
+		for _, child := range children {
+			if !onlyNetClosed(child) {
+				return false
+			}
+		}
+		return true
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return onlyNetClosed(wrapped.Unwrap())
+	}
+	return errors.Is(err, net.ErrClosed)
 }
 
 func (l *notifyCloseListener) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.stateMu.Lock()
+	l.closing = true
+	l.stateMu.Unlock()
+	var result error
+	if !l.closed {
+		err := l.Listener.Close()
+		if err == nil || onlyNetClosed(err) {
+			l.closed = true
+		} else {
+			result = err
+		}
+	}
 	if l.closed {
-		return nil
+		// No new Accept can start after closing was set. Include every late
+		// accepted client before deciding that cleanup succeeded.
+		l.accepts.Wait()
 	}
-	err := l.Listener.Close()
-	if err == nil || errors.Is(err, net.ErrClosed) {
-		l.closed = true
-		return nil
+	l.stateMu.Lock()
+	clients := make([]*notifyOwnedConn, 0, len(l.clients))
+	for client := range l.clients {
+		clients = append(clients, client)
 	}
-	return err
+	l.stateMu.Unlock()
+	for _, client := range clients {
+		result = errors.Join(result, client.Close())
+	}
+	return result
 }
 
 func (r *notifyRuntime) Close() error {
@@ -177,7 +268,7 @@ func (r *notifyRuntime) Close() error {
 		close(r.done)
 	}
 	if r.lis != nil {
-		if err := r.lis.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		if err := r.lis.Close(); err != nil && !onlyNetClosed(err) {
 			return err
 		}
 	}
