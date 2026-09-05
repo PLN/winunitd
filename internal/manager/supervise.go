@@ -213,20 +213,30 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 	m.journal.Attach(name, proc.PID(), inv, proc.Stdout(), proc.Stderr())
 
 	m.mu.Lock()
+	// operations retains this record across reload, and the per-unit operation
+	// lock prevents another launch from installing a process. Adopt even a late
+	// completion before attempting cleanup so failure remains reachable by Stop.
 	rt = m.units[name]
-	if rt == nil || m.closed || rt.stopping || rt.gen != startGen {
-		m.mu.Unlock()
-		_ = proc.Stop(0)
-		m.closeNotify(name)
-		return nil
-	}
-	if existing := rt.proc; existing != nil && existing.Alive() {
-		m.mu.Unlock()
-		_ = proc.Stop(0)
-		m.closeNotify(name)
-		return nil
-	}
 	rt.proc = proc
+	if m.closed || rt.stopping || rt.gen != startGen {
+		rt.stopUncertain = true
+		m.mu.Unlock()
+		stopErr := m.stopProcess(proc, stopTimeout(u))
+		if stopErr == nil && proc.Alive() {
+			stopErr = fmt.Errorf("process remains alive after late launch cleanup")
+		}
+		m.closeNotify(name)
+		m.mu.Lock()
+		if stopErr == nil {
+			rt.proc = nil
+			rt.stopUncertain = false
+		} else {
+			rt.step(core.EventStartFailed)
+			rt.err = fmt.Sprintf("late launch cleanup: %v", stopErr)
+		}
+		m.mu.Unlock()
+		return errors.Join(fmt.Errorf("start superseded during process creation"), stopErr)
+	}
 	rt.terminated = false
 	if svc.Type == unit.TypeNotify {
 		rt.step(core.EventStartRequested)

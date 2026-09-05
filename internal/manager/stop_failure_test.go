@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -267,5 +268,78 @@ func TestReadinessTimeoutCleanupFailureRetainsOwnership(t *testing.T) {
 	p.fail.Store(false)
 	if _, err := m.Stop(name); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A process may already exist when cancellation overtakes the launch response.
+type lateFailedStopLauncher struct {
+	failedStopLauncher
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (l *lateFailedStopLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
+	p, err := l.failedStopLauncher.Start(ctx, spec)
+	close(l.entered)
+	<-l.release
+	return p, err
+}
+
+func TestLateLaunchCleanupFailureRetainsOwnership(t *testing.T) {
+	for _, closing := range []bool{false, true} {
+		t.Run(map[bool]string{false: "stop", true: "close"}[closing], func(t *testing.T) {
+			const name = "late-cleanup.service"
+			l := &lateFailedStopLauncher{entered: make(chan struct{}), release: make(chan struct{})}
+			m := managerWith(t, l, map[string]string{name: "[Service]\nType=simple\nExecStart=C:\\Tools\\worker.exe\n"})
+			var once sync.Once
+			release := func() { once.Do(func() { close(l.release) }) }
+			t.Cleanup(release)
+			done := make(chan error, 1)
+			go func() { _, err := m.Start(context.Background(), name); done <- err }()
+			select {
+			case <-l.entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("launch did not enter")
+			}
+			p := l.proc
+			t.Cleanup(func() { p.fail.Store(false); _ = p.Process.Stop(time.Second) })
+			var stopped chan error
+			if closing {
+				m.Close()
+			} else {
+				stopped = make(chan error, 1)
+				go func() { _, err := m.Stop(name); stopped <- err }()
+				waitCond(t, func() bool {
+					m.mu.Lock()
+					defer m.mu.Unlock()
+					return m.units[name].stopping
+				})
+			}
+			release()
+			if err := waitErr(t, done); err == nil {
+				t.Fatal("superseded launch reported success")
+			}
+			if stopped != nil && waitErr(t, stopped) == nil {
+				t.Fatal("failed late-process stop reported success")
+			}
+			m.mu.Lock()
+			rt := m.units[name]
+			retained := rt.proc == p && rt.stopUncertain
+			m.mu.Unlock()
+			if !retained || !p.Alive() {
+				t.Fatal("late launch lost unresolved process ownership")
+			}
+			status, err := m.Status(name)
+			if err != nil || status.Unit == nil {
+				t.Fatalf("late process lost status: %v", err)
+			}
+			p.fail.Store(false)
+			if _, err := m.Stop(name); err != nil {
+				t.Fatal(err)
+			}
+			if p.Alive() {
+				t.Fatal("successful retry left process alive")
+			}
+		})
 	}
 }
