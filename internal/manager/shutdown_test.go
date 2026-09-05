@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -533,4 +534,51 @@ func waitHungLaunchJournal(t *testing.T, m *Manager, fk *timers.Fake, launch *ha
 		}
 		return true
 	})
+}
+
+func TestShutdownWaitsForLateLaunchAndClosesAdmission(t *testing.T) {
+	const name = "shutdown-launch.service"
+	l := &lateFailedStopLauncher{entered: make(chan struct{}), release: make(chan struct{})}
+	m := managerWith(t, l, map[string]string{name: "[Service]\nExecStart=C:\\Tools\\worker.exe\n"})
+	var once sync.Once
+	release := func() { once.Do(func() { close(l.release) }) }
+	t.Cleanup(release)
+	started := make(chan error, 1)
+	go func() { _, err := m.Start(context.Background(), name); started <- err }()
+	select {
+	case <-l.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("launch did not enter")
+	}
+	p := l.proc
+	p.fail.Store(false)
+	t.Cleanup(func() { _ = p.Process.Stop(time.Second) })
+	done := make(chan error, 1)
+	go func() { done <- m.Shutdown(context.Background()) }()
+	waitCond(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.closed
+	})
+	select {
+	case err := <-done:
+		t.Fatalf("shutdown returned before launch completion: %v", err)
+	default:
+	}
+	if _, err := m.Start(context.Background(), name); err == nil {
+		t.Fatal("shutdown admitted a new start")
+	}
+	release()
+	if err := waitErr(t, started); err == nil {
+		t.Fatal("superseded launch reported success")
+	}
+	if err := waitErr(t, done); err != nil {
+		t.Fatal(err)
+	}
+	if p.Alive() {
+		t.Fatal("shutdown returned with late process alive")
+	}
+	if _, err := m.Start(context.Background(), name); err == nil {
+		t.Fatal("completed shutdown admitted a new start")
+	}
 }

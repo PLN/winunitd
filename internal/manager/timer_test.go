@@ -280,6 +280,13 @@ OnUnitActiveSec=7s
 	if _, err := m.Start(context.Background(), "foo.service"); err != nil {
 		t.Fatal(err)
 	}
+	// Advancing past TimeoutStopSec while the exit watcher is still cleaning
+	// the first invocation would inject a cleanup timeout into this timer test.
+	waitCond(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.units["foo.service"].proc == nil
+	})
 	// Wait for the activation timer, not an outstanding 5s cleanup deadline.
 	waitCond(t, func() bool { return fk.WaitingAt(7 * time.Second) })
 	fk.Advance(7 * time.Second)

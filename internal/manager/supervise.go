@@ -35,7 +35,10 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		return nil
+		if autoRestart {
+			return nil
+		}
+		return fmt.Errorf("manager is shutting down or closed")
 	}
 	rt := m.units[name]
 	if rt == nil {

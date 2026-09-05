@@ -16,7 +16,8 @@ import (
 // is the stop-transaction root when it is loaded; active units are extra
 // roots so winctl-started services go down even if they are not After=
 // shutdown.target. Timers are disarmed first so they cannot fire during
-// stop. Pending Restart= relaunch is cancelled by each unit stop (M6).
+// stop. Admission closes before the stop snapshot; accepted launches are
+// included even before they publish a process, and new starts are rejected.
 func (m *Manager) Shutdown(ctx context.Context) error {
 	if m == nil {
 		return nil
@@ -24,15 +25,25 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// Close admission before taking the root snapshot. A launch may still be
+	// inside the OS with no process reference/state yet; its operation keeps it
+	// in the stop plan, which waits for adoption and confirmed cleanup.
+	m.mu.Lock()
+	m.closed = true
+	for _, rt := range m.units {
+		rt.stopping = true
+		if rt.startCancel != nil {
+			rt.startCancel()
+		}
+		rt.cancelRestart()
+	}
+	g := m.graph
+	roots := m.shutdownRootsLocked()
+	m.mu.Unlock()
 	if m.engine != nil {
 		m.engine.Retain(nil)
 		m.engine.Stop()
 	}
-
-	m.mu.Lock()
-	g := m.graph
-	roots := m.shutdownRootsLocked()
-	m.mu.Unlock()
 	if g == nil || len(roots) == 0 {
 		return nil
 	}
@@ -66,7 +77,7 @@ func (m *Manager) shutdownRootsLocked() []string {
 		if rt != nil && rt.state != core.Inactive {
 			add(name)
 		}
-		if rt != nil && rt.proc != nil {
+		if rt != nil && (rt.proc != nil || rt.operations != 0 || rt.stopUncertain) {
 			add(name)
 		}
 	}

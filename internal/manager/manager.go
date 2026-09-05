@@ -128,7 +128,8 @@ func New(cfg Config) (*Manager, error) {
 
 // Close stops the timer scheduler, notify listeners, watchdogs,
 // registry/eventlog/path watches, and pending Restart= timers. No relaunch
-// runs after Close returns; Shutdown is not required first (issue #26).
+// is admitted after Close returns; an already accepted launch still owns its
+// completion and cleanup. Shutdown drains those launches before Close.
 func (m *Manager) Close() {
 	if m == nil {
 		return
@@ -418,6 +419,10 @@ func (m *Manager) Start(ctx context.Context, name string) (*protocol.UnitResult,
 	}
 
 	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return nil, protocol.ErrFailed("manager is shutting down or closed")
+	}
 	g := m.graph
 	if _, ok := m.units[name]; !ok {
 		m.mu.Unlock()
