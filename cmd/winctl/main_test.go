@@ -1468,8 +1468,10 @@ func TestCLIEnableLingerUsesSystemPipe(t *testing.T) {
 
 	dir := t.TempDir()
 	h := manager.NewUserHost(manager.UserHostConfig{
-		Exe:       "winunitd-test",
-		LingerDir: dir,
+		Admission:      manager.UserAdmission{Mode: "unit-files"},
+		ProbeUserUnits: func(*runtime.UserToken) (bool, error) { return true, nil },
+		Exe:            "winunitd-test",
+		LingerDir:      dir,
 		QueryToken: func(sessionID uint32) (*runtime.UserToken, error) {
 			return nil, runtime.ErrNoUserToken
 		},
@@ -1544,8 +1546,10 @@ func TestCLIEnableLingerNonAdminDenied(t *testing.T) {
 	defer stop()
 	dir := t.TempDir()
 	h := manager.NewUserHost(manager.UserHostConfig{
-		Exe:       "winunitd-test",
-		LingerDir: dir,
+		Admission:      manager.UserAdmission{Mode: "unit-files"},
+		ProbeUserUnits: func(*runtime.UserToken) (bool, error) { return true, nil },
+		Exe:            "winunitd-test",
+		LingerDir:      dir,
 		Start: func(spec runtime.UserManagerSpec) (runtime.UserManagerProc, error) {
 			t.Fatal("must not start")
 			return nil, nil

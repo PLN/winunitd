@@ -47,9 +47,11 @@ func TestWindowsLingerBootNoSessionAndLogoff(t *testing.T) {
 	defer logf.Close()
 
 	h := manager.NewUserHost(manager.UserHostConfig{
-		Exe:       os.Args[0],
-		ExtraArgs: []string{"--base-dir", userDir},
-		LingerDir: lingerDir,
+		Admission:      manager.UserAdmission{Mode: "unit-files"},
+		ProbeUserUnits: func(*runtime.UserToken) (bool, error) { return true, nil },
+		Exe:            os.Args[0],
+		ExtraArgs:      []string{"--base-dir", userDir},
+		LingerDir:      lingerDir,
 		QueryToken: func(sessionID uint32) (*runtime.UserToken, error) {
 			return &runtime.UserToken{Info: info}, nil
 		},
@@ -93,9 +95,11 @@ func TestWindowsLingerBootNoSessionAndLogoff(t *testing.T) {
 	// Simulate boot: new host, linger record on disk, no session.
 	h.Close()
 	h2 := manager.NewUserHost(manager.UserHostConfig{
-		Exe:       os.Args[0],
-		ExtraArgs: []string{"--base-dir", userDir},
-		LingerDir: lingerDir,
+		Admission:      manager.UserAdmission{Mode: "unit-files"},
+		ProbeUserUnits: func(*runtime.UserToken) (bool, error) { return true, nil },
+		Exe:            os.Args[0],
+		ExtraArgs:      []string{"--base-dir", userDir},
+		LingerDir:      lingerDir,
 		LingerToken: func(rec runtime.LingerRecord) (*runtime.UserToken, error) {
 			return &runtime.UserToken{Info: info}, nil
 		},
@@ -223,8 +227,10 @@ func TestWindowsNonAdminEnableLingerDenied(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := manager.NewUserHost(manager.UserHostConfig{
-		Exe:       "winunitd-test",
-		LingerDir: filepath.Join(dir, "linger"),
+		Admission:      manager.UserAdmission{Mode: "unit-files"},
+		ProbeUserUnits: func(*runtime.UserToken) (bool, error) { return true, nil },
+		Exe:            "winunitd-test",
+		LingerDir:      filepath.Join(dir, "linger"),
 		Start: func(spec runtime.UserManagerSpec) (runtime.UserManagerProc, error) {
 			t.Fatal("non-admin must not start a manager")
 			return nil, nil

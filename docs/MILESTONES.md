@@ -69,6 +69,8 @@ Status: planned. Dependencies: R2, R3. Outcome: real Windows identities and sess
 - [ ] **R4.4 Security:** verify pipe ownership/DACL/token checks, UAC-filtered users, cross-user rejection, protected privileged paths, reparse-point handling, and no unintended inherited handles.
 - [ ] **R4.5 Linger modes:** qualify explicit headless S4U behavior and its credential limitations. Any unqualified optional credential-store mode remains disabled/experimental and is excluded from supported release claims.
 
+Initial R4.2 admission implementation reads protected machine policy, defaults to explicit admission, probes unit-file presence under a duplicated user token with bounded workers, and rejects stale admission results. Existing sessions and policy are reconciled every ten seconds. Portable/native regressions cover revocation, independent linger grants, directory presence, junction rejection, token identity, and deadline ownership. Administrative CLI/installer controls, complete recovery coordination, and real SYSTEM/session evidence remain pending; this does not close R4 or its dependencies.
+
 Exit gate: disposable VM evidence includes genuine LocalSystem session-0 launch into a standard user's session, existing-session reconciliation, multiple sessions for one SID, separate users, manager crash, rapid logon/logoff, shutdown during launch, profile/environment cases, and explicit linger behavior. One manager per SID and no post-stop resurrection hold. Unsupported modes fail visibly. No hosted-admin-only evidence is accepted as a substitute.
 
 ## R5 — Durable timers and operational diagnostics

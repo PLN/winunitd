@@ -46,7 +46,9 @@ func testUserHost(t *testing.T, sidBySession map[uint32]string, fail map[uint32]
 	procs := map[string]*fakeUserMgr{}
 	var mu sync.Mutex
 	h := NewUserHost(UserHostConfig{
-		Exe: "winunitd-test",
+		Admission:      UserAdmission{Mode: "unit-files"},
+		ProbeUserUnits: func(*runtime.UserToken) (bool, error) { return true, nil },
+		Exe:            "winunitd-test",
 		QueryToken: func(sessionID uint32) (*runtime.UserToken, error) {
 			if err, ok := fail[sessionID]; ok {
 				return nil, err

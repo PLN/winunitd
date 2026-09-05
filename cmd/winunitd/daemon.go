@@ -52,7 +52,13 @@ func serve(ctx context.Context, baseDir string, stderr io.Writer, sessions chan 
 		fmt.Fprintf(stderr, "winunitd: "+format+"\n", args...)
 	}
 	runtime.SetLingerLogf(logf)
+	admissionPath := filepath.Join(baseDir, "user-admission.json")
+	admission, admissionErr := manager.LoadUserAdmission(admissionPath)
+	if admissionErr != nil {
+		logf("user admission policy: %v", admissionErr)
+	}
 	host := manager.NewUserHost(manager.UserHostConfig{
+		Admission: admission,
 		Exe:       exe,
 		Daemon:    job,
 		LingerDir: filepath.Join(baseDir, "linger"),
@@ -83,6 +89,7 @@ func serve(ctx context.Context, baseDir string, stderr io.Writer, sessions chan 
 	}
 	go runtime.WatchSessions(ctx, sessions)
 	go host.Listen(ctx, sessions)
+	go host.WatchUserAdmission(ctx, admissionPath)
 	go watchClock(ctx, m, clock)
 
 	lis, err := protocol.ListenControl()

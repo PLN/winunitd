@@ -180,8 +180,10 @@ WorkingDirectory=C:\Tools
 	defer logf.Close()
 
 	h := manager.NewUserHost(manager.UserHostConfig{
-		Exe:       os.Args[0],
-		ExtraArgs: []string{"--base-dir", userDir},
+		Admission:      manager.UserAdmission{Mode: "unit-files"},
+		ProbeUserUnits: func(*runtime.UserToken) (bool, error) { return true, nil },
+		Exe:            os.Args[0],
+		ExtraArgs:      []string{"--base-dir", userDir},
 		QueryToken: func(sessionID uint32) (*runtime.UserToken, error) {
 			return &runtime.UserToken{Info: info}, nil
 		},

@@ -205,7 +205,9 @@ Log responses are paginated below the 1 MiB RPC limit. `winctl logs` reads every
 
 ## User managers and linger
 
-On first interactive logon the system manager launches `winunitd --user-manager <SID>` (same binary, not an extra SCM service) using `WTSQueryUserToken`. One manager per SID. System `list-units` does not show user units.
+Interactive user managers require admission. The default admits only administrator-enabled users in `<base-dir>\user-admission.json`; a missing file admits none. Administrators may instead select `unit-files` mode to delegate admission to user unit-file presence. Explicit per-SID disable overrides delegation. See [configuration and qualification limits](docs/USER-ADMISSION.md).
+
+For an admitted interactive user the system manager launches `winunitd --user-manager <SID>` (same binary, not an extra SCM service) using `WTSQueryUserToken`. One manager per SID. System `list-units` does not show user units. Policy and existing sessions are reconciled every ten seconds; explicit changes also invalidate pending admission results.
 
 User units load from `%LOCALAPPDATA%\winunitd\units\`. User processes get a deterministic environment (`USERPROFILE`, `LOCALAPPDATA`, `APPDATA`, `TEMP`, `TMP`, `USERNAME`, `USERDOMAIN`).
 

@@ -18,22 +18,26 @@ import (
 // trusted-LSA S4U first, then an optional named CredMan/LSA URI on the
 // linger record only when S4U is insufficient for outbound network creds.
 type UserHostConfig struct {
-	Exe         string
-	ExtraArgs   []string
-	Daemon      *runtime.DaemonJob
-	QueryToken  runtime.TokenSource
-	Start       runtime.UserManagerLauncher
-	Sessions    runtime.SessionEnumerator
-	LingerDir   string
-	Lookup      runtime.AccountLookup
-	LingerToken runtime.LingerTokenFunc
-	Logf        func(string, ...any)
+	Admission      UserAdmission
+	ProbeUserUnits func(*runtime.UserToken) (bool, error)
+	Exe            string
+	ExtraArgs      []string
+	Daemon         *runtime.DaemonJob
+	QueryToken     runtime.TokenSource
+	Start          runtime.UserManagerLauncher
+	Sessions       runtime.SessionEnumerator
+	LingerDir      string
+	Lookup         runtime.AccountLookup
+	LingerToken    runtime.LingerTokenFunc
+	Logf           func(string, ...any)
 }
 
 // UserHost is SID-keyed (one manager per user), not session-keyed.
 // First interactive logon starts the manager. Last logoff kills it
 // unless the user is lingering.
 type UserHost struct {
+	admission          UserAdmission
+	admissionRevision  uint64
 	closed             bool
 	ops                unitOps
 	stops              stopSet
@@ -73,12 +77,21 @@ func NewUserHost(cfg UserHostConfig) *UserHost {
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
 	}
+	policy, err := cfg.Admission.validated()
+	if err != nil {
+		cfg.Logf("user admission: %v", err)
+		policy, _ = (UserAdmission{}).validated()
+	}
+	if cfg.ProbeUserUnits == nil {
+		cfg.ProbeUserUnits = runtime.UserUnitFilesPresent
+	}
 	if cfg.Exe == "" {
 		if exe, err := os.Executable(); err == nil {
 			cfg.Exe = exe
 		}
 	}
 	h := &UserHost{
+		admission:       policy,
 		cfg:             cfg,
 		bySID:           make(map[string]*userInstance),
 		sessions:        make(map[uint32]string),
@@ -172,7 +185,11 @@ func (h *UserHost) Logon(sessionID uint32) {
 		}
 		h.mu.Unlock()
 	}()
-	current := func() bool { return h.sessionRequests[sessionID] == request }
+	h.mu.Lock()
+	revision := h.admissionRevision
+	policy := h.admission
+	h.mu.Unlock()
+	current := func() bool { return h.sessionRequests[sessionID] == request && h.admissionRevision == revision }
 	tok, err := h.cfg.QueryToken(sessionID)
 	if err != nil {
 		h.cfg.Logf("session %d: %v", sessionID, err)
@@ -189,6 +206,17 @@ func (h *UserHost) Logon(sessionID uint32) {
 	}
 	if !protocol.ValidSID(sid) {
 		h.cfg.Logf("session %d: invalid SID %q", sessionID, sid)
+		return
+	}
+	allow, probe := policy.decision(sid)
+	if probe {
+		allow, err = h.cfg.ProbeUserUnits(tok)
+		if err != nil {
+			h.cfg.Logf("user admission probe: %v", err)
+			return
+		}
+	}
+	if !allow {
 		return
 	}
 
@@ -446,8 +474,9 @@ func (h *UserHost) stopUser(ctx context.Context, sid string, onlyIdle bool) erro
 	defer unlock()
 	h.mu.Lock()
 	if onlyIdle && !h.closed {
+		allow, probe := h.admission.decision(sid)
 		for _, mapped := range h.sessions {
-			if mapped == sid {
+			if mapped == sid && (allow || probe) {
 				h.mu.Unlock()
 				return nil
 			}

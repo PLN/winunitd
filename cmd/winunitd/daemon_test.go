@@ -38,7 +38,9 @@ func (p *finishUserProc) Kill() error {
 
 func finishTestHost(p *finishUserProc) *manager.UserHost {
 	h := manager.NewUserHost(manager.UserHostConfig{
-		Exe: "winunitd-test",
+		Admission:      manager.UserAdmission{Mode: "unit-files"},
+		ProbeUserUnits: func(*runtime.UserToken) (bool, error) { return true, nil },
+		Exe:            "winunitd-test",
 		QueryToken: func(uint32) (*runtime.UserToken, error) {
 			return &runtime.UserToken{Info: runtime.UserInfo{SID: shutdownTestSID}}, nil
 		},
