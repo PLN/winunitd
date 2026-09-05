@@ -54,4 +54,4 @@ Private raw output and identity details are retained outside this repository. Th
 
 ## Remaining R0 work
 
-Finish CI qualification of the pinned builds; turn supervised VM bring-up into a repeatable controller with isolated networking and explicit identity lanes; perform the [WiX/service-servicing packaging spike](PACKAGING-SPIKE.md). R0 closure still requires all milestone exit gates and maintainer acceptance.
+Pinned builds are qualified in [BUILDING.md](BUILDING.md), and the [packaging spike](PACKAGING-SPIKE.md) is complete. Turn supervised VM bring-up into a repeatable controller with isolated networking and explicit identity lanes. R0 closure still requires all milestone exit gates and maintainer acceptance.

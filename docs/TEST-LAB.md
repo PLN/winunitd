@@ -1,6 +1,6 @@
 # Windows qualification lab
 
-September 5, 2026. Implementation plan for R0.4 and the R4–R8 acceptance lanes in [MILESTONES.md](MILESTONES.md). Infrastructure discovery established an available three-node Proxmox cluster, shared image storage, working administrative access, and an existing Gitea instance with online Windows/Linux build runners. A first Windows Server 2025 Core evaluation guest has been provisioned for supervised smoke testing. Maintained templates, the controller, and CI integration remain pending.
+September 5, 2026. Implementation plan for R0.4 and the R4–R8 acceptance lanes in [MILESTONES.md](MILESTONES.md). A first Windows Server 2025 Core evaluation guest has passed supervised smoke and packaging-fixture tests. An isolated network and restricted API account are provisioned; the controller's authenticated probe is implemented. Maintained templates, run orchestration, and CI integration remain pending.
 
 Private inventory, endpoints, VM IDs, key paths, and credentials belong in the operator's infrastructure workspace. They must not enter project workflows, committed test results, or guest images. This document is intentionally portable to another installation.
 
@@ -21,7 +21,7 @@ Keep the current GitHub source remote during initial lab bring-up. A private Git
 
 ## Baselines and capacity
 
-Create a maintained Windows desktop baseline and a Server Core baseline from identified installation media. Start with two concurrent guests at a provisional 4 vCPU, 8 GiB RAM, and 80 GiB thin disk each; tune after measuring tests and storage behavior. Set controller concurrency and disk-retention quotas so failed guests cannot accumulate indefinitely.
+Create maintained Windows 11 Enterprise, Enterprise LTSC, and Server Core baselines from identified installation media. The maintainer selected Enterprise/LTSC for the initial desktop support matrix. Start with two concurrent guests at a provisional 4 vCPU, 8 GiB RAM, and 80 GiB thin disk each; tune after measuring tests and storage behavior. Set controller concurrency and disk-retention quotas so failed guests cannot accumulate indefinitely.
 
 Record OS edition/build/patch level, media and driver hashes, firmware/TPM configuration, guest-agent version, and baseline creation procedure. Keep test accounts distinct from operator identities. Remove provisioning secrets and runner registrations before sealing the baseline. A cloned guest gets unique machine/network identity and run credentials. Do not clone a personalized workstation or shared build server as a clean acceptance image.
 
@@ -67,12 +67,18 @@ Store detailed private logs locally with retention limits. Publish only sanitize
 ## Bring-up work packages
 
 - R0.4a: inventory/access/media discovery — performed; private evidence recorded separately.
-- R0.4b: allocate isolated pool/network and restricted controller identity — pool allocated; isolated network and restricted identity pending.
+- R0.4b: allocate isolated pool/network and restricted controller identity — pool and bridge allocated, with no physical uplink or host IP/IPv6 address. A dedicated API account has pool-scoped VM permissions and required storage/network permissions; TLS-authenticated pool access and denial of an out-of-pool VM configuration were verified. Run orchestration must retain these boundaries.
 - R0.4c: create and validate reproducible Windows baselines — first Server Core evaluation guest deployed; reproducible maintained baselines pending.
 - R0.4d: implement controller run records, guest handshakes, collection, cleanup and orphan reconciliation — pending.
 - R0.4e: connect trusted Gitea dispatch/artifact flow and prove the first reboot smoke — supervised local reboot smoke passed; Gitea integration pending.
 
-R0 remains planned until all of its milestone gates are met. Discovery itself created no resources; subsequent supervised bring-up allocated a dedicated pool and one evaluation guest. The first guest uses the existing network with Windows Firewall enabled, not the planned isolated CI network. Do not expose it to arbitrary repository jobs or treat it as a maintained template.
+R0 remains in progress until all of its milestone gates are met. Subsequent supervised bring-up allocated a dedicated pool and one evaluation guest. That guest was moved from its initial network to the isolated bridge after evidence collection; guest-agent access still worked, and it was shut down again. Do not expose it to arbitrary repository jobs or treat it as a maintained template.
+
+## Controller API foundation
+
+`go run ./tools/lab -config PRIVATE_FILE probe` authenticates to the configured pool and optionally verifies HTTP 403 for a known out-of-pool VM. The private JSON configuration has `api_origin`, `ca_file`, `token_file`, `node`, `pool`, and optional `deny_vm_id` fields. The token file contains the Proxmox API authorization value; keep it outside the repository. The probe prints outcomes and a resource count, not private deployment identifiers or response bodies.
+
+The client requires an HTTPS origin, validates the cluster CA and hostname, refuses redirects, bounds requests, and suppresses API response bodies on errors. Local race tests cover trusted/untrusted TLS, token delivery, redirect refusal, response redaction, and unsafe origins. Provisioning, immutable artifact admission, durable run records, cleanup, and orphan reconciliation are not implemented by this probe.
 
 ## First provisioning observations
 

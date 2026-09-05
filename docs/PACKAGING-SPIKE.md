@@ -1,4 +1,4 @@
-# R0.5 packaging spike preparation
+# R0.5 packaging spike
 
 September 5, 2026. Selected experiment tooling: **WixToolset.Sdk 7.0.0**, **WixToolset.Util.wixext 7.0.0**, and **.NET SDK 10.0.400**, targeting an x64 MSI. Installed winunitd binaries remain native Go executables without a .NET prerequisite.
 
@@ -59,4 +59,25 @@ Production direction: use a narrowly scoped native helper for advanced settings 
 
 The prototype requires a fresh transaction token from the lab harness. `msiexec /f` did not pass that custom property; fixture repair uses `/i REINSTALL=ALL REINSTALLMODE=amus`. The production MSI must generate its own transaction identity internally and support ordinary repair/uninstall entry points. This fixture does not qualify production custom-action security, crash/power-loss recovery, arbitrary service configurations, GUI servicing, signing, or the application maintenance barrier.
 
-Final deadline and post-removal rollback qualification is in progress. R0.5 remains open until final artifact identities and results are recorded.
+## Qualified fixture evidence
+
+Implementation: `ea7fb358581ba7cfe54cdfc04bc99044c8ce14aa`. A clean build with Go 1.27.1, WiX 7.0.0, and .NET SDK 10.0.400 was transferred, hash-verified, and tested as SYSTEM on the Server Core build above. The strict helper lane passed:
+
+| Scenario | MSI exit | Observation |
+| --- | --- | --- |
+| Install | 0 | Required settings and running service; 2.31 seconds |
+| Repair | 0 | Required settings retained; 2.84 seconds |
+| Failure after old-product removal | 1603, expected | Old binary, settings, and running state restored; 4.21 seconds |
+| Same failure, previously stopped | 1603, expected | Old binary and settings restored; service remained stopped; 3.78 seconds |
+| 200-second stop against 180-second deadline | 1603, expected | Prepare action failed at about 180 seconds; rollback waited for stop completion and restored the old running service; 200.94 seconds total |
+| 45-second stop and upgrade | 0 | New binary running with required settings; 47.00 seconds |
+| Uninstall | 0 | Service, executable, process, and transaction files absent; retained fixture logs remained; 0.97 seconds |
+
+| Qualified artifact | SHA256 |
+| --- | --- |
+| fixture-0.0.1.msi | `e225fcdf5011526168d6871b1c44477de59a0ed35587d317784ddbad0d41046c` |
+| fixture-0.0.2.msi | `ab6ee1f4ecec635e4ef0213f3837d35427aa1be3e26a377f868b43d25fc19fab` |
+| 0.0.1 fixture.exe | `401f436b5d4b082debd8d8d6c0cc966ada4ef5325d6f01adea5f039161780052` |
+| 0.0.2 fixture.exe | `7606035ba6fb7ea42b67ce091fa6545af55c65309835e56070c61e13524adfdf` |
+
+The same scenarios also passed before the clean-commit rebuild. Raw logs, package copies, and the build manifest are retained in the private operator workspace. R0.5's experiment is complete; none of these results qualifies the product MSI or closes R0's remaining lab-controller gate.
