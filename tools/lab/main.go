@@ -20,6 +20,12 @@ type config struct {
 	Node      string `json:"node"`
 	Pool      string `json:"pool"`
 	DenyVMID  int    `json:"deny_vm_id"`
+	Storage   string `json:"storage"`
+	Bridge    string `json:"bridge"`
+	MACPrefix string `json:"mac_prefix"`
+	FirstVMID int    `json:"first_vm_id"`
+	LastVMID  int    `json:"last_vm_id"`
+	StateDir  string `json:"state_dir"`
 }
 
 func main() {
@@ -31,9 +37,14 @@ func main() {
 
 func run() error {
 	file := flag.String("config", "", "private controller configuration")
+	vmid := flag.Int("vmid", 0, "guest ID within the configured range")
+	osISO := flag.String("os-iso", "", "allowlisted installation ISO volume")
+	bootstrapISO := flag.String("bootstrap-iso", "", "private bootstrap ISO volume")
+	artifacts := flag.String("artifacts", "", "directory containing admitted build manifest and binaries")
+	commit := flag.String("commit", "", "full reviewed source commit for artifact admission")
 	flag.Parse()
-	if *file == "" || flag.NArg() != 1 || flag.Arg(0) != "probe" {
-		return fmt.Errorf("usage: lab -config PRIVATE_FILE probe")
+	if *file == "" || flag.NArg() != 1 {
+		return fmt.Errorf("usage: lab -config PRIVATE_FILE [options] probe|create|wait|smoke")
 	}
 	f, err := os.Open(*file)
 	if err != nil {
@@ -53,6 +64,18 @@ func run() error {
 	a, err := newAPI(c.APIOrigin, c.CAFile, c.TokenFile)
 	if err != nil {
 		return err
+	}
+	if flag.Arg(0) == "create" {
+		return createGuest(a, c, *vmid, *osISO, *bootstrapISO)
+	}
+	if flag.Arg(0) == "wait" {
+		return waitGuest(a, c, *vmid)
+	}
+	if flag.Arg(0) == "smoke" {
+		return smokeGuest(a, c, *vmid, *artifacts, *commit)
+	}
+	if flag.Arg(0) != "probe" {
+		return fmt.Errorf("unknown lab command")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()

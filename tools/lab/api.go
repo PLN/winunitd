@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -53,17 +54,30 @@ func newAPI(base, caFile, tokenFile string) (*api, error) {
 }
 
 func (a *api) call(ctx context.Context, method, path string, form url.Values, result any) error {
-	if !strings.HasPrefix(path, "/") || strings.Contains(path, "..") || strings.ContainsAny(path, "?#") {
+	if method == http.MethodGet && len(form) != 0 {
+		return a.request(ctx, method, path+"?"+form.Encode(), nil, "", result)
+	}
+	return a.request(ctx, method, path, strings.NewReader(form.Encode()), "application/x-www-form-urlencoded", result)
+}
+
+func (a *api) callJSON(ctx context.Context, method, path string, body any, result any) error {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	return a.request(ctx, method, path, bytes.NewReader(data), "application/json", result)
+}
+
+func (a *api) request(ctx context.Context, method, path string, body io.Reader, contentType string, result any) error {
+	if !strings.HasPrefix(path, "/") || strings.Contains(path, "..") || strings.Contains(path, "#") {
 		return fmt.Errorf("invalid API path")
 	}
-	req, err := http.NewRequestWithContext(ctx, method, a.base+"/api2/json"+path, strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, method, a.base+"/api2/json"+path, body)
 	if err != nil {
 		return fmt.Errorf("create API request")
 	}
 	req.Header.Set("Authorization", a.token)
-	if form != nil {
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	}
+	req.Header.Set("Content-Type", contentType)
 	resp, err := a.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("API transport failed (%T); inspect private controller configuration", err)

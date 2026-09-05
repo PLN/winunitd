@@ -3,3 +3,4 @@
 go.mod text eol=lf
 go.sum text eol=lf
 .go-version text eol=lf
+tools/lab/assets/** text eol=lf

@@ -43,7 +43,7 @@ R0 packaging research may proceed alongside runtime stabilization. R4 and R5 may
 
 Internal diagnostic builds and disposable-VM MSI prototypes are allowed before milestones close. Label them experimental and include their known limitations. R6 is the gate for an installable internal candidate; R7 replaces the current Hermes pilot; R8 is the gate for public installation releases. The initial public release may remain a prerelease; completion of this roadmap does not automatically confer a stable `1.0` API.
 
-Supported targets must be backed by evidence. Windows 11 x64 and Windows Server 2022/2025 x64, including Core, remain qualification candidates. An untested target is excluded from release claims rather than inferred from compilation. Boot-time linger modes are separately qualified and explicit opt-in. GUI/session attachment, ARM64, and additional account types remain deferred.
+Supported targets must be backed by evidence. The first desktop release targets Windows 11 Enterprise and Enterprise LTSC x64 only. Windows Server 2022/2025 x64, including Core, remain qualification candidates. An untested target is excluded from release claims rather than inferred from compilation. Boot-time linger modes are separately qualified and explicit opt-in. GUI/session attachment, ARM64, and additional account types remain deferred.
 
 Keep the repository private while the basics are proved. Making source public is separate from publishing a supported installer. A public source preview may precede R8 completion after a history/artifact review, with experimental binaries clearly identified. No visibility change, enrollment, or purchase is performed by adopting these documents.
 

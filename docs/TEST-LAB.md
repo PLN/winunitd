@@ -1,6 +1,6 @@
 # Windows qualification lab
 
-September 5, 2026. Implementation plan for R0.4 and the R4–R8 acceptance lanes in [MILESTONES.md](MILESTONES.md). A first Windows Server 2025 Core evaluation guest has passed supervised smoke and packaging-fixture tests. An isolated network and restricted API account are provisioned; the controller's authenticated probe is implemented. Maintained templates, run orchestration, and CI integration remain pending.
+September 5, 2026. Implementation plan for R0.4 and the R4–R8 acceptance lanes in [MILESTONES.md](MILESTONES.md). Server Core and Windows 11 Enterprise LTSC evaluation guests have completed fresh unattended installation through the restricted controller. An isolated network, authenticated API client, ownership records, artifact admission, and reboot smoke orchestration are implemented. Automated media preparation, cleanup/reconciliation, and CI integration remain pending.
 
 Private inventory, endpoints, VM IDs, key paths, and credentials belong in the operator's infrastructure workspace. They must not enter project workflows, committed test results, or guest images. This document is intentionally portable to another installation.
 
@@ -23,11 +23,11 @@ Keep the current GitHub source remote during initial lab bring-up. A private Git
 
 Create maintained Windows 11 Enterprise, Enterprise LTSC, and Server Core baselines from identified installation media. The maintainer selected Enterprise/LTSC for the initial desktop support matrix. Start with two concurrent guests at a provisional 4 vCPU, 8 GiB RAM, and 80 GiB thin disk each; tune after measuring tests and storage behavior. Set controller concurrency and disk-retention quotas so failed guests cannot accumulate indefinitely.
 
-Record OS edition/build/patch level, media and driver hashes, firmware/TPM configuration, guest-agent version, and baseline creation procedure. Keep test accounts distinct from operator identities. Remove provisioning secrets and runner registrations before sealing the baseline. A cloned guest gets unique machine/network identity and run credentials. Do not clone a personalized workstation or shared build server as a clean acceptance image.
+Record OS edition/build/patch level, media and driver hashes, firmware/TPM configuration, guest-agent version, and baseline creation procedure. The initial baseline strategy is a fresh installation for each run, using identified media and versioned bootstrap assets. Keep test accounts distinct from operator identities and generate unique credentials. Remove provisioning secrets after setup. If templates are introduced later, every clone must receive unique machine/network identity and run credentials.
 
-The existing Windows builder was verified as Windows 10 LTSC. It can help build artifacts but cannot supply Windows 11 or Server acceptance evidence. Available media includes desktop Windows and Server 2022; Server 2025 media and current target patch levels require preparation. Only validated targets appear in release support claims.
+The existing Windows builder was verified as Windows 10 LTSC. It can help build artifacts but cannot supply Windows 11 or Server acceptance evidence. Official Server 2025, Windows 11 Enterprise 25H2, and Enterprise LTSC 2024 evaluation media have been downloaded. Both desktop ISO hashes match Microsoft's published verification PDF. The maintainer selected temporary, restricted internet access for evaluation activation and Windows Update during baseline preparation, disconnected for qualification tests. Implement and verify that boundary before maintaining patched baselines. Only validated targets appear in release support claims.
 
-Templates are immutable inputs to a run. Windows updates create a new baseline version rather than changing one during tests. Verify clone/snapshot behavior and performance on the actual storage backend before depending on linked clones. Failed guests may be retained with a bounded expiry and only after evidence collection.
+Media and bootstrap recipes are immutable inputs to a run. Windows updates create a new baseline version rather than changing one during tests. Verify clone/snapshot behavior and performance on the actual storage backend before depending on linked clones. Failed guests may be retained with a bounded expiry and only after evidence collection.
 
 ## Controller and run contract
 
@@ -68,9 +68,9 @@ Store detailed private logs locally with retention limits. Publish only sanitize
 
 - R0.4a: inventory/access/media discovery — performed; private evidence recorded separately.
 - R0.4b: allocate isolated pool/network and restricted controller identity — pool and bridge allocated, with no physical uplink or host IP/IPv6 address. A dedicated API account has pool-scoped VM permissions and required storage/network permissions; TLS-authenticated pool access and denial of an out-of-pool VM configuration were verified. Run orchestration must retain these boundaries.
-- R0.4c: create and validate reproducible Windows baselines — first Server Core evaluation guest deployed; reproducible maintained baselines pending.
-- R0.4d: implement controller run records, guest handshakes, collection, cleanup and orphan reconciliation — pending.
-- R0.4e: connect trusted Gitea dispatch/artifact flow and prove the first reboot smoke — supervised local reboot smoke passed; Gitea integration pending.
+- R0.4c: create and validate reproducible Windows baselines — fresh Server Core and Enterprise LTSC evaluation setup and SYSTEM guest-agent handshakes passed. Versioned answer-file/scripts exist; media rendering/upload and maintenance policy remain unfinished.
+- R0.4d: implement controller run records, guest handshakes, collection, cleanup and orphan reconciliation — allocation, ownership checks, readiness, artifact admission, and reboot smoke are implemented. Automated cleanup and reconciliation remain pending.
+- R0.4e: connect trusted Gitea dispatch/artifact flow and prove the first reboot smoke — controller reboot smoke passed on Server Core and Enterprise LTSC with downloaded GitHub CI artifacts; Gitea integration pending.
 
 R0 remains in progress until all of its milestone gates are met. Subsequent supervised bring-up allocated a dedicated pool and one evaluation guest. That guest was moved from its initial network to the isolated bridge after evidence collection; guest-agent access still worked, and it was shut down again. Do not expose it to arbitrary repository jobs or treat it as a maintained template.
 
@@ -78,9 +78,42 @@ R0 remains in progress until all of its milestone gates are met. Subsequent supe
 
 `go run ./tools/lab -config PRIVATE_FILE probe` authenticates to the configured pool and optionally verifies HTTP 403 for a known out-of-pool VM. The private JSON configuration has `api_origin`, `ca_file`, `token_file`, `node`, `pool`, and optional `deny_vm_id` fields. The token file contains the Proxmox API authorization value; keep it outside the repository. The probe prints outcomes and a resource count, not private deployment identifiers or response bodies.
 
-The client requires an HTTPS origin, validates the cluster CA and hostname, refuses redirects, bounds requests, and suppresses API response bodies on errors. Local race tests cover trusted/untrusted TLS, token delivery, redirect refusal, response redaction, and unsafe origins. Provisioning, immutable artifact admission, durable run records, cleanup, and orphan reconciliation are not implemented by this probe.
+The client requires an HTTPS origin, validates the cluster CA and hostname, refuses redirects, bounds requests, and suppresses API response bodies on errors. Local race tests cover trusted/untrusted TLS, token delivery, redirect refusal, response redaction, unsafe origins, reused VM IDs, ownership/network drift, concurrency admission, and artifact identity/tampering.
+
+Additional private configuration fields are `storage`, `bridge`, `mac_prefix`, `first_vm_id`, `last_vm_id`, and an absolute `state_dir`. The dedicated storage and isolated bridge must already exist with scoped API permissions. Commands:
+
+- `create`, with `-vmid`, `-os-iso`, and `-bootstrap-iso`: allocate a fresh guest, persist a random ownership marker before allocation, enforce a two-running-guest limit, and boot setup. Media volume names are limited to dedicated storage. Initial boot key delivery is bounded; that automation still needs a fresh end-to-end repeat after its addition.
+- `wait`, with `-vmid`: check pool/node/network and matching ownership record, then await post-setup SYSTEM readiness. It cannot reset an active scenario to ready.
+- `smoke`, with `-vmid`, `-artifacts`, and a full `-commit`: reject dirty/wrong-target builds, verify all binary sizes/hashes, transfer bounded chunks, verify guest-side hashes, exercise SCM/unit operations, reboot, check a new invocation and exactly one session-0 process, stop SCM, and collect private evidence.
+
+The state directory is private controller storage, not a public artifact directory. A crashed admission lock requires inspection; do not blindly delete it or treat an unmatched old record as authority over a reused VM ID. Failed scenarios remain available for diagnosis. This is a supervised controller prototype: distributed admission, automatic retirement, orphan reconciliation, complete failure-log collection, baseline hash admission, and trusted CI dispatch are still required before unattended operation.
 
 ## First provisioning observations
+
+### Fresh controller runs — September 5, 2026
+
+Fresh Windows Server 2025 Standard Evaluation Core build **26100.32230** and Windows 11 Enterprise LTSC Evaluation build **26100.1742** passed unattended setup, a SYSTEM guest-agent handshake, and the controller reboot smoke. Secure Boot was confirmed enabled in both guests. Guest-agent file version was `110.0.2`; the serial driver and MSI came from the VirtIO 0.1.285 media. These are media baselines, not current patch-compliance claims.
+
+The smoke consumed the native Windows artifact from GitHub CI run `33951099740`, source `40858a8b593c1aecbc2fbb7452b9ce20c25ed772`:
+
+| Artifact | SHA256 |
+| --- | --- |
+| winunitd.exe | `617ddbc9a090dd0d0679a4157e5d27c83b940d0d2dfc89b65cfdf70b22dd931e` |
+| winctl.exe | `7f5e29234f53c20eed27528d63f3805ac400ce54d5a4109146742c4c7377c0f9` |
+| winunit-notify.exe | `f77d3768a29900a69678377b7f8207d49913f918da0065e4a4aeeb8ced43a7c0` |
+
+Both runs verified transferred hashes, unit verification, SCM installation, enable/start, status/logs, stop with no surviving fixture process, and a second start. After reboot, the boot timestamp and invocation changed, exactly one fixture process ran in session 0, and SCM stop removed it. Private controller state, transcripts, and result records were collected. The scripts remain supervised: initial media construction and a boot key were supplied manually, and teardown is not yet automated. This does not qualify a production MSI or the deferred identity/session scenarios.
+
+Verified desktop media:
+
+| Evaluation media | SHA256 |
+| --- | --- |
+| Windows 11 Enterprise 25H2 en-US x64 | `a61adeab895ef5a4db436e0a7011c92a2ff17bb0357f58b13bbc4062e535e7b9` |
+| Windows 11 Enterprise LTSC 2024 en-US x64 | `67cec5865eaa037a72ddc633a717a10a2bed50778862267223ddb9c60ef5da68` |
+
+Both digests match the [Microsoft verification PDF](https://cdn-dynmedia-1.microsoft.com/is/content/microsoftcorp/microsoft/bade/documents/products-and-services/en-us/owned-and-operated/Verify-Download-Win11-Enterprise.pdf) linked from the [Evaluation Center downloads](https://www.microsoft.com/en-us/evalcenter/download-windows-11-enterprise). Enterprise 25H2 is downloaded but has not yet run the smoke.
+
+### Original supervised bring-up
 
 The initial guest uses official Windows Server 2025 Standard Evaluation media, WIM index 1 (Server Core), build 26100.32230. It has four vCPUs, 8 GiB RAM, an 80 GiB sparse SATA disk, UEFI with enrolled Microsoft keys, and an emulated Intel NIC. These conservative device choices let Windows Setup run without injecting storage/network drivers. Future baselines should explicitly qualify their chosen VirtIO devices.
 
