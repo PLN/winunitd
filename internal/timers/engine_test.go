@@ -272,16 +272,10 @@ func TestStatusUnlocksBeforeNextDeadline(t *testing.T) {
 
 	started := make(chan struct{})
 	release := make(chan struct{})
-	var lockHeld atomic.Bool
 	var once atomic.Bool
 	e.onStatusDeadline = func() {
 		if !once.CompareAndSwap(false, true) {
 			return
-		}
-		if !e.mu.TryLock() {
-			lockHeld.Store(true)
-		} else {
-			e.mu.Unlock()
 		}
 		close(started)
 		<-release
@@ -297,6 +291,9 @@ func TestStatusUnlocksBeforeNextDeadline(t *testing.T) {
 	}
 
 	armDone := make(chan struct{})
+	// Arm must acquire e.mu while Status is blocked in the callback. This
+	// proves Status released the lock; TryLock could instead observe an
+	// unrelated engine goroutine briefly holding it.
 	go func() {
 		e.Arm(Spec{Name: "other.timer", OnStartupSec: time.Second, OnStartupSecSet: true})
 		close(armDone)
@@ -326,9 +323,6 @@ func TestStatusUnlocksBeforeNextDeadline(t *testing.T) {
 	case snap = <-errc:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Status did not return")
-	}
-	if lockHeld.Load() {
-		t.Fatal("Status held e.mu during NextDeadline")
 	}
 	if !snap.Next.Equal(want) {
 		t.Fatalf("Next = %v, want %v", snap.Next, want)
