@@ -29,12 +29,14 @@ func (m *Manager) armRegistry(u *unit.Unit) error {
 	var opened []registry.Watch
 	for _, key := range u.Registry.Changed {
 		w, err := open(key)
+		if w != nil {
+			opened = append(opened, w)
+		}
 		if err != nil {
 			cancel()
 			cleanupErr := m.disposeHub(u.Name, &watchRuntime{watches: toWatchIO(opened)})
 			return errors.Join(fmt.Errorf("%s: %w", core.ReasonConfiguration, err), cleanupErr)
 		}
-		opened = append(opened, w)
 	}
 	if err := m.installHub(u.Name, toWatchIO(opened), cancel, false); err != nil {
 		return err

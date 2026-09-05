@@ -16,7 +16,8 @@ type Watch interface {
 	Close() error
 }
 
-// OpenFunc opens a watch on one PathChanged= or PathExists= path.
+// OpenFunc opens a watch on one PathChanged= or PathExists= path. A non-nil
+// watch returned with an error still belongs to the caller and must be closed.
 type OpenFunc func(Spec) (Watch, error)
 
 // ExistsFunc reports whether a PathExists= path exists.

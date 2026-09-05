@@ -12,5 +12,6 @@ type Watch interface {
 	Close() error
 }
 
-// OpenFunc opens a watch on a key and its subtree.
+// OpenFunc opens a watch on a key and its subtree. A non-nil watch returned
+// with an error still belongs to the caller and must be closed.
 type OpenFunc func(Key) (Watch, error)

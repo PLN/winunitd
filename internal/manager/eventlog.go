@@ -29,12 +29,14 @@ func (m *Manager) armEventLog(u *unit.Unit) error {
 	var opened []eventlog.Subscription
 	for _, tr := range u.EventLog.Triggers {
 		s, err := open(tr)
+		if s != nil {
+			opened = append(opened, s)
+		}
 		if err != nil {
 			cancel()
 			cleanupErr := m.disposeHub(u.Name, &watchRuntime{watches: toWatchIO(opened)})
 			return errors.Join(fmt.Errorf("%s: %w", core.ReasonConfiguration, err), cleanupErr)
 		}
-		opened = append(opened, s)
 	}
 	if err := m.installHub(u.Name, toWatchIO(opened), cancel, false); err != nil {
 		return err

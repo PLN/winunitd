@@ -61,7 +61,7 @@ func OpenExistsWatch(s Spec) (Watch, error) {
 	}
 	inner, err := openExistsDirWatch(dir, filter)
 	if err != nil {
-		return nil, err
+		return inner, err
 	}
 	w := &existsWatch{
 		target:   s.Raw,
@@ -161,6 +161,9 @@ func (w *existsWatch) rearm(dir, filter string) bool {
 	}
 	next, err := openExistsDirWatch(dir, filter)
 	if err != nil {
+		if next != nil {
+			w.pending = append(w.pending, next)
+		}
 		return false
 	}
 	return w.replaceInner(next, dir, filter)
@@ -186,6 +189,10 @@ func (w *existsWatch) rearmCloser() bool {
 		}
 		next, err := openExistsDirWatch(nextDir, nextFilter)
 		if err != nil {
+			if next != nil {
+				w.pending = append(w.pending, next)
+				return false
+			}
 			return true
 		}
 		if !w.replaceInner(next, nextDir, nextFilter) {

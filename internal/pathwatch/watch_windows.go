@@ -91,8 +91,7 @@ func openDirWatchNotify(watchDir, filter string, mask uint32) (Watch, error) {
 	}
 	ev, err := windows.CreateEvent(nil, 0, 0, nil)
 	if err != nil {
-		_ = windows.CloseHandle(h)
-		return nil, fmt.Errorf("%w: %s: %v", ErrUnwatchable, watchDir, err)
+		return failedOpenWatch(&winWatch{dir: h, ch: make(chan struct{}), done: make(chan struct{})}, fmt.Errorf("%w: %s: %v", ErrUnwatchable, watchDir, err))
 	}
 	if mask == 0 {
 		mask = notifyFilter
@@ -115,6 +114,16 @@ func openDirWatchNotify(watchDir, filter string, mask uint32) (Watch, error) {
 }
 
 func (w *winWatch) C() <-chan struct{} { return w.ch }
+
+// No read loop has started; a failed cleanup transfers the remaining handles.
+func failedOpenWatch(w *winWatch, openErr error) (Watch, error) {
+	close(w.done)
+	close(w.ch)
+	if err := w.Close(); err != nil {
+		return w, errors.Join(openErr, err)
+	}
+	return nil, openErr
+}
 
 func (w *winWatch) Close() error {
 	w.closeMu.Lock()

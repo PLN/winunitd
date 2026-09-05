@@ -45,5 +45,6 @@ type Subscription interface {
 	Close() error
 }
 
-// OpenFunc opens a push subscription for one EventLogTrigger=.
+// OpenFunc opens a push subscription for one EventLogTrigger=. A non-nil
+// subscription returned with an error belongs to the caller and must be closed.
 type OpenFunc func(Trigger) (Subscription, error)

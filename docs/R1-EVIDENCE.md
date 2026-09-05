@@ -20,6 +20,8 @@ Notification listeners also retain accepted clients until each connection closes
 
 A notification adapter returning both a listener and an open error transfers cleanup ownership to the manager. No process is launched from that partial result. Failed cleanup remains attached to the unit for stop retry, or to manager shutdown if the unit cannot own it. Successful cleanup permits a later start attempt. Both retry paths pass twenty race-enabled repetitions, alongside the full suite and vet.
 
+Path, existence, registry, and event-log adapters use the same resource-plus-error ownership contract. The manager includes the failed opening's resource alongside earlier watches in retained cleanup. Native directory/event allocation and registry notification-arm failures return unfinished handles if cleanup fails. Existence-watch rearming preserves partial opens as pending cleanup and stops rearming. Twenty portable race repetitions cover all four manager adapters; twenty Windows repetitions use protected native handles to verify failed-open cleanup retention and successful retry.
+
 ## Validation
 
 All GitHub CI lanes passed for `40ce624`. Full local race tests with CI flags and vet cover unit/native cleanup, real-child storage stalls, and failed launch ownership. Focused repetitions include 100 timer activations, ten shutdown/native-stop deadline scenarios, and five real-child storage stalls. The timer/readiness regressions distinguish their fake-clock deadlines from cleanup deadlines.
@@ -78,7 +80,6 @@ To reproduce, compile the journal package with `go test -c -trimpath`, put `jour
 
 ## Remaining qualification
 
-- Post-allocation failures inside watcher open adapters need an explicit ownership contract.
 - Windows identity/session scenarios and broader installer qualification remain open.
 - Journal qualification still needs aggregate overload fairness, read-path stalls, and lifecycle admission bounds; actual volume exhaustion has passed on Server Core.
 - Immutable configuration revisions and stale-event handling remain R2 work; service stop semantics remain R3 work.

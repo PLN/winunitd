@@ -34,23 +34,27 @@ func (m *Manager) armPath(u *unit.Unit) error {
 	var changed []pathwatch.Watch
 	for _, spec := range u.PathWatch.Changed {
 		w, err := open(spec)
+		if w != nil {
+			opened = append(opened, w)
+		}
 		if err != nil {
 			cancel()
 			cleanupErr := m.disposeHub(u.Name, &watchRuntime{watches: toWatchIO(opened)})
 			return errors.Join(fmt.Errorf("%s: %w", core.ReasonConfiguration, err), cleanupErr)
 		}
-		opened = append(opened, w)
 		changed = append(changed, w)
 	}
 	var existsWatches []pathwatch.Watch
 	for _, spec := range u.PathWatch.Exists {
 		w, err := existsOpen(spec)
+		if w != nil {
+			opened = append(opened, w)
+		}
 		if err != nil {
 			cancel()
 			cleanupErr := m.disposeHub(u.Name, &watchRuntime{watches: toWatchIO(opened)})
 			return errors.Join(fmt.Errorf("%s: %w", core.ReasonConfiguration, err), cleanupErr)
 		}
-		opened = append(opened, w)
 		existsWatches = append(existsWatches, w)
 	}
 	satisfied := false

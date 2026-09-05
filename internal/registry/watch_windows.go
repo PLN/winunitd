@@ -45,8 +45,7 @@ func OpenWatch(key Key) (Watch, error) {
 	}
 	ev, err := windows.CreateEvent(nil, 0, 0, nil)
 	if err != nil {
-		_ = k.Close()
-		return nil, err
+		return failedOpenWatch(&winWatch{key: k, ch: make(chan struct{}), done: make(chan struct{})}, err)
 	}
 	w := &winWatch{
 		key:   k,
@@ -55,12 +54,21 @@ func OpenWatch(key Key) (Watch, error) {
 		done:  make(chan struct{}),
 	}
 	if err := w.arm(); err != nil {
-		close(w.done)
-		_ = w.Close()
-		return nil, err
+		return failedOpenWatch(w, err)
 	}
 	go w.loop()
 	return w, nil
+}
+
+// No loop has started. Return unfinished handles with the open error so the
+// caller can retain ownership and retry cleanup.
+func failedOpenWatch(w *winWatch, openErr error) (Watch, error) {
+	close(w.done)
+	close(w.ch)
+	if err := w.Close(); err != nil {
+		return w, errors.Join(openErr, err)
+	}
+	return nil, openErr
 }
 
 func (w *winWatch) C() <-chan struct{} { return w.ch }
