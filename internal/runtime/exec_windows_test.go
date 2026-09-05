@@ -188,6 +188,11 @@ func TestOneshotWaitsForExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer p.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := p.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if time.Since(start) > 5*time.Second {
 		t.Fatal("oneshot hung")
 	}
@@ -196,7 +201,7 @@ func TestOneshotWaitsForExit(t *testing.T) {
 	}
 }
 
-func TestOneshotTimeoutKillsJob(t *testing.T) {
+func TestOneshotReturnsBeforeCompletion(t *testing.T) {
 	p, err := DefaultLauncher().Start(context.Background(), StartSpec{
 		Unit:         "oneshot.service",
 		Type:         unit.TypeOneshot,
@@ -205,12 +210,12 @@ func TestOneshotTimeoutKillsJob(t *testing.T) {
 		Env:          helperEnv("WINUNITD_JOB_HELPER=sleep"),
 		TimeoutStart: 200 * time.Millisecond,
 	})
-	if err == nil {
-		_ = p.Stop(time.Second)
-		t.Fatal("expected TimeoutStartSec failure")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if p != nil {
-		t.Fatal("process returned after timeout")
+	defer p.Stop(time.Second)
+	if !p.Alive() {
+		t.Fatal("launcher waited for oneshot completion")
 	}
 }
 
@@ -274,16 +279,20 @@ func TestKillUnitJobTearsDownTree(t *testing.T) {
 }
 
 func TestOneshotFailureReturnsExitStatus(t *testing.T) {
-	_, err := DefaultLauncher().Start(context.Background(), StartSpec{
+	p, err := DefaultLauncher().Start(context.Background(), StartSpec{
 		Unit: "fail.service",
 		Type: unit.TypeOneshot,
 		Argv: []string{testAbs(t), winunitdHelperArgPrefix + "fail"},
 		Dir:  t.TempDir(),
 		Env:  helperEnv("WINUNITD_JOB_HELPER=fail"),
 	})
-	if err == nil {
-		t.Fatal("expected non-zero oneshot to fail")
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer p.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = p.Wait(ctx)
 	var st *ExitStatus
 	if !errors.As(err, &st) || st.Code != 2 {
 		t.Fatalf("err = %v", err)

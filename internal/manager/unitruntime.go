@@ -25,6 +25,7 @@ type unitRuntime struct {
 	proc          runtime.Process // whoever clears this owns job.Kill+Close (#25)
 	notify        *notifyRuntime
 	watchdog      context.CancelFunc
+	startCancel   context.CancelFunc
 	restartCancel context.CancelFunc
 	stopping      bool
 	terminated    bool
@@ -110,6 +111,7 @@ func teardownJob(proc runtime.Process) {
 // unitTeardown holds async control handles taken off a unitRuntime so
 // dropping or closing the unit cannot relaunch or leave a stale substate.
 type unitTeardown struct {
+	start    context.CancelFunc
 	watchdog context.CancelFunc
 	notify   *notifyRuntime
 	restart  context.CancelFunc
@@ -123,12 +125,14 @@ func (rt *unitRuntime) detachAsync() unitTeardown {
 		return unitTeardown{}
 	}
 	td := unitTeardown{
+		start:    rt.startCancel,
 		watchdog: rt.watchdog,
 		notify:   rt.notify,
 		restart:  rt.restartCancel,
 		hub:      rt.hub,
 	}
 	rt.watchdog = nil
+	rt.startCancel = nil
 	rt.notify = nil
 	rt.restartCancel = nil
 	rt.hub = nil
@@ -136,6 +140,9 @@ func (rt *unitRuntime) detachAsync() unitTeardown {
 }
 
 func (td unitTeardown) cancelNonblocking() {
+	if td.start != nil {
+		td.start()
+	}
 	if td.restart != nil {
 		td.restart()
 	}

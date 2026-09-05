@@ -12,21 +12,15 @@ Only the test binary reads the endpoint environment variable. The production lis
 
 Protocol tests retain production ACLs. Tests that require an elevated control-pipe connection now state that prerequisite explicitly. Three restricted-token fixtures require a non-SYSTEM user: removing Administrators membership from a SYSTEM token does not remove its LocalSystem identity. These fixtures run in the elevated-user lane instead of claiming to represent ordinary users under SYSTEM.
 
-## Known failing reproductions
+## Original review reproductions
 
 Run explicitly on Windows from PowerShell:
 
 ```powershell
-$previousRepro = $env:WINUNITD_REVIEW_REPRO
-try {
-	$env:WINUNITD_REVIEW_REPRO = '1'
-	go test ./internal/manager -run '^TestReviewRepro' -count=1 -v -timeout 45s
-} finally {
-	$env:WINUNITD_REVIEW_REPRO = $previousRepro
-}
+go test ./internal/manager -run '^TestReviewRepro' -count=1 -v -timeout 45s
 ```
 
-The Go command is expected to report FAIL and exit 1 on this baseline. Do not make this an ordinary passing CI gate or interpret the normal suite's skips as fixes.
+These tests failed on the original review baseline as recorded below. Both now run unconditionally and pass after the R1 fixes; the opt-in environment gate has been removed.
 
 | Reproduction | Baseline observation |
 | --- | --- |
@@ -37,9 +31,9 @@ The Go command is expected to report FAIL and exit 1 on this baseline. Do not ma
 
 The reload cases retain an independent process/job reference for cleanup even after the manager loses its lookup. Output cases record the helper PID and check that completion/timeout leaves no live child. All fixtures have temporary data directories and use direct manager APIs, with no connection to an installed manager. The observed runs completed cleanup without cleanup failures.
 
-R1 must remove the opt-in gate when the desired-behavior assertions pass, strengthen output-content and edge-case coverage, and make these required regressions.
+R1 retains these as required regressions and extends edge-case coverage.
 
-R1 follow-up: the reload ownership cases now run unconditionally and pass, including status/log/stop access, recreation of the file without replacing the live process, and refusal to relaunch after stopping an unavailable unit. A delayed-launch regression also passes. The table above records the original baseline defects; the large-output oneshot cases still require opt-in and remain unfixed.
+R1 follow-up: reload ownership cases pass, including status/log/stop access, recreation without replacing the live process, and refusal to relaunch after stopping an unavailable unit. Delayed launch/stop regressions also pass. Oneshot completion now waits in the manager after output attachment, and the output cases verify all 5,000 lines from each stream. Real-process timeout and explicit-stop tests confirm that interrupted oneshots exit. The table above records historical defects; termination-failure injection and bounded capture remain separate R1 work.
 
 ## Qualification evidence
 

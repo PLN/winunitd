@@ -1281,7 +1281,7 @@ func (f *fakeLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runti
 	if err != nil {
 		return nil, err
 	}
-	return &fakeProc{
+	p := &fakeProc{
 		name:   spec.Unit,
 		rec:    f,
 		pid:    pid,
@@ -1289,7 +1289,11 @@ func (f *fakeLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runti
 		done:   make(chan struct{}),
 		stdout: io.NopCloser(strings.NewReader(out)),
 		stderr: io.NopCloser(strings.NewReader(errOut)),
-	}, nil
+	}
+	if spec.Type == unit.TypeOneshot {
+		p.die(0)
+	}
+	return p, nil
 }
 
 func (f *fakeLauncher) specs() []runtime.StartSpec {

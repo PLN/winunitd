@@ -52,9 +52,9 @@ type StartSpec struct {
 	// Env is the full environment block (KEY=value). Nil means inherit the
 	// manager process environment.
 	Env []string
-	// TimeoutStart bounds CreateProcess for Type=simple. For Type=oneshot it
-	// bounds waiting for the process to exit. Type=notify ignores this
-	// (the manager bounds READY=1 with TimeoutStartSec). Zero means no extra timeout.
+	// TimeoutStart bounds CreateProcess for Type=simple. The manager bounds
+	// oneshot completion and notify readiness separately, after attaching output.
+	// Zero means no extra timeout.
 	TimeoutStart time.Duration
 	// Limits are applied to the unit Job Object (whole tree). Zero is today's job.
 	Limits JobLimits
@@ -91,7 +91,8 @@ type Process interface {
 	Close() error
 }
 
-// Launcher starts a unit into its own Job Object.
+// Launcher starts a unit into its own Job Object and returns without waiting
+// for oneshot completion. Callers attach output before waiting for exit.
 type Launcher interface {
 	Start(ctx context.Context, spec StartSpec) (Process, error)
 }

@@ -117,6 +117,9 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 		m.mu.Lock()
 		if rt := m.units[name]; rt != nil {
 			rt.stopping = true
+			if rt.startCancel != nil {
+				rt.startCancel()
+			}
 			rt.cancelRestart()
 		}
 		m.mu.Unlock()

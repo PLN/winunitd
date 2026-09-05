@@ -13,14 +13,7 @@ import (
 	"github.com/PLN/winunitd/internal/protocol"
 )
 
-// Still-failing review reproductions require explicit opt-in. Fixed cases
-// run unconditionally as permanent regressions.
-func requireReviewRepro(t *testing.T) {
-	t.Helper()
-	if os.Getenv("WINUNITD_REVIEW_REPRO") != "1" {
-		t.Skip("known failing review reproduction; set WINUNITD_REVIEW_REPRO=1")
-	}
-}
+// The original review reproductions now run as required regressions.
 
 func TestReviewReproReloadKeepsLiveUnit(t *testing.T) {
 	for _, change := range []string{"delete", "invalid"} {
@@ -114,7 +107,6 @@ func TestReviewReproReloadKeepsLiveUnit(t *testing.T) {
 }
 
 func TestReviewReproOneshotDrainsOutput(t *testing.T) {
-	requireReviewRepro(t)
 	for _, stream := range []string{"stdout", "stderr"} {
 		for _, large := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/large=%t", stream, large), func(t *testing.T) {
@@ -134,6 +126,33 @@ func TestReviewReproOneshotDrainsOutput(t *testing.T) {
 				if err != nil {
 					t.Errorf("oneshot output did not drain before exit: %v", err)
 				}
+				count := 0
+				cursor := ""
+				for {
+					logs, logErr := m.Logs(protocol.LogsParams{Unit: "review.service", Cursor: cursor})
+					if logErr != nil {
+						t.Fatal(logErr)
+					}
+					for _, entry := range logs.Entries {
+						if entry.Stream == stream && entry.Message == "review-output-012345678901234567890123456789" {
+							count++
+						}
+					}
+					if !logs.More {
+						break
+					}
+					if logs.Cursor == cursor {
+						t.Fatal("log pagination did not advance")
+					}
+					cursor = logs.Cursor
+				}
+				want := 4
+				if large {
+					want = 5000
+				}
+				if count != want {
+					t.Errorf("captured %d output lines, want %d", count, want)
+				}
 				pid := waitWindowsChildPID(t, pidFile)
 				if windowsProcessAlive(pid) {
 					// The launcher should terminate timed-out children. A bounded
@@ -147,5 +166,46 @@ func TestReviewReproOneshotDrainsOutput(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestWindowsOneshotTimeoutAndExplicitStop(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("explicit-stop=%t", explicit), func(t *testing.T) {
+			body := "Type=oneshot\nTimeoutStartSec=1s\n"
+			if explicit {
+				body = "Type=oneshot\nTimeoutStartSec=0\n"
+			}
+			m := startWindowsHelperUnit(t, t.TempDir(), "waiting.service", body, "sleep", 0, "")
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { _, err := m.Start(ctx, "waiting.service"); done <- err }()
+			proc := waitWindowsLiveProc(t, m, "waiting.service")
+			t.Cleanup(func() { _ = proc.Stop(3 * time.Second); _ = proc.Close() })
+			if explicit {
+				stopped := make(chan error, 1)
+				go func() { _, err := m.Stop("waiting.service"); stopped <- err }()
+				select {
+				case err := <-stopped:
+					if err != nil {
+						t.Fatal(err)
+					}
+				case <-ctx.Done():
+					t.Fatal("stop blocked on oneshot completion")
+				}
+			}
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Fatal("interrupted oneshot reported success")
+				}
+			case <-ctx.Done():
+				t.Fatal("oneshot start did not finish")
+			}
+			if proc.Alive() {
+				t.Fatal("interrupted oneshot survived")
+			}
+		})
 	}
 }

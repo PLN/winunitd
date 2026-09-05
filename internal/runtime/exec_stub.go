@@ -61,13 +61,18 @@ func (l stubLauncher) Start(ctx context.Context, spec StartSpec) (Process, error
 	if err != nil {
 		return nil, err
 	}
-	return &stubProc{
+	p := &stubProc{
 		pid:    1,
 		job:    job,
 		stdout: io.NopCloser(strings.NewReader(l.stdout)),
 		stderr: io.NopCloser(strings.NewReader(l.stderr)),
 		done:   make(chan struct{}),
-	}, nil
+	}
+	if spec.Type == unit.TypeOneshot {
+		p.dead, p.exited = true, true
+		close(p.done)
+	}
+	return p, nil
 }
 
 func (p *stubProc) PID() int { return p.pid }

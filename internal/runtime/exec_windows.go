@@ -83,21 +83,6 @@ func (l *winLauncher) Start(ctx context.Context, spec StartSpec) (Process, error
 		p = o.p
 	}
 
-	if spec.Type == unit.TypeOneshot {
-		waitCtx := ctx
-		var cancel context.CancelFunc
-		if spec.TimeoutStart > 0 {
-			waitCtx, cancel = context.WithTimeout(ctx, spec.TimeoutStart)
-			defer cancel()
-		}
-		if err := p.wait(waitCtx); err != nil {
-			_ = p.Stop(0)
-			if waitCtx.Err() != nil {
-				return nil, fmt.Errorf("TimeoutStartSec exceeded: %w", waitCtx.Err())
-			}
-			return nil, err
-		}
-	}
 	return p, nil
 }
 

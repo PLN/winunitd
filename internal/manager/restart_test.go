@@ -568,6 +568,9 @@ func (s *scriptedLauncher) Start(ctx context.Context, spec runtime.StartSpec) (r
 		stderr: io.NopCloser(strings.NewReader("")),
 	}
 	if !auto {
+		if spec.Type == unit.TypeOneshot {
+			p.die(0)
+		}
 		return p, nil
 	}
 	if spec.Type == unit.TypeOneshot {

@@ -212,6 +212,47 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 	gen := rt.gen
 	m.mu.Unlock()
 
+	if svc.Type == unit.TypeOneshot {
+		waitCtx, cancel := m.clockTimeout(ctx, svc.TimeoutStartSec)
+		m.mu.Lock()
+		if rt := m.units[name]; rt != nil && !rt.stopping && !m.closed {
+			rt.startCancel = cancel
+		} else {
+			cancel()
+		}
+		m.mu.Unlock()
+		err := proc.Wait(waitCtx)
+		if waitCtx.Err() != nil {
+			err = fmt.Errorf("TimeoutStartSec exceeded: %w", waitCtx.Err())
+		}
+		cancel()
+		m.mu.Lock()
+		if rt := m.units[name]; rt != nil && rt.gen == gen {
+			rt.startCancel = nil
+		}
+		m.mu.Unlock()
+		if err != nil {
+			stopErr := m.stopProcess(proc, stopTimeout(u))
+			m.mu.Lock()
+			if rt := m.units[name]; rt != nil && rt.proc == proc {
+				rt.terminated = true
+			}
+			m.mu.Unlock()
+			go m.watch(name, proc)
+			if stopErr == nil {
+				m.maybeRestart(name, classifyWait(err), svc)
+			}
+			return errors.Join(err, stopErr)
+		}
+		// Drain the final bytes before watch closes the process's pipe handles.
+		if job := proc.Job(); job != nil {
+			if err := job.Kill(); err != nil {
+				return err
+			}
+		}
+		m.waitJournal(name, stopTimeout(u))
+	}
+
 	if svc.Type == unit.TypeNotify {
 		if err := m.waitReady(ctx, name, proc, svc.TimeoutStartSec); err != nil {
 			m.mu.Lock()
@@ -251,10 +292,6 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 		m.startWatchdog(name, svc, gen)
 	}
 
-	if svc.Type == unit.TypeOneshot && proc.Alive() {
-		// Stub/fake oneshot that has not exited: stay Active like M5.
-		return nil
-	}
 	go m.watch(name, proc)
 	return nil
 }
