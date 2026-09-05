@@ -642,22 +642,44 @@ func stopTimeout(u *unit.Unit) time.Duration {
 	return defaultStopTimeout
 }
 
+type processStopAttempt struct {
+	done chan struct{}
+	err  error
+}
+
 func (m *Manager) stopProcess(proc runtime.Process, timeout time.Duration) error {
 	if proc == nil {
 		return nil
 	}
-	if timeout <= 0 {
-		return proc.Stop(timeout)
+	// A caller deadline does not cancel an adapter call already inside the OS.
+	// Keep one attempt per process; retries join it instead of closing handles
+	// concurrently or accumulating another blocked Stop goroutine each time.
+	m.stopMu.Lock()
+	if m.stopAttempts == nil {
+		m.stopAttempts = make(map[runtime.Process]*processStopAttempt)
 	}
-	done := make(chan error, 1)
-	go func() {
-		done <- proc.Stop(timeout)
-	}()
+	attempt := m.stopAttempts[proc]
+	if attempt == nil {
+		attempt = &processStopAttempt{done: make(chan struct{})}
+		m.stopAttempts[proc] = attempt
+		go func(a *processStopAttempt) {
+			a.err = proc.Stop(timeout)
+			m.stopMu.Lock()
+			delete(m.stopAttempts, proc)
+			m.stopMu.Unlock()
+			close(a.done)
+		}(attempt)
+	}
+	m.stopMu.Unlock()
+	if timeout <= 0 {
+		<-attempt.done
+		return attempt.err
+	}
 	t := m.clock().Timer(timeout)
 	defer t.Stop()
 	select {
-	case err := <-done:
-		return err
+	case <-attempt.done:
+		return attempt.err
 	case <-t.C():
 		return fmt.Errorf("TimeoutStopSec exceeded")
 	}

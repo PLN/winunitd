@@ -39,6 +39,8 @@ R1.3 failed-state cleanup follow-up: asynchronous reaping retains the process re
 
 R1.3 exit cleanup follow-up: the ordinary exit watcher and a start that encounters an exited but unreaped process now retain ownership until adapter cleanup succeeds. Failure blocks restart/replacement and remains available for explicit stop retry. The operation lock is released before restart delay/relaunch; existing real Windows restart tests cover that boundary. Targeted fault injection and the full local race suite pass. Late launch disposal, pending stop completions, complete descendant-exit confirmation, and manager shutdown remain open. The bounded journal implementation passed every GitHub CI lane at `ee64959`.
 
+R1.3 pending stop follow-up: manager stop retries now join an outstanding adapter call after caller timeout, preventing concurrent termination/handle cleanup and repeated blocked stop goroutines for the same process. A controlled blocked adapter test covers repeated timeouts, one adapter invocation, and recovery. Direct legacy cleanup paths still need migration to this shared stop path.
+
 Exit gate: real-process tests cover deletion, invalid replacement, recreation while an old invocation lives, large stdout/stderr, no-newline output, exit-before-attach, and failed termination. The previously reproduced failures now pass required regression tests. Race tests and cleanup assertions pass; no owned process becomes unreachable through status/stop and no ambiguous termination is reported as successful.
 
 ## R2 — Authoritative lifecycle coordinator
