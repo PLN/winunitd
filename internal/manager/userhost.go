@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/timers"
 )
 
 // UserHostConfig launches per-SID user managers from the system daemon.
@@ -32,6 +34,9 @@ type UserHostConfig struct {
 // First interactive logon starts the manager. Last logoff kills it
 // unless the user is lingering.
 type UserHost struct {
+	closed   bool
+	ops      unitOps
+	stops    stopSet
 	cfg      UserHostConfig
 	store    *LingerStore
 	mu       sync.Mutex
@@ -40,8 +45,10 @@ type UserHost struct {
 }
 
 type userInstance struct {
-	sid  string
-	proc runtime.UserManagerProc
+	uncertain bool
+	err       string
+	sid       string
+	proc      runtime.UserManagerProc
 }
 
 // NewUserHost creates a host. Call Listen after the system manager is up.
@@ -160,11 +167,11 @@ func (h *UserHost) Logon(sessionID uint32) {
 	}
 
 	h.mu.Lock()
-	h.sessions[sessionID] = sid
-	if inst := h.bySID[sid]; inst != nil && inst.proc != nil && inst.proc.Alive() {
+	if h.closed {
 		h.mu.Unlock()
 		return
 	}
+	h.sessions[sessionID] = sid
 	h.mu.Unlock()
 
 	if err := h.ensureRunning(sid, tok); err != nil {
@@ -188,35 +195,14 @@ func (h *UserHost) Logoff(sessionID uint32) {
 		return
 	}
 	h.mu.Lock()
-	sid, ok := h.sessions[sessionID]
-	if ok {
-		delete(h.sessions, sessionID)
-	}
-	if sid == "" {
-		h.mu.Unlock()
-		return
-	}
-	for _, mapped := range h.sessions {
-		if mapped == sid {
-			h.mu.Unlock()
-			return
-		}
-	}
-	if h.lingeringLocked(sid) {
-		h.mu.Unlock()
-		h.cfg.Logf("user manager %s lingering; keeping after last logoff", sid)
-		return
-	}
-	inst := h.bySID[sid]
-	delete(h.bySID, sid)
+	sid := h.sessions[sessionID]
+	delete(h.sessions, sessionID)
 	h.mu.Unlock()
-
-	if inst != nil && inst.proc != nil {
-		if err := inst.proc.Kill(); err != nil {
-			h.cfg.Logf("kill user manager %s: %v", sid, err)
-		} else {
-			h.cfg.Logf("user manager %s stopped (session %d logoff)", sid, sessionID)
-		}
+	if sid == "" {
+		return
+	}
+	if err := h.stopUser(context.Background(), sid, true); err != nil {
+		h.cfg.Logf("kill user manager %s: %v", sid, err)
 	}
 }
 
@@ -249,6 +235,12 @@ func (h *UserHost) LingerCount() int {
 func (h *UserHost) EnableLinger(user string) (*protocol.LingerResult, error) {
 	if h == nil {
 		return nil, protocol.ErrFailed("user host is not configured")
+	}
+	h.mu.Lock()
+	closed := h.closed
+	h.mu.Unlock()
+	if closed {
+		return nil, protocol.ErrFailed("user host is shutting down or closed")
 	}
 	if h.store == nil {
 		return nil, protocol.ErrFailed("linger store is not configured")
@@ -286,26 +278,11 @@ func (h *UserHost) DisableLinger(user string) (*protocol.LingerResult, error) {
 		return nil, protocol.ErrFailed(err.Error())
 	}
 
-	h.mu.Lock()
-	hasSession := false
-	for _, mapped := range h.sessions {
-		if mapped == rec.SID {
-			hasSession = true
-			break
-		}
+	result := &protocol.LingerResult{SID: rec.SID, User: rec.Name, Lingering: false}
+	if err := h.stopUser(context.Background(), rec.SID, true); err != nil {
+		return result, protocol.ErrFailed(err.Error())
 	}
-	inst := h.bySID[rec.SID]
-	if !hasSession {
-		delete(h.bySID, rec.SID)
-	}
-	h.mu.Unlock()
-
-	if !hasSession && inst != nil && inst.proc != nil {
-		if err := inst.proc.Kill(); err != nil {
-			h.cfg.Logf("disable-linger kill %s: %v", rec.SID, err)
-		}
-	}
-	return &protocol.LingerResult{SID: rec.SID, User: rec.Name, Lingering: false}, nil
+	return result, nil
 }
 
 func (h *UserHost) resolve(user string) (runtime.LingerRecord, error) {
@@ -369,36 +346,117 @@ func (h *UserHost) startLinger(rec runtime.LingerRecord) error {
 }
 
 func (h *UserHost) ensureRunning(sid string, tok *runtime.UserToken) error {
+	unlock := h.ops.lock(sid)
+	defer unlock()
 	h.mu.Lock()
-	if inst := h.bySID[sid]; inst != nil && inst.proc != nil && inst.proc.Alive() {
+	if h.closed {
+		h.mu.Unlock()
+		return fmt.Errorf("user host is shutting down or closed")
+	}
+	inst := h.bySID[sid]
+	if inst != nil && inst.uncertain {
+		h.mu.Unlock()
+		return fmt.Errorf("user manager termination is unconfirmed; retry cleanup")
+	}
+	if inst != nil && inst.proc != nil && inst.proc.Alive() {
 		h.mu.Unlock()
 		return nil
 	}
 	h.mu.Unlock()
-
+	if inst != nil && inst.proc != nil {
+		if err := h.killUserInstance(context.Background(), sid, inst); err != nil {
+			return err
+		}
+	}
+	// Publish the accepted launch before leaving the lock for process creation.
+	// Shutdown includes this placeholder even though no process exists yet.
+	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		return fmt.Errorf("user host is shutting down or closed")
+	}
+	inst = &userInstance{sid: sid}
+	h.bySID[sid] = inst
+	h.mu.Unlock()
 	spec := runtime.UserManagerSpec{
-		SID:       sid,
-		Token:     tok,
-		Exe:       h.cfg.Exe,
-		ExtraArgs: append([]string(nil), h.cfg.ExtraArgs...),
-		Daemon:    h.cfg.Daemon,
+		SID: sid, Token: tok, Exe: h.cfg.Exe,
+		ExtraArgs: append([]string(nil), h.cfg.ExtraArgs...), Daemon: h.cfg.Daemon,
 	}
 	if tok != nil {
 		spec.Env = runtime.MergeDeterministicUserEnv(os.Environ(), tok.Info)
 	}
 	proc, err := h.cfg.Start(spec)
+	h.mu.Lock()
+	inst.proc = proc
+	closed := h.closed
+	if proc == nil {
+		delete(h.bySID, sid)
+	} else if err != nil {
+		inst.uncertain = true
+		inst.err = err.Error()
+	}
+	h.mu.Unlock()
 	if err != nil {
 		return err
 	}
+	if proc == nil {
+		return fmt.Errorf("user manager launcher returned no process")
+	}
+	if closed {
+		return errors.Join(fmt.Errorf("user manager launch superseded by shutdown"), h.killUserInstance(context.Background(), sid, inst))
+	}
+	return nil
+}
 
+// stopUser serializes with accepted launches and rechecks the idle policy after
+// acquiring the operation lock. A concurrent logon cannot lose its replacement.
+func (h *UserHost) stopUser(ctx context.Context, sid string, onlyIdle bool) error {
+	unlock, err := h.ops.lockContext(ctx, sid)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	if inst := h.bySID[sid]; inst != nil && inst.proc != nil && inst.proc.Alive() {
-		_ = proc.Kill()
+	if onlyIdle && !h.closed {
+		for _, mapped := range h.sessions {
+			if mapped == sid {
+				h.mu.Unlock()
+				return nil
+			}
+		}
+		if h.lingeringLocked(sid) {
+			h.mu.Unlock()
+			return nil
+		}
+	}
+	inst := h.bySID[sid]
+	h.mu.Unlock()
+	return h.killUserInstance(ctx, sid, inst)
+}
+
+// Caller owns the per-SID operation lock; failed or pending kills keep the record.
+func (h *UserHost) killUserInstance(ctx context.Context, sid string, inst *userInstance) error {
+	if inst == nil || inst.proc == nil {
 		return nil
 	}
-	h.bySID[sid] = &userInstance{sid: sid, proc: proc}
-	return nil
+	h.mu.Lock()
+	inst.uncertain = true
+	h.mu.Unlock()
+	proc := inst.proc
+	err := h.stops.wait(ctx, timers.DefaultClock(), stopKey{user: proc}, defaultStopTimeout, proc.Kill)
+	if err == nil && proc.Alive() {
+		err = fmt.Errorf("user manager remains alive after termination")
+	}
+	h.mu.Lock()
+	if h.bySID[sid] == inst {
+		if err == nil {
+			delete(h.bySID, sid)
+		} else {
+			inst.err = err.Error()
+		}
+	}
+	h.mu.Unlock()
+	return err
 }
 
 // Alive reports whether a manager is running for sid.
@@ -428,24 +486,43 @@ func (h *UserHost) Running() []string {
 	return out
 }
 
-// Close kills every user manager (system shutdown).
+// Close requests bounded shutdown and logs unresolved cleanup. Shutdown exposes
+// the error to callers that must prove termination before proceeding.
 func (h *UserHost) Close() {
 	if h == nil {
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), defaultStopTimeout)
+	defer cancel()
+	if err := h.Shutdown(ctx); err != nil {
+		h.cfg.Logf("user host shutdown: %v", err)
+	}
+}
+
+// Shutdown closes admission, drains accepted launches, and retains failed cleanup
+// for a later retry. The supplied context bounds waits across all user managers.
+func (h *UserHost) Shutdown(ctx context.Context) error {
+	if h == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	h.mu.Lock()
-	insts := make([]*userInstance, 0, len(h.bySID))
-	for sid, inst := range h.bySID {
-		insts = append(insts, inst)
-		delete(h.bySID, sid)
+	h.closed = true
+	sids := make([]string, 0, len(h.bySID))
+	for sid := range h.bySID {
+		sids = append(sids, sid)
 	}
 	h.sessions = make(map[uint32]string)
 	h.mu.Unlock()
-	for _, inst := range insts {
-		if inst != nil && inst.proc != nil {
-			_ = inst.proc.Kill()
+	var result error
+	for _, sid := range sids {
+		if err := h.stopUser(ctx, sid, false); err != nil {
+			result = errors.Join(result, err)
 		}
 	}
+	return errors.Join(result, ctx.Err())
 }
 
 // ManagerCount is the number of tracked user managers (live or not yet reaped).

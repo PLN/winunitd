@@ -681,17 +681,6 @@ func stopTimeout(u *unit.Unit) time.Duration {
 	return defaultStopTimeout
 }
 
-type stopKey struct {
-	proc       runtime.Process
-	nativeKind string
-	nativeName string
-}
-
-type stopAttempt struct {
-	done chan struct{}
-	err  error
-}
-
 func (m *Manager) stopProcess(proc runtime.Process, timeout time.Duration) error {
 	return m.stopProcessContext(context.Background(), proc, timeout)
 }
@@ -706,50 +695,8 @@ func (m *Manager) stopProcessContext(ctx context.Context, proc runtime.Process, 
 	return m.awaitStop(ctx, stopKey{proc: proc}, timeout, func() error { return proc.Stop(timeout) })
 }
 
-// awaitStop bounds the caller's wait while retaining a single pending adapter
-// operation per process or native target, including calls blocked inside the OS.
 func (m *Manager) awaitStop(ctx context.Context, key stopKey, timeout time.Duration, stop func() error) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	// A caller deadline does not cancel an adapter call already inside the OS.
-	// Keep one attempt per target; retries join it instead of closing handles
-	// concurrently or accumulating another blocked Stop goroutine each time.
-	m.stopMu.Lock()
-	if m.stopAttempts == nil {
-		m.stopAttempts = make(map[stopKey]*stopAttempt)
-	}
-	attempt := m.stopAttempts[key]
-	if attempt == nil {
-		attempt = &stopAttempt{done: make(chan struct{})}
-		m.stopAttempts[key] = attempt
-		go func(a *stopAttempt) {
-			a.err = stop()
-			m.stopMu.Lock()
-			delete(m.stopAttempts, key)
-			m.stopMu.Unlock()
-			close(a.done)
-		}(attempt)
-	}
-	m.stopMu.Unlock()
-	if timeout <= 0 {
-		select {
-		case <-attempt.done:
-			return attempt.err
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	t := m.clock().Timer(timeout)
-	defer t.Stop()
-	select {
-	case <-attempt.done:
-		return attempt.err
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-t.C():
-		return fmt.Errorf("TimeoutStopSec exceeded")
-	}
+	return m.stops.wait(ctx, m.clock(), key, timeout, stop)
 }
 
 func mergeEnv(extra []unit.EnvVar) []string {

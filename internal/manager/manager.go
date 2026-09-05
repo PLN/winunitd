@@ -40,8 +40,7 @@ type Manager struct {
 	pathExists     pathwatch.ExistsFunc
 	session        sync.Mutex // serializes graphical-session.target start/stop
 	ops            unitOps    // per-unit start/stop/restart (issue #24)
-	stopMu         sync.Mutex
-	stopAttempts   map[stopKey]*stopAttempt
+	stops          stopSet
 }
 
 // New creates a manager. Reload must be called to load units.

@@ -36,7 +36,8 @@ type UserManagerProc interface {
 }
 
 // UserManagerLauncher starts a user manager. Production uses
-// CreateProcessAsUser with a WTS token.
+// CreateProcessAsUser with a WTS token. A non-nil process returned with an error
+// transfers unfinished cleanup ownership to the caller, which must retry Kill.
 type UserManagerLauncher func(spec UserManagerSpec) (UserManagerProc, error)
 
 // UserManagerArgs is the child command line after exe.

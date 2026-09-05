@@ -306,3 +306,175 @@ func TestFailClosedErrorIsNotPassword(t *testing.T) {
 	}
 	_ = err
 }
+
+type failingUserMgr struct {
+	fakeUserMgr
+	fail    atomic.Bool
+	calls   atomic.Int32
+	release <-chan struct{}
+}
+
+func (p *failingUserMgr) Kill() error {
+	p.calls.Add(1)
+	if p.release != nil {
+		<-p.release
+	}
+	if p.fail.Load() {
+		return errors.New("injected user-manager cleanup failure")
+	}
+	return p.fakeUserMgr.Kill()
+}
+
+func TestUserHostSerializesConcurrentStarts(t *testing.T) {
+	h, _, _ := testUserHost(t, map[uint32]string{1: testSIDA, 2: testSIDA}, nil)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once, freed sync.Once
+	unblock := func() { freed.Do(func() { close(release) }) }
+	defer unblock()
+	var starts, done atomic.Int32
+	h.cfg.Start = func(spec runtime.UserManagerSpec) (runtime.UserManagerProc, error) {
+		starts.Add(1)
+		once.Do(func() { close(entered) })
+		<-release
+		p := &fakeUserMgr{sid: spec.SID}
+		p.alive.Store(true)
+		return p, nil
+	}
+	go func() { h.Logon(1); done.Add(1) }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("launch did not enter")
+	}
+	go func() { h.Logon(2); done.Add(1) }()
+	waitCond(t, func() bool { h.mu.Lock(); defer h.mu.Unlock(); return len(h.sessions) == 2 })
+	unblock()
+	waitCond(t, func() bool { return done.Load() == 2 })
+	if starts.Load() != 1 || !h.Alive(testSIDA) {
+		t.Fatal("concurrent logons created duplicate user managers")
+	}
+}
+
+func TestUserHostLogoffFailureRetainsOwnership(t *testing.T) {
+	h, _, _ := testUserHost(t, map[uint32]string{1: testSIDA, 2: testSIDA}, nil)
+	p := &failingUserMgr{fakeUserMgr: fakeUserMgr{sid: testSIDA}}
+	p.alive.Store(true)
+	p.fail.Store(true)
+	var starts atomic.Int32
+	h.cfg.Start = func(runtime.UserManagerSpec) (runtime.UserManagerProc, error) { starts.Add(1); return p, nil }
+	t.Cleanup(func() { p.fail.Store(false) })
+	h.Logon(1)
+	h.Logoff(1)
+	if h.ManagerCount() != 1 || !h.Alive(testSIDA) {
+		t.Fatal("failed logoff cleanup discarded ownership")
+	}
+	h.Logon(2)
+	if starts.Load() != 1 {
+		t.Fatal("uncertain cleanup admitted a replacement")
+	}
+	p.fail.Store(false)
+	h.Logoff(2)
+	if h.ManagerCount() != 0 || p.Alive() {
+		t.Fatal("logoff cleanup retry did not finish")
+	}
+}
+
+func TestUserHostShutdownDeadlineRetainsLateLaunch(t *testing.T) {
+	h, _, _ := testUserHost(t, map[uint32]string{1: testSIDA}, nil)
+	p := &failingUserMgr{fakeUserMgr: fakeUserMgr{sid: testSIDA}}
+	p.alive.Store(true)
+	p.fail.Store(true)
+	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	t.Cleanup(func() { p.fail.Store(false) })
+	h.cfg.Start = func(runtime.UserManagerSpec) (runtime.UserManagerProc, error) {
+		close(entered)
+		<-release
+		return p, nil
+	}
+	go func() { h.Logon(1); close(done) }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("launch did not enter")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	stopped := make(chan error, 1)
+	go func() { stopped <- h.Shutdown(ctx) }()
+	if err := waitErr(t, stopped); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("shutdown result: %v", err)
+	}
+	if h.ManagerCount() != 1 {
+		t.Fatal("shutdown deadline dropped accepted launch")
+	}
+	unblock()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("late launch did not finish")
+	}
+	if h.ManagerCount() != 1 || !h.Alive(testSIDA) {
+		t.Fatal("late launch cleanup failure lost ownership")
+	}
+	p.fail.Store(false)
+	if err := h.Shutdown(context.Background()); err != nil {
+		t.Fatal("shutdown retry", err)
+	}
+	if h.ManagerCount() != 0 || p.Alive() {
+		t.Fatal("shutdown retry left user manager owned")
+	}
+}
+
+func TestUserHostFailedStartRetainsReturnedProcess(t *testing.T) {
+	h, _, _ := testUserHost(t, map[uint32]string{1: testSIDA}, nil)
+	p := &failingUserMgr{fakeUserMgr: fakeUserMgr{sid: testSIDA}}
+	p.alive.Store(true)
+	p.fail.Store(true)
+	t.Cleanup(func() { p.fail.Store(false) })
+	h.cfg.Start = func(runtime.UserManagerSpec) (runtime.UserManagerProc, error) {
+		return p, errors.New("injected launch failure")
+	}
+	h.Logon(1)
+	if h.ManagerCount() != 1 || !h.Alive(testSIDA) {
+		t.Fatal("failed start discarded returned user manager")
+	}
+	if err := h.Shutdown(context.Background()); err == nil {
+		t.Fatal("failed cleanup reported success")
+	}
+	p.fail.Store(false)
+	if err := h.Shutdown(context.Background()); err != nil {
+		t.Fatal("cleanup retry", err)
+	}
+}
+
+func TestUserHostShutdownJoinsPendingKill(t *testing.T) {
+	h, _, _ := testUserHost(t, map[uint32]string{1: testSIDA}, nil)
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	p := &failingUserMgr{fakeUserMgr: fakeUserMgr{sid: testSIDA}, release: release}
+	p.alive.Store(true)
+	h.cfg.Start = func(runtime.UserManagerSpec) (runtime.UserManagerProc, error) { return p, nil }
+	h.Logon(1)
+	for i := 0; i < 3; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		done := make(chan error, 1)
+		go func() { done <- h.Shutdown(ctx) }()
+		err := waitErr(t, done)
+		cancel()
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("shutdown result: %v", err)
+		}
+	}
+	if p.calls.Load() != 1 || h.ManagerCount() != 1 {
+		t.Fatal("shutdown retry duplicated pending kill or lost ownership")
+	}
+	unblock()
+	if err := h.Shutdown(context.Background()); err != nil {
+		t.Fatal("shutdown retry", err)
+	}
+}

@@ -370,3 +370,68 @@ func TestUserManagerKillConfirmsDescendantExit(t *testing.T) {
 		t.Fatalf("descendant still running after Kill: wait=%d err=%v", state, err)
 	}
 }
+
+func TestFailedUserManagerStartTransfersCleanup(t *testing.T) {
+	tok := testUserToken(t)
+	proc, err := StartUserManager(UserManagerSpec{
+		SID: tok.Info.SID, Token: tok, Exe: testAbs(t),
+		Env:       helperEnv("WINUNITD_JOB_HELPER=sleep"),
+		ExtraArgs: []string{winunitdHelperArgPrefix + "sleep"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := proc.(*userMgrProc)
+	h := p.process
+	const protectFromClose = 0x2
+	if err := windows.SetHandleInformation(h, protectFromClose, protectFromClose); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = windows.SetHandleInformation(h, protectFromClose, 0)
+		_ = p.Kill()
+	})
+	cause := errors.New("injected launch failure")
+	retained, err := failedUserManagerStart(p, cause)
+	if retained != p || !errors.Is(err, cause) || p.closed || p.process != h {
+		t.Fatalf("unfinished cleanup lost: retained=%v err=%v closed=%v", retained != nil, err, p.closed)
+	}
+	if err := windows.SetHandleInformation(h, protectFromClose, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := retained.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if !p.closed {
+		t.Fatal("retry did not release retained handles")
+	}
+}
+
+func TestUserManagerKillCleansUnassignedProcess(t *testing.T) {
+	tok := testUserToken(t)
+	proc, err := StartUserManager(UserManagerSpec{
+		SID: tok.Info.SID, Token: tok, Exe: testAbs(t),
+		Env:       helperEnv("WINUNITD_JOB_HELPER=sleep"),
+		ExtraArgs: []string{winunitdHelperArgPrefix + "sleep"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := proc.(*userMgrProc)
+	original := p.job
+	empty, err := OpenDaemonJob()
+	if err != nil {
+		_ = p.Kill()
+		t.Fatal(err)
+	}
+	// Model failed assignment: the retained job cannot terminate the main
+	// process, so cleanup must use the original process handle as well.
+	p.job, p.unassigned = empty, true
+	t.Cleanup(func() { _ = p.Kill(); _ = original.Close() })
+	if err := p.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if p.Alive() || !p.closed || !empty.Closed() {
+		t.Fatal("unassigned process cleanup did not finish")
+	}
+}

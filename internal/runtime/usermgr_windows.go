@@ -23,6 +23,8 @@ type userMgrProc struct {
 	sid        string
 	pid        int
 	process    windows.Handle
+	thread     windows.Handle
+	unassigned bool
 	job        *DaemonJob
 	closed     bool
 }
@@ -46,16 +48,25 @@ func StartUserManager(spec UserManagerSpec) (UserManagerProc, error) {
 
 	p, err := createUserManager(tok, spec, job)
 	if err != nil {
-		_ = job.Close()
-		return nil, err
+		if p != nil {
+			return failedUserManagerStart(p, err)
+		}
+		return nil, errors.Join(err, job.Close())
 	}
 	if spec.Daemon != nil {
 		if err := assignDaemonPID(spec.Daemon, p.pid); err != nil {
-			_ = p.Kill()
-			return nil, err
+			return failedUserManagerStart(p, err)
 		}
 	}
 	return p, nil
+}
+
+// failedUserManagerStart transfers ownership when cleanup cannot finish.
+func failedUserManagerStart(p *userMgrProc, cause error) (UserManagerProc, error) {
+	if err := p.Kill(); err != nil {
+		return p, errors.Join(cause, fmt.Errorf("user manager launch cleanup: %w", err))
+	}
+	return nil, cause
 }
 
 func createUserManager(tok windows.Token, spec UserManagerSpec, job *DaemonJob) (*userMgrProc, error) {
@@ -187,26 +198,22 @@ func createUserManager(tok windows.Token, spec UserManagerSpec, job *DaemonJob) 
 		return nil, fmt.Errorf("CreateProcessAsUser %s: %w", spec.Exe, err)
 	}
 
+	p := &userMgrProc{
+		sid: spec.SID, pid: int(pi.ProcessId), process: pi.Process,
+		thread: pi.Thread, job: job, unassigned: true,
+	}
 	if err := job.Assign(pi.Process); err != nil {
-		_ = windows.TerminateProcess(pi.Process, 1)
-		_ = windows.CloseHandle(pi.Thread)
-		_ = windows.CloseHandle(pi.Process)
-		return nil, err
+		return p, err
 	}
+	p.unassigned = false
 	if _, err := windows.ResumeThread(pi.Thread); err != nil {
-		_ = windows.TerminateProcess(pi.Process, 1)
-		_ = windows.CloseHandle(pi.Thread)
-		_ = windows.CloseHandle(pi.Process)
-		return nil, fmt.Errorf("ResumeThread: %w", err)
+		return p, fmt.Errorf("ResumeThread: %w", err)
 	}
-	_ = windows.CloseHandle(pi.Thread)
-
-	return &userMgrProc{
-		sid:     spec.SID,
-		pid:     int(pi.ProcessId),
-		process: pi.Process,
-		job:     job,
-	}, nil
+	if err := windows.CloseHandle(pi.Thread); err != nil {
+		return p, fmt.Errorf("close initial user manager thread: %w", err)
+	}
+	p.thread = 0
+	return p, nil
 }
 
 func (p *userMgrProc) PID() int    { return p.pid }
@@ -247,6 +254,13 @@ func (p *userMgrProc) Kill() error {
 		defer p.job.mu.Unlock()
 	}
 	if !p.terminated {
+		// A failed assignment leaves the suspended child outside the job.
+		// Terminate only the process handle obtained at creation.
+		if p.unassigned && p.Alive() {
+			if err := windows.TerminateProcess(process, 1); err != nil {
+				return fmt.Errorf("terminate unassigned user manager: %w", err)
+			}
+		}
 		if p.job != nil {
 			if p.job.handle == 0 {
 				return fmt.Errorf("user manager job is closed before exit confirmation")
@@ -257,8 +271,10 @@ func (p *userMgrProc) Kill() error {
 			if err := windows.TerminateJobObject(p.job.handle, 1); err != nil {
 				return fmt.Errorf("terminate user manager job: %w", err)
 			}
-		} else if err := windows.TerminateProcess(process, 1); err != nil {
-			return fmt.Errorf("terminate user manager: %w", err)
+		} else if p.Alive() {
+			if err := windows.TerminateProcess(process, 1); err != nil {
+				return fmt.Errorf("terminate user manager: %w", err)
+			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -325,6 +341,12 @@ func (p *userMgrProc) closeHandles() error {
 	defer p.mu.Unlock()
 	if p.closed {
 		return nil
+	}
+	if p.thread != 0 {
+		if err := windows.CloseHandle(p.thread); err != nil {
+			return fmt.Errorf("close initial user manager thread: %w", err)
+		}
+		p.thread = 0
 	}
 	if p.process != 0 {
 		if err := windows.CloseHandle(p.process); err != nil {
