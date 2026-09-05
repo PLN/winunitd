@@ -166,3 +166,58 @@ func TestSuccessfulFailedStateCleanupAllowsStart(t *testing.T) {
 		t.Fatal("replacement did not launch after confirmed cleanup")
 	}
 }
+
+func TestMainExitCleanupFailureRetainsOwnership(t *testing.T) {
+	l := &failedStopLauncher{}
+	m := managerWith(t, l, map[string]string{"worker.service": "[Service]\nType=simple\nExecStart=C:\\Tools\\worker.exe\nRestart=always\nRestartSec=0\n"})
+	if _, err := m.Start(context.Background(), "worker"); err != nil {
+		t.Fatal(err)
+	}
+	p := l.proc
+	t.Cleanup(func() { p.fail.Store(false); _ = p.Process.Stop(time.Second) })
+	p.Process.(*fakeProc).finish()
+	waitUntil(t, time.Second, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		rt := m.units["worker.service"]
+		return rt.proc == p && rt.stopUncertain && rt.state == core.Failed
+	})
+	if len(l.specs()) != 1 {
+		t.Fatal("restarted before exit cleanup succeeded")
+	}
+	if _, err := m.Start(context.Background(), "worker"); err == nil {
+		t.Fatal("start admitted after exit cleanup failure")
+	}
+	p.fail.Store(false)
+	if _, err := m.Stop("worker"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStartCannotDiscardUnreapedProcessAfterCleanupFailure(t *testing.T) {
+	l := &failedStopLauncher{}
+	m := managerWith(t, l, map[string]string{"worker.service": "[Service]\nType=simple\nExecStart=C:\\Tools\\worker.exe\n"})
+	if _, err := m.Start(context.Background(), "worker"); err != nil {
+		t.Fatal(err)
+	}
+	p := l.proc
+	t.Cleanup(func() { p.fail.Store(false); _ = p.Process.Stop(time.Second) })
+	// Hold the operation lock so the explicit start wins against the exit watcher.
+	unlock := m.ops.lock("worker.service")
+	p.Process.(*fakeProc).finish()
+	err := m.launchUnitOp(context.Background(), "worker.service", false)
+	unlock()
+	if err == nil {
+		t.Fatal("start ignored cleanup failure")
+	}
+	m.mu.Lock()
+	retained := m.procOfLocked("worker.service") == p
+	m.mu.Unlock()
+	if !retained || len(l.specs()) != 1 {
+		t.Fatal("start replaced unresolved invocation")
+	}
+	p.fail.Store(false)
+	if _, err := m.Stop("worker"); err != nil {
+		t.Fatal(err)
+	}
+}

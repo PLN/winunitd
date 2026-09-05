@@ -80,12 +80,37 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 		return nil
 	}
 	startGen := rt.gen
-	// Dead-but-unreaped: we are removing the proc, so we own job.Kill
-	// and Close. Do not rely on watch's early return (issue #25).
-	evicted := rt.takeProc()
+	// A start can win the operation lock before the exit watcher. Retain the
+	// old invocation until cleanup succeeds; a dead main PID is not sufficient.
+	evicted := rt.proc
+	if evicted != nil {
+		rt.stopUncertain = true
+	}
 	u := rt.unit
 	m.mu.Unlock()
-	teardownJob(evicted)
+	if evicted != nil {
+		cleanupErr := m.stopProcess(evicted, stopTimeout(u))
+		if cleanupErr == nil && evicted.Alive() {
+			cleanupErr = fmt.Errorf("process remains alive after previous invocation cleanup")
+		}
+		m.mu.Lock()
+		stillOwned := m.units[name] == rt && rt.sameOp(startGen, evicted) && !m.closed
+		if stillOwned {
+			if cleanupErr == nil {
+				rt.proc = nil
+				rt.stopUncertain = false
+			} else {
+				rt.err = fmt.Sprintf("previous invocation cleanup: %v", cleanupErr)
+			}
+		}
+		m.mu.Unlock()
+		if cleanupErr != nil {
+			return fmt.Errorf("previous invocation cleanup: %w", cleanupErr)
+		}
+		if !stillOwned {
+			return fmt.Errorf("start superseded during previous invocation cleanup")
+		}
+	}
 
 	if u == nil {
 		return fmt.Errorf("unit %q is not loaded", name)
@@ -314,6 +339,15 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 	// hit; then tear down the unit job so leftover children die. Restart
 	// CreateProcess into a new per-unit job.
 	err, limitHit := waitProcOrLimit(proc)
+	unlock := m.ops.lock(name)
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			unlock()
+		}
+	}
+	defer release()
 	m.mu.Lock()
 	rt := m.units[name]
 	if rt == nil || rt.proc != proc {
@@ -330,7 +364,7 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 		m.mu.Unlock()
 		return
 	}
-	_ = rt.takeProc()
+	rt.stopUncertain = true
 	stopping := rt.stopping
 	terminated := rt.terminated
 	rt.terminated = false
@@ -349,7 +383,29 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 		nrt.Close()
 	}
 
-	teardownJob(proc)
+	cleanupErr := m.stopProcess(proc, stopTimeout(u))
+	if cleanupErr == nil && proc.Alive() {
+		cleanupErr = fmt.Errorf("process remains alive after exit cleanup")
+	}
+	m.mu.Lock()
+	rt = m.units[name]
+	if rt == nil || !rt.sameOp(gen, proc) || rt.proc != proc {
+		m.mu.Unlock()
+		return
+	}
+	if cleanupErr != nil {
+		if rt.state != core.Failed {
+			rt.step(core.EventStartFailed)
+		}
+		rt.err = fmt.Sprintf("exit cleanup: %v", cleanupErr)
+		m.mu.Unlock()
+		return
+	}
+	rt.proc = nil
+	rt.stopUncertain = false
+	m.mu.Unlock()
+	// Restart waits and relaunches through the same operation lock.
+	release()
 
 	if stopping || terminated {
 		return

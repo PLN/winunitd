@@ -35,6 +35,8 @@ R1.1 native proxy follow-up: active or unresolved SCM/task proxies now retain th
 
 R1.3 failed-state cleanup follow-up: asynchronous reaping retains the process reference, serializes termination with lifecycle operations, blocks replacement starts until confirmed cleanup, and exposes cleanup failures for explicit stop retry. A main-process exit cannot discard a record already marked uncertain. Fault injection covers retained ownership after failure and later main exit, successful retry, and replacement after successful cleanup. Full local race tests and vet pass. Ordinary exit teardown, late launch disposal, and manager shutdown still require the broader ownership audit.
 
+R1.3 exit cleanup follow-up: the ordinary exit watcher and a start that encounters an exited but unreaped process now retain ownership until adapter cleanup succeeds. Failure blocks restart/replacement and remains available for explicit stop retry. The operation lock is released before restart delay/relaunch; existing real Windows restart tests cover that boundary. Targeted fault injection and the full local race suite pass. Late launch disposal, pending stop completions, complete descendant-exit confirmation, and manager shutdown remain open. The bounded journal implementation passed every GitHub CI lane at `ee64959`.
+
 Exit gate: real-process tests cover deletion, invalid replacement, recreation while an old invocation lives, large stdout/stderr, no-newline output, exit-before-attach, and failed termination. The previously reproduced failures now pass required regression tests. Race tests and cleanup assertions pass; no owned process becomes unreachable through status/stop and no ambiguous termination is reported as successful.
 
 ## R2 — Authoritative lifecycle coordinator
