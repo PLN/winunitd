@@ -6,6 +6,11 @@ $base = Join-Path $env:ProgramData 'winunitd-lab-bootstrap'
 if (-not (Test-Path (Join-Path $base 'ready.json'))) { throw 'Completed lab setup required' }
 Start-Transcript (Join-Path $base 'maintenance.log') -Append
 try {
+	# Collect the previous wave before invoking this script again.
+	foreach ($name in 'maintenance-result.json', 'updates-selected.json', 'updates-installed.json') {
+		$path = Join-Path $base $name
+		if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path }
+	}
 	'activation' | Set-Content (Join-Path $base 'maintenance-phase.txt')
 	& cscript.exe //Nologo "$env:SystemRoot\System32\slmgr.vbs" /ato | Set-Content (Join-Path $base 'activation.log')
 	if ($LASTEXITCODE) { throw 'Evaluation activation command failed' }
@@ -30,7 +35,8 @@ try {
 		$selected += [ordered]@{title=$update.Title; id=$update.Identity.UpdateID; revision=$update.Identity.RevisionNumber; kb=@($update.KBArticleIDs)}
 	}
 	ConvertTo-Json -InputObject $selected -Depth 5 | Set-Content (Join-Path $base 'updates-selected.json')
-	$reboot = $false
+	$systemInfo = New-Object -ComObject Microsoft.Update.SystemInfo
+	$reboot = [bool]$systemInfo.RebootRequired
 	if ($updates.Count) {
 		'downloading' | Set-Content (Join-Path $base 'maintenance-phase.txt')
 		$downloader = $session.CreateUpdateDownloader()
@@ -47,7 +53,7 @@ try {
 		$details = for ($i=0; $i -lt $updates.Count; $i++) { $result=$installed.GetUpdateResult($i); [ordered]@{id=$updates.Item($i).Identity.UpdateID; code=$result.ResultCode; hresult=$result.HResult; reboot=$result.RebootRequired} }
 		ConvertTo-Json -InputObject @($details) -Depth 4 | Set-Content (Join-Path $base 'updates-installed.json')
 		if ($installed.ResultCode -ne 2) { throw 'Windows Update installation was not completely successful' }
-		$reboot = $installed.RebootRequired
+		$reboot = $reboot -or $installed.RebootRequired
 	}
 	[ordered]@{schema=1; completed=(Get-Date).ToUniversalTime().ToString('o'); selected=$updates.Count; reboot_required=$reboot} | ConvertTo-Json | Set-Content (Join-Path $base 'maintenance-result.json')
 	'completed' | Set-Content (Join-Path $base 'maintenance-phase.txt')
