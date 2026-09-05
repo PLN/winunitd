@@ -41,7 +41,13 @@ func (m *Manager) openNotify(name string) (*notifyRuntime, error) {
 	}
 	lis, err := listen(name)
 	if err != nil {
+		if lis != nil {
+			return &notifyRuntime{name: name, lis: &notifyCloseListener{Listener: lis}}, err
+		}
 		return nil, err
+	}
+	if lis == nil {
+		return nil, fmt.Errorf("notification open returned no listener")
 	}
 	lis = &notifyCloseListener{Listener: lis}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -308,7 +314,15 @@ func (m *Manager) closeNotifyContext(ctx context.Context, name string, timeout t
 }
 
 func (m *Manager) disposeNotify(nrt *notifyRuntime) error {
+	if nrt == nil {
+		return nil
+	}
 	m.mu.Lock()
+	if rt := m.units[nrt.name]; rt != nil && rt.notify == nil && !m.closed {
+		rt.notify = nrt
+		m.mu.Unlock()
+		return m.closeNotify(nrt.name)
+	}
 	m.closePending = append(m.closePending, unitTeardown{notify: nrt})
 	m.mu.Unlock()
 	err := m.stops.wait(context.Background(), m.clock(), stopKey{notify: nrt}, defaultStopTimeout, nrt.Close)

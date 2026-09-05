@@ -23,7 +23,8 @@ type Listener interface {
 	Close() error
 }
 
-// ListenFunc opens a per-unit notify listener.
+// ListenFunc opens a per-unit notify listener. A non-nil listener returned
+// with an error still belongs to the caller and must be closed.
 type ListenFunc func(unitID string) (Listener, error)
 
 type wrapConn struct {

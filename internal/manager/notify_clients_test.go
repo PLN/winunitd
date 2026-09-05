@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -164,5 +165,65 @@ func TestNotificationJoinedCloseFailureIsNotSuppressed(t *testing.T) {
 	}
 	if !onlyNetClosed(errors.Join(net.ErrClosed, net.ErrClosed)) {
 		t.Fatal("already-closed leaves rejected")
+	}
+}
+
+func TestNotificationPartialOpenRetainsCleanup(t *testing.T) {
+	const name = "partial-notify.service"
+	launch := &fakeLauncher{}
+	m := managerWith(t, launch, map[string]string{name: "[Service]\nType=notify\nExecStart=C:\\Tools\\worker.exe\n"})
+	lis := &controlledNotifyListener{}
+	lis.fail.Store(true)
+	openErr := errors.New("notification open failed after allocation")
+	var calls atomic.Int32
+	m.cfg.NotifyListen = func(string) (notify.Listener, error) {
+		calls.Add(1)
+		return lis, openErr
+	}
+	if _, err := m.Start(context.Background(), name); err == nil || !strings.Contains(err.Error(), openErr.Error()) {
+		t.Fatalf("open result: %v", err)
+	}
+	m.mu.Lock()
+	retained := m.units[name].notify != nil && m.units[name].stopUncertain
+	m.mu.Unlock()
+	if !retained {
+		t.Fatal("partial notification open lost failed cleanup")
+	}
+	if len(launch.specs()) != 0 {
+		t.Fatal("partial listener launched a process")
+	}
+	if _, err := m.Start(context.Background(), name); err == nil {
+		t.Fatal("partial open admitted replacement")
+	}
+	if calls.Load() != 1 {
+		t.Fatal("replacement allocated another listener")
+	}
+	lis.fail.Store(false)
+	if _, err := m.stopUnit(name); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	retained = m.units[name].notify != nil || m.units[name].stopUncertain
+	m.mu.Unlock()
+	if retained {
+		t.Fatal("partial open retry did not release ownership")
+	}
+}
+
+func TestNotificationPartialOpenSuccessfulCleanupAllowsRetry(t *testing.T) {
+	const name = "partial-clean.service"
+	m := managerWith(t, &fakeLauncher{}, map[string]string{name: "[Service]\nType=notify\nExecStart=C:\\Tools\\worker.exe\n"})
+	var calls int
+	m.cfg.NotifyListen = func(string) (notify.Listener, error) {
+		calls++
+		return &controlledNotifyListener{}, errors.New("open failed")
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := m.Start(context.Background(), name); err == nil {
+			t.Fatal("expected open failure")
+		}
+	}
+	if calls != 2 {
+		t.Fatal("successful partial-open cleanup prevented retry")
 	}
 }

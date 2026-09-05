@@ -166,7 +166,7 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 		var err error
 		nrt, err = m.openNotify(name)
 		if err != nil {
-			return err
+			return errors.Join(err, m.disposeNotify(nrt))
 		}
 		m.mu.Lock()
 		if rt := m.units[name]; rt != nil && !m.closed {
