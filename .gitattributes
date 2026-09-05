@@ -1,0 +1,5 @@
+# Keep compiler inputs identical across Windows and Linux checkouts.
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+.go-version text eol=lf
