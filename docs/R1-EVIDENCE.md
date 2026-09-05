@@ -78,8 +78,14 @@ The test binary used source `181472e01c9e9d2d4e5b2925bb401fabf0daf847` plus the 
 
 To reproduce, compile the journal package with `go test -c -trimpath`, put `journal.test.exe` on fixture CD media, and run `journal-pressure.ps1 -DisposableLab` as SYSTEM in an offline disposable Windows guest. Ordinary test runs skip the volume test unless `WINUNITD_TEST_JOURNAL_VOLUME` is set; the test also requires a separate 16-128 MiB volume labeled `winunitd-test`. A skipped run is not qualification.
 
+## Query deadlines and admission
+
+Journal queries now have a five-second default deadline and a context-aware entry point. Each store admits at most four query workers; cancellation returns the original cursor and leaves a blocked worker's slot occupied until the native call or lock wait finishes. Additional queries fail with an explicit capacity error. Scans check cancellation between records and files. Capture can continue during a stalled scan because scans hold no journal write lock.
+
+Ten race-enabled repetitions cover four stalled scans outliving their callers, rejection of an additional request, continued append, eventual slot release, successful later queries, and cancellation while waiting for the flush lock. Full local race tests and vet pass. This is injected-stall evidence; it does not guarantee that Windows will interrupt a filesystem call or bound all manager memory/admission.
+
 ## Remaining qualification
 
 - Windows identity/session scenarios and broader installer qualification remain open.
-- Journal qualification still needs aggregate overload fairness, read-path stalls, and lifecycle admission bounds; actual volume exhaustion has passed on Server Core.
+- Journal qualification still needs aggregate overload fairness and lifecycle admission bounds; actual volume exhaustion passed on Server Core and injected read stalls preserve bounded worker admission.
 - Immutable configuration revisions and stale-event handling remain R2 work; service stop semantics remain R3 work.

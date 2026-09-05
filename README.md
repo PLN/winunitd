@@ -193,7 +193,7 @@ Capture uses a bounded writer queue: at most 4 MiB of pending message data per i
 
 Unit status exposes cumulative `logDroppedRecords`, `logDroppedBytes` (normalized message bytes, excluding line endings), `logStorageErrors`, and `logLastStorageError`. Counters reset with the manager. Drop counters cover rejected fragments and pending records abandoned by a failed close. Sync failures or external file damage can lose additional data. Do not treat continuation metadata as proof of a complete line after loss.
 
-Journal waits honor their context during capture and sync; close waits up to five seconds, returns an error on timeout, and retains file ownership for cleanup if storage recovers. After an interrupted append, reopening the journal adds a missing newline before new records and reports the repair; existing bytes are preserved. During a live write failure, each file retains the exact unwritten suffix of its current batch (at most 4 KiB or one larger serialized record) and retries with a 1 to 30 second backoff. New records for that file are rejected and counted while recovery is pending. A recovered write resumes without reopening or duplicating the retained record. Real-volume exhaustion qualification, log-read deadlines, and fairness under aggregate overload remain pending.
+Journal waits honor their context during capture and sync; close waits up to five seconds, returns an error on timeout, and retains file ownership for cleanup if storage recovers. After an interrupted append, reopening the journal adds a missing newline before new records and reports the repair; existing bytes are preserved. During a live write failure, each file retains the exact unwritten suffix of its current batch (at most 4 KiB or one larger serialized record) and retries with a 1 to 30 second backoff. New records for that file are rejected and counted while recovery is pending. A recovered write resumes without reopening or duplicating the retained record. Actual volume exhaustion and automatic recovery passed on a disposable Server Core baseline copy; see [R1 evidence](docs/R1-EVIDENCE.md). Fairness under aggregate overload remains pending.
 
 ```text
 winctl logs UNIT [--follow] [--since <when>]
@@ -201,7 +201,7 @@ winctl logs UNIT [--follow] [--since <when>]
 
 `--since` is a lower bound (RFC3339, `YYYY-MM-DD`, Go duration such as `1h`, or `1 hour ago`); a bad value is an error. `--follow` polls new lines with a cursor over the existing `logs` RPC (no streaming). `--boot` is not implemented.
 
-Log responses are paginated below the 1 MiB RPC limit. `winctl logs` reads every page, including without `--follow`. API clients should request the returned `cursor` while `more` is true. A single entry too large for a response returns an explicit error.
+Log responses are paginated below the 1 MiB RPC limit. `winctl logs` reads every page, including without `--follow`. API clients should request the returned `cursor` while `more` is true. A single entry too large for a response returns an explicit error. Each query has a five-second deadline, and at most four queries per store may occupy storage workers. A timed-out native read or flush retains its slot until it returns; further queries receive a capacity error when all four slots are occupied. Cancellation preserves the supplied cursor. These limits bound requests and workers; they cannot interrupt an underlying Windows filesystem call.
 
 ## User managers and linger
 

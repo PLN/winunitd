@@ -52,6 +52,7 @@ type Store struct {
 	dropped     map[string]CaptureStats
 	syncPending map[string]*journalSync
 	syncSlots   chan struct{}
+	querySlots  chan struct{}
 
 	// onOpen / onSync / onScan / onEntryID are test hooks (nil in production).
 	// onOpen fires after a successful OpenFile; onSync fires immediately
@@ -131,6 +132,7 @@ func Open(dir string) (*Store, error) {
 		dropped:     make(map[string]CaptureStats),
 		syncPending: make(map[string]*journalSync),
 		syncSlots:   make(chan struct{}, 4),
+		querySlots:  make(chan struct{}, queryWorkers),
 	}
 	go s.writeCaptures()
 	return s, nil
@@ -616,7 +618,14 @@ func (s *Store) Query(unit string, since time.Time, cursor string) ([]Entry, str
 // QueryPage bounds the sum of JSON-encoded Entry sizes (including separators).
 // A zero budget is unlimited. The cursor always follows the last returned
 // entry; more indicates that another entry was found beyond the page budget.
+// Each call has a five-second deadline and shares bounded query admission.
 func (s *Store) QueryPage(unit string, since time.Time, cursor string, maxBytes int) ([]Entry, string, bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultQueryTimeout)
+	defer cancel()
+	return s.QueryPageContext(ctx, unit, since, cursor, maxBytes)
+}
+
+func (s *Store) queryPage(ctx context.Context, unit string, since time.Time, cursor string, maxBytes int) ([]Entry, string, bool, error) {
 	if s == nil {
 		return nil, cursor, false, nil
 	}
@@ -624,15 +633,19 @@ func (s *Store) QueryPage(unit string, since time.Time, cursor string, maxBytes 
 
 	if f := s.fileExisting(unit); f != nil {
 		f.mu.Lock()
+		if err := ctx.Err(); err != nil {
+			f.mu.Unlock()
+			return nil, cursor, false, err
+		}
 		if !f.closed {
 			_ = f.flushLocked()
 		}
 		f.mu.Unlock()
 	}
-	return s.scan(unit, since, cursor, maxBytes)
+	return s.scan(ctx, unit, since, cursor, maxBytes)
 }
 
-func (s *Store) scan(unit string, since time.Time, cursor string, maxBytes int) ([]Entry, string, bool, error) {
+func (s *Store) scan(ctx context.Context, unit string, since time.Time, cursor string, maxBytes int) ([]Entry, string, bool, error) {
 	var out []Entry
 	used := 0
 	next := cursor
@@ -643,6 +656,9 @@ func (s *Store) scan(unit string, since time.Time, cursor string, maxBytes int) 
 	base := s.path(unit)
 
 	for _, path := range s.logPaths(unit) {
+		if err := ctx.Err(); err != nil {
+			return nil, cursor, false, err
+		}
 		archive := path != base
 		if archive && !cursorTS.IsZero() {
 			last := peekLastTimestamp(path)
@@ -663,6 +679,10 @@ func (s *Store) scan(unit string, since time.Time, cursor string, maxBytes int) 
 		sc := bufio.NewScanner(f)
 		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for sc.Scan() {
+			if err := ctx.Err(); err != nil {
+				_ = f.Close()
+				return nil, cursor, false, err
+			}
 			line := sc.Bytes()
 			if len(line) == 0 {
 				continue
