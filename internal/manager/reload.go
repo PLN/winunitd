@@ -32,7 +32,7 @@ func (m *Manager) Reload() (*protocol.DaemonReloadResult, error) {
 		accepted[core.NormalizeName(u.Name)] = true
 	}
 	for name, rt := range m.units {
-		if !accepted[name] && (rt.proc != nil || rt.operations != 0) {
+		if !accepted[name] && rt.retainWithoutConfig() {
 			graphUnits = append(graphUnits, rt.unit)
 		}
 	}
@@ -140,7 +140,7 @@ func (m *Manager) replaceLocked(units []*unit.Unit, g *core.Graph, links map[str
 		if keep[name] {
 			continue
 		}
-		if rt.proc != nil || rt.operations != 0 {
+		if rt.retainWithoutConfig() {
 			rt.unavailable = true
 			rt.enabled = false
 			rt.targets = nil
@@ -159,4 +159,17 @@ func (m *Manager) replaceLocked(units []*unit.Unit, g *core.Graph, links map[str
 	m.syncTimersLocked()
 	m.syncHubsLocked()
 	return dropped
+}
+
+// retainWithoutConfig keeps stop routing available until ownership is resolved.
+// Native proxies have no process handle; their last configuration still names
+// the external service/task that Stop must address. Failed native starts can
+// also leave an uncertain external outcome, so only Inactive permits removal.
+// Caller holds m.mu.
+func (rt *unitRuntime) retainWithoutConfig() bool {
+	if rt.proc != nil || rt.operations != 0 || rt.stopUncertain {
+		return true
+	}
+	native := scmServiceName(rt.unit) != "" || scheduledTaskName(rt.unit) != ""
+	return native && rt.state != core.Inactive
 }

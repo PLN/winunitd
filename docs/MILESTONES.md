@@ -31,6 +31,8 @@ Status: in progress alongside remaining supervised R0 qualification. Dependencie
 
 Additional R1 finding: notification tests exposed an early-disconnect transport race and an idle-client shutdown hang. The notify helper now waits for a server-acceptance banner before writing; canceled listeners close accepted clients. The single-send Windows manager test passes 100 race-enabled repetitions, with portable acceptance/cancellation regressions. This alpha transport change requires upgrading the helper and daemon together; it does not acknowledge readiness or replace the invocation/authentication work in R2/R3.
 
+R1.1 native proxy follow-up: active or unresolved SCM/task proxies now retain their last configuration after deletion or invalid replacement, keeping status and stop routing available without a process handle. Portable adapter regressions verify both proxy types and actual stop dispatch before the missing record is retired on a later reload. The earlier runtime/notify fixes passed all GitHub CI lanes at `a1f46c0`. Trigger coverage and valid configuration changes during an invocation remain open.
+
 Exit gate: real-process tests cover deletion, invalid replacement, recreation while an old invocation lives, large stdout/stderr, no-newline output, exit-before-attach, and failed termination. The previously reproduced failures now pass required regression tests. Race tests and cleanup assertions pass; no owned process becomes unreachable through status/stop and no ambiguous termination is reported as successful.
 
 ## R2 — Authoritative lifecycle coordinator
