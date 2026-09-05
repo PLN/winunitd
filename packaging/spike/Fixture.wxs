@@ -1,0 +1,61 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+	<Package Name="winunitd MSI fixture" Manufacturer="PLN" Version="$(FixtureVersion)"
+		UpgradeCode="6BF75153-09DE-4D44-B053-74B01921B136" Scope="perMachine">
+		<?if $(FixtureMode) = helper ?>
+		<MajorUpgrade DowngradeErrorMessage="A newer fixture is installed." Schedule="afterInstallExecute" />
+		<?else?>
+		<MajorUpgrade DowngradeErrorMessage="A newer fixture is installed." Schedule="afterInstallInitialize" />
+		<?endif?>
+		<MediaTemplate EmbedCab="yes" />
+		<Property Id="FIXTURE_FAIL" Secure="yes" />
+		<Property Id="FIXTURE_TRANSACTION" Secure="yes" />
+		<Launch Condition="FIXTURE_TRANSACTION OR UPGRADINGPRODUCTCODE" Message="Use the disposable-lab test harness with a fresh fixture transaction token." />
+		<StandardDirectory Id="ProgramFiles64Folder">
+			<Directory Id="INSTALLFOLDER" Name="winunitd-msi-fixture">
+				<Component Id="FixtureService" Guid="34839249-2D80-495E-8BB7-24082E1C4141">
+					<File Id="FixtureExe" Source="$(FixtureExe)" KeyPath="yes" />
+					<ServiceInstall Id="InstallFixture" Name="winunitd-msi-fixture" DisplayName="winunitd MSI fixture"
+						Type="ownProcess" Start="auto" ErrorControl="normal" Vital="yes">
+						<?if $(FixtureMode) != helper ?>
+						<ServiceConfig OnInstall="yes" OnReinstall="yes" DelayedAutoStart="yes"
+							FailureActionsWhen="failedToStopOrReturnedError" PreShutdownDelay="180000" />
+						<?if $(FixtureMode) = native ?>
+						<ServiceConfigFailureActions OnInstall="yes" OnReinstall="yes" ResetPeriod="86400">
+							<Failure Action="restartService" Delay="1000" />
+							<Failure Action="restartService" Delay="1000" />
+							<Failure Action="restartService" Delay="1000" />
+						</ServiceConfigFailureActions>
+						<?else?>
+						<util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart"
+							ThirdFailureActionType="restart" RestartServiceDelayInSeconds="1" ResetPeriodInDays="1" />
+						<?endif?>
+						<?endif?>
+					</ServiceInstall>
+					<ServiceControl Id="ControlFixture" Name="winunitd-msi-fixture" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+				</Component>
+			</Directory>
+		</StandardDirectory>
+		<Feature Id="Main"><ComponentRef Id="FixtureService" /></Feature>
+		<Binary Id="FixtureHelper" SourceFile="$(FixtureExe)" />
+		<CustomAction Id="InjectFailure" BinaryRef="FixtureHelper" ExeCommand="fail" Execute="deferred" Impersonate="no" Return="check" />
+		<?if $(FixtureMode) = helper ?>
+		<CustomAction Id="RestoreFixture" BinaryRef="FixtureHelper" ExeCommand="rollback [FIXTURE_TRANSACTION]" Execute="rollback" Impersonate="no" Return="check" />
+		<CustomAction Id="PrepareFixture" BinaryRef="FixtureHelper" ExeCommand="prepare [FIXTURE_TRANSACTION]" Execute="deferred" Impersonate="no" Return="check" />
+		<CustomAction Id="CommitFixture" BinaryRef="FixtureHelper" ExeCommand="commit [FIXTURE_TRANSACTION]" Execute="commit" Impersonate="no" Return="check" />
+		<CustomAction Id="ConfigureFixture" BinaryRef="FixtureHelper" ExeCommand="configure" Execute="deferred" Impersonate="no" Return="check" />
+		<?endif?>
+		<InstallExecuteSequence>
+			<?if $(FixtureMode) = helper ?>
+			<Custom Action="RestoreFixture" Before="PrepareFixture" Condition="NOT UPGRADINGPRODUCTCODE" />
+			<Custom Action="PrepareFixture" Before="StopServices" Condition="NOT UPGRADINGPRODUCTCODE" />
+			<Custom Action="CommitFixture" After="PrepareFixture" Condition="NOT UPGRADINGPRODUCTCODE" />
+			<Custom Action="ConfigureFixture" After="InstallServices" Condition="NOT REMOVE" />
+			<?endif?>
+			<?if $(FixtureMode) = helper ?>
+			<Custom Action="InjectFailure" After="RemoveExistingProducts" Condition="FIXTURE_FAIL = &quot;1&quot; AND NOT REMOVE" />
+			<?else?>
+			<Custom Action="InjectFailure" After="StartServices" Condition="FIXTURE_FAIL = &quot;1&quot; AND NOT REMOVE" />
+			<?endif?>
+		</InstallExecuteSequence>
+	</Package>
+</Wix>

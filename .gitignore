@@ -8,6 +8,8 @@
 *.out
 /bin/
 /dist/
+/packaging/**/obj/
+/packaging/**/bin/
 
 # Local Unix-style builds of the three cmds (Windows artifacts are covered by *.exe)
 /winunitd

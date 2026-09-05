@@ -1,0 +1,15 @@
+<Project Sdk="WixToolset.Sdk/7.0.0">
+	<PropertyGroup>
+		<OutputType>Package</OutputType>
+		<InstallerPlatform>x64</InstallerPlatform>
+		<FixtureVersion Condition="'$(FixtureVersion)' == ''">0.0.1</FixtureVersion>
+		<FixtureMode Condition="'$(FixtureMode)' == ''">helper</FixtureMode>
+		<IntermediateOutputPath>obj\$(FixtureMode)\$(FixtureVersion)\</IntermediateOutputPath>
+		<DefineConstants>FixtureMode=$(FixtureMode);FixtureVersion=$(FixtureVersion);FixtureExe=$(MSBuildThisFileDirectory)..\..\dist\msi-spike\$(FixtureVersion)\fixture.exe</DefineConstants>
+		<OutputPath>..\..\dist\msi-spike\$(FixtureVersion)\</OutputPath>
+		<OutputName>fixture-$(FixtureVersion)</OutputName>
+	</PropertyGroup>
+	<ItemGroup>
+		<PackageReference Include="WixToolset.Util.wixext" Version="7.0.0" />
+	</ItemGroup>
+</Project>
