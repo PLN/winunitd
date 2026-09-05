@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"sync"
@@ -580,5 +581,112 @@ func TestShutdownWaitsForLateLaunchAndClosesAdmission(t *testing.T) {
 	}
 	if _, err := m.Start(context.Background(), name); err == nil {
 		t.Fatal("completed shutdown admitted a new start")
+	}
+}
+
+func TestShutdownDeadlinePreservesPendingLaunch(t *testing.T) {
+	const name = "deadline-launch.service"
+	l := &lateFailedStopLauncher{entered: make(chan struct{}), release: make(chan struct{})}
+	m := managerWith(t, l, map[string]string{name: "[Service]\nExecStart=C:\\Tools\\worker.exe\n"})
+	var once sync.Once
+	release := func() { once.Do(func() { close(l.release) }) }
+	t.Cleanup(release)
+	started := make(chan error, 1)
+	go func() { _, err := m.Start(context.Background(), name); started <- err }()
+	select {
+	case <-l.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("launch did not enter")
+	}
+	p := l.proc
+	p.fail.Store(false)
+	t.Cleanup(func() { _ = p.Process.Stop(time.Second) })
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- m.Shutdown(ctx) }()
+	if err := waitErr(t, done); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("shutdown deadline result = %v", err)
+	}
+	m.mu.Lock()
+	pending := m.units[name].operations != 0
+	m.mu.Unlock()
+	if !pending || !p.Alive() {
+		t.Fatal("deadline discarded pending launch")
+	}
+	release()
+	if err := waitErr(t, started); err == nil {
+		t.Fatal("late start reported success")
+	}
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal("shutdown retry", err)
+	}
+	if p.Alive() {
+		t.Fatal("late launch survived shutdown retry")
+	}
+}
+
+type shutdownBlockedLauncher struct {
+	fakeLauncher
+	proc *blockedStopProcess
+}
+
+func (l *shutdownBlockedLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
+	p, err := l.fakeLauncher.Start(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	l.proc = &blockedStopProcess{Process: p, release: make(chan struct{})}
+	return l.proc, nil
+}
+
+func TestShutdownDeadlinePreservesPendingStop(t *testing.T) {
+	const name = "deadline-stop.service"
+	l := &shutdownBlockedLauncher{}
+	m := managerWith(t, l, map[string]string{name: "[Service]\nExecStart=C:\\Tools\\worker.exe\nTimeoutStopSec=30s\n"})
+	if _, err := m.Start(context.Background(), name); err != nil {
+		t.Fatal(err)
+	}
+	p := l.proc
+	var once sync.Once
+	release := func() { once.Do(func() { close(p.release) }) }
+	t.Cleanup(func() { release(); _ = p.Process.Stop(time.Second) })
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- m.Shutdown(ctx) }()
+	if err := waitErr(t, done); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("shutdown deadline result = %v", err)
+	}
+	m.mu.Lock()
+	rt := m.units[name]
+	retained := rt.proc == p && rt.stopUncertain
+	m.mu.Unlock()
+	if !retained || !p.Alive() || p.calls.Load() != 1 {
+		t.Fatal("shutdown discarded pending termination")
+	}
+	release()
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal("shutdown retry", err)
+	}
+	if p.Alive() {
+		t.Fatal("pending stop survived retry")
+	}
+}
+
+func TestShutdownDeadlineBoundsJournalWait(t *testing.T) {
+	const name = "deadline-journal.service"
+	l := &hangJournalLauncher{}
+	m := managerWith(t, l, map[string]string{name: "[Service]\nExecStart=C:\\Tools\\worker.exe\nTimeoutStopSec=30s\n"})
+	if _, err := m.Start(context.Background(), name); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.pw.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- m.Shutdown(ctx) }()
+	if err := waitErr(t, done); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("shutdown journal deadline result = %v", err)
 	}
 }

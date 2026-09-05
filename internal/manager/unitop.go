@@ -1,6 +1,9 @@
 package manager
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 // unitOps serializes start / stop / restart / auto-restart relaunch per
 // unit name (issue #24). Independent units still start concurrently
@@ -10,43 +13,58 @@ import "sync"
 // while holding Manager.mu.
 type unitOps struct {
 	mu sync.Mutex
-	by map[string]*sync.Mutex
+	by map[string]chan struct{}
 }
 
-func (o *unitOps) lock(name string) func() {
-	if o == nil {
-		return func() {}
-	}
+func (o *unitOps) semaphore(name string) chan struct{} {
 	o.mu.Lock()
+	defer o.mu.Unlock()
 	if o.by == nil {
-		o.by = make(map[string]*sync.Mutex)
+		o.by = make(map[string]chan struct{})
 	}
 	u := o.by[name]
 	if u == nil {
-		u = new(sync.Mutex)
+		u = make(chan struct{}, 1)
 		o.by[name] = u
 	}
-	o.mu.Unlock()
-	u.Lock()
-	return u.Unlock
+	return u
+}
+
+func (o *unitOps) lock(name string) func() {
+	unlock, _ := o.lockContext(context.Background(), name)
+	return unlock
+}
+
+// Cancellation abandons the wait, never the operation already holding the lock.
+func (o *unitOps) lockContext(ctx context.Context, name string) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if o == nil {
+		return func() {}, nil
+	}
+	u := o.semaphore(name)
+	select {
+	case u <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-u
+			return nil, err
+		}
+		return func() { <-u }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (o *unitOps) tryLock(name string) (func(), bool) {
 	if o == nil {
 		return func() {}, true
 	}
-	o.mu.Lock()
-	if o.by == nil {
-		o.by = make(map[string]*sync.Mutex)
-	}
-	u := o.by[name]
-	if u == nil {
-		u = new(sync.Mutex)
-		o.by[name] = u
-	}
-	o.mu.Unlock()
-	if !u.TryLock() {
+	u := o.semaphore(name)
+	select {
+	case u <- struct{}{}:
+		return func() { <-u }, true
+	default:
 		return nil, false
 	}
-	return u.Unlock, true
 }

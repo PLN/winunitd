@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -45,14 +46,14 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		m.engine.Stop()
 	}
 	if g == nil || len(roots) == 0 {
-		return nil
+		return ctx.Err()
 	}
 
 	run, err := g.Shutdown(ctx, core.StopFunc(m.stopUnitCtx), roots...)
 	m.mu.Lock()
 	m.applyRunLocked(run)
 	m.mu.Unlock()
-	return err
+	return errors.Join(err, ctx.Err())
 }
 
 func (m *Manager) shutdownRootsLocked() []string {
@@ -113,12 +114,18 @@ func (m *Manager) stopTransaction(name string) (*protocol.UnitResult, error) {
 }
 
 func (m *Manager) stopUnitCtx(ctx context.Context, name string) error {
-	_ = ctx
-	_, err := m.stopUnit(name)
+	_, err := m.stopUnitWithContext(ctx, name)
 	return err
 }
 
 func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
+	return m.stopUnitWithContext(context.Background(), name)
+}
+
+func (m *Manager) stopUnitWithContext(ctx context.Context, name string) (*protocol.UnitResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if norm, nerr := requireUnit(name); nerr == nil {
 		name = norm
 		// Set stopping before ops.lock so Type=notify waitReady
@@ -137,7 +144,10 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 		m.mu.Unlock()
 	}
 
-	unlock := m.ops.lock(name)
+	unlock, lockErr := m.ops.lockContext(ctx, name)
+	if lockErr != nil {
+		return nil, lockErr
+	}
 	released := false
 	release := func() {
 		if !released {
@@ -193,15 +203,15 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 
 	var stopErr error
 	if scmName != "" {
-		ctx, cancel := m.clockTimeout(context.Background(), timeout)
+		ctx, cancel := m.clockTimeout(ctx, timeout)
 		stopErr = m.stopSCM(ctx, scmName, timeout)
 		cancel()
 	} else if taskName != "" {
-		ctx, cancel := m.clockTimeout(context.Background(), timeout)
+		ctx, cancel := m.clockTimeout(ctx, timeout)
 		stopErr = m.stopTask(ctx, taskName, timeout)
 		cancel()
 	} else if proc != nil {
-		stopErr = m.stopProcess(proc, timeout)
+		stopErr = m.stopProcessContext(ctx, proc, timeout)
 		if stopErr == nil && proc.Alive() {
 			stopErr = fmt.Errorf("process remains alive after stop")
 		}
@@ -219,7 +229,8 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 	// Release the per-unit op lock before journal.Wait so a hung
 	// capture cannot block later Start/Stop (issue #68).
 	release()
-	m.waitJournal(name, timeout)
+	m.waitJournalContext(ctx, name, timeout)
+	stopErr = errors.Join(stopErr, ctx.Err())
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -255,10 +266,14 @@ func (m *Manager) stopUnit(name string) (*protocol.UnitResult, error) {
 }
 
 func (m *Manager) waitJournal(name string, timeout time.Duration) {
+	m.waitJournalContext(context.Background(), name, timeout)
+}
+
+func (m *Manager) waitJournalContext(ctx context.Context, name string, timeout time.Duration) {
 	if m == nil || m.journal == nil {
 		return
 	}
-	ctx, cancel := m.clockTimeout(context.Background(), timeout)
+	ctx, cancel := m.clockTimeout(ctx, timeout)
 	defer cancel()
 	if !m.journal.WaitContext(ctx, name) {
 		log.Printf("winunitd: %s: journal wait exceeded TimeoutStopSec", name)

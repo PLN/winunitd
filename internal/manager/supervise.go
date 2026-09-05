@@ -675,6 +675,13 @@ type processStopAttempt struct {
 }
 
 func (m *Manager) stopProcess(proc runtime.Process, timeout time.Duration) error {
+	return m.stopProcessContext(context.Background(), proc, timeout)
+}
+
+func (m *Manager) stopProcessContext(ctx context.Context, proc runtime.Process, timeout time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if proc == nil {
 		return nil
 	}
@@ -699,14 +706,20 @@ func (m *Manager) stopProcess(proc runtime.Process, timeout time.Duration) error
 	}
 	m.stopMu.Unlock()
 	if timeout <= 0 {
-		<-attempt.done
-		return attempt.err
+		select {
+		case <-attempt.done:
+			return attempt.err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	t := m.clock().Timer(timeout)
 	defer t.Stop()
 	select {
 	case <-attempt.done:
 		return attempt.err
+	case <-ctx.Done():
+		return ctx.Err()
 	case <-t.C():
 		return fmt.Errorf("TimeoutStopSec exceeded")
 	}
