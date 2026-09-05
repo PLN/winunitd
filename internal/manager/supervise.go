@@ -323,6 +323,13 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 		teardownJob(proc)
 		return
 	}
+	if rt.stopUncertain {
+		// A cleanup operation (or its explicit retry) owns this process.
+		// Main-process exit alone does not confirm descendant termination;
+		// keep the reference until that operation reports success.
+		m.mu.Unlock()
+		return
+	}
 	_ = rt.takeProc()
 	stopping := rt.stopping
 	terminated := rt.terminated
@@ -495,15 +502,43 @@ func (m *Manager) subOfLocked(name string) core.Substate {
 }
 
 func (m *Manager) reapFailedLocked() {
-	for _, rt := range m.units {
+	for name, rt := range m.units {
 		if rt == nil || rt.state != core.Failed || rt.proc == nil || rt.stopUncertain {
 			continue
 		}
-		proc := rt.takeProc()
-		go func(p runtime.Process) {
-			_ = p.Stop(defaultStopTimeout)
-		}(proc)
+		proc := rt.proc
+		gen := rt.gen
+		rt.stopUncertain = true
+		go m.reapFailed(name, proc, gen)
 	}
+}
+
+func (m *Manager) reapFailed(name string, proc runtime.Process, gen uint64) {
+	unlock := m.ops.lock(name)
+	defer unlock()
+	m.mu.Lock()
+	rt := m.units[name]
+	if rt == nil || !rt.sameOp(gen, proc) || rt.proc != proc || m.closed {
+		m.mu.Unlock()
+		return
+	}
+	m.mu.Unlock()
+	err := m.stopProcess(proc, defaultStopTimeout)
+	if err == nil && proc.Alive() {
+		err = fmt.Errorf("process remains alive after failed-state cleanup")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rt = m.units[name]
+	if rt == nil || !rt.sameOp(gen, proc) || rt.proc != proc {
+		return
+	}
+	if err != nil {
+		rt.err = fmt.Sprintf("failed-state cleanup: %v", err)
+		return
+	}
+	rt.proc = nil
+	rt.stopUncertain = false
 }
 
 func classifyWait(err error) core.ExitKind {

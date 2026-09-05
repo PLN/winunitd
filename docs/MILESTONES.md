@@ -33,6 +33,8 @@ Additional R1 finding: notification tests exposed an early-disconnect transport 
 
 R1.1 native proxy follow-up: active or unresolved SCM/task proxies now retain their last configuration after deletion or invalid replacement, keeping status and stop routing available without a process handle. Portable adapter regressions verify both proxy types and actual stop dispatch before the missing record is retired on a later reload. The earlier runtime/notify fixes passed all GitHub CI lanes at `a1f46c0`. Trigger coverage and valid configuration changes during an invocation remain open.
 
+R1.3 failed-state cleanup follow-up: asynchronous reaping retains the process reference, serializes termination with lifecycle operations, blocks replacement starts until confirmed cleanup, and exposes cleanup failures for explicit stop retry. A main-process exit cannot discard a record already marked uncertain. Fault injection covers retained ownership after failure and later main exit, successful retry, and replacement after successful cleanup. Full local race tests and vet pass. Ordinary exit teardown, late launch disposal, and manager shutdown still require the broader ownership audit.
+
 Exit gate: real-process tests cover deletion, invalid replacement, recreation while an old invocation lives, large stdout/stderr, no-newline output, exit-before-attach, and failed termination. The previously reproduced failures now pass required regression tests. Race tests and cleanup assertions pass; no owned process becomes unreachable through status/stop and no ambiguous termination is reported as successful.
 
 ## R2 — Authoritative lifecycle coordinator
