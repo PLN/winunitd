@@ -221,3 +221,51 @@ func TestStartCannotDiscardUnreapedProcessAfterCleanupFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestWatchdogCleanupFailureBlocksRestart(t *testing.T) {
+	const name = "cleanup-watchdog.service"
+	l := &failedStopLauncher{}
+	m := managerWith(t, l, map[string]string{name: "[Service]\nType=simple\nExecStart=C:\\Tools\\worker.exe\nWatchdogSec=1h\nRestart=always\nRestartSec=0\n"})
+	if _, err := m.Start(context.Background(), name); err != nil {
+		t.Fatal(err)
+	}
+	p := l.proc
+	t.Cleanup(func() { p.fail.Store(false); _ = p.Process.Stop(time.Second) })
+	m.mu.Lock()
+	gen := m.units[name].gen
+	m.mu.Unlock()
+	m.onWatchdogTimeout(name, gen)
+	m.mu.Lock()
+	rt := m.units[name]
+	retained := rt.proc == p && rt.stopUncertain && rt.state == core.Failed
+	m.mu.Unlock()
+	if !retained || len(l.specs()) != 1 {
+		t.Fatal("watchdog failed to retain unresolved termination without restart")
+	}
+	p.fail.Store(false)
+	if _, err := m.Stop(name); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadinessTimeoutCleanupFailureRetainsOwnership(t *testing.T) {
+	const name = "cleanup-ready.service"
+	l := &failedStopLauncher{}
+	m := managerWith(t, l, map[string]string{name: "[Service]\nType=notify\nExecStart=C:\\Tools\\worker.exe\nTimeoutStartSec=20ms\n"})
+	if _, err := m.Start(context.Background(), name); err == nil {
+		t.Fatal("missing readiness reported success")
+	}
+	p := l.proc
+	t.Cleanup(func() { p.fail.Store(false); _ = p.Process.Stop(time.Second) })
+	m.mu.Lock()
+	rt := m.units[name]
+	retained := rt.proc == p && rt.stopUncertain && rt.state == core.Failed
+	m.mu.Unlock()
+	if !retained || !p.Alive() {
+		t.Fatal("readiness timeout discarded unconfirmed process")
+	}
+	p.fail.Store(false)
+	if _, err := m.Stop(name); err != nil {
+		t.Fatal(err)
+	}
+}

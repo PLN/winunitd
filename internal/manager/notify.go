@@ -315,9 +315,18 @@ func (m *Manager) probeWatchdogLoop(ctx context.Context, name string, svc *unit.
 }
 
 func (m *Manager) onWatchdogTimeout(name string, gen uint64) {
+	unlock := m.ops.lock(name)
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			unlock()
+		}
+	}
+	defer release()
 	m.mu.Lock()
 	rt := m.units[name]
-	if rt == nil || rt.stopping || rt.gen != gen {
+	if rt == nil || rt.stopping || rt.gen != gen || m.closed || rt.stopUncertain {
 		m.mu.Unlock()
 		return
 	}
@@ -329,11 +338,39 @@ func (m *Manager) onWatchdogTimeout(name string, gen uint64) {
 	rt.terminated = true
 	u := rt.unit
 	proc := rt.proc
+	rt.stopUncertain = proc != nil
+	nrt := rt.notify
+	rt.notify = nil
+	wdCancel := rt.watchdog
+	rt.watchdog = nil
 	m.mu.Unlock()
-
-	if proc != nil {
-		_ = proc.Stop(0)
+	if wdCancel != nil {
+		wdCancel()
 	}
+	if nrt != nil {
+		nrt.Close()
+	}
+
+	stopErr := m.stopProcess(proc, stopTimeout(u))
+	if stopErr == nil && proc != nil && proc.Alive() {
+		stopErr = fmt.Errorf("process remains alive after watchdog cleanup")
+	}
+	m.mu.Lock()
+	rt = m.units[name]
+	if rt == nil || !rt.sameOp(gen, proc) {
+		m.mu.Unlock()
+		return
+	}
+	if stopErr != nil {
+		rt.err = fmt.Sprintf("watchdog cleanup: %v", stopErr)
+		m.mu.Unlock()
+		return
+	}
+	rt.proc = nil
+	rt.stopUncertain = false
+	rt.terminated = false
+	m.mu.Unlock()
+	release()
 
 	var svc *unit.ServiceSpec
 	if u != nil {

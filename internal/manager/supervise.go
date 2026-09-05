@@ -296,7 +296,7 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 			rt = m.units[name]
 			if rt != nil && rt.proc == proc {
 				rt.terminated = true
-				_ = rt.takeProc()
+				rt.stopUncertain = true
 			}
 			stopping := rt != nil && rt.stopping
 			if rt != nil && !rt.stopping && rt.gen == startGen {
@@ -305,12 +305,26 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 				}
 			}
 			m.mu.Unlock()
-			_ = proc.Stop(0)
+			stopErr := m.stopProcess(proc, stopTimeout(u))
+			if stopErr == nil && proc.Alive() {
+				stopErr = fmt.Errorf("process remains alive after readiness cleanup")
+			}
 			m.closeNotify(name)
-			if !stopping {
+			m.mu.Lock()
+			if rt := m.units[name]; rt != nil && rt.sameOp(startGen, proc) {
+				if stopErr == nil {
+					rt.proc = nil
+					rt.stopUncertain = false
+					rt.terminated = false
+				} else {
+					rt.err = fmt.Sprintf("readiness cleanup: %v", stopErr)
+				}
+			}
+			m.mu.Unlock()
+			if !stopping && stopErr == nil {
 				m.maybeRestart(name, core.ExitFailure, svc)
 			}
-			return err
+			return errors.Join(err, stopErr)
 		}
 		m.mu.Lock()
 		if rt := m.units[name]; rt != nil && !rt.stopping && rt.gen == startGen && rt.proc == proc {
