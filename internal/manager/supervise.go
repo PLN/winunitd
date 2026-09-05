@@ -148,7 +148,9 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 	if svc.Type == unit.TypeScheduledTask {
 		return m.startTask(ctx, name, u, autoRestart)
 	}
-	m.closeNotify(name)
+	if err := m.closeNotify(name); err != nil {
+		return err
+	}
 	m.stopWatchdog(name)
 
 	inv := journal.NewInvocationID()
@@ -172,8 +174,7 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 			m.mu.Unlock()
 		} else {
 			m.mu.Unlock()
-			nrt.Close()
-			return nil
+			return errors.Join(fmt.Errorf("manager closed during notification open"), m.disposeNotify(nrt))
 		}
 		wd := time.Duration(0)
 		if svc.WatchdogMode == unit.WatchdogModeNotify {
@@ -211,7 +212,7 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 			m.journal.SetOrigin(m.journalOrigin())
 			m.journal.Attach(name, proc.PID(), inv, proc.Stdout(), proc.Stderr())
 		}
-		m.closeNotify(name)
+		err = errors.Join(err, m.closeNotify(name))
 		var st *runtime.ExitStatus
 		if proc == nil && errors.As(err, &st) {
 			m.maybeRestart(name, classifyWait(err), svc)
@@ -241,7 +242,7 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 		if stopErr == nil && proc.Alive() {
 			stopErr = fmt.Errorf("process remains alive after late launch cleanup")
 		}
-		m.closeNotify(name)
+		stopErr = errors.Join(stopErr, m.closeNotify(name))
 		m.mu.Lock()
 		if stopErr == nil {
 			rt.proc = nil
@@ -335,7 +336,7 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 			if stopErr == nil && proc.Alive() {
 				stopErr = fmt.Errorf("process remains alive after readiness cleanup")
 			}
-			m.closeNotify(name)
+			stopErr = errors.Join(stopErr, m.closeNotify(name))
 			m.mu.Lock()
 			if rt := m.units[name]; rt != nil && rt.sameOp(startGen, proc) {
 				if stopErr == nil {
@@ -408,8 +409,6 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 	rt.terminated = false
 	u := rt.unit
 	gen := rt.gen
-	nrt := rt.notify
-	rt.notify = nil
 	wdCancel := rt.watchdog
 	rt.watchdog = nil
 	m.mu.Unlock()
@@ -417,14 +416,12 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 	if wdCancel != nil {
 		wdCancel()
 	}
-	if nrt != nil {
-		nrt.Close()
-	}
-
+	notifyErr := m.closeNotify(name)
 	cleanupErr := m.stopProcess(proc, stopTimeout(u))
 	if cleanupErr == nil && proc.Alive() {
 		cleanupErr = fmt.Errorf("process remains alive after exit cleanup")
 	}
+	cleanupErr = errors.Join(cleanupErr, notifyErr)
 	m.mu.Lock()
 	rt = m.units[name]
 	if rt == nil || !rt.sameOp(gen, proc) || rt.proc != proc {

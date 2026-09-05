@@ -2,7 +2,9 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"sync"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 )
 
 type notifyRuntime struct {
+	closeMu   sync.Mutex
 	name      string
 	lis       notify.Listener
 	cancel    context.CancelFunc
@@ -40,6 +43,7 @@ func (m *Manager) openNotify(name string) (*notifyRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
+	lis = &notifyCloseListener{Listener: lis}
 	ctx, cancel := context.WithCancel(context.Background())
 	rt := &notifyRuntime{
 		name:      name,
@@ -134,44 +138,101 @@ func (r *notifyRuntime) onMessage(msg notify.Message) {
 	}
 }
 
-func (r *notifyRuntime) Close() {
+// notifyCloseListener serializes ServeAccept cancellation with manager cleanup.
+// A failed close remains retryable; a successful close is never repeated.
+type notifyCloseListener struct {
+	notify.Listener
+	mu     sync.Mutex
+	closed bool
+}
+
+func (l *notifyCloseListener) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return nil
+	}
+	err := l.Listener.Close()
+	if err == nil || errors.Is(err, net.ErrClosed) {
+		l.closed = true
+		return nil
+	}
+	return err
+}
+
+func (r *notifyRuntime) Close() error {
 	if r == nil {
-		return
+		return nil
 	}
+	r.closeMu.Lock()
+	defer r.closeMu.Unlock()
 	r.mu.Lock()
-	if r.closed {
-		r.mu.Unlock()
-		return
-	}
+	first := !r.closed
 	r.closed = true
 	r.mu.Unlock()
-	r.cancel()
-	if r.lis != nil {
-		_ = r.lis.Close()
+	if r.cancel != nil {
+		r.cancel()
 	}
-	select {
-	case <-r.done:
-	default:
+	if first && r.done != nil {
 		close(r.done)
 	}
-	// Wait for ServeAccept to leave Accept so Windows can re-Listen
-	// the same \\.\pipe\winunitd\notify\<unit> name on restart.
+	if r.lis != nil {
+		if err := r.lis.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			return err
+		}
+	}
+	// A successful native close must also release Accept before name reuse.
 	if r.serveDone != nil {
 		<-r.serveDone
 	}
+	return nil
 }
 
-func (m *Manager) closeNotify(name string) {
+func (m *Manager) closeNotify(name string) error {
+	return m.closeNotifyContext(context.Background(), name, defaultStopTimeout)
+}
+
+func (m *Manager) closeNotifyContext(ctx context.Context, name string, timeout time.Duration) error {
 	m.mu.Lock()
 	var nrt *notifyRuntime
 	if rt := m.units[name]; rt != nil {
 		nrt = rt.notify
-		rt.notify = nil
 	}
 	m.mu.Unlock()
-	if nrt != nil {
-		nrt.Close()
+	if nrt == nil {
+		return nil
 	}
+	err := m.stops.wait(ctx, m.clock(), stopKey{notify: nrt}, timeout, nrt.Close)
+	m.mu.Lock()
+	if rt := m.units[name]; rt != nil && rt.notify == nrt {
+		if err == nil {
+			rt.notify = nil
+		} else {
+			rt.stopUncertain = true
+			rt.err = fmt.Sprintf("notification cleanup: %v", err)
+		}
+	}
+	m.mu.Unlock()
+	return err
+}
+
+func (m *Manager) disposeNotify(nrt *notifyRuntime) error {
+	m.mu.Lock()
+	m.closePending = append(m.closePending, unitTeardown{notify: nrt})
+	m.mu.Unlock()
+	err := m.stops.wait(context.Background(), m.clock(), stopKey{notify: nrt}, defaultStopTimeout, nrt.Close)
+	if err == nil {
+		m.mu.Lock()
+		kept := m.closePending[:0]
+		for _, td := range m.closePending {
+			if td.notify != nrt {
+				kept = append(kept, td)
+			}
+		}
+		m.closePending = kept
+		m.mu.Unlock()
+	}
+	return err
 }
 
 func (m *Manager) waitReady(ctx context.Context, name string, proc runtime.Process, timeout time.Duration) error {
@@ -339,22 +400,18 @@ func (m *Manager) onWatchdogTimeout(name string, gen uint64) {
 	u := rt.unit
 	proc := rt.proc
 	rt.stopUncertain = proc != nil
-	nrt := rt.notify
-	rt.notify = nil
 	wdCancel := rt.watchdog
 	rt.watchdog = nil
 	m.mu.Unlock()
 	if wdCancel != nil {
 		wdCancel()
 	}
-	if nrt != nil {
-		nrt.Close()
-	}
-
+	notifyErr := m.closeNotify(name)
 	stopErr := m.stopProcess(proc, stopTimeout(u))
 	if stopErr == nil && proc != nil && proc.Alive() {
 		stopErr = fmt.Errorf("process remains alive after watchdog cleanup")
 	}
+	stopErr = errors.Join(stopErr, notifyErr)
 	m.mu.Lock()
 	rt = m.units[name]
 	if rt == nil || !rt.sameOp(gen, proc) {

@@ -202,8 +202,6 @@ func (m *Manager) stopUnitWithContext(ctx context.Context, name string) (*protoc
 	rt.gen++
 	stopGen := rt.gen
 	rt.cancelRestart()
-	nrt := rt.notify
-	rt.notify = nil
 	wdCancel := rt.watchdog
 	rt.watchdog = nil
 	timeout := stopTimeout(rt.unit)
@@ -217,9 +215,7 @@ func (m *Manager) stopUnitWithContext(ctx context.Context, name string) (*protoc
 	if wdCancel != nil {
 		wdCancel()
 	}
-	if nrt != nil {
-		nrt.Close()
-	}
+	notifyErr := m.closeNotifyContext(ctx, name, timeout)
 
 	if kind == unit.KindTimer && m.engine != nil {
 		m.engine.Disarm(name)
@@ -242,6 +238,7 @@ func (m *Manager) stopUnitWithContext(ctx context.Context, name string) (*protoc
 			stopErr = fmt.Errorf("process remains alive after stop")
 		}
 	}
+	stopErr = errors.Join(stopErr, notifyErr)
 	// Publish uncertainty before releasing the operation lock: a queued Start
 	// must not replace a process whose termination has not been confirmed.
 	m.mu.Lock()

@@ -36,9 +36,11 @@ Native registry, Event Log, and directory watchers now serialize close retries a
 
 Twenty repeated manager tests cover failed watch stop retained across reload, pending-close deadlines, and partial-open failure blocking replacement. A retry can join an already pending failure; a subsequent fresh attempt is tested separately. CI confirmation for the manager watcher changes remains pending. These results are implementation progress, not milestone closure or installation qualification.
 
+Notification listeners now serialize cancellation and close, propagate failures through explicit stop, launch/readiness cleanup, ordinary exit, watchdog failure, and manager close, and retain failed ownership for retry. Ten repeated tests cover these failures, concurrent close waiting for server exit, and deadlines joining the pending listener close. Full local race tests and vet pass. CI confirmation for this change remains pending.
+
 ## Remaining qualification
 
-- Notification listener cleanup must propagate failures and retain ownership across every teardown path.
+- Accepted notification-client connection cleanup and post-allocation open failures still need failure-injection qualification.
 - Post-allocation failures inside watcher open adapters need an explicit ownership contract.
 - Windows identity/session scenarios and broader installer qualification remain open.
 - Journal qualification still needs real-volume exhaustion, buffered-writer recovery without reopening, aggregate overload fairness, read-path stalls, and lifecycle admission bounds.

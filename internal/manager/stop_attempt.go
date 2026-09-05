@@ -11,6 +11,7 @@ import (
 )
 
 type stopKey struct {
+	notify     *notifyRuntime
 	hub        *watchRuntime
 	manager    *Manager
 	shutdown   *Manager

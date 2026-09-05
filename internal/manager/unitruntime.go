@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"log"
 	"time"
 
@@ -133,13 +134,14 @@ func (td unitTeardown) cancelNonblocking() {
 }
 
 func (td unitTeardown) closeBlocking() error {
+	var result error
 	if td.notify != nil {
-		td.notify.Close()
+		result = td.notify.Close()
 	}
 	if td.hub != nil {
-		return td.hub.stop()
+		result = errors.Join(result, td.hub.stop())
 	}
-	return nil
+	return result
 }
 
 func (m *Manager) runtimeLocked(name string) *unitRuntime {

@@ -5,12 +5,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/notify"
 	"github.com/PLN/winunitd/internal/pathwatch"
 )
 
@@ -18,6 +20,159 @@ type controlledCloseWatch struct {
 	calls   atomic.Int32
 	fail    atomic.Bool
 	release <-chan struct{}
+}
+
+type controlledNotifyListener struct{ controlledCloseWatch }
+
+func (l *controlledNotifyListener) Addr() string { return "test" }
+func (l *controlledNotifyListener) Accept() (notify.Conn, error) {
+	return nil, errors.New("test listener does not accept")
+}
+
+func TestNotificationCloseFailureRetainsStopOwnership(t *testing.T) {
+	const name = "notification-close.service"
+	m := managerWith(t, &fakeLauncher{}, map[string]string{name: "[Service]\nExecStart=C:\\Tools\\worker.exe\n"})
+	if _, err := m.Start(context.Background(), name); err != nil {
+		t.Fatal(err)
+	}
+	lis := &controlledNotifyListener{}
+	lis.fail.Store(true)
+	nrt := &notifyRuntime{lis: &notifyCloseListener{Listener: lis}, done: make(chan struct{})}
+	m.mu.Lock()
+	proc := m.units[name].proc
+	m.units[name].notify = nrt
+	m.mu.Unlock()
+	if _, err := m.stopUnit(name); err == nil {
+		t.Fatal("notification close failure reported success")
+	}
+	m.mu.Lock()
+	rt := m.units[name]
+	retained := rt.notify == nrt && rt.proc == proc && rt.stopUncertain
+	m.mu.Unlock()
+	if !retained || proc.Alive() {
+		t.Fatal("failed notification close lost ownership or prevented process termination")
+	}
+	if _, err := m.Start(context.Background(), name); err == nil {
+		t.Fatal("unresolved notification cleanup admitted replacement")
+	}
+	lis.fail.Store(false)
+	if _, err := m.stopUnit(name); err != nil {
+		t.Fatal("notification retry", err)
+	}
+	m.mu.Lock()
+	retained = m.units[name].notify != nil || m.units[name].proc != nil || m.units[name].stopUncertain
+	m.mu.Unlock()
+	if retained || lis.calls.Load() != 2 {
+		t.Fatal("notification retry did not finish cleanup")
+	}
+}
+
+func TestNotificationCloseWaitsForEveryCaller(t *testing.T) {
+	serveDone := make(chan struct{})
+	r := &notifyRuntime{done: make(chan struct{}), serveDone: serveDone}
+	finished := make(chan error, 2)
+	go func() { finished <- r.Close() }()
+	<-r.done
+	go func() { finished <- r.Close() }()
+	select {
+	case err := <-finished:
+		close(serveDone)
+		t.Fatalf("close returned before server exit: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(serveDone)
+	for i := 0; i < 2; i++ {
+		if err := <-finished; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestNotificationListenerCloseSerializesCancellation(t *testing.T) {
+	lis := &controlledNotifyListener{}
+	w := &notifyCloseListener{Listener: lis}
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := w.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if lis.calls.Load() != 1 {
+		t.Fatal("cancellation repeated successful listener close")
+	}
+}
+
+func TestNotificationFailureDuringExitAndWatchdogRetainsOwnership(t *testing.T) {
+	for _, cause := range []string{"exit", "watchdog"} {
+		t.Run(cause, func(t *testing.T) {
+			const name = "notification-health.service"
+			m := managerWith(t, &fakeLauncher{}, map[string]string{name: "[Service]\nExecStart=C:\\Tools\\worker.exe\nRestart=always\n"})
+			if _, err := m.Start(context.Background(), name); err != nil {
+				t.Fatal(err)
+			}
+			lis := &controlledNotifyListener{}
+			lis.fail.Store(true)
+			t.Cleanup(func() { lis.fail.Store(false) })
+			nrt := &notifyRuntime{lis: &notifyCloseListener{Listener: lis}, done: make(chan struct{})}
+			m.mu.Lock()
+			proc := m.units[name].proc.(*fakeProc)
+			gen := m.units[name].gen
+			m.units[name].notify = nrt
+			m.mu.Unlock()
+			if cause == "exit" {
+				proc.die(1)
+			} else {
+				m.onWatchdogTimeout(name, gen)
+			}
+			waitUntil(t, time.Second, func() bool {
+				m.mu.Lock()
+				defer m.mu.Unlock()
+				return strings.HasPrefix(m.units[name].err, cause+" cleanup:")
+			})
+			m.mu.Lock()
+			rt := m.units[name]
+			retained := rt.notify == nrt && rt.proc == proc && rt.stopUncertain
+			m.mu.Unlock()
+			if !retained || proc.Alive() {
+				t.Fatal("health cleanup lost ownership or left process alive")
+			}
+			if _, err := m.Start(context.Background(), name); err == nil {
+				t.Fatal("failed cleanup allowed restart")
+			}
+			lis.fail.Store(false)
+			if _, err := m.stopUnit(name); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestNotificationReadinessFailureRetainsListener(t *testing.T) {
+	const name = "notification-ready.service"
+	m := managerWith(t, &fakeLauncher{}, map[string]string{name: "[Service]\nType=notify\nExecStart=C:\\Tools\\worker.exe\nTimeoutStartSec=50ms\n"})
+	lis := &controlledNotifyListener{}
+	lis.fail.Store(true)
+	t.Cleanup(func() { lis.fail.Store(false) })
+	m.cfg.NotifyListen = func(string) (notify.Listener, error) { return lis, nil }
+	if _, err := m.Start(context.Background(), name); err == nil {
+		t.Fatal("missing readiness reported success")
+	}
+	m.mu.Lock()
+	rt := m.units[name]
+	retained := rt.notify != nil && rt.proc != nil && rt.stopUncertain
+	m.mu.Unlock()
+	if !retained {
+		t.Fatal("readiness cleanup discarded failed listener")
+	}
+	lis.fail.Store(false)
+	if _, err := m.stopUnit(name); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestWatchStopFailureRetainsReloadRouting(t *testing.T) {
@@ -244,15 +399,15 @@ func TestShutdownDeadlineJoinsBlockedNotificationClose(t *testing.T) {
 			t.Fatalf("shutdown result: %v", err)
 		}
 		m.stops.mu.Lock()
-		pending := m.stops.pending[stopKey{shutdown: m}]
+		pending := m.stops.pending[stopKey{notify: nrt}]
 		m.stops.mu.Unlock()
 		if pending == nil {
-			t.Fatal("deadline discarded pending shutdown")
+			t.Fatal("deadline discarded pending notification close")
 		}
 		if first == nil {
 			first = pending
 		} else if pending != first {
-			t.Fatal("retry duplicated blocked shutdown")
+			t.Fatal("retry duplicated blocked notification close")
 		}
 	}
 	m.mu.Lock()
