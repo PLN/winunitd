@@ -19,7 +19,7 @@ func (o *restartOrigin) validLocked(m *Manager) bool {
 	}
 	for name, member := range o.members {
 		rt := m.units[name]
-		if rt != member.record || rt == nil || rt.stopEpoch != member.stopEpoch {
+		if rt != member.record || rt == nil || rt.stopEpoch != member.stopEpoch || rt.unavailable {
 			return false
 		}
 	}

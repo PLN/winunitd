@@ -2,6 +2,8 @@ package manager
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -77,6 +79,15 @@ func TestRestartKeepsExplicitStartLimitPolicy(t *testing.T) {
 }
 
 func TestStopInvalidatesRestartWaitingForDependency(t *testing.T) {
+	testInvalidateRestartWaitingForDependency(t, false)
+}
+
+func TestRemovalInvalidatesRestartWaitingForDependency(t *testing.T) {
+	testInvalidateRestartWaitingForDependency(t, true)
+}
+
+func testInvalidateRestartWaitingForDependency(t *testing.T, remove bool) {
+	t.Helper()
 	launch := &fakeLauncher{}
 	m := managerWith(t, launch, map[string]string{
 		"work.service": "[Unit]\nRequires=dep.service\nAfter=dep.service\n[Service]\nExecStart=C:\\Tools\\work.exe\n",
@@ -93,8 +104,17 @@ func TestStopInvalidatesRestartWaitingForDependency(t *testing.T) {
 		defer m.ops.mu.Unlock()
 		return m.ops.by["dep.service"].refs == 2
 	})
-	if _, err := m.Stop("work"); err != nil {
-		t.Fatal(err)
+	if remove {
+		if err := os.Remove(filepath.Join(m.cfg.UnitsDir(), "work.service")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.Reload(); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if _, err := m.Stop("work"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	release()
 	select {

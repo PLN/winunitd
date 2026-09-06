@@ -402,6 +402,11 @@ Both phases use the same admission slot, and stop-only records remain retained
 through delayed cleanup. A later stop of any captured stop member invalidates
 the pending start phase and queued launches.
 
+Accepted removal also invalidates the captured restart origin. A follow-up
+regression reproduced a queued dependency launching after the root definition
+was removed; the unavailable-record check now rejects that launch. Removal/stop
+dependency-gate cases and restart regressions pass twenty race repetitions.
+
 Regressions reproduced active `PartOf` services remaining stopped, an invalid
 start plan or full admission pool interrupting the running service before
 reporting rejection, and reload retargeting a restart during native cleanup.
