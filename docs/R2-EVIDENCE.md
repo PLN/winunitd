@@ -341,6 +341,17 @@ suite and vet pass. Blocking cleanup still runs outside the lifecycle decision;
 this is an initial typed completion path, not migration of every state writer
 or a completed coordinator/event-admission design.
 
+## Control-server lifetime
+
+A listener-failure regression reproduced an accepted handler remaining active
+after `Serve` returned while the caller's context was still live. The server now
+derives a serving context and cancels it on every return after admission begins.
+This releases its cancellation waiter, closes accepted control connections, and
+signals cooperative handlers without cancelling the caller's context. Fifty
+race repetitions verify handler cancellation and connection release; the full
+repository race suite and vet pass. This does not add bounded connection
+admission, wait for uncooperative handlers, or implement durable operation IDs.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

@@ -27,6 +27,10 @@ func Serve(ctx context.Context, lis net.Listener, h Handler, auth Authorizer) er
 	if h == nil {
 		return ErrFailed("nil handler")
 	}
+	// Accepted connections belong to this serving lifetime, including when
+	// Accept fails before the caller cancels its own context.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	go func() {
 		<-ctx.Done()
 		_ = lis.Close()
