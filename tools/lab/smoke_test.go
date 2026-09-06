@@ -12,7 +12,7 @@ import (
 
 func TestArtifactAdmission(t *testing.T) {
 	const commit = "0123456789abcdef0123456789abcdef01234567"
-	for _, scenario := range []string{"valid", "dirty", "wrong-commit", "changed-bytes", "path-traversal", "missing-artifact", "duplicate"} {
+	for _, scenario := range []string{"valid", "valid-v2", "missing-notice", "missing-source-hash", "dirty", "wrong-commit", "changed-bytes", "path-traversal", "missing-artifact", "duplicate"} {
 		t.Run(scenario, func(t *testing.T) {
 			dir := t.TempDir()
 			artifacts := []map[string]any{}
@@ -24,6 +24,21 @@ func TestArtifactAdmission(t *testing.T) {
 				artifacts = append(artifacts, map[string]any{"name": name, "size": len(data), "sha256": fmt.Sprintf("%x", sha256.Sum256(data))})
 			}
 			m := map[string]any{"schema": 1, "commit": commit, "dirty": false, "goos": "windows", "goarch": "amd64"}
+
+			if scenario == "valid-v2" || scenario == "missing-notice" || scenario == "missing-source-hash" {
+				m["schema"] = 2
+				m["third_party_sha256"] = fmt.Sprintf("%x", sha256.Sum256([]byte("source fixture")))
+				if scenario == "missing-source-hash" {
+					delete(m, "third_party_sha256")
+				}
+				if scenario != "missing-notice" {
+					data := []byte("license fixture")
+					if err := os.WriteFile(filepath.Join(dir, "THIRD-PARTY-NOTICES.txt"), data, 0600); err != nil {
+						t.Fatal(err)
+					}
+					artifacts = append(artifacts, map[string]any{"name": "THIRD-PARTY-NOTICES.txt", "size": len(data), "sha256": fmt.Sprintf("%x", sha256.Sum256(data))})
+				}
+			}
 			switch scenario {
 			case "dirty":
 				m["dirty"] = true
@@ -46,10 +61,10 @@ func TestArtifactAdmission(t *testing.T) {
 				t.Fatal(err)
 			}
 			archive, err := smokeArchive(dir, commit)
-			if (err == nil) != (scenario == "valid") {
+			if (err == nil) != (scenario == "valid" || scenario == "valid-v2") {
 				t.Fatalf("admission outcome: %v", err)
 			}
-			if scenario == "valid" {
+			if scenario == "valid" || scenario == "valid-v2" {
 				again, err := smokeArchive(dir, commit)
 				if err != nil || !bytes.Equal(archive, again) {
 					t.Fatal("archive identity not reproducible")

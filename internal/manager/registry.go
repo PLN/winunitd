@@ -38,17 +38,18 @@ func (m *Manager) armRegistry(u *unit.Unit) error {
 			return errors.Join(fmt.Errorf("%s: %w", core.ReasonConfiguration, err), cleanupErr)
 		}
 	}
-	if err := m.installHub(u.Name, toWatchIO(opened), cancel, false); err != nil {
+	h, err := m.installHub(u, toWatchIO(opened), cancel, false)
+	if err != nil {
 		return err
 	}
 	for _, w := range opened {
-		go m.runWatch(ctx, u.Name, "registry key is missing", w, m.onRegistryChanged)
+		go m.runWatch(ctx, u.Name, "registry key is missing", h, w, m.onRegistryChanged)
 	}
 	return nil
 }
 
-func (m *Manager) onRegistryChanged(name string) {
-	m.startHubCompanion(name, func(u *unit.Unit) string {
+func (m *Manager) onRegistryChanged(name string, h *watchRuntime) {
+	m.startHubCompanion(name, h, func(u *unit.Unit) string {
 		if u != nil && u.Registry != nil {
 			return u.Registry.Unit
 		}

@@ -451,6 +451,10 @@ func (m *Manager) names() []string {
 
 // Start runs a start transaction, then CreateProcess into a per-unit job.
 func (m *Manager) Start(ctx context.Context, name string) (*protocol.UnitResult, error) {
+	return m.startFromWatch(ctx, name, nil)
+}
+
+func (m *Manager) startFromWatch(ctx context.Context, name string, origin *watchOrigin) (*protocol.UnitResult, error) {
 	name, err := requireUnit(name)
 	if err != nil {
 		return nil, err
@@ -460,6 +464,10 @@ func (m *Manager) Start(ctx context.Context, name string) (*protocol.UnitResult,
 	if m.closed {
 		m.mu.Unlock()
 		return nil, protocol.ErrFailed("manager is shutting down or closed")
+	}
+	if origin != nil && !origin.validLocked(m) {
+		m.mu.Unlock()
+		return nil, protocol.ErrFailed("watch activation superseded")
 	}
 	g := m.graph
 	if _, ok := m.units[name]; !ok {
@@ -478,7 +486,7 @@ func (m *Manager) Start(ctx context.Context, name string) (*protocol.UnitResult,
 	definitions := make(map[string]*plannedStart)
 	for _, member := range tx.Units() {
 		if rt := m.units[member]; rt != nil {
-			definitions[member] = &plannedStart{unit: rt.unit, record: rt, stopEpoch: rt.stopEpoch, gen: rt.gen}
+			definitions[member] = &plannedStart{unit: rt.unit, record: rt, stopEpoch: rt.stopEpoch, gen: rt.gen, origin: origin}
 			rt.operations++
 		}
 	}
@@ -498,7 +506,7 @@ func (m *Manager) Start(ctx context.Context, name string) (*protocol.UnitResult,
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		planned.completed = true
-		if m.units[member] == planned.record && planned.record.stopEpoch == planned.stopEpoch && !m.closed {
+		if m.units[member] == planned.record && planned.record.stopEpoch == planned.stopEpoch && !m.closed && (planned.launched || planned.origin == nil || planned.origin.validLocked(m)) {
 			state := core.Active
 			if errors.Is(err, core.ErrSkipped) {
 				state = core.Inactive
@@ -519,7 +527,7 @@ func (m *Manager) Start(ctx context.Context, name string) (*protocol.UnitResult,
 	// Return the transaction outcome without rewriting the newer runtime state.
 	if run != nil {
 		for member, planned := range definitions {
-			if planned.completed || m.units[member] != planned.record || planned.record.stopEpoch != planned.stopEpoch || planned.record.gen != planned.gen {
+			if (planned.origin != nil && !planned.origin.validLocked(m)) || planned.completed || m.units[member] != planned.record || planned.record.stopEpoch != planned.stopEpoch || planned.record.gen != planned.gen {
 				delete(run.States, member)
 				delete(run.Errors, member)
 			}
@@ -527,7 +535,7 @@ func (m *Manager) Start(ctx context.Context, name string) (*protocol.UnitResult,
 	}
 	m.applyRunLocked(run)
 	m.reapFailedLocked()
-	rootCurrent := definitions[name] != nil && !definitions[name].completed && m.units[name] == definitions[name].record && definitions[name].stopEpoch == definitions[name].record.stopEpoch && definitions[name].gen == definitions[name].record.gen
+	rootCurrent := (origin == nil || origin.validLocked(m)) && definitions[name] != nil && !definitions[name].completed && m.units[name] == definitions[name].record && definitions[name].stopEpoch == definitions[name].record.stopEpoch && definitions[name].gen == definitions[name].record.gen
 	if err != nil {
 		if rootCurrent {
 			m.setErrLocked(name, waitFailMessage(err))

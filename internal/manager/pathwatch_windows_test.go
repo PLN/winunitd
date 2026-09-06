@@ -36,14 +36,24 @@ Type=oneshot
 		proc := m.procOfLocked("foo.service")
 		return proc == nil || !proc.Alive()
 	})
+	// One write may produce several native notifications. Quiesce the source
+	// before asserting a stable stopped companion; a later notification is a
+	// permitted fresh activation while the path unit remains armed.
+	if _, err := m.Stop("foo.path"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := m.Stop("foo.service"); err != nil {
 		t.Fatal(err)
 	}
 	assertState(t, m, "foo.service", core.Inactive)
+	before := helperCountLines(count)
+	if _, err := m.Start(context.Background(), "foo.path"); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(watchDir, "b.txt"), []byte("2"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	waitWindowsCount(t, count, 2, 8*time.Second)
+	waitWindowsCount(t, count, before+1, 8*time.Second)
 }
 
 func TestWindowsPathDoesNotRestartRunningSimple(t *testing.T) {

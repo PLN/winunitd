@@ -67,25 +67,26 @@ func (m *Manager) armPath(u *unit.Unit) error {
 		}
 		satisfied = ok
 	}
-	if err := m.installHub(u.Name, toWatchIO(opened), cancel, satisfied); err != nil {
+	h, err := m.installHub(u, toWatchIO(opened), cancel, satisfied)
+	if err != nil {
 		return err
 	}
 
 	for _, w := range changed {
-		go m.runWatch(ctx, u.Name, "path is not watchable", w, m.onPathChanged)
+		go m.runWatch(ctx, u.Name, "path is not watchable", h, w, m.onPathChanged)
 	}
 	for _, w := range existsWatches {
-		go m.runWatch(ctx, u.Name, "path is not watchable", w, m.onPathExistsMaybe)
+		go m.runWatch(ctx, u.Name, "path is not watchable", h, w, m.onPathExistsForHub)
 	}
 	if satisfied {
 		activated := u.PathWatch.Unit
-		go m.startPathCompanion(activated)
+		go m.startPathCompanion(u.Name, h, activated)
 	}
 	return nil
 }
 
-func (m *Manager) onPathChanged(name string) {
-	m.startHubCompanion(name, func(u *unit.Unit) string {
+func (m *Manager) onPathChanged(name string, h *watchRuntime) {
+	m.startHubCompanion(name, h, func(u *unit.Unit) string {
 		if u != nil && u.PathWatch != nil {
 			return u.PathWatch.Unit
 		}
@@ -94,6 +95,16 @@ func (m *Manager) onPathChanged(name string) {
 }
 
 func (m *Manager) onPathExistsMaybe(name string) {
+	m.mu.Lock()
+	var h *watchRuntime
+	if rt := m.units[name]; rt != nil {
+		h = rt.hub
+	}
+	m.mu.Unlock()
+	m.onPathExistsForHub(name, h)
+}
+
+func (m *Manager) onPathExistsForHub(name string, h *watchRuntime) {
 	if m == nil {
 		return
 	}
@@ -104,23 +115,23 @@ func (m *Manager) onPathExistsMaybe(name string) {
 		return
 	}
 	rt := m.units[name]
-	if rt == nil || rt.hub == nil || rt.unit == nil || rt.unit.PathWatch == nil {
+	if rt == nil || h == nil || rt.hub != h || rt.gen != h.gen || rt.stopping || rt.unavailable || rt.stopUncertain || m.closed || h.unit == nil || h.unit.PathWatch == nil {
 		m.mu.Unlock()
 		return
 	}
-	specs := rt.unit.PathWatch.Exists
-	activated := rt.unit.PathWatch.Unit
+	specs := h.unit.PathWatch.Exists
+	activated := h.unit.PathWatch.Unit
 	m.mu.Unlock()
 
 	ok, err := m.pathExistsAll(specs)
 	if err != nil {
-		m.failHub(name, fmt.Errorf("%s: %w", core.ReasonConfiguration, err))
+		m.failHub(name, h, fmt.Errorf("%s: %w", core.ReasonConfiguration, err))
 		return
 	}
 
 	m.mu.Lock()
 	rt = m.units[name]
-	if rt == nil || rt.hub == nil || m.stateOfLocked(name) != core.Active {
+	if rt == nil || rt.hub != h || rt.gen != h.gen || rt.stopping || rt.unavailable || rt.stopUncertain || m.closed || m.stateOfLocked(name) != core.Active {
 		m.mu.Unlock()
 		return
 	}
@@ -128,15 +139,15 @@ func (m *Manager) onPathExistsMaybe(name string) {
 	rt.hub.existsSatisfied = ok
 	m.mu.Unlock()
 	if ok && !was {
-		m.startPathCompanion(activated)
+		m.startPathCompanion(name, h, activated)
 	}
 }
 
-func (m *Manager) startPathCompanion(activated string) {
+func (m *Manager) startPathCompanion(name string, h *watchRuntime, activated string) {
 	if activated == "" {
 		return
 	}
-	_, _ = m.Start(context.Background(), activated)
+	_, _ = m.startFromWatch(context.Background(), activated, &watchOrigin{name: name, hub: h})
 }
 
 func (m *Manager) pathExistsAll(specs []pathwatch.Spec) (bool, error) {

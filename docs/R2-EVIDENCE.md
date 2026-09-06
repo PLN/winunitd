@@ -80,12 +80,59 @@ per-unit stop operations; transaction summaries are returned as outcomes only.
 Both deterministic regressions pass twenty race repetitions. Graph planning and
 dependency failure reporting remain separate from observed runtime state.
 
+## Watch definition and callback ownership
+
+Armed registry, event-log, and path watches retain the definition used to open
+them. A PathExists regression reproduced evaluating new conditions against old
+watch handles after reload. The captured conditions remain in effect until a
+fresh activation opens replacement watches.
+
+Callbacks carry the exact watch instance and generation. A stale existence
+probe or failure cannot update or close replacement watches. Watch-originated
+start plans validate that source at admission and again after waiting for the
+destination operation gate; stopping the source cancels a queued companion
+launch. Initial already-satisfied PathExists activation uses the same origin
+checks. Four focused regressions pass twenty race repetitions using isolated
+fake watches, delayed probes, and a blocked destination gate/launcher. A source
+stop preserves an already-admitted companion launch and its result.
+
+Native path testing also exposed an invalid test assumption: several filesystem
+notifications from one write can admit another start after a companion stop.
+Diagnostics confirmed a newer generation with stopping cleared. The native test
+now stops the watch before asserting a stable stopped companion, rearms it, and
+requires an additional counted execution after the next write. Twenty Windows
+race repetitions pass.
+
+## Dependency qualification finding
+
+The full manager run uncovered a go-winio listener-close hang during watchdog
+recovery. The accepted repository-relative patched copy passes 100 watchdog/restart
+repetitions, the manager race suite, vet, build, and vulnerability scanning.
+Its deterministic cancellation regression passes 100 repetitions and fails when
+the original cancellation branch is restored. See the accepted
+[pipe-listener decision](PIPE-LISTENER-DECISION.md) and upstream tracking.
+The full-suite rerun also exposed a journal test deadline expiring before scan
+admission. That bounded-worker test now cancels after confirmed admission; the
+separate deadline/flush-lock regression remains. The corrected full repository
+race suite passes with the checked-in replacement. Lab artifact admission also
+accepts the new manifest and requires its dependency hash and license artifact.
+
+## Timer deadline ownership
+
+A dequeued timer deadline now carries its armed-instance identity and schedule
+generation through consumption. Schedule generations are unique across rearming
+the same name, so an old heap entry cannot match a replacement timer either.
+Regressions reproduced both stale-dequeue consumption and an old calendar entry
+firing a replacement schedule early. The replacement's real deadline still fires.
+Twenty race repetitions of the complete timer package pass. Callback/result
+identity and manager timer-definition capture remain subsequent work.
+
 ## Limits
 
 This is the first R2.1 ownership slice, not the completed v2 coordinator. It does
 not add revision identifiers, atomic candidate/graph acceptance, immutable
 status snapshots, bounded operation admission, or typed completion events.
-Timer and watch configuration capture remains separate work. Existing generation
+Timer configuration and callback capture remain separate work. Existing generation
 checks and lifecycle writers remain in place; the full interleaving matrix and
 source audit are still required. These adapter tests do not qualify real SCM or
 Task Scheduler behavior, the supported Windows matrix, or MSI maintenance.

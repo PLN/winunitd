@@ -36,9 +36,11 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 }
 
 type plannedStart struct {
+	origin    *watchOrigin
 	unit      *unit.Unit
 	record    *unitRuntime
 	stopEpoch uint64
+	launched  bool   // adapter work was admitted before source invalidation
 	completed bool   // completion already published while holding the unit gate
 	gen       uint64 // generation at plan acceptance, for members never launched
 }
@@ -65,7 +67,7 @@ func (m *Manager) launchUnitConfigOp(ctx context.Context, name string, autoResta
 		m.mu.Unlock()
 		return nil
 	}
-	if planned != nil && (planned.record != rt || planned.stopEpoch != rt.stopEpoch) {
+	if planned != nil && (planned.record != rt || planned.stopEpoch != rt.stopEpoch || (planned.origin != nil && !planned.origin.validLocked(m))) {
 		m.mu.Unlock()
 		return fmt.Errorf("unit %q start superseded by stop", name)
 	}
@@ -95,6 +97,9 @@ func (m *Manager) launchUnitConfigOp(ctx context.Context, name string, autoResta
 		(scmServiceName(owned) != scmServiceName(definition) || scheduledTaskName(owned) != scheduledTaskName(definition)) {
 		m.mu.Unlock()
 		return fmt.Errorf("unit %q still owns a previous native target; stop it before starting the new definition", name)
+	}
+	if planned != nil {
+		planned.launched = true
 	}
 	rt.operations++
 	defer func(record *unitRuntime) {

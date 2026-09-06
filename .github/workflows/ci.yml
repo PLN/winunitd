@@ -41,6 +41,11 @@ jobs:
         # goroutines; the first two -race jobs failed on wait timeouts.
         run: go test -race -parallel 1 ./... -timeout 180s
 
+      - name: Patched pipe regression
+        env:
+          CGO_ENABLED: 1
+        run: go -C third_party/go-winio test -race -run 'TestConsumedCloseOverridesConnectionResult|TestConnectionErrorWithoutClosePreserved' -count 100 -timeout 60s .
+
       - name: Vulnerability check
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 

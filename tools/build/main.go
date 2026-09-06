@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,16 +22,17 @@ type artifact struct {
 }
 
 type manifest struct {
-	Schema    int        `json:"schema"`
-	Commit    string     `json:"commit"`
-	Dirty     bool       `json:"dirty"`
-	Go        string     `json:"go"`
-	GOOS      string     `json:"goos"`
-	GOARCH    string     `json:"goarch"`
-	CGO       bool       `json:"cgo"`
-	GoModHash string     `json:"go_mod_sha256"`
-	GoSumHash string     `json:"go_sum_sha256"`
-	Artifacts []artifact `json:"artifacts"`
+	Schema         int        `json:"schema"`
+	Commit         string     `json:"commit"`
+	Dirty          bool       `json:"dirty"`
+	Go             string     `json:"go"`
+	GOOS           string     `json:"goos"`
+	GOARCH         string     `json:"goarch"`
+	CGO            bool       `json:"cgo"`
+	GoModHash      string     `json:"go_mod_sha256"`
+	GoSumHash      string     `json:"go_sum_sha256"`
+	ThirdPartyHash string     `json:"third_party_sha256"`
+	Artifacts      []artifact `json:"artifacts"`
 }
 
 func main() {
@@ -85,7 +87,11 @@ func run() error {
 	if err := os.Remove(manifestPath); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	m := manifest{Schema: 1, Commit: commit, Dirty: status != "", Go: want,
+	thirdPartyHash, err := hashTree("third_party/go-winio")
+	if err != nil {
+		return err
+	}
+	m := manifest{Schema: 2, ThirdPartyHash: thirdPartyHash, Commit: commit, Dirty: status != "", Go: want,
 		GOOS: *goos, GOARCH: *arch, GoModHash: modHash, GoSumHash: sumHash}
 	for _, name := range []string{"winunitd", "winctl", "winunit-notify"} {
 		file := name
@@ -105,6 +111,16 @@ func run() error {
 		}
 		m.Artifacts = append(m.Artifacts, artifact{Name: file, SHA256: digest(data), Size: len(data)})
 	}
+
+	notice, err := os.ReadFile("third_party/go-winio/LICENSE")
+	if err != nil {
+		return err
+	}
+	notice = append([]byte("github.com/Microsoft/go-winio v0.6.2 (locally patched)\n\n"), notice...)
+	if err := os.WriteFile(filepath.Join(*out, "THIRD-PARTY-NOTICES.txt"), notice, 0o644); err != nil {
+		return err
+	}
+	m.Artifacts = append(m.Artifacts, artifact{Name: "THIRD-PARTY-NOTICES.txt", SHA256: digest(notice), Size: len(notice)})
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
@@ -148,4 +164,34 @@ func buildEnv(env []string, goos, arch string) []string {
 		result = append(result, e)
 	}
 	return append(result, "GOOS="+goos, "GOARCH="+arch, "CGO_ENABLED=0", "GOTOOLCHAIN=local", "GOFLAGS=", "GOEXPERIMENT=", "GOAMD64=v1", "GOARM64=v8.0", "GOWORK=off")
+}
+
+// WalkDir sorts names; slash paths and content hashes make this host-independent.
+func hashTree(root string) (string, error) {
+	h := sha256.New()
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("non-regular dependency file")
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		sum, err := hashFile(path)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(h, "%s\x00%s\n", filepath.ToSlash(rel), sum)
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }

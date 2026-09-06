@@ -4,3 +4,9 @@ go.mod text eol=lf
 go.sum text eol=lf
 .go-version text eol=lf
 tools/lab/assets/** text eol=lf
+
+# Preserve the pinned dependency bytes, including upstream fixtures.
+third_party/go-winio/** -text -whitespace
+
+# Unified diffs contain context-prefix whitespace by design.
+docs/dependency-patches/*.patch -whitespace

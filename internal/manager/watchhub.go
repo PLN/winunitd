@@ -21,6 +21,8 @@ type watchIO interface {
 // and path all store this on unitRuntime.hub so close/fail/disarm/sync
 // share one path (issue #67).
 type watchRuntime struct {
+	gen             uint64
+	unit            *unit.Unit // immutable definition captured when the watches were opened
 	closeMu         sync.Mutex
 	cancel          context.CancelFunc
 	watches         []watchIO
@@ -73,20 +75,22 @@ func toWatchIO[W watchIO](ws []W) []watchIO {
 	return out
 }
 
-func (m *Manager) installHub(name string, opened []watchIO, cancel context.CancelFunc, existsSatisfied bool) error {
-	rt := &watchRuntime{cancel: cancel, watches: opened, existsSatisfied: existsSatisfied}
+func (m *Manager) installHub(u *unit.Unit, opened []watchIO, cancel context.CancelFunc, existsSatisfied bool) (*watchRuntime, error) {
+	name := u.Name
+	rt := &watchRuntime{unit: u, cancel: cancel, watches: opened, existsSatisfied: existsSatisfied}
 	m.mu.Lock()
 	unitRT := m.units[name]
-	if unitRT == nil || unitRT.unavailable || m.closed || unitRT.hub != nil {
+	if unitRT == nil || unitRT.unavailable || unitRT.stopping || m.closed || unitRT.hub != nil {
 		m.mu.Unlock()
-		return errors.Join(fmt.Errorf("unit %q is unavailable, already watched, or manager is closed", name), m.disposeHub(name, rt))
+		return nil, errors.Join(fmt.Errorf("unit %q is unavailable, already watched, or manager is closed", name), m.disposeHub(name, rt))
 	}
+	rt.gen = unitRT.gen
 	unitRT.hub = rt
 	m.mu.Unlock()
-	return nil
+	return rt, nil
 }
 
-func (m *Manager) runWatch(ctx context.Context, name, failMsg string, w watchIO, onFire func(string)) {
+func (m *Manager) runWatch(ctx context.Context, name, failMsg string, h *watchRuntime, w watchIO, onFire func(string, *watchRuntime)) {
 	if w == nil {
 		return
 	}
@@ -100,23 +104,22 @@ func (m *Manager) runWatch(ctx context.Context, name, failMsg string, w watchIO,
 				case <-ctx.Done():
 					return
 				default:
-					m.failHub(name, fmt.Errorf("%s: %s", core.ReasonConfiguration, failMsg))
+					m.failHub(name, h, fmt.Errorf("%s: %s", core.ReasonConfiguration, failMsg))
 				}
 				return
 			}
-			onFire(name)
+			onFire(name, h)
 		}
 	}
 }
 
-func (m *Manager) failHub(name string, err error) {
+func (m *Manager) failHub(name string, h *watchRuntime, err error) {
 	m.mu.Lock()
 	rt := m.units[name]
-	if rt == nil || rt.hub == nil {
+	if rt == nil || h == nil || rt.hub != h || rt.gen != h.gen {
 		m.mu.Unlock()
 		return
 	}
-	h := rt.hub
 	rt.stopUncertain = true
 	if rt.state == core.Active || rt.state == core.Activating {
 		if rt.step(core.EventStartFailed) {
@@ -242,7 +245,7 @@ func (m *Manager) syncHubsLocked() {
 // startHubCompanion starts the counterpart unit. A still-running
 // Type=simple early-returns in launchUnitOp without bumping gen (C1);
 // Start is serialized per unit (C3).
-func (m *Manager) startHubCompanion(name string, companion func(*unit.Unit) string) {
+func (m *Manager) startHubCompanion(name string, h *watchRuntime, companion func(*unit.Unit) string) {
 	if m == nil {
 		return
 	}
@@ -252,14 +255,26 @@ func (m *Manager) startHubCompanion(name string, companion func(*unit.Unit) stri
 		return
 	}
 	rt := m.units[name]
-	if rt == nil || rt.hub == nil || rt.stopUncertain || rt.unavailable || m.closed {
+	if rt == nil || h == nil || rt.hub != h || rt.stopping || rt.stopUncertain || rt.unavailable || m.closed {
 		m.mu.Unlock()
 		return
 	}
-	activated := companion(rt.unit)
+	activated := companion(h.unit)
 	m.mu.Unlock()
 	if activated == "" {
 		return
 	}
-	_, _ = m.Start(context.Background(), activated)
+	_, _ = m.startFromWatch(context.Background(), activated, &watchOrigin{name: name, hub: h})
+}
+
+// watchOrigin binds queued activation to the exact armed watch generation.
+// Validate at admission and again after the destination operation gate opens.
+type watchOrigin struct {
+	name string
+	hub  *watchRuntime
+}
+
+func (o *watchOrigin) validLocked(m *Manager) bool {
+	rt := m.units[o.name]
+	return !m.closed && rt != nil && o.hub != nil && rt.hub == o.hub && rt.gen == o.hub.gen && !rt.stopping && !rt.unavailable && !rt.stopUncertain
 }

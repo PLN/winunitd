@@ -24,12 +24,13 @@ var smokeBefore string
 var smokeAfter string
 
 type smokeManifest struct {
-	Schema    int    `json:"schema"`
-	Commit    string `json:"commit"`
-	Dirty     bool   `json:"dirty"`
-	GOOS      string `json:"goos"`
-	GOARCH    string `json:"goarch"`
-	Artifacts []struct {
+	Schema         int    `json:"schema"`
+	Commit         string `json:"commit"`
+	Dirty          bool   `json:"dirty"`
+	GOOS           string `json:"goos"`
+	GOARCH         string `json:"goarch"`
+	ThirdPartyHash string `json:"third_party_sha256"`
+	Artifacts      []struct {
 		Name   string `json:"name"`
 		SHA256 string `json:"sha256"`
 		Size   int    `json:"size"`
@@ -45,8 +46,11 @@ func smokeArchive(dir, commit string) ([]byte, error) {
 		return nil, err
 	}
 	var m smokeManifest
-	if json.Unmarshal(raw, &m) != nil || m.Schema != 1 || m.Commit != commit || m.Dirty || m.GOOS != "windows" || m.GOARCH != "amd64" {
+	if json.Unmarshal(raw, &m) != nil || (m.Schema != 1 && m.Schema != 2) || m.Commit != commit || m.Dirty || m.GOOS != "windows" || m.GOARCH != "amd64" {
 		return nil, fmt.Errorf("artifact identity does not match clean admitted Windows build")
+	}
+	if m.Schema == 2 && !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(m.ThirdPartyHash) {
+		return nil, fmt.Errorf("missing dependency source identity")
 	}
 	var out bytes.Buffer
 	w := zip.NewWriter(&out)
@@ -60,7 +64,7 @@ func smokeArchive(dir, commit string) ([]byte, error) {
 	}
 	seen := map[string]bool{}
 	for _, artifact := range m.Artifacts {
-		if seen[artifact.Name] || (artifact.Name != "winunitd.exe" && artifact.Name != "winctl.exe" && artifact.Name != "winunit-notify.exe") {
+		if seen[artifact.Name] || (artifact.Name != "winunitd.exe" && artifact.Name != "winctl.exe" && artifact.Name != "winunit-notify.exe" && !(m.Schema == 2 && artifact.Name == "THIRD-PARTY-NOTICES.txt")) {
 			return nil, fmt.Errorf("unexpected or duplicate artifact")
 		}
 		seen[artifact.Name] = true
@@ -79,7 +83,11 @@ func smokeArchive(dir, commit string) ([]byte, error) {
 			return nil, err
 		}
 	}
-	if len(seen) != 3 {
+	expected := 3
+	if m.Schema == 2 {
+		expected = 4
+	}
+	if len(seen) != expected {
 		return nil, fmt.Errorf("incomplete artifact set")
 	}
 	for _, entry := range []struct {

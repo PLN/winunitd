@@ -30,6 +30,7 @@ type Engine struct {
 	running  bool
 	fires    sync.WaitGroup
 	clockGen uint64 // incremented on ClockChanged; armed.schedGen tracks it
+	nextGen  uint64 // unique schedule identity across disarm/rearm of the same name
 
 	// onStatusDeadline is a test hook (nil in production). It fires after
 	// e.mu is released and before NextDeadline on the dirty-cache path.
@@ -203,11 +204,11 @@ func (e *Engine) waitDuration() (time.Duration, bool) {
 func (e *Engine) fireDue() {
 	now := e.clk.now()
 	for {
-		name, scheduled, ok := e.popDue(now)
+		due, ok := e.popDue(now)
 		if !ok {
 			return
 		}
-		e.consume(name, scheduled, now)
+		e.consume(due, now)
 	}
 }
 
@@ -221,7 +222,15 @@ func (e *Engine) recalcWall() {
 	}
 }
 
-func (e *Engine) popDue(now time.Time) (name string, scheduled time.Time, ok bool) {
+// dueTimer retains both the armed instance and its schedule generation across
+// the unlocked gap between dequeue and consumption.
+type dueTimer struct {
+	instance   *armed
+	generation uint64
+	scheduled  time.Time
+}
+
+func (e *Engine) popDue(now time.Time) (due dueTimer, ok bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.dropStaleLocked()
@@ -239,24 +248,25 @@ func (e *Engine) popDue(now time.Time) (name string, scheduled time.Time, ok boo
 		}
 	}
 	if best < 0 {
-		return "", time.Time{}, false
+		return dueTimer{}, false
 	}
 	it := heap.Remove(&e.pq, best).(*pqItem)
-	return it.name, it.when, true
+	return dueTimer{instance: e.armed[it.name], generation: it.gen, scheduled: it.when}, true
 }
 
-func (e *Engine) consume(name string, scheduled, actual time.Time) {
+func (e *Engine) consume(due dueTimer, actual time.Time) {
 	e.mu.Lock()
 	if !e.running {
 		e.mu.Unlock()
 		return
 	}
-	a := e.armed[name]
-	if a == nil {
+	a := due.instance
+	if a == nil || e.armed[a.spec.Name] != a || a.gen != due.generation {
 		e.mu.Unlock()
 		return
 	}
-	MarkFired(a.spec, &a.rt, e.clk, scheduled, actual)
+	name := a.spec.Name
+	MarkFired(a.spec, &a.rt, e.clk, due.scheduled, actual)
 	_ = e.store.Save(name, a.rt)
 	fire := e.fire
 	if fire != nil {
@@ -350,7 +360,8 @@ func (e *Engine) rescheduleLocked(a *armed) {
 	a.next = next
 	a.ok = ok
 	a.schedGen = e.clockGen
-	a.gen++
+	e.nextGen++
+	a.gen = e.nextGen
 	if ok {
 		heap.Push(&e.pq, &pqItem{name: a.spec.Name, when: next, gen: a.gen})
 	}

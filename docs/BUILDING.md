@@ -41,3 +41,17 @@ Commit `7b788e9` passed Windows vet/race tests, Linux race tests, both vulnerabi
 Commit `40858a8` fixes compiler inputs to LF through `.gitattributes`. All lanes passed again in [CI run 33951099740](https://github.com/PLN/winunitd/actions/runs/33951099740). Downloaded native Windows artifacts matched their manifest, and all three native Windows binary hashes matched the Linux-to-Windows manifest exactly. This proves cross-host reproducibility for those inputs and compiler, not for future changes without rechecking.
 
 Runtime defect reproductions and identity-specific test requirements remain documented in [R0-BASELINE.md](R0-BASELINE.md). The compiler/dependency update does not close those runtime defects or replace installer/session qualification.
+
+## Locally patched pipe dependency
+
+See [third-party maintenance](../third_party/README.md). Build manifest schema 2
+adds `third_party_sha256`: SHA256 of the dependency's sorted relative slash paths,
+a NUL separator, each file's lowercase SHA256, and a newline per file. It covers
+all replacement bytes because go.sum cannot authenticate a local replacement.
+The artifacts include the upstream MIT notice for redistribution.
+
+Run the nested-module regressions explicitly on Windows:
+
+```powershell
+go -C third_party/go-winio test -race -run 'TestConsumedCloseOverridesConnectionResult|TestConnectionErrorWithoutClosePreserved' -count 100 -timeout 60s .
+```

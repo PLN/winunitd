@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestQueryDeadlinesRetainBoundedScanWorkers(t *testing.T) {
+func TestQueryCancellationRetainsBoundedScanWorkers(t *testing.T) {
 	s := testStore(t)
 	const name = "query.service"
 	if err := s.append(Entry{Unit: name, Message: "before"}); err != nil {
@@ -21,7 +21,7 @@ func TestQueryDeadlinesRetainBoundedScanWorkers(t *testing.T) {
 	defer unblock()
 	s.onScan = func() { entered <- struct{}{}; <-release }
 	for i := 0; i < queryWorkers; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		ctx, cancel := context.WithCancel(context.Background())
 		finished := make(chan error, 1)
 		go func() { _, _, _, err := s.QueryPageContext(ctx, name, time.Time{}, "original", 1024); finished <- err }()
 		select {
@@ -30,9 +30,11 @@ func TestQueryDeadlinesRetainBoundedScanWorkers(t *testing.T) {
 			cancel()
 			t.Fatal("scan did not start")
 		}
-		if err := <-finished; !errors.Is(err, context.DeadlineExceeded) {
+		// Cancel only after admission so scheduling delay cannot skip the scan.
+		cancel()
+		if err := <-finished; !errors.Is(err, context.Canceled) {
 			cancel()
-			t.Fatalf("query deadline: %v", err)
+			t.Fatalf("query cancellation: %v", err)
 		}
 		cancel()
 	}
@@ -40,7 +42,7 @@ func TestQueryDeadlinesRetainBoundedScanWorkers(t *testing.T) {
 		t.Fatalf("overload was not rejected with unchanged cursor: %q %v", cursor, err)
 	}
 	if len(s.querySlots) != queryWorkers {
-		t.Fatal("deadline released a still-blocked scan slot")
+		t.Fatal("cancellation released a still-blocked scan slot")
 	}
 	// Scans do not own the write lock; output can continue while reads stall.
 	if err := s.append(Entry{Unit: name, Message: "after"}); err != nil {

@@ -38,17 +38,18 @@ func (m *Manager) armEventLog(u *unit.Unit) error {
 			return errors.Join(fmt.Errorf("%s: %w", core.ReasonConfiguration, err), cleanupErr)
 		}
 	}
-	if err := m.installHub(u.Name, toWatchIO(opened), cancel, false); err != nil {
+	h, err := m.installHub(u, toWatchIO(opened), cancel, false)
+	if err != nil {
 		return err
 	}
 	for _, s := range opened {
-		go m.runWatch(ctx, u.Name, "event log subscribe failed", s, m.onEventLogMatch)
+		go m.runWatch(ctx, u.Name, "event log subscribe failed", h, s, m.onEventLogMatch)
 	}
 	return nil
 }
 
-func (m *Manager) onEventLogMatch(name string) {
-	m.startHubCompanion(name, func(u *unit.Unit) string {
+func (m *Manager) onEventLogMatch(name string, h *watchRuntime) {
+	m.startHubCompanion(name, h, func(u *unit.Unit) string {
 		if u != nil && u.EventLog != nil {
 			return u.EventLog.Unit
 		}
