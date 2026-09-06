@@ -23,6 +23,7 @@ type watchIO interface {
 type watchRuntime struct {
 	gen             uint64
 	unit            *unit.Unit // immutable definition captured when the watches were opened
+	revision        string
 	closeMu         sync.Mutex
 	cancel          context.CancelFunc
 	watches         []watchIO
@@ -75,9 +76,9 @@ func toWatchIO[W watchIO](ws []W) []watchIO {
 	return out
 }
 
-func (m *Manager) installHub(u *unit.Unit, opened []watchIO, cancel context.CancelFunc, existsSatisfied bool) (*watchRuntime, error) {
+func (m *Manager) installHub(u *unit.Unit, revision string, opened []watchIO, cancel context.CancelFunc, existsSatisfied bool) (*watchRuntime, error) {
 	name := u.Name
-	rt := &watchRuntime{unit: u, cancel: cancel, watches: opened, existsSatisfied: existsSatisfied}
+	rt := &watchRuntime{unit: u, revision: revision, cancel: cancel, watches: opened, existsSatisfied: existsSatisfied}
 	m.mu.Lock()
 	unitRT := m.units[name]
 	if unitRT == nil || unitRT.unavailable || unitRT.stopping || m.closed || unitRT.hub != nil {

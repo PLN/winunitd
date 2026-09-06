@@ -100,11 +100,24 @@ func TestReloadKeepsArmedTimerDefinition(t *testing.T) {
 	if _, err := m.Start(context.Background(), "work.timer"); err != nil {
 		t.Fatal(err)
 	}
+	before, _ := m.Status("work.timer")
+	armedRevision := before.Unit.ArmedConfigRevision
+	if armedRevision == "" || armedRevision != before.Unit.ConfigRevision {
+		t.Fatal("timer arm did not capture configuration revision")
+	}
 	if err := os.WriteFile(filepath.Join(m.cfg.UnitsDir(), "work.timer"), []byte("[Timer]\nUnit=new.service\nOnBootSec=1h20s\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.Reload(); err != nil {
 		t.Fatal(err)
+	}
+	after, _ := m.Status("work.timer")
+	if after.Unit.ArmedConfigRevision != armedRevision || after.Unit.ConfigRevision == armedRevision {
+		t.Fatal("reload relabelled the armed timer")
+	}
+	listed, err := m.ListTimers()
+	if err != nil || len(listed.Timers) != 1 || listed.Timers[0].Unit != "old.service" {
+		t.Fatal("list-timers reported a companion other than the armed target")
 	}
 	clock.Advance(11 * time.Second)
 	m.engine.ClockChanged()
@@ -113,8 +126,16 @@ func TestReloadKeepsArmedTimerDefinition(t *testing.T) {
 	if _, err := m.Stop("work.timer"); err != nil {
 		t.Fatal(err)
 	}
+	stopped, _ := m.Status("work.timer")
+	if stopped.Unit.ArmedConfigRevision != "" {
+		t.Fatal("disarmed timer retained an armed revision")
+	}
 	if _, err := m.Start(context.Background(), "work.timer"); err != nil {
 		t.Fatal(err)
+	}
+	rearmed, _ := m.Status("work.timer")
+	if rearmed.Unit.ArmedConfigRevision != rearmed.Unit.ConfigRevision || rearmed.Unit.ArmedConfigRevision == armedRevision {
+		t.Fatal("fresh timer arm did not capture the accepted revision")
 	}
 	clock.Advance(10 * time.Second)
 	m.engine.ClockChanged()

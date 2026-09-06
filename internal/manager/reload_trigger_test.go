@@ -96,7 +96,7 @@ func TestUnavailableRetainedTimerCannotArmOrFire(t *testing.T) {
 	if m.engine.Armed("worker.timer") {
 		t.Fatal("reload kept unavailable timer armed")
 	}
-	if err := m.armTimer(old); err == nil {
+	if err := m.armTimer(old, ""); err == nil {
 		t.Fatal("late arm accepted unavailable configuration")
 	}
 	// Also reject an elapsed callback even if an engine entry is stale.

@@ -22,9 +22,18 @@ func TestReloadKeepsArmedExistenceConditions(t *testing.T) {
 	if _, err := m.Start(context.Background(), "input.path"); err != nil {
 		t.Fatal(err)
 	}
+	before, _ := m.Status("input.path")
+	armedRevision := before.Unit.ArmedConfigRevision
+	if armedRevision == "" || armedRevision != before.Unit.ConfigRevision {
+		t.Fatal("watch did not capture the accepted revision")
+	}
 	writeUnit(t, m.cfg.UnitsDir(), "input.path", "[Path]\nPathExists=C:\\Data\\new.flag\n")
 	if _, err := m.Reload(); err != nil {
 		t.Fatal(err)
+	}
+	after, _ := m.Status("input.path")
+	if after.Unit.ArmedConfigRevision != armedRevision || after.Unit.ConfigRevision == armedRevision {
+		t.Fatal("reload relabelled the armed watch")
 	}
 	hub.mu.Lock()
 	hub.exists[`C:\Data\old.flag`] = true
@@ -36,11 +45,19 @@ func TestReloadKeepsArmedExistenceConditions(t *testing.T) {
 	if _, err := m.Stop("input.path"); err != nil {
 		t.Fatal(err)
 	}
+	stopped, _ := m.Status("input.path")
+	if stopped.Unit.ArmedConfigRevision != "" {
+		t.Fatal("closed watch retained an armed revision")
+	}
 	if _, err := m.Stop("input.service"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.Start(context.Background(), "input.path"); err != nil {
 		t.Fatal(err)
+	}
+	rearmed, _ := m.Status("input.path")
+	if rearmed.Unit.ArmedConfigRevision != rearmed.Unit.ConfigRevision || rearmed.Unit.ArmedConfigRevision == armedRevision {
+		t.Fatal("fresh watch did not capture the accepted revision")
 	}
 	hub.mu.Lock()
 	hub.exists[`C:\Data\new.flag`] = true
@@ -48,6 +65,49 @@ func TestReloadKeepsArmedExistenceConditions(t *testing.T) {
 	m.onPathExistsMaybe("input.path")
 	if len(launch.specs()) != 2 {
 		t.Fatal("fresh watch did not adopt reloaded conditions")
+	}
+}
+
+func TestDelayedWatchOpenRetainsConfigurationRevision(t *testing.T) {
+	hub := newFakePathHub()
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	m := managerWithPath(t, &fakeLauncher{}, func(spec pathwatch.Spec) (pathwatch.Watch, error) {
+		close(entered)
+		<-release
+		return hub.Open(spec)
+	}, map[string]string{
+		"work.path":    "[Path]\nPathChanged=C:\\Data\\old.flag\n",
+		"work.service": "[Service]\nExecStart=C:\\Tools\\work.exe\n",
+	})
+	before, _ := m.Status("work.path")
+	done := make(chan error, 1)
+	go func() { _, err := m.Start(context.Background(), "work.path"); done <- err }()
+	select {
+	case <-entered:
+	case err := <-done:
+		t.Fatalf("watch start returned before open: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("watch did not reach delayed open")
+	}
+	writeUnit(t, m.cfg.UnitsDir(), "work.path", "[Path]\nPathChanged=C:\\Data\\new.flag\n")
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	unblock()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("watch start did not finish")
+	}
+	after, _ := m.Status("work.path")
+	if after.Unit.ArmedConfigRevision != before.Unit.ConfigRevision || after.Unit.ArmedConfigRevision == after.Unit.ConfigRevision {
+		t.Fatal("delayed watch was labelled with a definition it did not open")
 	}
 }
 

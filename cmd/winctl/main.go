@@ -776,6 +776,9 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		if u.InvocationConfigRevision != "" {
 			fmt.Fprintf(c.stdout, "InvocationConfigRevision=%s\n", u.InvocationConfigRevision)
 		}
+		if u.ArmedConfigRevision != "" {
+			fmt.Fprintf(c.stdout, "ArmedConfigRevision=%s\n", u.ArmedConfigRevision)
+		}
 		if u.Error != "" {
 			fmt.Fprintf(c.stdout, "      Error: %s\n", u.Error)
 		}

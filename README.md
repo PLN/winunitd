@@ -93,6 +93,9 @@ reloads. Running services and automatic recovery keep their captured ID; a new
 explicit start adopts the accepted one. A removed unit has no loaded revision,
 but its last invocation revision remains available. IDs are scoped across daemon
 instances and do not expose configuration content.
+Timer and native-watch status report `ArmedConfigRevision` until disarm/cleanup.
+Reload keeps that captured ID; a fresh arm adopts the accepted revision.
+`list-timers` reports the armed companion when a timer remains armed across reload.
 
 ## Control API
 

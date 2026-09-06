@@ -10,7 +10,7 @@ import (
 	"github.com/PLN/winunitd/internal/unit"
 )
 
-func (m *Manager) armPath(u *unit.Unit) error {
+func (m *Manager) armPath(u *unit.Unit, revision string) error {
 	if m == nil || u == nil || u.PathWatch == nil {
 		return nil
 	}
@@ -67,7 +67,7 @@ func (m *Manager) armPath(u *unit.Unit) error {
 		}
 		satisfied = ok
 	}
-	h, err := m.installHub(u, toWatchIO(opened), cancel, satisfied)
+	h, err := m.installHub(u, revision, toWatchIO(opened), cancel, satisfied)
 	if err != nil {
 		return err
 	}

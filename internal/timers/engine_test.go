@@ -380,7 +380,9 @@ func TestStatusNextAfterFireAndArmMatchesHeap(t *testing.T) {
 		t.Fatal(err)
 	}
 	var n atomic.Int64
-	e.onNextDeadline = func() { n.Add(1) }
+	// Callback completion can reschedule concurrently with Status. Count only
+	// Status's uncached path, not unrelated scheduler deadline calculations.
+	e.onStatusDeadline = func() { n.Add(1) }
 	e.Arm(Spec{Name: "cal.timer", OnCalendar: []Calendar{cal}})
 	today := time.Date(2026, 9, 1, 15, 0, 0, 0, time.UTC)
 	waitNext(t, e, "cal.timer", today)

@@ -4,6 +4,8 @@ import "time"
 
 // Spec is one timer unit's schedule (DESIGN.md §17, §74).
 type Spec struct {
+	ConfigRevision string // opaque identity supplied by the configuration owner
+
 	Name string
 	Unit string // activated unit; empty means same basename .service
 

@@ -45,7 +45,7 @@ func (m *Manager) onTimerElapsed(event timers.Fire) {
 	}
 }
 
-func (m *Manager) armTimer(u *unit.Unit) error {
+func (m *Manager) armTimer(u *unit.Unit, revision string) error {
 	if m == nil || m.engine == nil || u == nil || u.Timer == nil {
 		return nil
 	}
@@ -55,7 +55,9 @@ func (m *Manager) armTimer(u *unit.Unit) error {
 	if rt == nil || rt.unavailable || m.closed {
 		return fmt.Errorf("timer %q is unavailable or manager is closed", u.Name)
 	}
-	m.engine.Arm(timerSpec(u))
+	spec := timerSpec(u)
+	spec.ConfigRevision = revision
+	m.engine.Arm(spec)
 	return nil
 }
 
@@ -100,7 +102,9 @@ func (m *Manager) syncTimersLocked() {
 	m.engine.Retain(keep)
 	// Arm after Retain, still without calling fire synchronously.
 	for _, u := range toArm {
-		m.engine.Arm(timerSpec(u))
+		spec := timerSpec(u)
+		spec.ConfigRevision = m.units[u.Name].configRevision
+		m.engine.Arm(spec)
 	}
 }
 
@@ -117,15 +121,12 @@ func (m *Manager) overlayTimer(st *protocol.UnitStatus) {
 	if st == nil || st.Kind != string(unit.KindTimer) {
 		return
 	}
-	st.Next, st.Last = m.timerStamps(st.Name)
-}
-
-func (m *Manager) timerStamps(name string) (next, last string) {
 	if m == nil || m.engine == nil {
-		return "", ""
+		return
 	}
-	snap := m.engine.Status(name)
-	return formatTimerStamp(snap.Next), formatTimerStamp(snap.Last)
+	snapshot := m.engine.Status(st.Name)
+	st.Next, st.Last = formatTimerStamp(snapshot.Next), formatTimerStamp(snapshot.Last)
+	st.ArmedConfigRevision = snapshot.ConfigRevision
 }
 
 // activationOrigin is checked under m.mu at plan and adapter admission.

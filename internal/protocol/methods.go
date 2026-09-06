@@ -76,6 +76,9 @@ type ListTimersResult struct {
 
 // TimerStatus is one timer in list-timers.
 type TimerStatus struct {
+	ConfigRevision      string `json:"configRevision,omitempty"`
+	ArmedConfigRevision string `json:"armedConfigRevision,omitempty"`
+
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Path        string `json:"path,omitempty"`
@@ -118,9 +121,11 @@ type MachineStatus struct {
 type UnitStatus struct {
 	// ConfigRevision is empty when no loaded definition is accepted. The
 	// invocation field identifies the last captured service definition, even
-	// after stop. Native trigger arm identity is not represented by this field.
+	// after stop. ArmedConfigRevision identifies the installed native watch or
+	// armed timer separately; it clears when that ownership is released.
 	ConfigRevision           string `json:"configRevision,omitempty"`
 	InvocationConfigRevision string `json:"invocationConfigRevision,omitempty"`
+	ArmedConfigRevision      string `json:"armedConfigRevision,omitempty"`
 
 	Name                string `json:"name"`
 	Description         string `json:"description,omitempty"`

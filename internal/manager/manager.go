@@ -340,18 +340,27 @@ func (m *Manager) ListTimers() (*protocol.ListTimersResult, error) {
 			activated = rt.unit.Timer.Unit
 		}
 		out = append(out, protocol.TimerStatus{
-			Name:        st.Name,
-			Description: st.Description,
-			Path:        st.Path,
-			LoadState:   st.LoadState,
-			ActiveState: st.ActiveState,
-			Enabled:     st.Enabled,
-			Unit:        activated,
+			ConfigRevision: st.ConfigRevision,
+			Name:           st.Name,
+			Description:    st.Description,
+			Path:           st.Path,
+			LoadState:      st.LoadState,
+			ActiveState:    st.ActiveState,
+			Enabled:        st.Enabled,
+			Unit:           activated,
 		})
 	}
 	m.mu.Unlock()
 	for i := range out {
-		out[i].Next, out[i].Last = m.timerStamps(out[i].Name)
+		if m.engine == nil {
+			continue
+		}
+		snapshot := m.engine.Status(out[i].Name)
+		out[i].Next, out[i].Last = formatTimerStamp(snapshot.Next), formatTimerStamp(snapshot.Last)
+		out[i].ArmedConfigRevision = snapshot.ConfigRevision
+		if snapshot.Unit != "" {
+			out[i].Unit = snapshot.Unit
+		}
 	}
 	return &protocol.ListTimersResult{Timers: out}, nil
 }
@@ -411,6 +420,9 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 	if rt != nil {
 		st.ConfigRevision = rt.configRevision
 		st.InvocationConfigRevision = rt.invocationRevision
+		if rt.hub != nil {
+			st.ArmedConfigRevision = rt.hub.revision
+		}
 		if rt.unavailable {
 			st.LoadState = "unavailable"
 		}

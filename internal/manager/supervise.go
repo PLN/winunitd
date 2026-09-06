@@ -178,16 +178,16 @@ func (m *Manager) launchUnitConfigOp(ctx context.Context, name string, autoResta
 		return core.ErrSkipped
 	}
 	if u.Kind == unit.KindTimer {
-		return m.armTimer(u)
+		return m.armTimer(u, revision)
 	}
 	if u.Kind == unit.KindRegistry {
-		return m.armRegistry(u)
+		return m.armRegistry(u, revision)
 	}
 	if u.Kind == unit.KindEventLog {
-		return m.armEventLog(u)
+		return m.armEventLog(u, revision)
 	}
 	if u.Kind == unit.KindPath {
-		return m.armPath(u)
+		return m.armPath(u, revision)
 	}
 	if u.Kind != unit.KindService || u.Service == nil {
 		return nil

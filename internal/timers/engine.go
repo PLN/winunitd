@@ -521,6 +521,9 @@ func (e *Engine) RecordResult(event Fire, success bool) {
 
 // Snapshot is next/last for status and list-timers.
 type Snapshot struct {
+	ConfigRevision string
+	Unit           string
+
 	Next time.Time
 	Last time.Time
 }
@@ -543,12 +546,12 @@ func (e *Engine) Status(name string) Snapshot {
 	}
 	last := a.rt.LastActual
 	if a.retry != nil {
-		out := Snapshot{Last: last, Next: e.clk.now().Add(max(0, a.retry.after-e.clk.sinceStart()))}
+		out := Snapshot{ConfigRevision: a.spec.ConfigRevision, Unit: a.spec.Unit, Last: last, Next: e.clk.now().Add(max(0, a.retry.after-e.clk.sinceStart()))}
 		e.mu.Unlock()
 		return out
 	}
 	if a.schedGen == e.clockGen {
-		out := Snapshot{Last: last}
+		out := Snapshot{ConfigRevision: a.spec.ConfigRevision, Unit: a.spec.Unit, Last: last}
 		if a.ok {
 			out.Next = a.next
 		}
@@ -565,7 +568,7 @@ func (e *Engine) Status(name string) Snapshot {
 	if e.onNextDeadline != nil {
 		e.onNextDeadline()
 	}
-	out := Snapshot{Last: last}
+	out := Snapshot{ConfigRevision: spec.ConfigRevision, Unit: spec.Unit, Last: last}
 	if next, ok := NextDeadline(spec, rt, clk); ok {
 		out.Next = next
 	}

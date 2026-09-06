@@ -10,7 +10,7 @@ import (
 	"github.com/PLN/winunitd/internal/unit"
 )
 
-func (m *Manager) armEventLog(u *unit.Unit) error {
+func (m *Manager) armEventLog(u *unit.Unit, revision string) error {
 	if m == nil || u == nil || u.EventLog == nil {
 		return nil
 	}
@@ -38,7 +38,7 @@ func (m *Manager) armEventLog(u *unit.Unit) error {
 			return errors.Join(fmt.Errorf("%s: %w", core.ReasonConfiguration, err), cleanupErr)
 		}
 	}
-	h, err := m.installHub(u, toWatchIO(opened), cancel, false)
+	h, err := m.installHub(u, revision, toWatchIO(opened), cancel, false)
 	if err != nil {
 		return err
 	}

@@ -286,11 +286,36 @@ revision. The CLI displays both fields; the RPC fields are optional additions.
 
 Twenty race repetitions cover namespace separation, rejected and accepted
 reloads, enable/disable, live removal and stop, queued-plan capture, automatic
-recovery, and failed preparation followed by cleanup and a fresh start. Timer
-and native-watch arm tokens remain separate ownership identities; this slice
-does not add their captured revision to status or implement operation-history
-queries, persisted revision storage, or the lifecycle coordinator.
+recovery, and failed preparation followed by cleanup and a fresh start. This
+does not implement operation-history queries, persisted revision storage,
+or the lifecycle coordinator.
 The full repository race suite and vet pass with these optional status fields.
+
+## Armed trigger revision reporting
+
+Timer specs and installed registry/event-log/path watches capture the accepted
+plan's revision at arm/open. Unit status exposes it as `ArmedConfigRevision`,
+separate from the latest loaded revision and service invocation revision. A valid
+reload leaves an existing arm's identity unchanged; successful disarm/cleanup
+clears it, and a fresh activation captures the accepted revision. A delayed
+native open retains its original plan revision even when reload finishes before
+the handle is installed. Failed native close retains the installed watch's
+identity along with its ownership.
+
+The timer listing now reports the captured armed companion and both loaded/armed
+revision IDs. Previously, reload could make the listing name the new companion
+while the existing arm still activated the old one. A regression reproduces
+that discrepancy and verifies the actual firing behavior through stop/rearm.
+Timer metadata comes from the same engine snapshot as its next/last timestamps.
+Aggregate status still combines manager and adapter snapshots; it is not yet
+the immutable coordinator snapshot required by R2.
+
+The trigger capture/reload/rearm and delayed-open regressions pass twenty race
+repetitions, as does the full timer package. Repetition also reproduced a cache
+test race on the previous engine: the assertion counted asynchronous callback
+rescheduling as status work. It now measures only the existing status-specific
+deadline hook and retains its next-deadline/cache/heap checks.
+The full repository race suite and vet pass after the trigger reporting change.
 
 ## Limits
 
