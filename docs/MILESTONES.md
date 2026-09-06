@@ -68,6 +68,8 @@ active/activating reverse members including `PartOf`, and retains their records
 and revisions through cleanup. Invalid plans and full start admission reject
 before interruption; later stops invalidate pending restart launches. Operation
 IDs, whole-operation deadlines, and the remaining coordinator migration are open.
+Stop cleanup and final results now use typed completion events; late failed stops
+retain their own error without overwriting a newer operation's lifecycle state.
 
 Exit gate: each invariant in Design v2 §3 has a test/evidence mapping. Start/stop/restart/reload/exit/timeout/trigger permutations, late successful launches, stale probes, overload, client disconnect, and shutdown during launch preserve ownership and ordering. A source audit finds no second lifecycle authority. Independent units still perform I/O concurrently.
 

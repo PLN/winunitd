@@ -417,6 +417,29 @@ This establishes captured restart phases and admission, not queryable operation
 history, whole-operation deadlines, or the completed lifecycle coordinator.
 The full repository race suite and vet pass with captured restart phases.
 
+## Stop cleanup and completion events
+
+Stop workers now deliver typed cleanup and final-completion payloads carrying
+the exact runtime record, generation, process, and operation error. Cleanup
+ownership is published before releasing the unit gate; later journal draining
+cannot update a replacement operation's state.
+
+A controlled failed stop followed by a successful retry reproduced the first
+request incorrectly reporting success when its journal wait finished late.
+Completion now returns that request's original failure while leaving the newer
+successful stop's inactive state intact. Twenty race repetitions cover this
+interleaving, failed-stop ownership/retry, later failed-start state preservation,
+and releasing the unit gate during journal draining. This advances typed event
+delivery; it does not introduce retained operation-history queries.
+
+Start-plan workers likewise deliver a typed member-completion payload through
+the lifecycle decision path while retaining the unit gate. Accepted definition,
+record, stop epoch, and origin checks precede publication; transaction summaries
+still cannot replay completed members. This centralizes those completion writes
+without changing the existing start-result semantics. Other adapter/admission
+state writers and immutable aggregate status publication remain to be migrated.
+The full repository race suite and vet pass after these completion changes.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

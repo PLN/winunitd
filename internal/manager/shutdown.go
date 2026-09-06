@@ -200,6 +200,7 @@ func (m *Manager) stopUnitWithContext(ctx context.Context, name string) (*protoc
 	rt.stopping = true
 	rt.gen++
 	stopGen := rt.gen
+	stopOwner := runtimeIdentity{name: name, record: rt, gen: stopGen}
 	rt.cancelRestart()
 	wdCancel := rt.watchdog
 	rt.watchdog = nil
@@ -240,52 +241,14 @@ func (m *Manager) stopUnitWithContext(ctx context.Context, name string) (*protoc
 	stopErr = errors.Join(stopErr, notifyErr)
 	// Publish uncertainty before releasing the operation lock: a queued Start
 	// must not replace a process whose termination has not been confirmed.
-	m.mu.Lock()
-	if rt := m.units[name]; rt != nil && rt.sameOp(stopGen, proc) {
-		rt.stopUncertain = stopErr != nil
-		if stopErr == nil && rt.proc == proc {
-			rt.proc = nil
-			rt.invocationUnit = nil
-		}
-	}
-	m.mu.Unlock()
+	m.applyStopCleanup(stopCompletion{owner: stopOwner, process: proc, err: stopErr})
 	// Release the per-unit op lock before journal.Wait so a hung
 	// capture cannot block later Start/Stop (issue #68).
 	release()
 	m.waitJournalContext(ctx, name, timeout)
 	stopErr = errors.Join(stopErr, ctx.Err())
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	rt = m.units[name]
-	if rt != nil && !rt.sameOp(stopGen, proc) {
-		// A later lifecycle op owns this unit; do not stamp Inactive/Failed
-		// over its process (issue #24).
-		return &protocol.UnitResult{Unit: name, ActiveState: rt.state.String()}, nil
-	}
-	if stopErr != nil {
-		if rt != nil {
-			if rt.step(core.EventStartFailed) {
-				rt.err = stopErr.Error()
-			}
-			return &protocol.UnitResult{
-				Unit:        name,
-				ActiveState: rt.state.String(),
-				Error:       stopErr.Error(),
-			}, protocol.ErrFailed(stopErr.Error())
-		}
-		return &protocol.UnitResult{
-			Unit:        name,
-			ActiveState: core.Failed.String(),
-			Error:       stopErr.Error(),
-		}, protocol.ErrFailed(stopErr.Error())
-	}
-	active := core.Inactive.String()
-	if rt != nil {
-		rt.step(core.EventStopFinished)
-		active = rt.state.String()
-	}
-	return &protocol.UnitResult{Unit: name, ActiveState: active}, nil
+	return m.applyStopCompletion(stopCompletion{owner: stopOwner, process: proc, err: stopErr})
 }
 
 func (m *Manager) waitJournal(name string, timeout time.Duration) {

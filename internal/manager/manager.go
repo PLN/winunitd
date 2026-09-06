@@ -582,22 +582,7 @@ func (m *Manager) startOperation(ctx context.Context, name string, origin activa
 		defer unlock()
 		planned := definitions[member]
 		err := m.launchUnitConfigOp(ctx, member, false, planned)
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		planned.completed = true
-		if m.units[member] == planned.record && planned.record.stopEpoch == planned.stopEpoch && !m.closed && (planned.launched || planned.origin == nil || planned.origin.validLocked(m)) {
-			state := core.Active
-			if errors.Is(err, core.ErrSkipped) {
-				state = core.Inactive
-			} else if err != nil {
-				state = core.Failed
-			}
-			m.applyRunLocked(&core.Run{States: map[string]core.State{member: state}, Errors: map[string]error{member: err}})
-			if err == nil {
-				m.clearErrLocked(member)
-			}
-			m.reapFailedLocked()
-		}
+		m.applyStartCompletion(startCompletion{name: member, plan: planned, err: err})
 		return err
 	}))
 	m.mu.Lock()
