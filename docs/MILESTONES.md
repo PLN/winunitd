@@ -39,10 +39,10 @@ Exit gate: real-process tests cover deletion, invalid replacement, recreation wh
 
 Status: in progress (invocation-definition groundwork; coordinator pending). Dependencies: R1. Outcome: one state owner, concurrent I/O, explicit operation identity.
 
-- [ ] **R2.1 Records/events:** implement immutable configuration revisions, stable runtime records, invocation/operation IDs, generations, typed completion events, and immutable status snapshots. Atomic reload acceptance and opaque accepted/service-invocation revision IDs are implemented; queued plans and automatic recovery retain their captured identity. Armed triggers also report their captured revision. Operation IDs/events and immutable aggregate snapshots remain open.
+- [ ] **R2.1 Records/events:** implement immutable configuration revisions, stable runtime records, invocation/operation IDs, generations, typed completion events, and immutable status snapshots. Atomic reload acceptance and opaque accepted/service-invocation revision IDs are implemented; queued plans and automatic recovery retain their captured identity. Armed triggers report their captured revision, and start/stop/restart transactions expose queryable operation IDs. Remaining event migration and immutable aggregate snapshots are open.
 - [ ] **R2.2 Coordinator:** migrate start/stop/restart, process exit, notify, watchdog, timer/native trigger activation, reload, and user-host lifecycle decisions. Remove direct worker state writes and transaction-result overwrites. Process-exit decisions now use typed completions; watchdog/recovery callbacks carry exact runtime-record/generation identity and revalidate after waiting for the unit gate. Other direct state writers and coordinator admission remain open.
 - [ ] **R2.3 Scheduling:** bound admission/workers, preserve completion delivery under overload, coalesce redundant starts, and ensure stop/maintenance precedence. Keep blocking I/O outside the coordinator.
-- [ ] **R2.4 Operations:** retain accepted operations across client disconnect; expose queryable outcomes; apply internal deadlines and explicit cancellation; version protocol changes with client compatibility tests.
+- [ ] **R2.4 Operations:** retain accepted operations across client disconnect; expose queryable outcomes; apply internal deadlines and explicit cancellation; version protocol changes with client compatibility tests. Bounded in-memory transaction history and query/CLI compatibility tests are implemented; independent operation contexts, internal aggregate deadlines, and cancellation controls remain open.
 - [ ] **R2.5 Interleavings:** build deterministic operation-sequence tests with fake clocks and delayed workers; migrate existing tests rather than replacing them with implementation-mirroring tests.
 
 The first R2.1 slice now separates the latest loaded service definition from the
@@ -66,10 +66,14 @@ work. Broader admission/resource bounds and the coordinator remain pending.
 Explicit restart now admits captured stop/start plans before teardown, restores
 active/activating reverse members including `PartOf`, and retains their records
 and revisions through cleanup. Invalid plans and full start admission reject
-before interruption; later stops invalidate pending restart launches. Operation
-IDs, whole-operation deadlines, and the remaining coordinator migration are open.
+before interruption; later stops invalidate pending restart launches.
+Whole-operation deadlines and the remaining coordinator migration are open.
 Stop cleanup and final results now use typed completion events; late failed stops
 retain their own error without overwriting a newer operation's lifecycle state.
+Start/stop/restart transactions now expose queryable IDs and bounded history,
+including after client disconnect. Explicit stops have independent bounded
+admission; shutdown bypasses it. History persistence and internal operation
+contexts/deadlines remain open; see [operation history](OPERATIONS.md).
 
 Exit gate: each invariant in Design v2 §3 has a test/evidence mapping. Start/stop/restart/reload/exit/timeout/trigger permutations, late successful launches, stale probes, overload, client disconnect, and shutdown during launch preserve ownership and ordering. A source audit finds no second lifecycle authority. Independent units still perform I/O concurrently.
 

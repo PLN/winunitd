@@ -15,8 +15,9 @@ const (
 
 // Error is a protocol-level failure. It is the RPC error object, not CLI text.
 type Error struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	OperationID string `json:"operationId,omitempty"`
+	Code        string `json:"code"`
+	Message     string `json:"message"`
 }
 
 func (e *Error) Error() string {

@@ -15,6 +15,7 @@ const (
 	MethodVerify        = "verify"
 	MethodEnableLinger  = "enable-linger"
 	MethodDisableLinger = "disable-linger"
+	MethodOperation     = "operation"
 )
 
 // Methods is the full set of control verbs.
@@ -32,6 +33,7 @@ var Methods = []string{
 	MethodVerify,
 	MethodEnableLinger,
 	MethodDisableLinger,
+	MethodOperation,
 }
 
 var knownMethods = func() map[string]bool {
@@ -119,6 +121,7 @@ type MachineStatus struct {
 // Resource metrics are not reported. CPUWeight/CPUQuota/IoPriority are the
 // configured unit-file values when set (cheap; not a live Job Object query).
 type UnitStatus struct {
+	LastOperationID string `json:"lastOperationId,omitempty"`
 	// ConfigRevision is empty when no loaded definition is accepted. The
 	// invocation field identifies the last captured service definition, even
 	// after stop. ArmedConfigRevision identifies the installed native watch or
@@ -152,9 +155,30 @@ type UnitStatus struct {
 
 // UnitResult is the payload for start, stop, and restart.
 type UnitResult struct {
+	OperationID string `json:"operationId,omitempty"`
 	Unit        string `json:"unit"`
 	ActiveState string `json:"activeState"`
 	Error       string `json:"error,omitempty"`
+}
+
+// OperationParams identifies a retained transaction in this manager instance.
+type OperationParams struct {
+	ID string `json:"id"`
+}
+
+// OperationResult is a copied operation outcome, independent of current unit
+// lifecycle state. Completed history is bounded and does not survive restart.
+type OperationResult struct {
+	ID             string `json:"id"`
+	Unit           string `json:"unit"`
+	Action         string `json:"action"`
+	Origin         string `json:"origin"`
+	State          string `json:"state"`
+	ConfigRevision string `json:"configRevision"`
+	StartedAt      string `json:"startedAt"`
+	CompletedAt    string `json:"completedAt,omitempty"`
+	Error          string `json:"error,omitempty"`
+	ErrorTruncated bool   `json:"errorTruncated,omitempty"`
 }
 
 // EnableResult is the payload for enable and disable.

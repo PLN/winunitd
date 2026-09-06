@@ -18,6 +18,7 @@ type unitRuntime struct {
 	invocationUnit     *unit.Unit // captured service definition; reload only replaces unit
 	configRevision     string
 	invocationRevision string // last service invocation's captured acceptance identity
+	lastOperationID    string
 	enabled            bool
 	targets            []string
 	unavailable        bool // latest reload has no valid configuration for this record

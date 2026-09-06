@@ -36,6 +36,7 @@ Commands:
   logs <unit> [--follow] [--since <when>]
                       Show unit logs (poll --follow; --since RFC3339 / 1d / "1 hour ago")
   daemon-reload       Reload unit files
+  operation ID        Query a retained start/stop/restart outcome
   verify <path|unit>  Verify a unit file path (no daemon) or a loaded unit
   enable-linger <user>
                       Persist a user manager across logoff and at boot
@@ -198,6 +199,8 @@ func (c *cli) run(args []string) int {
 		return c.unitCmd(rest, protocol.MethodRestart, c.printUnitResult)
 	case "status":
 		return c.status(rest)
+	case "operation":
+		return c.operation(rest)
 	case "enable":
 		return c.unitCmd(rest, protocol.MethodEnable, c.printEnable)
 	case "disable":
@@ -280,6 +283,10 @@ func (c *cli) call(fn func(context.Context, *protocol.Client) error) error {
 
 func (c *cli) rpcError(err error) int {
 	fmt.Fprintf(c.stderr, "winctl: %v\n", err)
+	var pe *protocol.Error
+	if errors.As(err, &pe) && pe.OperationID != "" {
+		fmt.Fprintf(c.stderr, "OperationID=%s\n", pe.OperationID)
+	}
 	return 1
 }
 
@@ -710,6 +717,9 @@ func (c *cli) printUnitResult(v any) int {
 		return 0
 	}
 	fmt.Fprintf(c.stdout, "%s: %s\n", r.Unit, r.ActiveState)
+	if r.OperationID != "" {
+		fmt.Fprintf(c.stdout, "OperationID=%s\n", r.OperationID)
+	}
 	return 0
 }
 
@@ -772,6 +782,9 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		}
 		if u.ConfigRevision != "" {
 			fmt.Fprintf(c.stdout, "ConfigRevision=%s\n", u.ConfigRevision)
+		}
+		if u.LastOperationID != "" {
+			fmt.Fprintf(c.stdout, "LastOperationID=%s\n", u.LastOperationID)
 		}
 		if u.InvocationConfigRevision != "" {
 			fmt.Fprintf(c.stdout, "InvocationConfigRevision=%s\n", u.InvocationConfigRevision)

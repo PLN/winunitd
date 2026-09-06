@@ -105,9 +105,16 @@ Versioned JSON-RPC on `\\.\pipe\winunitd\control` (LocalSystem and Administrator
 
 ### `winctl` commands
 
-`start`, `stop`, `restart`, `status`, `enable`, `disable`, `list-units`, `list-timers`, `logs`, `daemon-reload`, `enable-linger`, `disable-linger`, `verify`.
+`start`, `stop`, `restart`, `status`, `operation`, `enable`, `disable`, `list-units`, `list-timers`, `logs`, `daemon-reload`, `enable-linger`, `disable-linger`, `verify`.
 
 `winctl status UNIT` exit codes are systemctl-shaped: **0** active, **3** loaded but inactive/failed, **4** not loaded. Transport/protocol errors keep their existing non-zero exit. Machine status (no unit) exits 0 on success.
+
+Start/stop/restart replies and admitted failures include `OperationID`; unit
+status exposes `LastOperationID`. Use `winctl operation ID` to query that
+transaction's outcome independently of current unit state. The manager retains
+pending operations and its latest 256 completed records; history resets when
+the manager exits. See [operation history](docs/OPERATIONS.md) for admission
+budgets, query exit codes, compatibility, and current limits.
 
 ### Enable links
 
@@ -141,7 +148,8 @@ Path vs unit name: a name with no `/`, `\`, or drive prefix is always a unit nam
 
 The daemon admits up to 32 simultaneous start transactions, with up to 16
 concurrent adapter calls per transaction. Excess operator starts report capacity
-exhaustion and may be retried. Stops remain available. Native watch activations
+exhaustion and may be retried. Explicit stops use a separate 32-transaction
+budget; shutdown bypasses both budgets. Native watch activations
 wait for capacity; timer activations retry without consuming a second deadline.
 These pending retries are not yet durable across a daemon crash.
 

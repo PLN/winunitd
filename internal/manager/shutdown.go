@@ -112,19 +112,50 @@ func (m *Manager) shutdownRootsLocked() []string {
 	return roots
 }
 
-func (m *Manager) stopTransaction(name string) (*protocol.UnitResult, error) {
+func (m *Manager) stopTransaction(name string) (result *protocol.UnitResult, resultErr error) {
 	m.mu.Lock()
 	g := m.graph
 	if _, ok := m.units[name]; !ok {
 		m.mu.Unlock()
 		return nil, protocol.ErrNotFound(name)
 	}
-	m.mu.Unlock()
 	if g == nil {
+		m.mu.Unlock()
 		return nil, protocol.ErrFailed("no units loaded")
 	}
-
-	_, err := g.Stop(context.Background(), core.StopFunc(m.stopUnitCtx), name)
+	limit := m.cfg.MaxStopTransactions
+	if limit == 0 {
+		limit = DefaultMaxStopTransactions
+	}
+	if m.activeStops >= limit {
+		m.mu.Unlock()
+		return nil, protocol.ErrFailed("stop transaction capacity exhausted")
+	}
+	plan, err := g.PlanStop(name)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, protocol.ErrFailed(err.Error())
+	}
+	m.activeStops++
+	var retained []*unitRuntime
+	for _, member := range plan.Units() {
+		if rt := m.units[member]; rt != nil {
+			rt.operations++
+			retained = append(retained, rt)
+		}
+	}
+	operationID := m.beginOperationLocked(name, protocol.MethodStop, nil, plan.Units())
+	m.mu.Unlock()
+	defer func() {
+		result, resultErr = m.finishOperation(operationID, result, resultErr)
+		m.mu.Lock()
+		m.activeStops--
+		for _, rt := range retained {
+			rt.operations--
+		}
+		m.mu.Unlock()
+	}()
+	_, err = plan.ExecuteStop(context.Background(), core.StopFunc(m.stopUnitCtx))
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err != nil {

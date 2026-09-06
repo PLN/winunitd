@@ -39,6 +39,10 @@ type Manager struct {
 	graph                *core.Graph
 	closed               bool
 	activeStarts         int
+	activeStops          int
+	operationSequence    uint64
+	operations           map[string]*protocol.OperationResult
+	completedOperations  []string
 	capacityWaiters      int
 	startCapacityChanged chan struct{}
 	scm                  runtime.SCM
@@ -58,6 +62,9 @@ type Manager struct {
 func New(cfg Config) (*Manager, error) {
 	if cfg.MaxStartTransactions < 0 {
 		return nil, fmt.Errorf("MaxStartTransactions must not be negative")
+	}
+	if cfg.MaxStopTransactions < 0 {
+		return nil, fmt.Errorf("MaxStopTransactions must not be negative")
 	}
 	if cfg.BaseDir == "" {
 		return nil, fmt.Errorf("base directory required")
@@ -209,6 +216,12 @@ func (m *Manager) closePass() error {
 // Handle implements protocol.Handler.
 func (m *Manager) Handle(ctx context.Context, method string, params json.RawMessage) (any, error) {
 	switch method {
+	case protocol.MethodOperation:
+		var p protocol.OperationParams
+		if err := protocol.DecodeParams(params, &p); err != nil {
+			return nil, err
+		}
+		return m.Operation(p.ID)
 	case protocol.MethodListUnits:
 		var p protocol.ListUnitsParams
 		if err := protocol.DecodeParams(params, &p); err != nil {
@@ -418,6 +431,7 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 	st.LogStorageErrors = stats.StorageErrors
 	st.LogLastStorageError = stats.LastStorageError
 	if rt != nil {
+		st.LastOperationID = rt.lastOperationID
 		st.ConfigRevision = rt.configRevision
 		st.InvocationConfigRevision = rt.invocationRevision
 		if rt.hub != nil {
@@ -485,7 +499,7 @@ func (m *Manager) startFromOrigin(ctx context.Context, name string, origin activ
 	return m.startOperation(ctx, name, origin, false)
 }
 
-func (m *Manager) startOperation(ctx context.Context, name string, origin activationOrigin, restart bool) (*protocol.UnitResult, error) {
+func (m *Manager) startOperation(ctx context.Context, name string, origin activationOrigin, restart bool) (result *protocol.UnitResult, resultErr error) {
 	name, err := requireUnit(name)
 	if err != nil {
 		return nil, err
@@ -561,6 +575,16 @@ func (m *Manager) startOperation(ctx context.Context, name string, origin activa
 			retainedStops = append(retainedStops, member.record)
 		}
 	}
+	action := protocol.MethodStart
+	if restart {
+		action = protocol.MethodRestart
+	}
+	members := tx.Units()
+	if stopPlan != nil {
+		members = append(members, stopPlan.Units()...)
+	}
+	operationID := m.beginOperationLocked(name, action, origin, members)
+	defer func() { result, resultErr = m.finishOperation(operationID, result, resultErr) }()
 	m.mu.Unlock()
 	defer func() {
 		m.mu.Lock()

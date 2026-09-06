@@ -26,6 +26,9 @@ type Config struct {
 	// MaxStartTransactions bounds admitted start plans; zero selects 32.
 	// Stop/shutdown do not consume this capacity.
 	MaxStartTransactions int
+	// MaxStopTransactions reserves separate explicit-stop capacity; zero is 32.
+	// Manager shutdown and restart's admitted teardown do not consume it.
+	MaxStopTransactions int
 	// BaseDir is the data root. Production uses C:\ProgramData\winunitd
 	// (DESIGN.md §7, §12, §22). Tests pass a temporary directory.
 	// Layout: units\, enabled\, journal\.

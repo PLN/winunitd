@@ -440,6 +440,31 @@ without changing the existing start-result semantics. Other adapter/admission
 state writers and immutable aggregate status publication remain to be migrated.
 The full repository race suite and vet pass after these completion changes.
 
+## Queryable transaction history
+
+Validated/admitted start, explicit stop, and explicit restart transactions now
+receive operation IDs, with running and completed snapshots available through
+`winctl operation`. Unit status reports the last participating operation;
+admitted RPC failures carry their ID without changing the error code. History
+retains pending records and the latest 256 completed records, with errors capped
+at 4,096 UTF-8 bytes. Explicit stop has separate default admission of 32
+transactions; shutdown bypasses start and stop admission. Stop plans retain
+participating records across delayed cleanup and reload.
+
+Twenty race repetitions cover disconnect during an admitted native start,
+reconnection after completion, pending-record survival while completed history
+is evicted, immutable query copies, bounded Unicode errors, rejected requests
+without history entries, stop overload and independent start capacity, shutdown
+bypassing that admission, CLI exit codes, and authorization of the new method.
+A failed stop and successful retry retain separate queryable outcomes. Existing
+protocol round trips and the full repository race suite and vet pass.
+
+[Operation history](OPERATIONS.md) documents optional protocol fields, older
+server behavior, retention, and limits. Automatic process recovery and daemon
+shutdown are not transaction-history entries. History does not survive manager
+restart; operation contexts, aggregate deadlines, and the remaining lifecycle
+coordinator are still pending.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

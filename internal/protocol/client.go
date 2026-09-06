@@ -23,6 +23,14 @@ func NewClient(rw io.ReadWriter) *Client {
 	return &Client{rw: rw, br: bufio.NewReader(rw)}
 }
 
+func (c *Client) Operation(ctx context.Context, id string) (*OperationResult, error) {
+	var out OperationResult
+	if err := c.Call(ctx, MethodOperation, OperationParams{ID: id}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // Call sends a versioned request and decodes the result into out (optional).
 func (c *Client) Call(ctx context.Context, method string, params, out any) error {
 	if err := ctx.Err(); err != nil {

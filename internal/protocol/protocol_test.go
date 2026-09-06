@@ -17,6 +17,7 @@ func TestMethodsCoverCLIVerbs(t *testing.T) {
 		"start", "stop", "restart", "status", "enable", "disable",
 		"list-units", "list-timers", "logs", "daemon-reload", "verify",
 		"enable-linger", "disable-linger",
+		"operation",
 	}
 	if len(Methods) != len(want) {
 		t.Fatalf("Methods = %v, want %v", Methods, want)
@@ -186,6 +187,12 @@ func TestAllMethodsRoundTrip(t *testing.T) {
 			}}}, nil
 		case MethodDaemonReload:
 			return DaemonReloadResult{Loaded: 1}, nil
+		case MethodOperation:
+			var p OperationParams
+			if err := DecodeParams(params, &p); err != nil {
+				return nil, err
+			}
+			return OperationResult{ID: p.ID, State: "succeeded"}, nil
 		case MethodVerify:
 			var p VerifyParams
 			if err := DecodeParams(params, &p); err != nil {
@@ -247,6 +254,9 @@ func TestAllMethodsRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := client.DisableLinger(ctx, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Operation(ctx, "example/op/1"); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range Methods {

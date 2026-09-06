@@ -2,10 +2,12 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
 )
 
@@ -61,8 +63,25 @@ func TestLateFailedStopKeepsOutcomeAfterSuccessfulRetry(t *testing.T) {
 	if err := <-second; err != nil {
 		t.Fatal(err)
 	}
-	if err := <-first; err == nil {
+	firstErr := <-first
+	if firstErr == nil {
 		t.Fatal("late failed stop was reported as successful")
 	}
 	assertState(t, m, "work.service", core.Inactive)
+	var pe *protocol.Error
+	if !errors.As(firstErr, &pe) || pe.OperationID == "" {
+		t.Fatal("failed stop lost history identity")
+	}
+	failed, err := m.Operation(pe.OperationID)
+	if err != nil || failed.State != "failed" {
+		t.Fatal("failed stop history changed after retry")
+	}
+	status, err := m.Status("work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	retried, err := m.Operation(status.Unit.LastOperationID)
+	if err != nil || retried.State != "succeeded" || retried.ID == failed.ID {
+		t.Fatal("retry history lost independent outcome")
+	}
 }
