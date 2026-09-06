@@ -156,6 +156,22 @@ R2.3 work. The full repository race suite and vet pass. The journal cancellation
 regression now allows ten seconds for scan admission under host contention and
 separately bounds cancellation response while that scan remains blocked.
 
+## Transaction worker bound
+
+Start and stop transactions now default to at most sixteen concurrent adapter
+calls. The completion channel is bounded to the worker count, and accepted calls
+are drained before returning. Internal callers can select a positive limit with
+ExecuteWithLimit/ExecuteStopWithLimit; invalid limits fail before side effects.
+
+A 48-member plan cancels after its third admitted start: exactly three successful
+completions are retained and the other 45 members report cancellation. A serial
+48-member stop plan retains every failure and attempts every member. Existing
+parallel-ordering and dependency tests remain enabled. Twenty race repetitions
+of the core package, the full repository race suite, and vet pass. This does
+not yet cap simultaneously accepted plans,
+RPC connections, or retained graph/result memory; manager-wide admission remains
+required before R2.3 can close.
+
 ## Limits
 
 This is the first R2.1 ownership slice, not the completed v2 coordinator. It does

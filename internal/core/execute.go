@@ -120,9 +120,22 @@ func (g *Graph) Shutdown(ctx context.Context, stopper Stopper, names ...string) 
 	return tx.ExecuteStop(ctx, stopper)
 }
 
+// DefaultTransactionWorkers bounds concurrent adapter calls within one plan.
+// Manager-wide admission is a separate bound.
+const DefaultTransactionWorkers = 16
+
 // Execute runs a previously validated transaction. Independent branches
 // start concurrently; After= is honored without serializing the whole graph.
 func (tx *Transaction) Execute(ctx context.Context, starter Starter) (*Run, error) {
+	return tx.ExecuteWithLimit(ctx, starter, DefaultTransactionWorkers)
+}
+
+// ExecuteWithLimit preserves dependency ordering while limiting adapter calls.
+// Accepted calls are drained even after cancellation; queued starts are canceled.
+func (tx *Transaction) ExecuteWithLimit(ctx context.Context, starter Starter, workers int) (*Run, error) {
+	if workers < 1 {
+		return nil, fmt.Errorf("transaction worker limit must be positive")
+	}
 	if starter == nil {
 		return nil, fmt.Errorf("nil starter")
 	}
@@ -156,7 +169,7 @@ func (tx *Transaction) Execute(ctx context.Context, starter Starter) (*Run, erro
 		}
 	}
 
-	finished := make(chan startResult, len(names))
+	finished := make(chan startResult, min(workers, len(names)))
 	for {
 		if err := ctx.Err(); err != nil {
 			for _, name := range names {
@@ -167,6 +180,9 @@ func (tx *Transaction) Execute(ctx context.Context, starter Starter) (*Run, erro
 			break
 		}
 		for _, name := range names {
+			if ex.inflight >= workers {
+				break
+			}
 			ex.tryLaunch(name, finished)
 		}
 		if ex.inflight == 0 {
@@ -196,6 +212,15 @@ func (tx *Transaction) Execute(ctx context.Context, starter Starter) (*Run, erro
 
 // ExecuteStop runs a previously validated stop transaction.
 func (tx *Transaction) ExecuteStop(ctx context.Context, stopper Stopper) (*Run, error) {
+	return tx.ExecuteStopWithLimit(ctx, stopper, DefaultTransactionWorkers)
+}
+
+// ExecuteStopWithLimit bounds adapter calls while retaining best-effort cleanup
+// of all planned members, including after an earlier stop failure.
+func (tx *Transaction) ExecuteStopWithLimit(ctx context.Context, stopper Stopper, workers int) (*Run, error) {
+	if workers < 1 {
+		return nil, fmt.Errorf("transaction worker limit must be positive")
+	}
 	if stopper == nil {
 		return nil, fmt.Errorf("nil stopper")
 	}
@@ -229,9 +254,12 @@ func (tx *Transaction) ExecuteStop(ctx context.Context, stopper Stopper) (*Run, 
 		}
 	}
 
-	finished := make(chan startResult, len(names))
+	finished := make(chan startResult, min(workers, len(names)))
 	for {
 		for _, name := range names {
+			if ex.inflight >= workers {
+				break
+			}
 			ex.tryLaunch(name, finished)
 		}
 		if ex.inflight == 0 {
