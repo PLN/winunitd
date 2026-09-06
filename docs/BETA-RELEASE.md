@@ -48,8 +48,31 @@ The product MSI now passes its complete two-phase lifecycle fixture on Windows
 11 Enterprise LTSC build 26100.9168. The same packaged binaries also pass the
 existing interactive Hermes pilot's maintenance rehearsal and agent response
 check. See [beta qualification](BETA-QUALIFICATION.md) for exact source, package
-hashes, evidence boundaries, and the CI test-fixture correction. Hosted artifact
-review and the explicit publication action remain under B4.
+hashes, evidence boundaries, and the CI test-fixture correction. A private draft
+release is uploaded and its downloaded assets match the frozen local files.
+The remaining B4 decision is the repository publication route described below.
+
+## Publication decision
+
+The targeted review covered 3,832 reachable Git objects including advertised PR
+references, hosted issue/comment text, all 282 retained workflow-log archives,
+all 175 retained build-artifact archives, MSI metadata, and the release files.
+No configured private-identifier or credential patterns matched. No Actions
+caches were present. This is a targeted review, not proof that every possible
+secret or identifying string has been excluded.
+
+An old affected blob remains accessible through GitHub's object API even though
+it is absent from the cleaned references. Keep the repository private until this
+is resolved. Rewriting references alone does not purge server-side objects;
+[GitHub documents the additional cleanup](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository).
+
+Recommended for delivery: retain the existing repository as a private archive
+and create a fresh public repository at the existing project address using only
+the reviewed clean main history. Preserve the current issue/PR/run history in
+the archive and recreate the prepared release from the verified files. This
+requires an explicit repository rename/create/publication decision. Alternatively,
+request GitHub-side garbage collection/cache removal; eligibility and completion
+depend on GitHub Support. No rename, visibility change, or publication has occurred.
 
 ## Release blockers and follow-up
 
