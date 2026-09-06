@@ -62,6 +62,24 @@ of a member waiting for its dependency, and stop of a member that has already
 started while another branch is pending. Definitions and stop epochs are internal;
 this change does not introduce revision IDs or an operation-query API.
 
+## Per-unit completion publication
+
+A blocked multi-unit start reproduced a stale result overwrite: one process
+exited and reached failed state, then completion of the remaining dependency
+made the transaction summary mark the exited unit active. Start adapter outcomes
+are now published per member while its operation gate is still held. Final
+transaction application only handles members never launched and still matching
+their original generation and stop epoch. It cannot replay completed members or
+clear errors produced by a later exit/recovery operation.
+
+A corresponding stop regression stopped one member, paused another member's
+cleanup, and failed a new start of the already-stopped member. The old stop
+summary incorrectly replaced the new failed state with inactive. Stop and
+shutdown now leave runtime publication to their existing generation-checked
+per-unit stop operations; transaction summaries are returned as outcomes only.
+Both deterministic regressions pass twenty race repetitions. Graph planning and
+dependency failure reporting remain separate from observed runtime state.
+
 ## Limits
 
 This is the first R2.1 ownership slice, not the completed v2 coordinator. It does

@@ -76,10 +76,9 @@ func (m *Manager) shutdownPass(ctx context.Context) error {
 		return ctx.Err()
 	}
 
-	run, err := g.Shutdown(ctx, core.StopFunc(m.stopUnitCtx), roots...)
-	m.mu.Lock()
-	m.applyRunLocked(run)
-	m.mu.Unlock()
+	// Each stop publishes its own generation-checked outcome. The graph's
+	// historical summary must not overwrite a later lifecycle operation.
+	_, err := g.Shutdown(ctx, core.StopFunc(m.stopUnitCtx), roots...)
 	return errors.Join(err, ctx.Err())
 }
 
@@ -124,19 +123,16 @@ func (m *Manager) stopTransaction(name string) (*protocol.UnitResult, error) {
 		return nil, protocol.ErrFailed("no units loaded")
 	}
 
-	run, err := g.Stop(context.Background(), core.StopFunc(m.stopUnitCtx), name)
+	_, err := g.Stop(context.Background(), core.StopFunc(m.stopUnitCtx), name)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.applyRunLocked(run)
 	if err != nil {
-		m.setErrLocked(name, err.Error())
 		return &protocol.UnitResult{
 			Unit:        name,
 			ActiveState: m.stateOfLocked(name).String(),
 			Error:       err.Error(),
 		}, protocol.ErrFailed(err.Error())
 	}
-	m.clearErrLocked(name)
 	return &protocol.UnitResult{Unit: name, ActiveState: m.stateOfLocked(name).String()}, nil
 }
 

@@ -478,7 +478,7 @@ func (m *Manager) Start(ctx context.Context, name string) (*protocol.UnitResult,
 	definitions := make(map[string]*plannedStart)
 	for _, member := range tx.Units() {
 		if rt := m.units[member]; rt != nil {
-			definitions[member] = &plannedStart{unit: rt.unit, record: rt, stopEpoch: rt.stopEpoch}
+			definitions[member] = &plannedStart{unit: rt.unit, record: rt, stopEpoch: rt.stopEpoch, gen: rt.gen}
 			rt.operations++
 		}
 	}
@@ -493,7 +493,25 @@ func (m *Manager) Start(ctx context.Context, name string) (*protocol.UnitResult,
 	run, err := tx.Execute(ctx, core.StartFunc(func(ctx context.Context, member string) error {
 		unlock := m.ops.lock(member)
 		defer unlock()
-		return m.launchUnitConfigOp(ctx, member, false, definitions[member])
+		planned := definitions[member]
+		err := m.launchUnitConfigOp(ctx, member, false, planned)
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		planned.completed = true
+		if m.units[member] == planned.record && planned.record.stopEpoch == planned.stopEpoch && !m.closed {
+			state := core.Active
+			if errors.Is(err, core.ErrSkipped) {
+				state = core.Inactive
+			} else if err != nil {
+				state = core.Failed
+			}
+			m.applyRunLocked(&core.Run{States: map[string]core.State{member: state}, Errors: map[string]error{member: err}})
+			if err == nil {
+				m.clearErrLocked(member)
+			}
+			m.reapFailedLocked()
+		}
+		return err
 	}))
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -501,7 +519,7 @@ func (m *Manager) Start(ctx context.Context, name string) (*protocol.UnitResult,
 	// Return the transaction outcome without rewriting the newer runtime state.
 	if run != nil {
 		for member, planned := range definitions {
-			if m.units[member] != planned.record || planned.record.stopEpoch != planned.stopEpoch {
+			if planned.completed || m.units[member] != planned.record || planned.record.stopEpoch != planned.stopEpoch || planned.record.gen != planned.gen {
 				delete(run.States, member)
 				delete(run.Errors, member)
 			}
@@ -509,7 +527,7 @@ func (m *Manager) Start(ctx context.Context, name string) (*protocol.UnitResult,
 	}
 	m.applyRunLocked(run)
 	m.reapFailedLocked()
-	rootCurrent := definitions[name] != nil && m.units[name] == definitions[name].record && definitions[name].stopEpoch == definitions[name].record.stopEpoch
+	rootCurrent := definitions[name] != nil && !definitions[name].completed && m.units[name] == definitions[name].record && definitions[name].stopEpoch == definitions[name].record.stopEpoch && definitions[name].gen == definitions[name].record.gen
 	if err != nil {
 		if rootCurrent {
 			m.setErrLocked(name, waitFailMessage(err))

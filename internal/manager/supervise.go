@@ -39,6 +39,8 @@ type plannedStart struct {
 	unit      *unit.Unit
 	record    *unitRuntime
 	stopEpoch uint64
+	completed bool   // completion already published while holding the unit gate
+	gen       uint64 // generation at plan acceptance, for members never launched
 }
 
 // A transaction passes its captured definition; recovery uses ownedUnit.

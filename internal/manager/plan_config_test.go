@@ -2,9 +2,14 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/runtime"
 )
 
 func TestStartPlanRetainsDefinitionsAcrossReload(t *testing.T) {
@@ -94,4 +99,91 @@ func TestStopCancelsStartWaitingForDependency(t *testing.T) {
 	if len(launch.specs()) != 2 {
 		t.Fatal("fresh start after stop did not launch")
 	}
+}
+
+func TestStartTransactionDoesNotReviveExitedMember(t *testing.T) {
+	launch := newGatedStartLauncher("slow.service")
+	m := managerWith(t, launch, map[string]string{
+		"app.target":    "[Unit]\nRequires=first.service slow.service\nAfter=first.service slow.service\n",
+		"first.service": "[Service]\nExecStart=C:\\Tools\\first.exe\n",
+		"slow.service":  "[Unit]\nAfter=first.service\n[Service]\nExecStart=C:\\Tools\\slow.exe\n",
+	})
+	var once sync.Once
+	release := func() { once.Do(launch.release) }
+	defer release()
+	done := make(chan error, 1)
+	go func() { _, err := m.Start(context.Background(), "app.target"); done <- err }()
+	select {
+	case <-launch.blocked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("slow dependency did not reach launcher")
+	}
+	m.mu.Lock()
+	first := m.units["first.service"].proc.(*fakeProc)
+	m.mu.Unlock()
+	first.die(1)
+	waitState(t, m, "first.service", core.Failed)
+	release()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("start transaction did not finish")
+	}
+	assertState(t, m, "first.service", core.Failed)
+}
+
+type transactionStopLauncher struct {
+	fakeLauncher
+	fail    atomic.Bool
+	slow    *blockedStopProcess
+	release chan struct{}
+}
+
+func (l *transactionStopLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
+	if spec.Unit == "worker.service" && l.fail.Load() {
+		return nil, errors.New("injected new start failure")
+	}
+	p, err := l.fakeLauncher.Start(ctx, spec)
+	if err != nil || spec.Unit != "slow.service" {
+		return p, err
+	}
+	l.slow = &blockedStopProcess{Process: p, release: l.release}
+	return l.slow, nil
+}
+
+func TestStopTransactionDoesNotOverwriteLaterFailedStart(t *testing.T) {
+	launch := &transactionStopLauncher{release: make(chan struct{})}
+	m := managerWith(t, launch, map[string]string{
+		"app.target":     "[Unit]\nWants=worker.service slow.service\n",
+		"worker.service": "[Unit]\nPartOf=app.target\nAfter=slow.service\n[Service]\nExecStart=C:\\Tools\\worker.exe\n",
+		"slow.service":   "[Unit]\nPartOf=app.target\n[Service]\nExecStart=C:\\Tools\\slow.exe\n",
+	})
+	var once sync.Once
+	release := func() { once.Do(func() { close(launch.release) }) }
+	defer release()
+	if _, err := m.Start(context.Background(), "app.target"); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := m.Stop("app.target"); done <- err }()
+	waitCond(t, func() bool { return launch.slow.calls.Load() == 1 })
+	assertState(t, m, "worker.service", core.Inactive)
+	launch.fail.Store(true)
+	if _, err := m.Start(context.Background(), "worker"); err == nil {
+		t.Fatal("new start failure missing")
+	}
+	assertState(t, m, "worker.service", core.Failed)
+	release()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("stop transaction did not finish")
+	}
+	assertState(t, m, "worker.service", core.Failed)
 }
