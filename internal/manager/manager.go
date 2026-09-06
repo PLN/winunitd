@@ -451,10 +451,10 @@ func (m *Manager) names() []string {
 
 // Start runs a start transaction, then CreateProcess into a per-unit job.
 func (m *Manager) Start(ctx context.Context, name string) (*protocol.UnitResult, error) {
-	return m.startFromWatch(ctx, name, nil)
+	return m.startFromOrigin(ctx, name, nil)
 }
 
-func (m *Manager) startFromWatch(ctx context.Context, name string, origin *watchOrigin) (*protocol.UnitResult, error) {
+func (m *Manager) startFromOrigin(ctx context.Context, name string, origin activationOrigin) (*protocol.UnitResult, error) {
 	name, err := requireUnit(name)
 	if err != nil {
 		return nil, err
@@ -467,7 +467,7 @@ func (m *Manager) startFromWatch(ctx context.Context, name string, origin *watch
 	}
 	if origin != nil && !origin.validLocked(m) {
 		m.mu.Unlock()
-		return nil, protocol.ErrFailed("watch activation superseded")
+		return nil, protocol.ErrFailed("trigger activation superseded")
 	}
 	g := m.graph
 	if _, ok := m.units[name]; !ok {

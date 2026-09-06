@@ -36,7 +36,7 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 }
 
 type plannedStart struct {
-	origin    *watchOrigin
+	origin    activationOrigin
 	unit      *unit.Unit
 	record    *unitRuntime
 	stopEpoch uint64

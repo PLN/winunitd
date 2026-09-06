@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/pathwatch"
+	"github.com/PLN/winunitd/internal/timers"
 )
 
 func TestLateWatchOpenCannotSurviveReloadOrClose(t *testing.T) {
@@ -99,8 +100,8 @@ func TestUnavailableRetainedTimerCannotArmOrFire(t *testing.T) {
 		t.Fatal("late arm accepted unavailable configuration")
 	}
 	// Also reject an elapsed callback even if an engine entry is stale.
-	m.engine.Arm(timerSpec(old))
-	m.onTimerElapsed("worker.timer")
+	token := m.engine.Arm(timerSpec(old))
+	m.onTimerElapsed(timers.Fire{Name: "worker.timer", Unit: old.Timer.Unit, Token: token})
 	m.engine.Disarm("worker.timer")
 	if len(launch.specs()) != 0 {
 		t.Fatal("unavailable timer activated its companion")

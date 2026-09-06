@@ -46,7 +46,7 @@ func TestStoreRoundTrip(t *testing.T) {
 func TestEngineFiresOnStartupSec(t *testing.T) {
 	t.Parallel()
 	fired := make(chan string, 4)
-	e, fk := testEngine(t, func(name string) { fired <- name })
+	e, fk := testEngine(t, func(event Fire) { fired <- event.Name })
 	e.Arm(Spec{Name: "foo.timer", Unit: "foo.service", OnStartupSec: 5 * time.Second, OnStartupSecSet: true})
 	waitQuiet(t, fired)
 	fk.Advance(5 * time.Second)
@@ -62,7 +62,7 @@ func TestEngineFiresOnStartupSec(t *testing.T) {
 func TestEngineDisarmPreventsFire(t *testing.T) {
 	t.Parallel()
 	fired := make(chan string, 1)
-	e, fk := testEngine(t, func(name string) { fired <- name })
+	e, fk := testEngine(t, func(event Fire) { fired <- event.Name })
 	e.Arm(Spec{Name: "foo.timer", OnStartupSec: 5 * time.Second, OnStartupSecSet: true})
 	e.Disarm("foo.timer")
 	fk.Advance(5 * time.Second)
@@ -85,7 +85,7 @@ func TestEnginePersistentCatchup(t *testing.T) {
 		t.Fatal(err)
 	}
 	fired := make(chan string, 1)
-	e := NewEngine(fk.Clock(), s, func(name string) { fired <- name })
+	e := NewEngine(fk.Clock(), s, func(event Fire) { fired <- event.Name })
 	t.Cleanup(e.Stop)
 	e.Arm(Spec{Name: "backup.timer", OnCalendar: []Calendar{cal}, Persistent: true})
 	if name := waitFired(t, fired); name != "backup.timer" {
@@ -96,7 +96,7 @@ func TestEnginePersistentCatchup(t *testing.T) {
 func TestEngineOnUnitActiveSecDoesNotRefireSameDue(t *testing.T) {
 	t.Parallel()
 	fired := make(chan string, 32)
-	e, fk := testEngine(t, func(name string) { fired <- name })
+	e, fk := testEngine(t, func(event Fire) { fired <- event.Name })
 	interval := 5 * time.Second
 	e.Arm(Spec{
 		Name:               "foo.timer",
@@ -119,7 +119,7 @@ func TestEngineOnUnitActiveSecDoesNotRefireSameDue(t *testing.T) {
 func TestEngineCalendarJumpAcrossDeadline(t *testing.T) {
 	t.Parallel()
 	fired := make(chan string, 4)
-	e, fk := testEngine(t, func(name string) { fired <- name })
+	e, fk := testEngine(t, func(event Fire) { fired <- event.Name })
 	cal, err := ParseCalendar("*-*-* 15:00:00")
 	if err != nil {
 		t.Fatal(err)
@@ -154,7 +154,7 @@ func TestEngineCalendarJumpBackwardRecalc(t *testing.T) {
 func TestEngineOnUnitActiveSecAcrossSuspend(t *testing.T) {
 	t.Parallel()
 	fired := make(chan string, 4)
-	e, fk := testEngine(t, func(name string) { fired <- name })
+	e, fk := testEngine(t, func(event Fire) { fired <- event.Name })
 	e.Arm(Spec{
 		Name:               "foo.timer",
 		Unit:               "foo.service",
@@ -176,7 +176,7 @@ func TestEngineClockChangedFiresCalendarWithoutPoll(t *testing.T) {
 	fk := NewFake(time.Time{})
 	clk := fk.Clock()
 	clk.Changed = nil
-	e := NewEngine(clk, nil, func(name string) { fired <- name })
+	e := NewEngine(clk, nil, func(event Fire) { fired <- event.Name })
 	t.Cleanup(e.Stop)
 	cal, err := ParseCalendar("*-*-* 15:00:00")
 	if err != nil {
@@ -202,7 +202,7 @@ func TestEngineClockChangedFiresCalendarWithoutPoll(t *testing.T) {
 func TestEngineClockChangedLeavesOnBootSecHeap(t *testing.T) {
 	t.Parallel()
 	fired := make(chan string, 4)
-	e, fk := testEngine(t, func(name string) { fired <- name })
+	e, fk := testEngine(t, func(event Fire) { fired <- event.Name })
 	e.Arm(Spec{Name: "boot.timer", OnBootSec: 2 * time.Hour, OnBootSecSet: true})
 	wantNext := fk.Now().Add(time.Hour) // Fake starts with 1h since boot
 	waitNext(t, e, "boot.timer", wantNext)
@@ -226,7 +226,7 @@ func TestEngineStopWaitsForFire(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	fk := NewFake(time.Time{})
-	e := NewEngine(fk.Clock(), nil, func(string) {
+	e := NewEngine(fk.Clock(), nil, func(Fire) {
 		close(started)
 		<-release
 	})
@@ -374,7 +374,7 @@ func TestStatusUsesCachedNextUnlessClockChanged(t *testing.T) {
 func TestStatusNextAfterFireAndArmMatchesHeap(t *testing.T) {
 	t.Parallel()
 	fired := make(chan string, 4)
-	e, fk := testEngine(t, func(name string) { fired <- name })
+	e, fk := testEngine(t, func(event Fire) { fired <- event.Name })
 	cal, err := ParseCalendar("*-*-* 15:00:00")
 	if err != nil {
 		t.Fatal(err)

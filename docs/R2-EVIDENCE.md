@@ -124,15 +124,25 @@ generation through consumption. Schedule generations are unique across rearming
 the same name, so an old heap entry cannot match a replacement timer either.
 Regressions reproduced both stale-dequeue consumption and an old calendar entry
 firing a replacement schedule early. The replacement's real deadline still fires.
-Twenty race repetitions of the complete timer package pass. Callback/result
-identity and manager timer-definition capture remain subsequent work.
+Twenty race repetitions of the complete timer package pass.
+
+Timer callbacks now carry a unique arm token and the captured companion name.
+Stop/rearm or refresh invalidates an old callback and its eventual success result;
+an old result cannot write the replacement's persistent last-success timestamp.
+Watch and timer starts share origin checks at plan and adapter admission. Stopping
+a timer cancels a queued companion but preserves one already admitted to launch.
+Valid reload retains the armed timer's schedule and target; a fresh activation
+adopts the latest definition. Three manager regressions and the timer package
+pass twenty race repetitions, including a controlled callback completion after
+replacement and reload across two different relative timer schedules. The full
+repository race suite and vet also pass after this callback-ownership slice.
 
 ## Limits
 
 This is the first R2.1 ownership slice, not the completed v2 coordinator. It does
 not add revision identifiers, atomic candidate/graph acceptance, immutable
 status snapshots, bounded operation admission, or typed completion events.
-Timer configuration and callback capture remain separate work. Existing generation
+Existing generation
 checks and lifecycle writers remain in place; the full interleaving matrix and
 source audit are still required. These adapter tests do not qualify real SCM or
 Task Scheduler behavior, the supported Windows matrix, or MSI maintenance.

@@ -11,11 +11,12 @@ import (
 	"github.com/PLN/winunitd/internal/unit"
 )
 
-func (m *Manager) onTimerElapsed(name string) {
+func (m *Manager) onTimerElapsed(event timers.Fire) {
+	name := event.Name
 	if m == nil {
 		return
 	}
-	if m.engine != nil && !m.engine.Armed(name) {
+	if m.engine != nil && !m.engine.Current(name, event.Token) {
 		return
 	}
 	m.mu.Lock()
@@ -27,15 +28,15 @@ func (m *Manager) onTimerElapsed(name string) {
 	ld := m.units[name]
 	activated := ""
 	if ld != nil && !ld.unavailable && !m.closed && ld.unit != nil && ld.unit.Timer != nil {
-		activated = ld.unit.Timer.Unit
+		activated = event.Unit
 	}
 	m.mu.Unlock()
 	if activated == "" {
 		return
 	}
-	_, err := m.Start(context.Background(), activated)
+	_, err := m.startFromOrigin(context.Background(), activated, &timerOrigin{name: name, token: event.Token})
 	if m.engine != nil {
-		m.engine.RecordResult(name, err == nil)
+		m.engine.RecordResult(event, err == nil)
 	}
 }
 
@@ -81,11 +82,15 @@ func (m *Manager) syncTimersLocked() {
 		if ld == nil || ld.unavailable || ld.unit == nil || ld.unit.Kind != unit.KindTimer {
 			continue
 		}
-		if m.stateOfLocked(name) != core.Active {
+		armed := m.engine.Armed(name)
+		if m.stateOfLocked(name) != core.Active && !(armed && ld.operations > 0) {
 			continue
 		}
 		keep[name] = true
-		toArm = append(toArm, ld.unit)
+		// Keep the captured schedule and callback identity until a fresh arm.
+		if !armed {
+			toArm = append(toArm, ld.unit)
+		}
 	}
 	m.engine.Retain(keep)
 	// Arm after Retain, still without calling fire synchronously.
@@ -116,4 +121,17 @@ func (m *Manager) timerStamps(name string) (next, last string) {
 	}
 	snap := m.engine.Status(name)
 	return formatTimerStamp(snap.Next), formatTimerStamp(snap.Last)
+}
+
+// activationOrigin is checked under m.mu at plan and adapter admission.
+type activationOrigin interface{ validLocked(*Manager) bool }
+
+type timerOrigin struct {
+	name  string
+	token uint64
+}
+
+func (o *timerOrigin) validLocked(m *Manager) bool {
+	rt := m.units[o.name]
+	return !m.closed && rt != nil && !rt.stopping && !rt.unavailable && !rt.stopUncertain && m.engine.Current(o.name, o.token)
 }

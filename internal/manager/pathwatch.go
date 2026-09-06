@@ -147,7 +147,7 @@ func (m *Manager) startPathCompanion(name string, h *watchRuntime, activated str
 	if activated == "" {
 		return
 	}
-	_, _ = m.startFromWatch(context.Background(), activated, &watchOrigin{name: name, hub: h})
+	_, _ = m.startFromOrigin(context.Background(), activated, &watchOrigin{name: name, hub: h})
 }
 
 func (m *Manager) pathExistsAll(specs []pathwatch.Spec) (bool, error) {

@@ -67,3 +67,46 @@ func TestOldHeapEntryCannotFireReplacementSchedule(t *testing.T) {
 		t.Fatal("current deadline was not consumed")
 	}
 }
+
+func TestOldFireResultCannotUpdateReplacement(t *testing.T) {
+	clock := NewFake(time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC))
+	store, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := make(chan Fire, 1)
+	e := &Engine{clk: clock.Clock(), store: store, armed: make(map[string]*armed), wakeup: make(chan struct{}, 1), running: true, fire: func(event Fire) { events <- event }}
+	spec := Spec{Name: "work.timer", Unit: "old.service", OnStartupSec: time.Second, OnStartupSecSet: true}
+	oldToken := e.Arm(spec)
+	clock.Advance(2 * time.Second)
+	due, ok := e.popDue(e.clk.now())
+	if !ok {
+		t.Fatal("deadline was not due")
+	}
+	e.consume(due, e.clk.now())
+	var old Fire
+	select {
+	case old = <-events:
+	case <-time.After(time.Second):
+		t.Fatal("callback missing")
+	}
+	e.fires.Wait()
+	if old.Token != oldToken || old.Unit != "old.service" {
+		t.Fatal("callback lost captured arm")
+	}
+	e.Disarm(spec.Name)
+	spec.Unit = "new.service"
+	freshToken := e.Arm(spec)
+	if freshToken == oldToken || e.Current(old.Name, old.Token) {
+		t.Fatal("old arm remained current")
+	}
+	e.RecordResult(old, true)
+	if !store.Load(spec.Name).LastSuccess.IsZero() {
+		t.Fatal("old result updated replacement persistence")
+	}
+	fresh := Fire{Name: spec.Name, Unit: spec.Unit, Token: freshToken}
+	e.RecordResult(fresh, true)
+	if !store.Load(spec.Name).LastSuccess.Equal(clock.Now()) {
+		t.Fatal("current result was not saved")
+	}
+}

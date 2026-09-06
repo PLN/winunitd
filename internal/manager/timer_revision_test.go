@@ -1,0 +1,120 @@
+package manager
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/timers"
+)
+
+func TestStoppedTimerCannotLaunchQueuedCompanion(t *testing.T) {
+	launch := &fakeLauncher{}
+	m, _ := managerWithFake(t, launch, map[string]string{
+		"input.timer":   "[Timer]\nOnStartupSec=1h\n",
+		"input.service": "[Service]\nExecStart=C:\\Tools\\input.exe\n",
+	})
+	if _, err := m.Start(context.Background(), "input.timer"); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	u := m.units["input.timer"].unit
+	source := timers.Fire{Name: u.Name, Unit: u.Timer.Unit, Token: m.engine.Arm(timerSpec(u))}
+	m.mu.Unlock()
+	unlock := m.ops.lock("input.service")
+	var once sync.Once
+	release := func() { once.Do(unlock) }
+	defer release()
+	done := make(chan struct{})
+	go func() { m.onTimerElapsed(source); close(done) }()
+	waitCond(t, func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.units["input.service"].operations > 0 })
+	if _, err := m.Stop("input.timer"); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("queued callback did not finish")
+	}
+	if len(launch.specs()) != 0 {
+		t.Fatal("stopped source launched a queued companion")
+	}
+	assertState(t, m, "input.service", core.Inactive)
+}
+
+func TestStoppedTimerPreservesAlreadyLaunchedCompanion(t *testing.T) {
+	launch := newGatedStartLauncher("input.service")
+	m, _ := managerWithFake(t, launch, map[string]string{
+		"input.timer":   "[Timer]\nOnStartupSec=1h\n",
+		"input.service": "[Service]\nExecStart=C:\\Tools\\input.exe\n",
+	})
+	var once sync.Once
+	release := func() { once.Do(launch.release) }
+	defer release()
+	if _, err := m.Start(context.Background(), "input.timer"); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	u := m.units["input.timer"].unit
+	source := timers.Fire{Name: u.Name, Unit: u.Timer.Unit, Token: m.engine.Arm(timerSpec(u))}
+	m.mu.Unlock()
+	done := make(chan struct{})
+	go func() { m.onTimerElapsed(source); close(done) }()
+	select {
+	case <-launch.blocked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("companion did not reach launcher")
+	}
+	if _, err := m.Stop("input.timer"); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("companion launch did not finish")
+	}
+	assertState(t, m, "input.service", core.Active)
+	if len(launch.specs()) != 1 {
+		t.Fatal("admitted companion was not launched")
+	}
+	if _, err := m.Stop("input.service"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReloadKeepsArmedTimerDefinition(t *testing.T) {
+	launch := &fakeLauncher{}
+	m, clock := managerWithFake(t, launch, map[string]string{
+		"work.timer":  "[Timer]\nUnit=old.service\nOnStartupSec=10s\n",
+		"old.service": "[Service]\nExecStart=C:\\Tools\\old.exe\n",
+		"new.service": "[Service]\nExecStart=C:\\Tools\\new.exe\n",
+	})
+	if _, err := m.Start(context.Background(), "work.timer"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(m.cfg.UnitsDir(), "work.timer"), []byte("[Timer]\nUnit=new.service\nOnBootSec=1h20s\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(11 * time.Second)
+	m.engine.ClockChanged()
+	waitState(t, m, "old.service", core.Active)
+	assertState(t, m, "new.service", core.Inactive)
+	if _, err := m.Stop("work.timer"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Start(context.Background(), "work.timer"); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(10 * time.Second)
+	m.engine.ClockChanged()
+	waitState(t, m, "new.service", core.Active)
+}

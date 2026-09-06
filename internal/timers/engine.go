@@ -10,10 +10,15 @@ import (
 // so calendar timers recover from clock/DST changes (DESIGN.md §18).
 const maxWait = 30 * time.Second
 
-// FireFunc is invoked when a timer elapses. It must not call back into
-// Engine while holding locks that Engine.Arm/Disarm need, except through
-// the documented Engine methods after it returns.
-type FireFunc func(name string)
+// Fire captures the source arm and target when a deadline is consumed.
+type Fire struct {
+	Name  string
+	Unit  string
+	Token uint64 // identity of the arm that produced this event
+}
+
+// FireFunc runs asynchronously without the engine lock held.
+type FireFunc func(Fire)
 
 // Engine is an internal timer scheduler (not Task Scheduler).
 type Engine struct {
@@ -30,6 +35,7 @@ type Engine struct {
 	running  bool
 	fires    sync.WaitGroup
 	clockGen uint64 // incremented on ClockChanged; armed.schedGen tracks it
+	nextArm  uint64 // unique callback identity across refresh/disarm/rearm
 	nextGen  uint64 // unique schedule identity across disarm/rearm of the same name
 
 	// onStatusDeadline is a test hook (nil in production). It fires after
@@ -43,6 +49,7 @@ type Engine struct {
 }
 
 type armed struct {
+	token    uint64
 	spec     Spec
 	rt       Runtime
 	next     time.Time
@@ -268,6 +275,7 @@ func (e *Engine) consume(due dueTimer, actual time.Time) {
 	name := a.spec.Name
 	MarkFired(a.spec, &a.rt, e.clk, due.scheduled, actual)
 	_ = e.store.Save(name, a.rt)
+	event := Fire{Name: name, Unit: a.spec.Unit, Token: a.token}
 	fire := e.fire
 	if fire != nil {
 		e.fires.Add(1)
@@ -277,7 +285,7 @@ func (e *Engine) consume(due dueTimer, actual time.Time) {
 	if fire != nil {
 		go func() {
 			defer e.fires.Done()
-			fire(name)
+			fire(event)
 		}()
 	}
 
@@ -368,24 +376,28 @@ func (e *Engine) rescheduleLocked(a *armed) {
 }
 
 // Arm starts or refreshes a timer. Existing FiredBoot/FiredStartup and last
-// unit-active time are kept so a reload does not re-fire one-shot relatives.
-func (e *Engine) Arm(spec Spec) {
+// unit-active time are kept so refresh does not re-fire one-shot relatives.
+// Each arm receives a new callback identity, returned to the caller.
+func (e *Engine) Arm(spec Spec) uint64 {
 	if e == nil || spec.Name == "" {
-		return
+		return 0
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.nextArm++
 	if a, ok := e.armed[spec.Name]; ok {
+		a.token = e.nextArm
 		a.spec = spec
 		e.rescheduleLocked(a)
 		e.kickLocked()
-		return
+		return a.token
 	}
 	rt := e.store.Load(spec.Name)
-	a := &armed{spec: spec, rt: rt}
+	a := &armed{spec: spec, rt: rt, token: e.nextArm}
 	e.armed[spec.Name] = a
 	e.rescheduleLocked(a)
 	e.kickLocked()
+	return a.token
 }
 
 // Disarm stops a timer. Persistent last-run times stay on disk.
@@ -446,14 +458,15 @@ func (e *Engine) UnitActive(unit string, when time.Time) {
 
 // RecordResult stores last successful execution after the activated unit
 // start attempt.
-func (e *Engine) RecordResult(name string, success bool) {
+func (e *Engine) RecordResult(event Fire, success bool) {
+	name := event.Name
 	if e == nil || name == "" || !success {
 		return
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	a := e.armed[name]
-	if a == nil {
+	if a == nil || a.token != event.Token {
 		return
 	}
 	a.rt.LastSuccess = e.clk.now()
@@ -562,4 +575,15 @@ func (h *deadlineHeap) Pop() any {
 	old[n-1] = nil
 	*h = old[:n-1]
 	return it
+}
+
+// Current reports whether an event still belongs to the current arm.
+func (e *Engine) Current(name string, token uint64) bool {
+	if e == nil {
+		return false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	a := e.armed[name]
+	return e.running && a != nil && a.token == token
 }
