@@ -18,7 +18,7 @@ func (m *Manager) startLimitHitLocked(rt *unitRuntime) bool {
 	if rt == nil {
 		return false
 	}
-	interval, burst := startLimitOf(rt.unit)
+	interval, burst := startLimitOf(rt.ownedUnit())
 	return core.StartLimitHit(rt.startTimes, m.now(), interval, burst)
 }
 
@@ -26,7 +26,7 @@ func (m *Manager) recordStartLocked(rt *unitRuntime) {
 	if rt == nil {
 		return
 	}
-	interval, burst := startLimitOf(rt.unit)
+	interval, burst := startLimitOf(rt.ownedUnit())
 	rt.startTimes = core.RecordStart(rt.startTimes, m.now(), interval, burst)
 }
 

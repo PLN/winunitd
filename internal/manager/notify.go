@@ -502,7 +502,7 @@ func (m *Manager) onWatchdogTimeout(name string, gen uint64) {
 	}
 	rt.err = "watchdog timed out"
 	rt.terminated = true
-	u := rt.unit
+	u := rt.ownedUnit()
 	proc := rt.proc
 	rt.stopUncertain = proc != nil
 	wdCancel := rt.watchdog

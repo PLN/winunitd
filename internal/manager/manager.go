@@ -298,7 +298,7 @@ func (m *Manager) ListUnits() (*protocol.ListUnitsResult, error) {
 		out = append(out, m.unitStatusLocked(name))
 		var u *unit.Unit
 		if rt := m.units[name]; rt != nil {
-			u = rt.unit
+			u = rt.ownedUnit()
 		}
 		scmNames = append(scmNames, scmServiceName(u))
 		taskNames = append(taskNames, scheduledTaskName(u))
@@ -357,8 +357,8 @@ func (m *Manager) Status(name string) (*protocol.StatusResult, error) {
 		return nil, err
 	}
 	st := m.unitStatusLocked(rt.unit.Name)
-	svcName := scmServiceName(rt.unit)
-	taskName := scheduledTaskName(rt.unit)
+	svcName := scmServiceName(rt.ownedUnit())
+	taskName := scheduledTaskName(rt.ownedUnit())
 	m.mu.Unlock()
 	m.overlaySCM(&st, svcName)
 	m.overlayTask(&st, taskName)
@@ -417,8 +417,8 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 				st.Reason = r
 			}
 		}
-		if rt.unit != nil && rt.unit.Service != nil {
-			svc := rt.unit.Service
+		if u := rt.ownedUnit(); u != nil && u.Service != nil {
+			svc := u.Service
 			if svc.CPUWeightSet {
 				st.CPUWeight = svc.CPUWeight
 			}

@@ -66,6 +66,15 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 		m.mu.Unlock()
 		return fmt.Errorf("unit %q has no valid configuration; reload a valid unit before starting", name)
 	}
+	// Native start failures can still leave an external resource running. Do
+	// not abandon its identity when an explicit start adopts a reloaded unit.
+	owned := rt.ownedUnit()
+	if !autoRestart && rt.invocationUnit != nil &&
+		(scmServiceName(owned) != "" || scheduledTaskName(owned) != "") &&
+		(scmServiceName(owned) != scmServiceName(rt.unit) || scheduledTaskName(owned) != scheduledTaskName(rt.unit)) {
+		m.mu.Unlock()
+		return fmt.Errorf("unit %q still owns a previous native target; stop it before starting the new definition", name)
+	}
 	rt.operations++
 	defer func(record *unitRuntime) {
 		m.mu.Lock()
@@ -90,9 +99,12 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 		rt.stopUncertain = true
 	}
 	u := rt.unit
+	if autoRestart {
+		u = owned
+	}
 	m.mu.Unlock()
 	if evicted != nil {
-		cleanupErr := m.stopProcess(evicted, stopTimeout(u))
+		cleanupErr := m.stopProcess(evicted, stopTimeout(owned))
 		if cleanupErr == nil && evicted.Alive() {
 			cleanupErr = fmt.Errorf("process remains alive after previous invocation cleanup")
 		}
@@ -138,6 +150,7 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 	}
 	m.mu.Lock()
 	if rt := m.units[name]; rt != nil && rt.gen == startGen && !m.closed {
+		rt.invocationUnit = u
 		m.recordStartLocked(rt)
 	}
 	m.mu.Unlock()
@@ -407,7 +420,7 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 	stopping := rt.stopping
 	terminated := rt.terminated
 	rt.terminated = false
-	u := rt.unit
+	u := rt.ownedUnit()
 	gen := rt.gen
 	wdCancel := rt.watchdog
 	rt.watchdog = nil

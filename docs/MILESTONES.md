@@ -1,6 +1,6 @@
 # Revision 2 implementation milestones
 
-September 5, 2026. Implements [ROADMAP.md](../ROADMAP.md) and [Design v2](../DESIGN.md). R0 and R1 are **in progress**; later milestones remain planned. Documentation adoption does not complete implementation. Work-package IDs are suitable issue-title prefixes. This file defines repository milestones; no GitHub milestone objects or implementation issues have been created by this documentation change.
+September 6, 2026. Implements [ROADMAP.md](../ROADMAP.md) and [Design v2](../DESIGN.md). R0, R1, and the initial R2 ownership work are **in progress**; later milestones remain planned. Documentation adoption does not complete implementation. Work-package IDs are suitable issue-title prefixes. This file defines repository milestones; no GitHub milestone objects or implementation issues have been created by this documentation change.
 
 ## Acceptance rules
 
@@ -37,7 +37,7 @@ Exit gate: real-process tests cover deletion, invalid replacement, recreation wh
 
 ## R2 — Authoritative lifecycle coordinator
 
-Status: planned. Dependencies: R1. Outcome: one state owner, concurrent I/O, explicit operation identity.
+Status: in progress (invocation-definition groundwork; coordinator pending). Dependencies: R1. Outcome: one state owner, concurrent I/O, explicit operation identity.
 
 - [ ] **R2.1 Records/events:** implement immutable configuration revisions, stable runtime records, invocation/operation IDs, generations, typed completion events, and immutable status snapshots.
 - [ ] **R2.2 Coordinator:** migrate start/stop/restart, process exit, notify, watchdog, timer/native trigger activation, reload, and user-host lifecycle decisions. Remove direct worker state writes and transaction-result overwrites.
@@ -45,14 +45,14 @@ Status: planned. Dependencies: R1. Outcome: one state owner, concurrent I/O, exp
 - [ ] **R2.4 Operations:** retain accepted operations across client disconnect; expose queryable outcomes; apply internal deadlines and explicit cancellation; version protocol changes with client compatibility tests.
 - [ ] **R2.5 Interleavings:** build deterministic operation-sequence tests with fake clocks and delayed workers; migrate existing tests rather than replacing them with implementation-mirroring tests.
 
-First implementation slice: separate the latest accepted definition from the
-configuration captured by an invocation or native-proxy operation. Today a valid
-reload replaces `unitRuntime.unit`, while status and stop can still consult that
-pointer to select an external service/task. Cover valid retargeting, type changes,
-reload during launch, and failed-stop retry before migrating event handling.
-Captured ownership must continue to address the original resource; explicit
-restart may adopt the latest accepted definition only after old ownership is
-resolved. This is R2.1 groundwork, not a completed coordinator or revision policy.
+The first R2.1 slice now separates the latest loaded service definition from the
+configuration captured before invocation side effects. Status, stop, shutdown,
+exit/watchdog cleanup, and automatic recovery retain the captured ownership.
+Explicit starts may adopt a new native target only after successful cleanup of
+the old one. [Initial R2 evidence](R2-EVIDENCE.md) covers retargeting, service-type
+changes, reload during native launch, failed cleanup retries, and automatic
+process recovery. Versioned configuration/graph acceptance, revision IDs,
+immutable status snapshots, and coordinator migration remain open.
 
 Exit gate: each invariant in Design v2 §3 has a test/evidence mapping. Start/stop/restart/reload/exit/timeout/trigger permutations, late successful launches, stale probes, overload, client disconnect, and shutdown during launch preserve ownership and ordering. A source audit finds no second lifecycle authority. Independent units still perform I/O concurrently.
 

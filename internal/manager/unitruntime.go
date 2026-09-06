@@ -14,11 +14,12 @@ import (
 // unitRuntime is all per-unit manager state. Removing a name from
 // Manager.units tears this down in one place (issue #26).
 type unitRuntime struct {
-	unit        *unit.Unit
-	enabled     bool
-	targets     []string
-	unavailable bool // latest reload has no valid configuration for this record
-	operations  int  // in-flight lifecycle calls retain the record across reload
+	unit           *unit.Unit
+	invocationUnit *unit.Unit // captured service definition; reload only replaces unit
+	enabled        bool
+	targets        []string
+	unavailable    bool // latest reload has no valid configuration for this record
+	operations     int  // in-flight lifecycle calls retain the record across reload
 
 	state         core.State
 	sub           core.Substate
@@ -35,6 +36,15 @@ type unitRuntime struct {
 	hub           *watchRuntime
 	err           string
 	startTimes    []time.Time
+}
+
+// ownedUnit selects the definition that controls an existing invocation. Unit
+// definitions are immutable after loading. Callers hold the manager mutex.
+func (rt *unitRuntime) ownedUnit() *unit.Unit {
+	if rt.invocationUnit != nil {
+		return rt.invocationUnit
+	}
+	return rt.unit
 }
 
 // step applies a lifecycle event. Illegal transitions are logged and

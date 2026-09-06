@@ -170,6 +170,6 @@ func (rt *unitRuntime) retainWithoutConfig() bool {
 	if rt.proc != nil || rt.notify != nil || rt.hub != nil || rt.operations != 0 || rt.stopUncertain {
 		return true
 	}
-	native := scmServiceName(rt.unit) != "" || scheduledTaskName(rt.unit) != ""
+	native := scmServiceName(rt.ownedUnit()) != "" || scheduledTaskName(rt.ownedUnit()) != ""
 	return native && rt.state != core.Inactive
 }

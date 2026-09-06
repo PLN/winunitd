@@ -36,7 +36,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		rt.stopping = true
 		// Publish uncertainty before an outer deadline can return while the
 		// stop pass is still blocked in a control/resource close.
-		if rt.proc != nil || (rt.unit != nil && rt.state != core.Inactive && (scmServiceName(rt.unit) != "" || scheduledTaskName(rt.unit) != "")) {
+		if rt.proc != nil || (rt.unit != nil && rt.state != core.Inactive && (scmServiceName(rt.ownedUnit()) != "" || scheduledTaskName(rt.ownedUnit()) != "")) {
 			rt.stopUncertain = true
 		}
 		if rt.startCancel != nil {
@@ -204,12 +204,12 @@ func (m *Manager) stopUnitWithContext(ctx context.Context, name string) (*protoc
 	rt.cancelRestart()
 	wdCancel := rt.watchdog
 	rt.watchdog = nil
-	timeout := stopTimeout(rt.unit)
+	timeout := stopTimeout(rt.ownedUnit())
 	rt.step(core.EventStopRequested)
 	rt.err = ""
-	kind := rt.unit.Kind
-	scmName := scmServiceName(rt.unit)
-	taskName := scheduledTaskName(rt.unit)
+	kind := rt.ownedUnit().Kind
+	scmName := scmServiceName(rt.ownedUnit())
+	taskName := scheduledTaskName(rt.ownedUnit())
 	m.mu.Unlock()
 
 	if wdCancel != nil {
@@ -246,6 +246,7 @@ func (m *Manager) stopUnitWithContext(ctx context.Context, name string) (*protoc
 		rt.stopUncertain = stopErr != nil
 		if stopErr == nil && rt.proc == proc {
 			rt.proc = nil
+			rt.invocationUnit = nil
 		}
 	}
 	m.mu.Unlock()
