@@ -31,4 +31,5 @@ Candidate: `winunitd-0.2.1-x64-beta.msi` (15,888,384 bytes).
 SHA256: `8ecabc2e40b03d81a3a683705969dd07b0685bb84ea544e92843d99902d6d141`.
 Source: `1c56a57ae6001b247c1358a8c7395d734326fe1d`.
 
-Publication and public visibility are pending maintainer approval.
+This is an unsigned prerelease for early adopters; see the qualification and
+recovery instructions before using it for important workloads.
