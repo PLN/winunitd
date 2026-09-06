@@ -122,12 +122,13 @@ func TestNotificationFailureDuringExitAndWatchdogRetainsOwnership(t *testing.T) 
 			m.mu.Lock()
 			proc := m.units[name].proc.(*fakeProc)
 			gen := m.units[name].gen
+			owner := runtimeIdentity{name: name, record: m.units[name], gen: gen}
 			m.units[name].notify = nrt
 			m.mu.Unlock()
 			if cause == "exit" {
 				proc.die(1)
 			} else {
-				m.onWatchdogTimeout(name, gen)
+				m.onWatchdogTimeout(owner)
 			}
 			waitUntil(t, time.Second, func() bool {
 				m.mu.Lock()

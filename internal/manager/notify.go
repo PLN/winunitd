@@ -388,22 +388,26 @@ func (m *Manager) startWatchdog(name string, svc *unit.ServiceSpec, gen uint64) 
 	if svc == nil || !svc.WatchdogEnabled() {
 		return
 	}
-	m.stopWatchdog(name)
 	ctx, cancel := context.WithCancel(context.Background())
 	m.mu.Lock()
-	if rt := m.units[name]; rt != nil && !m.closed {
-		rt.watchdog = cancel
-		m.mu.Unlock()
-	} else {
+	rt := m.units[name]
+	if rt == nil || m.closed || rt.stopping || rt.gen != gen {
 		m.mu.Unlock()
 		cancel()
 		return
 	}
+	owner := runtimeIdentity{name: name, record: rt, gen: gen}
+	previous := rt.watchdog
+	rt.watchdog = cancel
+	m.mu.Unlock()
+	if previous != nil {
+		previous()
+	}
 	switch svc.WatchdogMode {
 	case unit.WatchdogModeTCP, unit.WatchdogModeHTTP:
-		go m.probeWatchdogLoop(ctx, name, svc, gen)
+		go m.probeWatchdogLoop(ctx, owner, svc)
 	default:
-		go m.watchdogLoop(ctx, name, svc.WatchdogSec, gen)
+		go m.watchdogLoop(ctx, owner, svc.WatchdogSec)
 	}
 }
 
@@ -420,11 +424,11 @@ func (m *Manager) stopWatchdog(name string) {
 	}
 }
 
-func (m *Manager) watchdogLoop(ctx context.Context, name string, interval time.Duration, gen uint64) {
+func (m *Manager) watchdogLoop(ctx context.Context, owner runtimeIdentity, interval time.Duration) {
 	m.mu.Lock()
 	var nrt *notifyRuntime
-	if rt := m.units[name]; rt != nil {
-		nrt = rt.notify
+	if owner.currentLocked(m) {
+		nrt = owner.record.notify
 	}
 	m.mu.Unlock()
 	if nrt == nil {
@@ -447,13 +451,13 @@ func (m *Manager) watchdogLoop(ctx context.Context, name string, interval time.D
 			}
 			timer.Reset(interval)
 		case <-timer.C():
-			m.onWatchdogTimeout(name, gen)
+			m.onWatchdogTimeout(owner)
 			return
 		}
 	}
 }
 
-func (m *Manager) probeWatchdogLoop(ctx context.Context, name string, svc *unit.ServiceSpec, gen uint64) {
+func (m *Manager) probeWatchdogLoop(ctx context.Context, owner runtimeIdentity, svc *unit.ServiceSpec) {
 	interval := svc.WatchdogSec
 	if interval <= 0 {
 		return
@@ -472,7 +476,7 @@ func (m *Manager) probeWatchdogLoop(ctx context.Context, name string, svc *unit.
 				return
 			}
 			if err != nil {
-				m.onWatchdogTimeout(name, gen)
+				m.onWatchdogTimeout(owner)
 				return
 			}
 			timer.Reset(interval)
@@ -480,7 +484,8 @@ func (m *Manager) probeWatchdogLoop(ctx context.Context, name string, svc *unit.
 	}
 }
 
-func (m *Manager) onWatchdogTimeout(name string, gen uint64) {
+func (m *Manager) onWatchdogTimeout(owner runtimeIdentity) {
+	name, gen := owner.name, owner.gen
 	unlock := m.ops.lock(name)
 	released := false
 	release := func() {
@@ -492,7 +497,7 @@ func (m *Manager) onWatchdogTimeout(name string, gen uint64) {
 	defer release()
 	m.mu.Lock()
 	rt := m.units[name]
-	if rt == nil || rt.stopping || rt.gen != gen || m.closed || rt.stopUncertain {
+	if !owner.currentLocked(m) || rt.stopping || m.closed || rt.stopUncertain {
 		m.mu.Unlock()
 		return
 	}
@@ -519,7 +524,7 @@ func (m *Manager) onWatchdogTimeout(name string, gen uint64) {
 	stopErr = errors.Join(stopErr, notifyErr)
 	m.mu.Lock()
 	rt = m.units[name]
-	if rt == nil || !rt.sameOp(gen, proc) {
+	if !owner.currentLocked(m) || !rt.sameOp(gen, proc) {
 		m.mu.Unlock()
 		return
 	}
@@ -539,6 +544,6 @@ func (m *Manager) onWatchdogTimeout(name string, gen uint64) {
 		svc = u.Service
 	}
 	if svc != nil && core.ShouldRestart(svc.Restart, core.ExitWatchdog) {
-		m.beginRestart(name, gen, restartDelay(svc))
+		m.beginRestart(recoveryRequest{owner: owner, delay: restartDelay(svc)})
 	}
 }

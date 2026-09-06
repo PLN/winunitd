@@ -234,8 +234,9 @@ func TestWatchdogCleanupFailureBlocksRestart(t *testing.T) {
 	t.Cleanup(func() { p.fail.Store(false); _ = p.Process.Stop(time.Second) })
 	m.mu.Lock()
 	gen := m.units[name].gen
+	owner := runtimeIdentity{name: name, record: m.units[name], gen: gen}
 	m.mu.Unlock()
-	m.onWatchdogTimeout(name, gen)
+	m.onWatchdogTimeout(owner)
 	m.mu.Lock()
 	rt := m.units[name]
 	retained := rt.proc == p && rt.stopUncertain && rt.state == core.Failed

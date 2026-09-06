@@ -48,7 +48,15 @@ type plannedStart struct {
 
 // A transaction passes its captured definition; recovery uses ownedUnit.
 func (m *Manager) launchUnitConfigOp(ctx context.Context, name string, autoRestart bool, planned *plannedStart) error {
+	return m.launchUnitOwnedOp(ctx, name, autoRestart, planned, nil)
+}
+
+func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestart bool, planned *plannedStart, recovery *runtimeIdentity) error {
 	m.mu.Lock()
+	if recovery != nil && (ctx.Err() != nil || !recovery.currentLocked(m)) {
+		m.mu.Unlock()
+		return nil
+	}
 	if m.closed {
 		m.mu.Unlock()
 		if autoRestart {
@@ -467,6 +475,7 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 		return
 	}
 	rt.stopUncertain = true
+	owner := runtimeIdentity{name: name, record: rt, gen: rt.gen}
 	stopping := rt.stopping
 	terminated := rt.terminated
 	rt.terminated = false
@@ -505,43 +514,11 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 	// Restart waits and relaunches through the same operation lock.
 	release()
 
-	if stopping || terminated {
-		return
-	}
-
 	var svc *unit.ServiceSpec
 	if u != nil {
 		svc = u.Service
 	}
-	kind := classifyWait(err)
-	if limitHit {
-		kind = core.ExitResourceLimit
-	}
-	if svc != nil && core.ShouldRestart(svc.Restart, kind) {
-		m.beginRestart(name, gen, restartDelay(svc))
-		return
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	rt = m.units[name]
-	if rt == nil || rt.stopping || rt.gen != gen {
-		return
-	}
-	if rt.sub == core.SubWatchdog {
-		return
-	}
-	oneshot := svc != nil && svc.Type == unit.TypeOneshot
-	if oneshot && kind == core.ExitSuccess {
-		return
-	}
-	if rt.step(core.EventMainExited) {
-		if limitHit {
-			rt.err = core.ReasonResourceLimit
-		} else {
-			rt.err = mainExitMessage(err)
-		}
-	}
+	m.applyProcessExit(processExitCompletion{owner: owner, service: svc, waitErr: err, limitHit: limitHit, suppressed: stopping || terminated})
 }
 
 func waitProcOrLimit(proc runtime.Process) (error, bool) {
@@ -601,14 +578,16 @@ func (m *Manager) maybeRestart(name string, kind core.ExitKind, svc *unit.Servic
 		return
 	}
 	gen := rt.gen
+	owner := runtimeIdentity{name: name, record: rt, gen: gen}
 	m.mu.Unlock()
-	go m.beginRestart(name, gen, restartDelay(svc))
+	go m.beginRestart(recoveryRequest{owner: owner, delay: restartDelay(svc)})
 }
 
-func (m *Manager) beginRestart(name string, gen uint64, delay time.Duration) {
+func (m *Manager) beginRestart(request recoveryRequest) {
+	name, owner := request.owner.name, request.owner
 	m.mu.Lock()
 	rt := m.units[name]
-	if m.closed || rt == nil || rt.stopping || rt.unavailable || rt.gen != gen {
+	if m.closed || !owner.currentLocked(m) || rt.stopping || rt.unavailable {
 		m.mu.Unlock()
 		return
 	}
@@ -625,8 +604,8 @@ func (m *Manager) beginRestart(name string, gen uint64, delay time.Duration) {
 	rt.restartCancel = cancel
 	m.mu.Unlock()
 
-	if delay > 0 {
-		timer := m.clock().Timer(delay)
+	if request.delay > 0 {
+		timer := m.clock().Timer(request.delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -639,13 +618,17 @@ func (m *Manager) beginRestart(name string, gen uint64, delay time.Duration) {
 
 	m.mu.Lock()
 	rt = m.units[name]
-	if m.closed || rt == nil || rt.stopping || rt.gen != gen {
+	if m.closed || !owner.currentLocked(m) || rt.stopping || rt.unavailable {
 		m.mu.Unlock()
 		return
 	}
 	m.mu.Unlock()
 
-	_ = m.launchUnit(context.Background(), name, true)
+	unlock := m.ops.lock(name)
+	defer unlock()
+	// Stop, recreation, or another recovery can win while this worker waits
+	// for the unit gate. Validate the same owner inside launch admission too.
+	_ = m.launchUnitOwnedOp(ctx, name, true, nil, &owner)
 }
 
 func (m *Manager) subOfLocked(name string) core.Substate {

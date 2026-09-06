@@ -317,12 +317,36 @@ rescheduling as status work. It now measures only the existing status-specific
 deadline hook and retains its next-deadline/cache/heap checks.
 The full repository race suite and vet pass after the trigger reporting change.
 
+## Lifecycle completion and recovery identity
+
+Recreating a removed unit can reuse its numeric generation. Regressions
+reproduced a late watchdog timeout terminating the replacement and a late
+restart request changing its state when callbacks carried only name/generation.
+Watchdog loops and recovery requests now carry the exact runtime-record identity
+as well as generation. Process-exit completion is a typed payload containing
+that identity and the captured service policy; its serialized decision rejects
+stale records before changing lifecycle state or requesting recovery.
+
+Recovery validates the identity at admission, after its delay, and inside launch
+admission after acquiring the unit gate. It also retains cancellation across
+that gate wait. A controlled interleaving queues recovery behind a newer explicit
+attempt that fails: the stale worker must not launch again. Removing the final
+ownership/cancellation check reproduces that extra launch. Watchdog installation
+checks the current generation before replacing its cancellation handle.
+
+Twenty race repetitions cover recreated-record watchdog/restart/exit delivery,
+recovery delayed by the unit gate, captured recovery configuration, explicit-stop
+cancellation, and failed notification/watchdog cleanup. The full repository race
+suite and vet pass. Blocking cleanup still runs outside the lifecycle decision;
+this is an initial typed completion path, not migration of every state writer
+or a completed coordinator/event-admission design.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2
 coordinator. They do not add immutable status snapshots,
-admission bounds for every operation
-class, or typed completion events.
+admission bounds for every operation class, or a fully migrated typed-event
+coordinator.
 Existing generation
 checks and lifecycle writers remain in place; the full interleaving matrix and
 source audit are still required. The isolated adapter tests and LTSC daemon checks
