@@ -45,6 +45,15 @@ Status: planned. Dependencies: R1. Outcome: one state owner, concurrent I/O, exp
 - [ ] **R2.4 Operations:** retain accepted operations across client disconnect; expose queryable outcomes; apply internal deadlines and explicit cancellation; version protocol changes with client compatibility tests.
 - [ ] **R2.5 Interleavings:** build deterministic operation-sequence tests with fake clocks and delayed workers; migrate existing tests rather than replacing them with implementation-mirroring tests.
 
+First implementation slice: separate the latest accepted definition from the
+configuration captured by an invocation or native-proxy operation. Today a valid
+reload replaces `unitRuntime.unit`, while status and stop can still consult that
+pointer to select an external service/task. Cover valid retargeting, type changes,
+reload during launch, and failed-stop retry before migrating event handling.
+Captured ownership must continue to address the original resource; explicit
+restart may adopt the latest accepted definition only after old ownership is
+resolved. This is R2.1 groundwork, not a completed coordinator or revision policy.
+
 Exit gate: each invariant in Design v2 §3 has a test/evidence mapping. Start/stop/restart/reload/exit/timeout/trigger permutations, late successful launches, stale probes, overload, client disconnect, and shutdown during launch preserve ownership and ordering. A source audit finds no second lifecycle authority. Independent units still perform I/O concurrently.
 
 ## R3 — Unit semantics, compatibility, and application health

@@ -13,21 +13,38 @@ import (
 // while holding Manager.mu.
 type unitOps struct {
 	mu sync.Mutex
-	by map[string]chan struct{}
+	by map[string]*unitOp
 }
 
-func (o *unitOps) semaphore(name string) chan struct{} {
+type unitOp struct {
+	gate chan struct{}
+	refs int // holder plus every accepted waiter, protected by unitOps.mu
+}
+
+// Pin the entry before waiting, so reclamation cannot split one unit across
+// two independent gates while an old holder or waiter still references it.
+func (o *unitOps) retain(name string) *unitOp {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.by == nil {
-		o.by = make(map[string]chan struct{})
+		o.by = make(map[string]*unitOp)
 	}
 	u := o.by[name]
 	if u == nil {
-		u = make(chan struct{}, 1)
+		u = &unitOp{gate: make(chan struct{}, 1)}
 		o.by[name] = u
 	}
+	u.refs++
 	return u
+}
+
+func (o *unitOps) release(name string, u *unitOp) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	u.refs--
+	if u.refs == 0 {
+		delete(o.by, name)
+	}
 }
 
 func (o *unitOps) lock(name string) func() {
@@ -43,15 +60,17 @@ func (o *unitOps) lockContext(ctx context.Context, name string) (func(), error) 
 	if o == nil {
 		return func() {}, nil
 	}
-	u := o.semaphore(name)
+	u := o.retain(name)
 	select {
-	case u <- struct{}{}:
+	case u.gate <- struct{}{}:
 		if err := ctx.Err(); err != nil {
-			<-u
+			<-u.gate
+			o.release(name, u)
 			return nil, err
 		}
-		return func() { <-u }, nil
+		return func() { <-u.gate; o.release(name, u) }, nil
 	case <-ctx.Done():
+		o.release(name, u)
 		return nil, ctx.Err()
 	}
 }
@@ -60,11 +79,12 @@ func (o *unitOps) tryLock(name string) (func(), bool) {
 	if o == nil {
 		return func() {}, true
 	}
-	u := o.semaphore(name)
+	u := o.retain(name)
 	select {
-	case u <- struct{}{}:
-		return func() { <-u }, true
+	case u.gate <- struct{}{}:
+		return func() { <-u.gate; o.release(name, u) }, true
 	default:
+		o.release(name, u)
 		return nil, false
 	}
 }

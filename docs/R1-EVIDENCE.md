@@ -86,6 +86,21 @@ Ten race-enabled repetitions cover four stalled scans outliving their callers, r
 
 ## Remaining qualification
 
+Per-unit/per-SID operation gates now release their table entries after the last
+holder or waiter finishes. The historical implementation failed the new
+completed-name regression by retaining the first finished entry. Twenty
+race-enabled repetitions cover 2,000 distinct completed names per run, canceled
+waiters, independent units, and sixteen contenders repeatedly handing off one
+gate without overlapping ownership. Entries remain pinned while any holder or
+waiter references them. This removes historical-name growth; it does not cap
+simultaneously accepted operations or replace R2 admission scheduling.
+
+Twenty Windows race repetitions also cover both existence-watch rearm paths
+returning a resource with an open error. Rearming stops, both old and partial
+resources receive cleanup, failed cleanup remains retryable, and successful
+closes are not repeated. The protected-native-handle partial-open regression
+passes alongside these injected rearm tests.
+
 Five aggregate-pressure repetitions filled the 16 MiB shared queue using five independent capture groups while storage was stalled. Each group stayed within 4 MiB, quiet-unit loss was counted, all queued bytes drained after recovery, and subsequent quiet output persisted. This confirms the current drop-new policy's limit: several noisy invocations can crowd out a quiet one at total saturation. The single-invocation cap is not a per-unit fairness guarantee.
 
 - Windows identity/session scenarios and broader installer qualification remain open.

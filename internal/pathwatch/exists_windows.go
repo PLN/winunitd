@@ -41,6 +41,14 @@ type existsWatch struct {
 	inner    Watch
 	watchDir string
 	filter   string
+	open     func(string, string) (Watch, error)
+}
+
+func (w *existsWatch) openDirectory(dir, filter string) (Watch, error) {
+	if w.open != nil {
+		return w.open(dir, filter)
+	}
+	return openExistsDirWatch(dir, filter)
 }
 
 // OpenExistsWatch watches for spec's existence to change. A missing target
@@ -159,7 +167,7 @@ func (w *existsWatch) rearm(dir, filter string) bool {
 			return false
 		}
 	}
-	next, err := openExistsDirWatch(dir, filter)
+	next, err := w.openDirectory(dir, filter)
 	if err != nil {
 		if next != nil {
 			w.pending = append(w.pending, next)
@@ -187,7 +195,7 @@ func (w *existsWatch) rearmCloser() bool {
 		if !ok {
 			return true
 		}
-		next, err := openExistsDirWatch(nextDir, nextFilter)
+		next, err := w.openDirectory(nextDir, nextFilter)
 		if err != nil {
 			if next != nil {
 				w.pending = append(w.pending, next)
