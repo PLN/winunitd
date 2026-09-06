@@ -1,5 +1,11 @@
 # winunitd roadmap
 
+**Immediate target: public beta.** The maintainer-approved
+[beta delivery plan](docs/BETA-RELEASE.md) supersedes the full milestone sequence
+as the first release gate. Preserve the documented current unit syntax and ship
+the useful core with known limitations. R0-R8 below remain the longer-term
+architecture and qualification backlog; full completion is not required for beta.
+
 Revision 2 — September 5, 2026. Baseline: `98abb80`, `0.1.0-alpha`.
 
 This roadmap adopts the direction of the [architecture review](docs/DESIGN-REVIEW.md). It defines future work; it does not mark reviewed defects as fixed. [DESIGN.md](DESIGN.md) specifies the target architecture. [Milestones](docs/MILESTONES.md) define work packages, dependencies, and completion evidence. The [installer plan](docs/MSI-INSTALLER-PLAN.md) specifies package servicing details.
@@ -23,7 +29,7 @@ Feature expansion is paused through the stabilization milestones. Existing trigg
 
 ## Milestone sequence
 
-R0 is **in progress**; the remaining implementation milestones are **planned**. Their IDs are stable work-tracking identifiers, not release versions or deadlines. Preparation may overlap; completion requires the listed predecessors and the detailed exit gates. See the milestones for completed work packages and qualification evidence.
+R0, R1, and R2 are **in progress**; later milestones contain groundwork but remain open. Their IDs track the longer-term design, not beta release prerequisites or deadlines. See the milestones for completed work packages and qualification evidence; use B1-B4 for immediate release work.
 
 | ID | Outcome | Depends on | Completion signal |
 | --- | --- | --- | --- |
@@ -41,7 +47,10 @@ R0 packaging research may proceed alongside runtime stabilization. R4 and R5 may
 
 ## Release policy
 
-Internal diagnostic builds and disposable-VM MSI prototypes are allowed before milestones close. Label them experimental and include their known limitations. R6 is the gate for an installable internal candidate; R7 replaces the current Hermes pilot; R8 is the gate for public installation releases. The initial public release may remain a prerelease; completion of this roadmap does not automatically confer a stable `1.0` API.
+The public beta follows B1-B4 in the beta delivery plan. Label it as a prerelease
+and publish its limitations. R6-R8 describe the later fully qualified installation
+release; they no longer block beta delivery. A beta does not confer a stable
+`1.0` API, but documented core unit syntax should remain compatible across betas.
 
 Supported targets must be backed by evidence. The first desktop release targets Windows 11 Enterprise and Enterprise LTSC x64 only. Windows Server 2022/2025 x64, including Core, remain qualification candidates. An untested target is excluded from release claims rather than inferred from compilation. Boot-time linger modes are separately qualified and explicit opt-in. GUI/session attachment, ARM64, and additional account types remain deferred.
 
@@ -78,4 +87,4 @@ Additional features require a concrete workload, an architectural decision, and 
 
 The maintainer owns milestone acceptance. Close a milestone only with implementation commits, automated results, applicable OS/token context, and reproducible acceptance evidence. Store redacted reports with the release or CI artifacts; keep credentials and machine-specific unit files outside the repository. Create implementation issues using IDs such as `R1.1`; issue checkboxes and passing builds alone do not satisfy the exit gate.
 
-This revision establishes the roadmap and design documents only. Implementation remains pending. [The historical design](docs/archive/DESIGN-v1.md) preserves old source-comment section references; it is not the target specification.
+Implementation and evidence are recorded in the milestones. [The historical design](docs/archive/DESIGN-v1.md) preserves old source-comment section references; it is not the target specification.

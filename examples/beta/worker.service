@@ -1,0 +1,15 @@
+[Unit]
+Description=Beta example worker
+PartOf=worker.target
+After=worker.target
+
+[Service]
+Type=simple
+ExecStart=["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "while ($true) { Write-Output 'worker is running'; Start-Sleep -Seconds 5 }"]
+WorkingDirectory=C:\Windows
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=default.target

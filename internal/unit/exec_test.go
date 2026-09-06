@@ -34,6 +34,11 @@ func TestBuildArgv(t *testing.T) {
 			want: []string{`C:\Program Files\Foo\foo.exe`, "--listen", "127.0.0.1:8080"},
 		},
 		{
+			name:    "null is not a string argument",
+			exec:    `["C:\\Tools\\foo.exe", null]`,
+			wantErr: true,
+		},
+		{
 			name: "execstartarg leaves spaces in exe",
 			exec: `C:\Program Files\Foo\foo.exe`,
 			args: []string{"--listen", "127.0.0.1:8080"},

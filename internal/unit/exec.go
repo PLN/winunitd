@@ -57,6 +57,11 @@ func parseJSONArgv(s string) ([]string, error) {
 	out := make([]string, 0, len(raw))
 	for i, item := range raw {
 		var str string
+		// encoding/json accepts null into a string without an error. The unit
+		// grammar requires actual strings, including for empty arguments.
+		if len(item) == 0 || item[0] != '"' {
+			return nil, fmt.Errorf("JSON-array ExecStart[%d] must be a string", i)
+		}
 		if err := json.Unmarshal(item, &str); err != nil {
 			return nil, fmt.Errorf("JSON-array ExecStart[%d] must be a string", i)
 		}

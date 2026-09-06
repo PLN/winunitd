@@ -2,13 +2,18 @@
 
 Declarative Windows unit manager and process supervisor.
 
-The [roadmap](ROADMAP.md), [Design v2](DESIGN.md), and [implementation milestones](docs/MILESTONES.md) define the next iteration. They specify target behavior; the current alpha and its limitations are described below. License and copyright notice: [MIT](LICENSE).
+The immediate target is a usable [public beta](docs/BETA-RELEASE.md), with the
+[documented unit syntax](docs/UNIT-REFERENCE.md) preserved across beta updates.
+The [roadmap](ROADMAP.md), [Design v2](DESIGN.md), and [implementation milestones](docs/MILESTONES.md)
+retain the longer-term work. License and copyright notice: [MIT](LICENSE).
 
 The [MSI installer plan](docs/MSI-INSTALLER-PLAN.md) covers packaging, service readiness, upgrades, rollback, signing, and migration from existing installations. No MSI is shipped yet.
 
 Use the [pinned build and maintenance workflow](docs/BUILDING.md) for qualification artifacts and their source/hash manifests.
 
-The [architecture review](docs/DESIGN-REVIEW.md) records the evidence behind this direction. The roadmap adopts its priorities; the reproduced findings are not yet fixed. The [archived first design](docs/archive/DESIGN-v1.md) preserves section references in existing source comments.
+The [architecture review](docs/DESIGN-REVIEW.md) records the original findings;
+[R1](docs/R1-EVIDENCE.md) and [R2](docs/R2-EVIDENCE.md) record implemented fixes.
+The [archived first design](docs/archive/DESIGN-v1.md) preserves section references in existing source comments.
 
 ## Binaries
 
@@ -30,7 +35,8 @@ Implemented today: unit loader, dependency graph and start transactions, JSON-RP
 
 ## Build
 
-Requires Go 1.24+ ([go.mod](go.mod)). No MSI or full installer.
+Qualification builds use the Go version pinned in [.go-version](.go-version).
+No product MSI is shipped yet.
 
 ```text
 go test ./...

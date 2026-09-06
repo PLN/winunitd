@@ -1,5 +1,10 @@
 # Revision 2 implementation milestones
 
+**Delivery priority:** [B1-B4 public beta gates](BETA-RELEASE.md) now govern the
+first release. The R0-R8 completion rules below govern the longer-term design;
+their unchecked items do not automatically block beta. In particular, complete
+coordinator migration, exhaustive qualification, and the seven-day soak are deferred.
+
 September 6, 2026. Implements [ROADMAP.md](../ROADMAP.md) and [Design v2](../DESIGN.md). R0, R1, and the initial R2 ownership work are **in progress**; later milestones remain planned. Documentation adoption does not complete implementation. Work-package IDs are suitable issue-title prefixes. This file defines repository milestones; no GitHub milestone objects or implementation issues have been created by this documentation change.
 
 ## Acceptance rules
