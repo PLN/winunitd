@@ -15,13 +15,23 @@ import (
 // configuration disappears. Parse and directory reads happen outside m.mu;
 // graph construction and the runtime map swap share the lock.
 func (m *Manager) Reload() (*protocol.DaemonReloadResult, error) {
+	m.configMu.Lock()
+	defer m.configMu.Unlock()
 	loaded, result, err := m.parseUnitDir()
 	if err != nil {
 		return nil, err
 	}
+	// A candidate is accepted as a whole. An invalid file is not a removal,
+	// and valid neighbours must not become visible from a rejected directory.
+	if len(result.Errors) != 0 {
+		return result, nil
+	}
 
 	loaded = mergeBuiltins(loaded, m.cfg.UserScope)
-	links := m.readEnabledLinks()
+	links, err := m.readEnabledLinks()
+	if err != nil {
+		return nil, protocol.ErrFailed(err.Error())
+	}
 	m.mu.Lock()
 	// Retained configurations keep stop/dependency planning possible even when
 	// the latest directory no longer supplies a valid unit. Start admission is
@@ -44,6 +54,8 @@ func (m *Manager) Reload() (*protocol.DaemonReloadResult, error) {
 	}
 	if c := g.OrderingCycle(); c != nil {
 		result.Cycle = c.Error()
+		m.mu.Unlock()
+		return result, nil
 	}
 
 	dropped := m.replaceLocked(loaded, g, links)
@@ -60,8 +72,8 @@ func (m *Manager) parseUnitDir() ([]*unit.Unit, *protocol.DaemonReloadResult, er
 	unitsPath := m.cfg.UnitsDir()
 	result := &protocol.DaemonReloadResult{}
 
-	entries, err := os.ReadDir(unitsPath)
-	if err != nil && !os.IsNotExist(err) {
+	entries, err := readOptionalDirectory(unitsPath)
+	if err != nil {
 		return nil, nil, protocol.ErrFailed(err.Error())
 	}
 
@@ -116,6 +128,19 @@ func (m *Manager) parseUnitDir() ([]*unit.Unit, *protocol.DaemonReloadResult, er
 		loaded = append(loaded, rep.Unit)
 	}
 	return loaded, result, nil
+}
+
+// A genuinely absent directory is an empty candidate. On Windows ReadDir on
+// an existing regular file can also report a not-found error; do not mistake
+// that unreadable configuration source for a valid removal of every entry.
+func readOptionalDirectory(path string) ([]os.DirEntry, error) {
+	entries, err := os.ReadDir(path)
+	if os.IsNotExist(err) {
+		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+			return nil, nil
+		}
+	}
+	return entries, err
 }
 
 func (m *Manager) replaceLocked(units []*unit.Unit, g *core.Graph, links map[string][]string) []unitTeardown {

@@ -130,8 +130,7 @@ func TestStoppedWatchLeavesCapacityWait(t *testing.T) {
 
 func TestRejectedPlanReleasesStartCapacity(t *testing.T) {
 	m, _ := managerWithFake(t, &fakeLauncher{}, map[string]string{
-		"a.target":     "[Unit]\nWants=b.target\nAfter=b.target\n",
-		"b.target":     "[Unit]\nAfter=a.target\n",
+		"a.target":     "[Unit]\nRequires=missing.service\n",
 		"work.service": "[Service]\nExecStart=C:\\Tools\\work.exe\n",
 	})
 	m.cfg.MaxStartTransactions = 1

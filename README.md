@@ -81,6 +81,11 @@ On start (SCM or console) the daemon starts `builtin` `default.target`, which Wa
 The daemon creates a Job Object with `KILL_ON_JOB_CLOSE`: if `winunitd.exe` is killed, assigned children die with it. Each started unit gets its own nested Job Object (no breakaway). On `sc stop`, preshutdown, or console SIGINT, units stop in reverse After=/Before= order (`shutdown.target` as the stop root), then the daemon Job Object closes.
 
 `winctl daemon-reload` reparses units and rebuilds the graph without dropping live jobs.
+Invalid files or an ordering cycle reject the entire candidate; the previous
+accepted definitions and graph remain usable. A rejected cold load starts no
+candidate units. A valid removal retains a live unit as `LoadState=unavailable`
+for status/log/stop access and suppresses future activation until its definition
+returns. Reload errors and cycle diagnostics are returned by `daemon-reload`.
 
 ## Control API
 

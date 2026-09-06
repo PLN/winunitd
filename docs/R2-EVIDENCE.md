@@ -235,11 +235,41 @@ interactive users, MSI servicing, or the full supported-platform matrix. Baselin
 cloning and fixture preparation were supervised; this is not generalized-image
 provisioning evidence.
 
+## Atomic reload acceptance
+
+Invalid unit files now reject the entire candidate instead of accepting its valid
+subset. Ordering cycles also reject the candidate graph. Neither rejection
+changes loaded definitions, enablement, runtime records, or the accepted graph.
+A rejected cold load leaves control available with no accepted candidate units.
+The reload response contains the parser/scope diagnostics or cycle; `Loaded=0`
+means this attempt accepted no units, not that a previous revision was discarded.
+
+Reload, enable, and disable serialize their configuration I/O and acceptance
+separately from the lifecycle mutex. Unreadable unit or enablement directories
+fail without replacing the graph; only a genuinely absent directory is empty.
+Windows can return a not-found error for reading a regular file as a directory,
+so the loader checks absence before accepting that interpretation.
+
+Regressions reproduce mixed valid/invalid replacement, a rejected removal,
+partial cold startup, a cyclic replacement, and unreadable configuration roots.
+The corrected behavior and existing enable/disable, real-process reload, and
+native-proxy ownership cases pass twenty race repetitions. A valid removal
+still marks a retained live runtime unavailable and prevents new activation.
+An invalid replacement retains its last accepted loaded definition and start
+eligibility, superseding the earlier alpha behavior that marked it unavailable.
+The full repository race suite and vet pass after this acceptance change.
+
+This does not provide configuration revision IDs, a filesystem snapshot across
+external editors, transactional rollback of enable-link writes, or full graph
+construction outside the lifecycle mutex. Missing required dependencies remain
+plan-admission errors. Durable configuration diagnostics and cold-start handling
+of filesystem I/O errors remain separate work.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2
-coordinator. They do not add revision identifiers, atomic candidate/graph
-acceptance, immutable status snapshots, admission bounds for every operation
+coordinator. They do not add revision identifiers, immutable status snapshots,
+admission bounds for every operation
 class, or typed completion events.
 Existing generation
 checks and lifecycle writers remain in place; the full interleaving matrix and

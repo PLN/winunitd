@@ -50,13 +50,18 @@ func TestReloadRetainsActiveNativeProxy(t *testing.T) {
 				}
 				m.mu.Lock()
 				rt := m.units["worker.service"]
-				retained := rt != nil && rt.unavailable && rt.state == core.Active
+				wantUnavailable := change == "delete"
+				retained := rt != nil && rt.unavailable == wantUnavailable && rt.state == core.Active
 				m.mu.Unlock()
 				if !retained {
 					t.Fatal("reload discarded active native proxy or its state")
 				}
 				status, err := m.Status("worker")
-				if err != nil || status.Unit == nil || status.Unit.LoadState != "unavailable" || status.Unit.ActiveState != "active" {
+				wantLoad := "loaded"
+				if wantUnavailable {
+					wantLoad = "unavailable"
+				}
+				if err != nil || status.Unit == nil || status.Unit.LoadState != wantLoad || status.Unit.ActiveState != "active" {
 					t.Fatalf("status after configuration loss = %+v, %v", status, err)
 				}
 				if _, err := m.Stop("worker"); err != nil {
@@ -72,8 +77,8 @@ func TestReloadRetainsActiveNativeProxy(t *testing.T) {
 				m.mu.Lock()
 				_, retained = m.units["worker.service"]
 				m.mu.Unlock()
-				if retained {
-					t.Fatal("successfully stopped missing proxy remained retained")
+				if retained != (change == "invalid") {
+					t.Fatal("stopped proxy retention did not follow accepted configuration")
 				}
 			})
 		}

@@ -102,8 +102,12 @@ func TestReviewReproReloadKeepsLiveUnit(t *testing.T) {
 			} else if status.Unit == nil || status.Unit.ActiveState != "active" {
 				t.Errorf("live unit status = %+v", status)
 			}
-			if status != nil && status.Unit != nil && status.Unit.LoadState != "unavailable" {
-				t.Errorf("missing valid configuration not visible: %+v", status.Unit)
+			wantLoad := "unavailable"
+			if change == "invalid" {
+				wantLoad = "loaded" // atomic rejection retains the accepted definition
+			}
+			if status != nil && status.Unit != nil && status.Unit.LoadState != wantLoad {
+				t.Errorf("load state after %s: %+v", change, status.Unit)
 			}
 			if _, err := m.Logs(protocol.LogsParams{Unit: "review.service"}); err != nil {
 				t.Errorf("live unit became unreachable through logs: %v", err)

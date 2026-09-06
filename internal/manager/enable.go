@@ -14,6 +14,8 @@ import (
 // Enable does not start the unit. An empty WantedBy= means default.target.
 // Directory writes happen outside m.mu; the graph swap is under the lock.
 func (m *Manager) Enable(name string) (*protocol.EnableResult, error) {
+	m.configMu.Lock()
+	defer m.configMu.Unlock()
 	m.mu.Lock()
 	rt, err := m.lookup(name)
 	if err != nil {
@@ -37,7 +39,10 @@ func (m *Manager) Enable(name string) (*protocol.EnableResult, error) {
 			return nil, protocol.ErrFailed(err.Error())
 		}
 	}
-	links := m.readEnabledLinks()
+	links, err := m.readEnabledLinks()
+	if err != nil {
+		return nil, protocol.ErrFailed(err.Error())
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -55,6 +60,8 @@ func (m *Manager) Enable(name string) (*protocol.EnableResult, error) {
 
 // Disable removes enable files for the unit.
 func (m *Manager) Disable(name string) (*protocol.EnableResult, error) {
+	m.configMu.Lock()
+	defer m.configMu.Unlock()
 	m.mu.Lock()
 	rt, err := m.lookup(name)
 	if err != nil {
@@ -81,7 +88,13 @@ func (m *Manager) Disable(name string) (*protocol.EnableResult, error) {
 		}
 		return nil
 	})
-	links := m.readEnabledLinks()
+	if walkErr != nil {
+		return nil, protocol.ErrFailed(walkErr.Error())
+	}
+	links, err := m.readEnabledLinks()
+	if err != nil {
+		return nil, protocol.ErrFailed(err.Error())
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -91,9 +104,6 @@ func (m *Manager) Disable(name string) (*protocol.EnableResult, error) {
 	}
 	if err := m.rebuildGraphWithLinksLocked(links); err != nil {
 		return nil, protocol.ErrFailed(err.Error())
-	}
-	if walkErr != nil {
-		return nil, protocol.ErrFailed(walkErr.Error())
 	}
 	return &protocol.EnableResult{Unit: name, Enabled: rt.enabled, Targets: rt.targets}, nil
 }
@@ -132,11 +142,11 @@ func enabledTargetsFrom(links map[string][]string, name string) []string {
 
 // readEnabledLinks maps target name -> enabled unit names from
 // <base-dir>/enabled/<target>/<unit> files (not NTFS symlinks).
-func (m *Manager) readEnabledLinks() map[string][]string {
+func (m *Manager) readEnabledLinks() (map[string][]string, error) {
 	dir := m.cfg.EnabledDir()
-	ents, err := os.ReadDir(dir)
+	ents, err := readOptionalDirectory(dir)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	out := make(map[string][]string)
 	for _, e := range ents {
@@ -146,7 +156,7 @@ func (m *Manager) readEnabledLinks() map[string][]string {
 		target := core.NormalizeName(e.Name())
 		files, err := os.ReadDir(filepath.Join(dir, e.Name()))
 		if err != nil {
-			continue
+			return nil, err
 		}
 		for _, f := range files {
 			if f.IsDir() {
@@ -162,7 +172,7 @@ func (m *Manager) readEnabledLinks() map[string][]string {
 	for target := range out {
 		sort.Strings(out[target])
 	}
-	return out
+	return out, nil
 }
 
 // withEnabledWants returns units for graph build: each target's Wants=

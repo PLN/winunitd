@@ -30,6 +30,7 @@ type Manager struct {
 	journal              *journal.Store
 	engine               *timers.Engine
 	mu                   sync.Mutex
+	configMu             sync.Mutex // serializes reload/enable/disable I/O and acceptance
 	units                map[string]*unitRuntime
 	graph                *core.Graph
 	closed               bool
