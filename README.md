@@ -124,6 +124,12 @@ Path vs unit name: a name with no `/`, `\`, or drive prefix is always a unit nam
 
 `RestartMaxDelaySec=` and `RestartBackoff=` are not parsed.
 
+The daemon admits up to 32 simultaneous start transactions, with up to 16
+concurrent adapter calls per transaction. Excess operator starts report capacity
+exhaustion and may be retried. Stops remain available. Native watch activations
+wait for capacity; timer activations retry without consuming a second deadline.
+These pending retries are not yet durable across a daemon crash.
+
 ### Invocation IDs
 
 Each unit start (including `Restart=` relaunch) gets a new UUID. `winctl status` prints `InvocationID=`. Journal lines for that run carry the same ID. The process env includes `WINUNIT_INVOCATION_ID`.

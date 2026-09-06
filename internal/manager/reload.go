@@ -153,6 +153,7 @@ func (m *Manager) replaceLocked(units []*unit.Unit, g *core.Graph, links map[str
 		dropped = append(dropped, td)
 	}
 	m.units = next
+	m.signalStartCapacityLocked()
 	m.graph = g
 	// Live and in-flight records survive independently of configuration files.
 	// Unowned vanished units are dropped and their async controls cancelled.

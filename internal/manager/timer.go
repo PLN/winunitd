@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -36,6 +37,10 @@ func (m *Manager) onTimerElapsed(event timers.Fire) {
 	}
 	_, err := m.startFromOrigin(context.Background(), activated, &timerOrigin{name: name, token: event.Token})
 	if m.engine != nil {
+		if errors.Is(err, errStartCapacity) {
+			m.engine.Retry(event)
+			return
+		}
 		m.engine.RecordResult(event, err == nil)
 	}
 }

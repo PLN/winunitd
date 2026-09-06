@@ -58,8 +58,9 @@ and reject launches/results invalidated by a later stop request. Watches and
 timers retain their armed definitions and source identities; queued trigger
 starts and late results cannot cross stop/rearm. Triggered service starts share
 the restart budget. Transactions default to sixteen concurrent adapter calls
-and bounded completion channels. Global admission bounds and the coordinator
-remain pending.
+and bounded completion channels. Managers default to 32 admitted start plans;
+overloaded watches retain their activation and timers retry with bounded callback
+work. Broader admission/resource bounds and the coordinator remain pending.
 
 Exit gate: each invariant in Design v2 §3 has a test/evidence mapping. Start/stop/restart/reload/exit/timeout/trigger permutations, late successful launches, stale probes, overload, client disconnect, and shutdown during launch preserve ownership and ordering. A source audit finds no second lifecycle authority. Independent units still perform I/O concurrently.
 

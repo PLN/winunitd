@@ -24,30 +24,36 @@ import (
 
 // Manager holds loaded units and serves the control protocol.
 type Manager struct {
-	cfg            Config
-	clk            timers.Clock
-	launch         runtime.Launcher
-	journal        *journal.Store
-	engine         *timers.Engine
-	mu             sync.Mutex
-	units          map[string]*unitRuntime
-	graph          *core.Graph
-	closed         bool
-	scm            runtime.SCM
-	tasks          runtime.TaskScheduler
-	regOpen        registry.OpenFunc
-	evtOpen        eventlog.OpenFunc
-	pathOpen       pathwatch.OpenFunc
-	pathExistsOpen pathwatch.OpenFunc
-	pathExists     pathwatch.ExistsFunc
-	session        sync.Mutex // serializes graphical-session.target start/stop
-	ops            unitOps    // per-unit start/stop/restart (issue #24)
-	stops          stopSet
-	closePending   []unitTeardown
+	cfg                  Config
+	clk                  timers.Clock
+	launch               runtime.Launcher
+	journal              *journal.Store
+	engine               *timers.Engine
+	mu                   sync.Mutex
+	units                map[string]*unitRuntime
+	graph                *core.Graph
+	closed               bool
+	activeStarts         int
+	capacityWaiters      int
+	startCapacityChanged chan struct{}
+	scm                  runtime.SCM
+	tasks                runtime.TaskScheduler
+	regOpen              registry.OpenFunc
+	evtOpen              eventlog.OpenFunc
+	pathOpen             pathwatch.OpenFunc
+	pathExistsOpen       pathwatch.OpenFunc
+	pathExists           pathwatch.ExistsFunc
+	session              sync.Mutex // serializes graphical-session.target start/stop
+	ops                  unitOps    // per-unit start/stop/restart (issue #24)
+	stops                stopSet
+	closePending         []unitTeardown
 }
 
 // New creates a manager. Reload must be called to load units.
 func New(cfg Config) (*Manager, error) {
+	if cfg.MaxStartTransactions < 0 {
+		return nil, fmt.Errorf("MaxStartTransactions must not be negative")
+	}
 	if cfg.BaseDir == "" {
 		return nil, fmt.Errorf("base directory required")
 	}
@@ -152,6 +158,7 @@ func (m *Manager) CloseContext(ctx context.Context) error {
 	}
 	m.mu.Lock()
 	m.closed = true
+	m.signalStartCapacityLocked()
 	for _, rt := range m.units {
 		if rt.startCancel != nil {
 			rt.startCancel()
@@ -478,6 +485,21 @@ func (m *Manager) startFromOrigin(ctx context.Context, name string, origin activ
 		m.mu.Unlock()
 		return nil, protocol.ErrFailed("no units loaded")
 	}
+	limit := m.cfg.MaxStartTransactions
+	if limit == 0 {
+		limit = DefaultMaxStartTransactions
+	}
+	if m.activeStarts >= limit {
+		m.mu.Unlock()
+		return nil, errStartCapacity
+	}
+	m.activeStarts++
+	defer func() {
+		m.mu.Lock()
+		m.activeStarts--
+		m.signalStartCapacityLocked()
+		m.mu.Unlock()
+	}()
 	tx, err := g.PlanStart(name)
 	if err != nil {
 		m.mu.Unlock()

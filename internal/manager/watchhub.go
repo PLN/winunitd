@@ -267,7 +267,7 @@ func (m *Manager) startHubCompanion(name string, h *watchRuntime, companion func
 	if activated == "" {
 		return
 	}
-	_, _ = m.startFromOrigin(context.Background(), activated, &watchOrigin{name: name, hub: h})
+	m.startFromWatch(context.Background(), activated, &watchOrigin{name: name, hub: h})
 }
 
 // watchOrigin binds queued activation to the exact armed watch generation.

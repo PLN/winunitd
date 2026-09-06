@@ -32,6 +32,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	// in the stop plan, which waits for adoption and confirmed cleanup.
 	m.mu.Lock()
 	m.closed = true
+	m.signalStartCapacityLocked()
 	for _, rt := range m.units {
 		rt.stopping = true
 		// Publish uncertainty before an outer deadline can return while the
@@ -160,6 +161,7 @@ func (m *Manager) stopUnitWithContext(ctx context.Context, name string) (*protoc
 		if rt := m.units[name]; rt != nil {
 			rt.stopping = true
 			rt.stopEpoch++
+			m.signalStartCapacityLocked()
 			if rt.startCancel != nil {
 				rt.startCancel()
 			}

@@ -10,6 +10,10 @@ import (
 // so calendar timers recover from clock/DST changes (DESIGN.md §18).
 const maxWait = 30 * time.Second
 
+// Callback work is bounded separately from the number of armed timers.
+const maxTimerCallbacks = 32
+const admissionRetryDelay = 250 * time.Millisecond
+
 // Fire captures the source arm and target when a deadline is consumed.
 type Fire struct {
 	Name  string
@@ -26,17 +30,18 @@ type Engine struct {
 	store *Store
 	fire  FireFunc
 
-	mu       sync.Mutex
-	armed    map[string]*armed
-	pq       deadlineHeap
-	wakeup   chan struct{}
-	stop     chan struct{}
-	stopped  chan struct{}
-	running  bool
-	fires    sync.WaitGroup
-	clockGen uint64 // incremented on ClockChanged; armed.schedGen tracks it
-	nextArm  uint64 // unique callback identity across refresh/disarm/rearm
-	nextGen  uint64 // unique schedule identity across disarm/rearm of the same name
+	mu          sync.Mutex
+	armed       map[string]*armed
+	pq          deadlineHeap
+	wakeup      chan struct{}
+	stop        chan struct{}
+	stopped     chan struct{}
+	running     bool
+	fires       sync.WaitGroup
+	clockGen    uint64 // incremented on ClockChanged; armed.schedGen tracks it
+	activeFires int
+	nextArm     uint64 // unique callback identity across refresh/disarm/rearm
+	nextGen     uint64 // unique schedule identity across disarm/rearm of the same name
 
 	// onStatusDeadline is a test hook (nil in production). It fires after
 	// e.mu is released and before NextDeadline on the dirty-cache path.
@@ -48,7 +53,14 @@ type Engine struct {
 	onNextDeadline func()
 }
 
+type pendingRetry struct {
+	event Fire
+	after time.Duration
+}
+
 type armed struct {
+	firing   bool
+	retry    *pendingRetry
 	token    uint64
 	spec     Spec
 	rt       Runtime
@@ -184,7 +196,7 @@ func (e *Engine) waitDuration() (time.Duration, bool) {
 	d := maxWait
 	for _, it := range e.pq {
 		a := e.armed[it.name]
-		if a == nil || it.gen != a.gen {
+		if a == nil || it.gen != a.gen || a.firing || e.activeFires >= maxTimerCallbacks {
 			continue
 		}
 		w := e.itemWaitLocked(a, it, now)
@@ -244,7 +256,7 @@ func (e *Engine) popDue(now time.Time) (due dueTimer, ok bool) {
 	best := -1
 	for i, it := range e.pq {
 		a := e.armed[it.name]
-		if a == nil || it.gen != a.gen {
+		if a == nil || it.gen != a.gen || a.firing || e.activeFires >= maxTimerCallbacks {
 			continue
 		}
 		if !e.itemDueLocked(a, it, now) {
@@ -272,13 +284,26 @@ func (e *Engine) consume(due dueTimer, actual time.Time) {
 		e.mu.Unlock()
 		return
 	}
+	if a.firing || e.activeFires >= maxTimerCallbacks {
+		// Preserve the popped occurrence, even for non-persistent calendars.
+		heap.Push(&e.pq, &pqItem{name: a.spec.Name, when: due.scheduled, gen: due.generation})
+		e.mu.Unlock()
+		return
+	}
 	name := a.spec.Name
-	MarkFired(a.spec, &a.rt, e.clk, due.scheduled, actual)
-	_ = e.store.Save(name, a.rt)
 	event := Fire{Name: name, Unit: a.spec.Unit, Token: a.token}
+	if a.retry != nil {
+		event = a.retry.event
+		a.retry = nil
+	} else {
+		MarkFired(a.spec, &a.rt, e.clk, due.scheduled, actual)
+		_ = e.store.Save(name, a.rt)
+	}
 	fire := e.fire
 	if fire != nil {
 		e.fires.Add(1)
+		e.activeFires++
+		a.firing = true
 	}
 	e.mu.Unlock()
 
@@ -286,6 +311,16 @@ func (e *Engine) consume(due dueTimer, actual time.Time) {
 		go func() {
 			defer e.fires.Done()
 			fire(event)
+			e.mu.Lock()
+			e.activeFires--
+			if current := e.armed[name]; current == a && a.token == event.Token {
+				a.firing = false
+				if e.running {
+					e.rescheduleLocked(a)
+				}
+			}
+			e.mu.Unlock()
+			e.kick()
 		}()
 	}
 
@@ -313,6 +348,9 @@ func wallSensitive(spec Spec) bool {
 }
 
 func (e *Engine) itemWaitLocked(a *armed, it *pqItem, now time.Time) time.Duration {
+	if a.retry != nil {
+		return a.retry.after - e.clk.sinceStart()
+	}
 	if wallSensitive(a.spec) {
 		return it.when.Sub(now)
 	}
@@ -320,6 +358,9 @@ func (e *Engine) itemWaitLocked(a *armed, it *pqItem, now time.Time) time.Durati
 }
 
 func (e *Engine) itemDueLocked(a *armed, it *pqItem, now time.Time) bool {
+	if a.retry != nil {
+		return e.clk.sinceStart() >= a.retry.after
+	}
 	if wallSensitive(a.spec) {
 		return !it.when.After(now)
 	}
@@ -365,6 +406,9 @@ func (e *Engine) rescheduleLocked(a *armed) {
 		e.onNextDeadline()
 	}
 	next, ok := NextDeadline(a.spec, a.rt, e.clk)
+	if a.retry != nil {
+		next, ok = e.clk.now().Add(max(0, a.retry.after-e.clk.sinceStart())), true
+	}
 	a.next = next
 	a.ok = ok
 	a.schedGen = e.clockGen
@@ -387,6 +431,8 @@ func (e *Engine) Arm(spec Spec) uint64 {
 	e.nextArm++
 	if a, ok := e.armed[spec.Name]; ok {
 		a.token = e.nextArm
+		a.firing = false
+		a.retry = nil
 		a.spec = spec
 		e.rescheduleLocked(a)
 		e.kickLocked()
@@ -496,6 +542,11 @@ func (e *Engine) Status(name string) Snapshot {
 		return Snapshot{}
 	}
 	last := a.rt.LastActual
+	if a.retry != nil {
+		out := Snapshot{Last: last, Next: e.clk.now().Add(max(0, a.retry.after-e.clk.sinceStart()))}
+		e.mu.Unlock()
+		return out
+	}
 	if a.schedGen == e.clockGen {
 		out := Snapshot{Last: last}
 		if a.ok {
@@ -586,4 +637,22 @@ func (e *Engine) Current(name string, token uint64) bool {
 	defer e.mu.Unlock()
 	a := e.armed[name]
 	return e.running && a != nil && a.token == token
+}
+
+// Retry retains an activation rejected before manager admission. It does not
+// repeat MarkFired or update the successful-execution timestamp. R5 will make
+// pending intent durable; this retry is owned by the current in-memory arm.
+func (e *Engine) Retry(event Fire) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	a := e.armed[event.Name]
+	if !e.running || a == nil || a.token != event.Token {
+		return
+	}
+	a.retry = &pendingRetry{event: event, after: e.clk.sinceStart() + admissionRetryDelay}
+	e.rescheduleLocked(a)
+	e.kickLocked()
 }

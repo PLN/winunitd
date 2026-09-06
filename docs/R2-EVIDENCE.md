@@ -172,9 +172,36 @@ completions are retained and the other 45 members report cancellation. A serial
 48-member stop plan retains every failure and attempts every member. Existing
 parallel-ordering and dependency tests remain enabled. Twenty race repetitions
 of the core package, the full repository race suite, and vet pass. This does
-not yet cap simultaneously accepted plans,
-RPC connections, or retained graph/result memory; manager-wide admission remains
-required before R2.3 can close.
+not by itself cap simultaneously accepted plans, RPC connections, or retained
+graph/result memory. The subsequent admission slice below adds a plan bound.
+
+## Manager start admission and overload recovery
+
+Each manager now admits at most 32 simultaneous start transactions by default,
+checked before graph-plan allocation. Config.MaxStartTransactions permits a
+positive override for embedded callers; zero selects the default and negative
+values are rejected. The daemon currently uses the default. Rejected operator
+requests receive the existing failed RPC error with a capacity-exhausted message.
+Stop and shutdown do not need a start slot. Accepted plans retain their slot
+until every admitted adapter completion is drained, including failure paths.
+
+Native watch loops retain an activation rejected for capacity, wait for a capacity
+or ownership change, and revalidate the exact source before retrying. Stop,
+shutdown, close, and reload wake these waits. No separate retry worker is spawned.
+Timer dispatch is bounded to 32 callbacks per engine and one per arm. Undispatched
+deadlines remain queued. A timer rejected by manager admission retains its exact
+activation and retries after 250 ms of monotonic time; replacement/disarm invalidates
+that retry. A capacity race after dequeue puts the original calendar occurrence
+back, rather than calculating a later occurrence and losing the pending one.
+
+Focused race tests run twenty times cover repeated operator overload, an independent
+stop while full, eventual one-shot timer activation, cancellation of a waiting watch,
+slot release after invalid plans, callback capacity, monotonic retries, stale rearm
+identities, and capacity filling after calendar dequeue. Full repository race tests
+and vet pass. Pending timer retries remain in memory; crash recovery and durable
+intent are R5 work. RPC connection counts, stop request admission, automatic recovery
+worker totals, configured watch counts, and graph/result memory remain separate
+bounds. This is not closure of R2.3 or the coordinator milestone.
 
 ## Limits
 
