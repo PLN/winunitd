@@ -22,9 +22,21 @@ Go can download the selected toolchain through its normal verified module mechan
 
 CI retains native Windows artifacts and the Linux-to-Windows build manifest for 14 days. These are unsigned CI artifacts, not installation releases or provenance attestations. Compare artifact hashes with the manifest before deploying to a test guest. Pinning the Go compiler and actions does not freeze hosted runner images or the race-test C compiler; record the actual platform when interpreting results.
 
+## Private development CI budget
+
+GitHub's full workflow is now manual (`workflow_dispatch`); pushes, PR updates,
+and the weekly schedule do not automatically spend hosted-runner minutes.
+Use trusted local Gitea dispatch for reviewed full commit IDs and Proxmox guests
+for installation acceptance. Keep deployment configuration and credentials in
+the private operator workspace. Local CI must run the same vet, race, nested
+pipe regression, maintenance, vulnerability, and build checks; do not equate a
+skipped GitHub run with a passing check. Do not admit unreviewed public PR code
+to the trusted local runners. GitHub source/release hosting remains independent
+of where builds run. Manual hosted verification is reserved for release candidates.
+
 ## Maintenance policy
 
-- Run `govulncheck` on Windows and Linux on each push/PR, manually, and in the weekly scheduled CI run. Pin the scanner version in the workflow; use the current vulnerability database so newly published advisories are detected.
+- Run `govulncheck` on Windows and Linux for each admitted CI revision and during weekly dependency review. GitHub hosted verification is manual while routine work uses local CI. Pin the scanner version in the workflow; use the current vulnerability database so newly published advisories are detected.
 - Treat reachable vulnerability findings as a failed check. Review package/module-only findings too; do not silently suppress them or describe a reachability result as proof that all dependencies are vulnerability-free.
 - Review supported Go patch releases promptly, updating `.go-version` and `go.mod` together. Security updates take priority over routine feature work. Re-run vet, race tests, scanner, builds, and relevant Windows qualification when the compiler or dependencies change.
 - Dependabot proposes weekly Go-module and action updates. Review their source/release notes and compatibility; do not automatically merge them. Keep actions pinned to full commits, with readable version comments.

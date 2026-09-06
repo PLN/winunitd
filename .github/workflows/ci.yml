@@ -1,12 +1,10 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # Routine private development runs on trusted local CI. Keep this full
+  # hosted check available for deliberate release verification without
+  # spending the account's included minutes on each push or PR update.
   workflow_dispatch:
-  schedule:
-    - cron: '23 6 * * 1'
 
 permissions:
   contents: read
