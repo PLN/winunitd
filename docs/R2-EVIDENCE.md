@@ -136,6 +136,10 @@ adopts the latest definition. Three manager regressions and the timer package
 pass twenty race repetitions, including a controlled callback completion after
 replacement and reload across two different relative timer schedules. The full
 repository race suite and vet also pass after this callback-ownership slice.
+An additional timer-started oneshot shutdown check passes twenty race repetitions:
+shutdown cancels the long startup wait, drains the timer callback, and releases
+process ownership without advancing the fake clock to the startup deadline.
+This confirms the existing cancellation path; no shutdown change was needed.
 
 ## Trigger admission and publication
 

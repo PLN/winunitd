@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/timers"
+	"github.com/PLN/winunitd/internal/unit"
 )
 
 func TestStoppedTimerCannotLaunchQueuedCompanion(t *testing.T) {
@@ -117,4 +119,45 @@ func TestReloadKeepsArmedTimerDefinition(t *testing.T) {
 	clock.Advance(10 * time.Second)
 	m.engine.ClockChanged()
 	waitState(t, m, "new.service", core.Active)
+}
+
+// Keep the fixture process alive; the manager still uses the oneshot definition
+// and owns its startup wait. The base fake otherwise exits oneshots immediately.
+type pendingTimerOneshotLauncher struct{ fakeLauncher }
+
+func (l *pendingTimerOneshotLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
+	spec.Type = unit.TypeSimple
+	return l.fakeLauncher.Start(ctx, spec)
+}
+
+func TestShutdownCancelsTimerOneshotWait(t *testing.T) {
+	launch := &pendingTimerOneshotLauncher{}
+	m, clock := managerWithFake(t, launch, map[string]string{
+		"work.timer":   "[Timer]\nOnStartupSec=1s\n",
+		"work.service": "[Service]\nType=oneshot\nExecStart=C:\\Tools\\work.exe\nTimeoutStartSec=1h\n",
+	})
+	// Also release the startup wait if the shutdown regression times out.
+	defer m.Close()
+	if _, err := m.Start(context.Background(), "work.timer"); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(2 * time.Second)
+	m.engine.ClockChanged()
+	waitCond(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		rt := m.units["work.service"]
+		return rt.proc != nil && rt.startCancel != nil
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := m.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown did not cancel and drain the timer workload: %v", err)
+	}
+	m.mu.Lock()
+	owned := m.units["work.service"].proc
+	m.mu.Unlock()
+	if owned != nil {
+		t.Fatal("shutdown left the timer workload owned")
+	}
 }
