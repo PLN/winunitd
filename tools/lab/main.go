@@ -43,7 +43,7 @@ func run() error {
 	bootstrapISO := flag.String("bootstrap-iso", "", "private bootstrap ISO volume")
 	artifacts := flag.String("artifacts", "", "directory containing admitted build manifest and binaries")
 	commit := flag.String("commit", "", "full reviewed source commit for artifact admission")
-	scenario := flag.String("scenario", "", "post-smoke checks: runtime, admission, or configuration")
+	scenario := flag.String("scenario", "", "post-smoke checks: runtime, admission, configuration, or operations")
 	flag.Parse()
 	if *file == "" || flag.NArg() != 1 {
 		return fmt.Errorf("usage: lab -config PRIVATE_FILE [options] probe|create|wait|smoke|checks|detach|retire|reconcile")

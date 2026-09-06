@@ -10,7 +10,7 @@ import (
 
 func TestQualificationResultRequiresExactEvidence(t *testing.T) {
 	const commit = "0123456789abcdef0123456789abcdef01234567"
-	for _, scenarioName := range []string{"runtime", "admission", "configuration"} {
+	for _, scenarioName := range []string{"runtime", "admission", "configuration", "operations"} {
 		scenario, err := qualificationScenario(scenarioName)
 		if err != nil {
 			t.Fatal(err)

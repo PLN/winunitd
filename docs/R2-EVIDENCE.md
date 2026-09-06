@@ -465,6 +465,24 @@ shutdown are not transaction-history entries. History does not survive manager
 restart; operation contexts, aggregate deadlines, and the remaining lifecycle
 coordinator are still pending.
 
+### Windows operation qualification
+
+On September 6, 2026, clean commit
+`87e46660cdce122ba217d04b0d70026e0cc13407` from successful CI run
+`34045155713` passed isolated Windows 11 Enterprise LTSC Evaluation
+`26100.9168` qualification as SYSTEM with maintenance routing disconnected.
+Native and cross-built artifact manifests, hashes, and sizes matched before
+installation. SCM installation, reboot recovery, runtime, admission,
+configuration, and operation scenarios passed.
+
+The operation fixture SHA-256 was
+`a1fa090a07d0d4b4cb4f2d26dbb1b4842733bc8c5025a9a57641d667fd860641`.
+It verified active `PartOf` restoration while an idle member stayed inactive,
+successful restart queries, failed outcomes surviving definition removal,
+independent later stop outcomes, history expiry after manager restart, and no
+fixture process surviving SCM stop. Raw evidence remains outside the repository.
+This run predates compatible start coalescing and does not qualify that change.
+
 ## Compatible start coalescing
 
 Concurrent explicit starts now join an admitted start when their unit record,

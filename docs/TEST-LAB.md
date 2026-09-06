@@ -203,6 +203,7 @@ owned guest and admitted artifact directory:
 go run ./tools/lab -config PRIVATE_FILE -vmid TEST_ID -artifacts ARTIFACT_DIR -commit FULL_COMMIT -scenario runtime checks
 go run ./tools/lab -config PRIVATE_FILE -vmid TEST_ID -artifacts ARTIFACT_DIR -commit FULL_COMMIT -scenario admission checks
 go run ./tools/lab -config PRIVATE_FILE -vmid TEST_ID -artifacts ARTIFACT_DIR -commit FULL_COMMIT -scenario configuration checks
+go run ./tools/lab -config PRIVATE_FILE -vmid TEST_ID -artifacts ARTIFACT_DIR -commit FULL_COMMIT -scenario operations checks
 ```
 
 The controller requires a matching completed smoke record, disconnected routing,
@@ -211,6 +212,9 @@ set and the installed manifest before uploading an embedded fixture. Each
 scenario requires a fresh namespace; reruns need a fresh guest. Configuration
 checks exercise atomic reload rejection, captured invocation revisions, fresh
 start adoption, and stop access after removing a live definition.
+Operation checks exercise active/inactive `PartOf` restart participation,
+successful and failed transaction queries, retained outcomes after removal and
+a later stop, and history expiry after restarting the daemon.
 
 Results must match the source commit, exact fixture hash, SYSTEM identity,
 Windows build format, completion timestamp, and complete assertion set. Console

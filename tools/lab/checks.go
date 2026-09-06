@@ -27,6 +27,9 @@ var admissionChecks string
 //go:embed assets/configuration-checks.ps1
 var configurationChecks string
 
+//go:embed assets/operations-checks.ps1
+var operationsChecks string
+
 type checkScenario struct {
 	name   string
 	script string
@@ -35,6 +38,12 @@ type checkScenario struct {
 
 func qualificationScenario(name string) (checkScenario, error) {
 	switch name {
+	case "operations":
+		return checkScenario{name, operationsChecks, []string{
+			"active-partof-restored", "inactive-partof-stays-inactive", "successful-restart-query",
+			"failed-operation-survives-removal", "later-stop-keeps-independent-outcome",
+			"manager-restart-expires-history", "scm-stop-no-survivors",
+		}}, nil
 	case "configuration":
 		return checkScenario{name, configurationChecks, []string{
 			"invalid-candidate-atomic", "live-revision-retained", "fresh-start-adopts-revision",
