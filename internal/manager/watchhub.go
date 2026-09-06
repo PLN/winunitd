@@ -278,6 +278,8 @@ type watchOrigin struct {
 	hub  *watchRuntime
 }
 
+func (*watchOrigin) countsStartLimit() bool { return true }
+
 func (o *watchOrigin) validLocked(m *Manager) bool {
 	rt := m.units[o.name]
 	return !m.closed && rt != nil && o.hub != nil && rt.hub == o.hub && rt.gen == o.hub.gen && !rt.stopping && !rt.unavailable && !rt.stopUncertain

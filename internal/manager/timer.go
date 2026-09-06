@@ -130,12 +130,17 @@ func (m *Manager) overlayTimer(st *protocol.UnitStatus) {
 }
 
 // activationOrigin is checked under m.mu at plan and adapter admission.
-type activationOrigin interface{ validLocked(*Manager) bool }
+type activationOrigin interface {
+	validLocked(*Manager) bool
+	countsStartLimit() bool
+}
 
 type timerOrigin struct {
 	name  string
 	token uint64
 }
+
+func (*timerOrigin) countsStartLimit() bool { return true }
 
 func (o *timerOrigin) validLocked(m *Manager) bool {
 	rt := m.units[o.name]

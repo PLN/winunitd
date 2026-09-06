@@ -494,7 +494,7 @@ func (m *Manager) startFromOrigin(ctx context.Context, name string, origin activ
 	}
 	if origin != nil && !origin.validLocked(m) {
 		m.mu.Unlock()
-		return nil, protocol.ErrFailed("trigger activation superseded")
+		return nil, protocol.ErrFailed("activation superseded")
 	}
 	g := m.graph
 	if _, ok := m.units[name]; !ok {
@@ -652,12 +652,29 @@ func (m *Manager) Stop(name string) (*protocol.UnitResult, error) {
 	return m.stopTransaction(name)
 }
 
-// Restart is stop then start.
+// Restart retains its stop intent through cleanup and start-plan admission.
 func (m *Manager) Restart(ctx context.Context, name string) (*protocol.UnitResult, error) {
-	if _, err := m.Stop(name); err != nil {
+	m.mu.Lock()
+	rt, err := m.lookup(name)
+	if err != nil {
+		m.mu.Unlock()
 		return nil, err
 	}
-	return m.Start(ctx, name)
+	name = rt.unit.Name
+	// Our own root stop consumes one epoch. Any additional stop invalidates
+	// this restart, even if it finishes before the start phase is admitted.
+	origin := &restartOrigin{name: name, record: rt, stopEpoch: rt.stopEpoch + 1}
+	rt.operations++
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		rt.operations--
+		m.mu.Unlock()
+	}()
+	if _, err := m.stopTransaction(name); err != nil {
+		return nil, err
+	}
+	return m.startFromOrigin(ctx, name, origin)
 }
 
 // Logs returns stored stdout/stderr for the unit. Since is a lower bound

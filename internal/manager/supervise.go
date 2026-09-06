@@ -112,7 +112,7 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 	if planned != nil {
 		planned.launched = true
 	}
-	triggered := planned != nil && planned.origin != nil
+	triggered := planned != nil && planned.origin != nil && planned.origin.countsStartLimit()
 	if triggered {
 		interval, burst := startLimitOf(definition)
 		if core.StartLimitHit(rt.startTimes, m.now(), interval, burst) {

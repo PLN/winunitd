@@ -376,6 +376,24 @@ race repetitions verify handler cancellation and connection release; the full
 repository race suite and vet pass. This does not add bounded connection
 admission, wait for uncooperative handlers, or implement durable operation IDs.
 
+## Explicit restart stop precedence
+
+A delayed native-stop regression reproduced an explicit restart launching again
+after a later stop had already been accepted. Restart now retains its runtime
+record and expected stop epoch across cleanup and start-plan admission. Any
+additional root stop invalidates the pending start phase and queued dependency
+launches. Already admitted adapter work retains the existing cleanup/completion
+rules. An explicit restart still follows explicit-start budget policy, rather
+than charging the automatic trigger retry budget.
+
+Twenty race repetitions cover stop during native cleanup, stop while a restart
+waits for a dependency gate, and repeated explicit restart with a one-start
+automatic budget. This is stop precedence, not a complete restart coordinator:
+overlapping restart/stop requests can supersede each other, graph/configuration
+capture still occurs at start-phase admission, and queryable operation IDs and
+whole-operation admission/deadlines remain pending.
+The full repository race suite and vet pass after this change.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2
