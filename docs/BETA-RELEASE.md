@@ -38,7 +38,7 @@ explicit version/migration boundary. Additive directives remain possible.
   reload, workload crash recovery, daemon restart, and reboot using the packaged
   build. Exercise the Hermes maintenance path. Record limitations and a recovery
   procedure; an exhaustive identity/failure matrix and seven-day soak are deferred.
-- [ ] **B4 Publish:** finish the targeted privacy and hosted-artifact review,
+- [x] **B4 Publish:** finish the targeted privacy and hosted-artifact review,
   prepare beta release notes and checksums, and verify the downloaded package.
   Public visibility and publishing remain explicit release actions. Signing
   provider enrollment proceeds separately; a clearly identified unsigned beta
@@ -48,9 +48,12 @@ The product MSI now passes its complete two-phase lifecycle fixture on Windows
 11 Enterprise LTSC build 26100.9168. The same packaged binaries also pass the
 existing interactive Hermes pilot's maintenance rehearsal and agent response
 check. See [beta qualification](BETA-QUALIFICATION.md) for exact source, package
-hashes, evidence boundaries, and the CI test-fixture correction. A private draft
-release is uploaded and its downloaded assets match the frozen local files.
-The maintainer has authorized publication in the existing repository.
+hashes, evidence boundaries, and the CI test-fixture correction. The repository
+is public and [0.2.1-beta](https://github.com/PLN/winunitd/releases/tag/v0.2.1-beta)
+was published on September 6, 2026. The released MSI is the exact qualified
+package; documentation changes did not rebuild or replace its payload. All six
+release assets were downloaded without authentication and matched the frozen
+local files by SHA256; the release tag points to the qualified source commit.
 
 ## Publication decision
 
@@ -84,5 +87,5 @@ full R7 soak. Keep limitations visible and avoid supporting scenarios whose know
 failures would make the beta misleading. Stop currently terminates the owned job;
 applications requiring a graceful shutdown hook are outside the core beta scope.
 
-Next work is B4. Revisit broader architecture only when it fixes a concrete beta
-blocker or after the beta ships.
+The first beta delivery gate is complete. Prioritize adopter feedback and
+reproducible defects in the supported path, then continue the broader roadmap.
