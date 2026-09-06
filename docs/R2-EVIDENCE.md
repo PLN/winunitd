@@ -388,11 +388,29 @@ than charging the automatic trigger retry budget.
 
 Twenty race repetitions cover stop during native cleanup, stop while a restart
 waits for a dependency gate, and repeated explicit restart with a one-start
-automatic budget. This is stop precedence, not a complete restart coordinator:
-overlapping restart/stop requests can supersede each other, graph/configuration
-capture still occurs at start-phase admission, and queryable operation IDs and
-whole-operation admission/deadlines remain pending.
+automatic budget. Overlapping restart/stop requests can supersede each other;
+the captured multi-phase plan below extends this initial stop-precedence change.
 The full repository race suite and vet pass after this change.
+
+## Captured restart plans
+
+Restart now captures its stop graph, the active/activating reverse members to
+restore, and a validated multi-root start plan with definitions/revisions before
+teardown. Active `PartOf` members return even without a root `Wants` edge;
+inactive reverse members stay inactive unless the start graph selects them.
+Both phases use the same admission slot, and stop-only records remain retained
+through delayed cleanup. A later stop of any captured stop member invalidates
+the pending start phase and queued launches.
+
+Regressions reproduced active `PartOf` services remaining stopped, an invalid
+start plan or full admission pool interrupting the running service before
+reporting rejection, and reload retargeting a restart during native cleanup.
+The first case failed before the change; the other cases also failed against a
+private overlay of the preceding implementation. These now pass twenty race
+repetitions, together with stop precedence and explicit-start budget policy.
+This establishes captured restart phases and admission, not queryable operation
+history, whole-operation deadlines, or the completed lifecycle coordinator.
+The full repository race suite and vet pass with captured restart phases.
 
 ## Limits
 

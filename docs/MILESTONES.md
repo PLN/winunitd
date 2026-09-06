@@ -63,6 +63,12 @@ and bounded completion channels. Managers default to 32 admitted start plans;
 overloaded watches retain their activation and timers retry with bounded callback
 work. Broader admission/resource bounds and the coordinator remain pending.
 
+Explicit restart now admits captured stop/start plans before teardown, restores
+active/activating reverse members including `PartOf`, and retains their records
+and revisions through cleanup. Invalid plans and full start admission reject
+before interruption; later stops invalidate pending restart launches. Operation
+IDs, whole-operation deadlines, and the remaining coordinator migration are open.
+
 Exit gate: each invariant in Design v2 §3 has a test/evidence mapping. Start/stop/restart/reload/exit/timeout/trigger permutations, late successful launches, stale probes, overload, client disconnect, and shutdown during launch preserve ownership and ordering. A source audit finds no second lifecycle authority. Independent units still perform I/O concurrently.
 
 ## R3 — Unit semantics, compatibility, and application health

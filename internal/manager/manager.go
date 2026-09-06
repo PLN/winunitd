@@ -482,6 +482,10 @@ func (m *Manager) Start(ctx context.Context, name string) (*protocol.UnitResult,
 }
 
 func (m *Manager) startFromOrigin(ctx context.Context, name string, origin activationOrigin) (*protocol.UnitResult, error) {
+	return m.startOperation(ctx, name, origin, false)
+}
+
+func (m *Manager) startOperation(ctx context.Context, name string, origin activationOrigin, restart bool) (*protocol.UnitResult, error) {
 	name, err := requireUnit(name)
 	if err != nil {
 		return nil, err
@@ -520,7 +524,18 @@ func (m *Manager) startFromOrigin(ctx context.Context, name string, origin activ
 		m.signalStartCapacityLocked()
 		m.mu.Unlock()
 	}()
-	tx, err := g.PlanStart(name)
+	roots := []string{name}
+	var stopPlan *core.Transaction
+	if restart {
+		var intent *restartOrigin
+		stopPlan, roots, intent, err = m.planRestartLocked(g, name)
+		if err != nil {
+			m.mu.Unlock()
+			return nil, protocol.ErrFailed(waitFailMessage(err))
+		}
+		origin = intent
+	}
+	tx, err := g.PlanStart(roots...)
 	if err != nil {
 		m.mu.Unlock()
 		return nil, protocol.ErrFailed(waitFailMessage(err))
@@ -529,7 +544,21 @@ func (m *Manager) startFromOrigin(ctx context.Context, name string, origin activ
 	for _, member := range tx.Units() {
 		if rt := m.units[member]; rt != nil {
 			definitions[member] = &plannedStart{unit: rt.unit, revision: rt.configRevision, record: rt, stopEpoch: rt.stopEpoch, gen: rt.gen, origin: origin}
+			if intent, ok := origin.(*restartOrigin); ok {
+				if stopped, ok := intent.members[member]; ok {
+					definitions[member].stopEpoch = stopped.stopEpoch
+					definitions[member].gen++ // own stop increments the generation
+				}
+			}
 			rt.operations++
+		}
+	}
+	// Stop-only members also remain owned across reload and delayed teardown.
+	var retainedStops []*unitRuntime
+	if intent, ok := origin.(*restartOrigin); ok {
+		for _, member := range intent.members {
+			member.record.operations++
+			retainedStops = append(retainedStops, member.record)
 		}
 	}
 	m.mu.Unlock()
@@ -539,7 +568,15 @@ func (m *Manager) startFromOrigin(ctx context.Context, name string, origin activ
 		for _, planned := range definitions {
 			planned.record.operations--
 		}
+		for _, record := range retainedStops {
+			record.operations--
+		}
 	}()
+	if stopPlan != nil {
+		if _, err := stopPlan.ExecuteStop(context.Background(), core.StopFunc(m.stopUnitCtx)); err != nil {
+			return nil, protocol.ErrFailed(waitFailMessage(err))
+		}
+	}
 	run, err := tx.Execute(ctx, core.StartFunc(func(ctx context.Context, member string) error {
 		unlock := m.ops.lock(member)
 		defer unlock()
@@ -652,29 +689,9 @@ func (m *Manager) Stop(name string) (*protocol.UnitResult, error) {
 	return m.stopTransaction(name)
 }
 
-// Restart retains its stop intent through cleanup and start-plan admission.
+// Restart admits captured stop/start plans as one operation.
 func (m *Manager) Restart(ctx context.Context, name string) (*protocol.UnitResult, error) {
-	m.mu.Lock()
-	rt, err := m.lookup(name)
-	if err != nil {
-		m.mu.Unlock()
-		return nil, err
-	}
-	name = rt.unit.Name
-	// Our own root stop consumes one epoch. Any additional stop invalidates
-	// this restart, even if it finishes before the start phase is admitted.
-	origin := &restartOrigin{name: name, record: rt, stopEpoch: rt.stopEpoch + 1}
-	rt.operations++
-	m.mu.Unlock()
-	defer func() {
-		m.mu.Lock()
-		rt.operations--
-		m.mu.Unlock()
-	}()
-	if _, err := m.stopTransaction(name); err != nil {
-		return nil, err
-	}
-	return m.startFromOrigin(ctx, name, origin)
+	return m.startOperation(ctx, name, nil, true)
 }
 
 // Logs returns stored stdout/stderr for the unit. Since is a lower bound
