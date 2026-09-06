@@ -147,8 +147,8 @@ WorkingDirectory=C:\Tools
 	launch.release()
 	select {
 	case err := <-errc:
-		if err != nil {
-			t.Fatalf("Start app.target: %v", err)
+		if err == nil || !strings.Contains(err.Error(), "superseded by stop") {
+			t.Fatalf("Start app.target should report its canceled pending member: %v", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Start app.target did not return")
@@ -166,6 +166,7 @@ WorkingDirectory=C:\Tools
 		t.Fatal("stopped member must remain stopping so applyRunLocked cannot stamp Active")
 	}
 	assertState(t, m, "slow.service", core.Active)
+	assertState(t, m, "app.target", core.Inactive)
 }
 
 type slowStopLauncher struct {

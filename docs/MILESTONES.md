@@ -52,7 +52,9 @@ Explicit starts may adopt a new native target only after successful cleanup of
 the old one. [Initial R2 evidence](R2-EVIDENCE.md) covers retargeting, service-type
 changes, reload during native launch, failed cleanup retries, and automatic
 process recovery. Versioned configuration/graph acceptance, revision IDs,
-immutable status snapshots, and coordinator migration remain open.
+immutable status snapshots, and coordinator migration remain open. Start plans
+also capture their member definitions with the graph, retain pending records,
+and reject launches/results invalidated by a later stop request.
 
 Exit gate: each invariant in Design v2 §3 has a test/evidence mapping. Start/stop/restart/reload/exit/timeout/trigger permutations, late successful launches, stale probes, overload, client disconnect, and shutdown during launch preserve ownership and ordering. A source audit finds no second lifecycle authority. Independent units still perform I/O concurrently.
 

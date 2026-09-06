@@ -163,6 +163,7 @@ func (m *Manager) stopUnitWithContext(ctx context.Context, name string) (*protoc
 		m.mu.Lock()
 		if rt := m.units[name]; rt != nil {
 			rt.stopping = true
+			rt.stopEpoch++
 			if rt.startCancel != nil {
 				rt.startCancel()
 			}

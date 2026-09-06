@@ -41,6 +41,27 @@ local Windows development environment. The full repository race suite
 paused-launch regression was added afterward and passed in the focused twenty-run
 set. No live pilot deployment was changed for these checks.
 
+## Start plan definitions and stop precedence
+
+Start plans now capture the member definitions alongside the dependency graph,
+under the same manager lock. Pending members retain their runtime records until
+the transaction finishes. A later valid reload cannot substitute a new command
+into an already accepted graph; a fresh start plan uses the new definition.
+Current alpha removal/invalid-file admission still rejects a missing or
+unavailable member before launching it.
+
+Each planned member captures a stop epoch. Stop admission invalidates older
+pending starts, and transaction result application excludes those invalidated
+members. A superseded transaction returns an error without overwriting the
+completed stop's state or error. A start requested after that stop remains
+permitted. This changes the older mid-transaction stop regression's result:
+the canceled pending target is now reported as canceled instead of successful.
+
+Twenty race repetitions cover a blocked dependency spanning valid reload, stop
+of a member waiting for its dependency, and stop of a member that has already
+started while another branch is pending. Definitions and stop epochs are internal;
+this change does not introduce revision IDs or an operation-query API.
+
 ## Limits
 
 This is the first R2.1 ownership slice, not the completed v2 coordinator. It does

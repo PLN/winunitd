@@ -466,25 +466,63 @@ func (m *Manager) Start(ctx context.Context, name string) (*protocol.UnitResult,
 		m.mu.Unlock()
 		return nil, protocol.ErrNotFound(name)
 	}
-	m.mu.Unlock()
 	if g == nil {
+		m.mu.Unlock()
 		return nil, protocol.ErrFailed("no units loaded")
 	}
-
-	run, err := g.Start(ctx, core.StartFunc(m.startOne), name)
+	tx, err := g.PlanStart(name)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, protocol.ErrFailed(waitFailMessage(err))
+	}
+	definitions := make(map[string]*plannedStart)
+	for _, member := range tx.Units() {
+		if rt := m.units[member]; rt != nil {
+			definitions[member] = &plannedStart{unit: rt.unit, record: rt, stopEpoch: rt.stopEpoch}
+			rt.operations++
+		}
+	}
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		for _, planned := range definitions {
+			planned.record.operations--
+		}
+	}()
+	run, err := tx.Execute(ctx, core.StartFunc(func(ctx context.Context, member string) error {
+		unlock := m.ops.lock(member)
+		defer unlock()
+		return m.launchUnitConfigOp(ctx, member, false, definitions[member])
+	}))
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// A stop invalidates this plan's results as well as its queued launches.
+	// Return the transaction outcome without rewriting the newer runtime state.
+	if run != nil {
+		for member, planned := range definitions {
+			if m.units[member] != planned.record || planned.record.stopEpoch != planned.stopEpoch {
+				delete(run.States, member)
+				delete(run.Errors, member)
+			}
+		}
+	}
 	m.applyRunLocked(run)
 	m.reapFailedLocked()
+	rootCurrent := definitions[name] != nil && m.units[name] == definitions[name].record && definitions[name].stopEpoch == definitions[name].record.stopEpoch
 	if err != nil {
-		m.setErrLocked(name, waitFailMessage(err))
+		if rootCurrent {
+			m.setErrLocked(name, waitFailMessage(err))
+		}
 		return &protocol.UnitResult{
 			Unit:        name,
 			ActiveState: m.stateOfLocked(name).String(),
 			Error:       waitFailMessage(err),
 		}, protocol.ErrFailed(waitFailMessage(err))
 	}
-	m.clearErrLocked(name)
+	if rootCurrent {
+		m.clearErrLocked(name)
+	}
 	return &protocol.UnitResult{Unit: name, ActiveState: m.stateOfLocked(name).String()}, nil
 }
 

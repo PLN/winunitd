@@ -1,0 +1,97 @@
+package manager
+
+import (
+	"context"
+	"sync"
+	"testing"
+	"time"
+)
+
+func TestStartPlanRetainsDefinitionsAcrossReload(t *testing.T) {
+	launch := newGatedStartLauncher("first.service")
+	m := managerWith(t, launch, map[string]string{
+		"app.target":    "[Unit]\nRequires=first.service later.service\nAfter=first.service later.service\n",
+		"first.service": "[Service]\nExecStart=C:\\Tools\\first.exe\n",
+		"later.service": "[Unit]\nAfter=first.service\n[Service]\nExecStart=C:\\Tools\\old.exe\n",
+	})
+	var once sync.Once
+	release := func() { once.Do(launch.release) }
+	defer release()
+	done := make(chan error, 1)
+	go func() { _, err := m.Start(context.Background(), "app.target"); done <- err }()
+	select {
+	case <-launch.blocked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first dependency did not reach launcher")
+	}
+	writeUnit(t, m.cfg.UnitsDir(), "later.service", "[Service]\nExecStart=C:\\Tools\\new.exe\n")
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("start transaction did not finish")
+	}
+	specs := launch.specs()
+	if len(specs) != 2 || specs[1].Argv[0] != `C:\Tools\old.exe` {
+		t.Fatal("accepted graph used reloaded command")
+	}
+	if _, err := m.Stop("later"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Start(context.Background(), "later"); err != nil {
+		t.Fatal(err)
+	}
+	specs = launch.specs()
+	if len(specs) != 3 || specs[2].Argv[0] != `C:\Tools\new.exe` {
+		t.Fatal("new plan did not use new command")
+	}
+}
+
+func TestStopCancelsStartWaitingForDependency(t *testing.T) {
+	launch := newGatedStartLauncher("first.service")
+	m := managerWith(t, launch, map[string]string{
+		"later.service": "[Unit]\nRequires=first.service\nAfter=first.service\n[Service]\nExecStart=C:\\Tools\\later.exe\n",
+		"first.service": "[Service]\nExecStart=C:\\Tools\\first.exe\n",
+	})
+	var once sync.Once
+	release := func() { once.Do(launch.release) }
+	defer release()
+	done := make(chan error, 1)
+	go func() { _, err := m.Start(context.Background(), "later"); done <- err }()
+	select {
+	case <-launch.blocked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first dependency did not reach launcher")
+	}
+	if _, err := m.Stop("later"); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("superseded plan reported success")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("start transaction did not finish")
+	}
+	if specs := launch.specs(); len(specs) != 1 || specs[0].Unit != "first.service" {
+		t.Fatal("stopped pending member was launched")
+	}
+	status, err := m.Status("later")
+	if err != nil || status.Unit.ActiveState != "inactive" || status.Unit.Error != "" {
+		t.Fatal("old transaction overwrote completed stop")
+	}
+	if _, err := m.Start(context.Background(), "later"); err != nil {
+		t.Fatal(err)
+	}
+	if len(launch.specs()) != 2 {
+		t.Fatal("fresh start after stop did not launch")
+	}
+}

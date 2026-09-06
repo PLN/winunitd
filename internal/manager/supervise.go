@@ -32,6 +32,17 @@ func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool)
 }
 
 func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart bool) error {
+	return m.launchUnitConfigOp(ctx, name, autoRestart, nil)
+}
+
+type plannedStart struct {
+	unit      *unit.Unit
+	record    *unitRuntime
+	stopEpoch uint64
+}
+
+// A transaction passes its captured definition; recovery uses ownedUnit.
+func (m *Manager) launchUnitConfigOp(ctx context.Context, name string, autoRestart bool, planned *plannedStart) error {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -52,6 +63,10 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 		m.mu.Unlock()
 		return nil
 	}
+	if planned != nil && (planned.record != rt || planned.stopEpoch != rt.stopEpoch) {
+		m.mu.Unlock()
+		return fmt.Errorf("unit %q start superseded by stop", name)
+	}
 	if rt.stopUncertain {
 		m.mu.Unlock()
 		return fmt.Errorf("unit %q termination is unconfirmed; retry stop before starting", name)
@@ -69,9 +84,13 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 	// Native start failures can still leave an external resource running. Do
 	// not abandon its identity when an explicit start adopts a reloaded unit.
 	owned := rt.ownedUnit()
+	definition := rt.unit
+	if planned != nil {
+		definition = planned.unit
+	}
 	if !autoRestart && rt.invocationUnit != nil &&
 		(scmServiceName(owned) != "" || scheduledTaskName(owned) != "") &&
-		(scmServiceName(owned) != scmServiceName(rt.unit) || scheduledTaskName(owned) != scheduledTaskName(rt.unit)) {
+		(scmServiceName(owned) != scmServiceName(definition) || scheduledTaskName(owned) != scheduledTaskName(definition)) {
 		m.mu.Unlock()
 		return fmt.Errorf("unit %q still owns a previous native target; stop it before starting the new definition", name)
 	}
@@ -98,7 +117,7 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 	if evicted != nil {
 		rt.stopUncertain = true
 	}
-	u := rt.unit
+	u := definition
 	if autoRestart {
 		u = owned
 	}

@@ -24,6 +24,7 @@ type unitRuntime struct {
 	state         core.State
 	sub           core.Substate
 	gen           uint64
+	stopEpoch     uint64          // invalidates starts admitted before a stop request
 	proc          runtime.Process // whoever clears this owns job.Kill+Close (#25)
 	notify        *notifyRuntime
 	watchdog      context.CancelFunc
