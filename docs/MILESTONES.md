@@ -39,7 +39,7 @@ Exit gate: real-process tests cover deletion, invalid replacement, recreation wh
 
 Status: in progress (invocation-definition groundwork; coordinator pending). Dependencies: R1. Outcome: one state owner, concurrent I/O, explicit operation identity.
 
-- [ ] **R2.1 Records/events:** implement immutable configuration revisions, stable runtime records, invocation/operation IDs, generations, typed completion events, and immutable status snapshots.
+- [ ] **R2.1 Records/events:** implement immutable configuration revisions, stable runtime records, invocation/operation IDs, generations, typed completion events, and immutable status snapshots. Atomic reload acceptance and opaque accepted/service-invocation revision IDs are implemented; queued plans and automatic recovery retain their captured identity. Trigger revision status, operation IDs/events, and immutable aggregate snapshots remain open.
 - [ ] **R2.2 Coordinator:** migrate start/stop/restart, process exit, notify, watchdog, timer/native trigger activation, reload, and user-host lifecycle decisions. Remove direct worker state writes and transaction-result overwrites.
 - [ ] **R2.3 Scheduling:** bound admission/workers, preserve completion delivery under overload, coalesce redundant starts, and ensure stop/maintenance precedence. Keep blocking I/O outside the coordinator.
 - [ ] **R2.4 Operations:** retain accepted operations across client disconnect; expose queryable outcomes; apply internal deadlines and explicit cancellation; version protocol changes with client compatibility tests.

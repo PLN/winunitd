@@ -259,16 +259,43 @@ An invalid replacement retains its last accepted loaded definition and start
 eligibility, superseding the earlier alpha behavior that marked it unavailable.
 The full repository race suite and vet pass after this acceptance change.
 
-This does not provide configuration revision IDs, a filesystem snapshot across
-external editors, transactional rollback of enable-link writes, or full graph
+This does not provide a filesystem snapshot across external editors,
+transactional rollback of enable-link writes, or full graph
 construction outside the lifecycle mutex. Missing required dependencies remain
 plan-admission errors. Durable configuration diagnostics and cold-start handling
 of filesystem I/O errors remain separate work.
 
+## Configuration revision identity
+
+Accepted reloads and enablement graph swaps now receive an opaque revision ID
+with a random daemon-instance namespace and a monotonic acceptance sequence.
+Machine status and loaded unit status expose `ConfigRevision`; the reload
+response identifies the accepted revision even when a candidate is rejected.
+An unavailable retained unit has no loaded revision. Rejected candidates leave
+the identity unchanged, while an accepted unchanged-content reload advances it.
+Revision IDs identify acceptance events, not content hashes or archival lookup
+keys; different IDs do not prove a particular unit's content changed.
+
+Service status exposes `InvocationConfigRevision` for its last captured service
+invocation, including native proxy start attempts. Accepted plans retain their
+captured revision through delayed launch and reload. Automatic service recovery
+keeps the captured revision; an explicit new start adopts the accepted revision.
+Confirmed stop retains the last invocation ID/revision for diagnostics. Failed
+process-start preparation cannot relabel the previous invocation with a newer
+revision. The CLI displays both fields; the RPC fields are optional additions.
+
+Twenty race repetitions cover namespace separation, rejected and accepted
+reloads, enable/disable, live removal and stop, queued-plan capture, automatic
+recovery, and failed preparation followed by cleanup and a fresh start. Timer
+and native-watch arm tokens remain separate ownership identities; this slice
+does not add their captured revision to status or implement operation-history
+queries, persisted revision storage, or the lifecycle coordinator.
+The full repository race suite and vet pass with these optional status fields.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2
-coordinator. They do not add revision identifiers, immutable status snapshots,
+coordinator. They do not add immutable status snapshots,
 admission bounds for every operation
 class, or typed completion events.
 Existing generation

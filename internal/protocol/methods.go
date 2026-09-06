@@ -100,6 +100,8 @@ type StatusResult struct {
 
 // MachineStatus is the daemon-wide view (DESIGN.md §46).
 type MachineStatus struct {
+	ConfigRevision string `json:"configRevision,omitempty"`
+
 	State        string `json:"state"`
 	UnitsLoaded  int    `json:"unitsLoaded"`
 	UnitsActive  int    `json:"unitsActive"`
@@ -114,6 +116,12 @@ type MachineStatus struct {
 // Resource metrics are not reported. CPUWeight/CPUQuota/IoPriority are the
 // configured unit-file values when set (cheap; not a live Job Object query).
 type UnitStatus struct {
+	// ConfigRevision is empty when no loaded definition is accepted. The
+	// invocation field identifies the last captured service definition, even
+	// after stop. Native trigger arm identity is not represented by this field.
+	ConfigRevision           string `json:"configRevision,omitempty"`
+	InvocationConfigRevision string `json:"invocationConfigRevision,omitempty"`
+
 	Name                string `json:"name"`
 	Description         string `json:"description,omitempty"`
 	Kind                string `json:"kind"`
@@ -201,6 +209,8 @@ type DaemonReloadParams struct{}
 
 // DaemonReloadResult is the daemon-reload payload (DESIGN.md §33).
 type DaemonReloadResult struct {
+	ConfigRevision string `json:"configRevision,omitempty"`
+
 	Loaded int      `json:"loaded"`
 	Errors []string `json:"errors,omitempty"`
 	Cycle  string   `json:"cycle,omitempty"`

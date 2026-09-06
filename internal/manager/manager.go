@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +32,9 @@ type Manager struct {
 	engine               *timers.Engine
 	mu                   sync.Mutex
 	configMu             sync.Mutex // serializes reload/enable/disable I/O and acceptance
+	configNamespace      string
+	configSequence       uint64
+	configRevision       string
 	units                map[string]*unitRuntime
 	graph                *core.Graph
 	closed               bool
@@ -98,13 +102,14 @@ func New(cfg Config) (*Manager, error) {
 		}
 	}
 	m := &Manager{
-		cfg:     cfg,
-		clk:     clk,
-		launch:  launch,
-		scm:     scm,
-		tasks:   tasks,
-		journal: js,
-		units:   make(map[string]*unitRuntime),
+		configNamespace: rand.Text(),
+		cfg:             cfg,
+		clk:             clk,
+		launch:          launch,
+		scm:             scm,
+		tasks:           tasks,
+		journal:         js,
+		units:           make(map[string]*unitRuntime),
 	}
 	if cfg.RegistryOpen != nil {
 		m.regOpen = cfg.RegistryOpen
@@ -375,7 +380,7 @@ func (m *Manager) Status(name string) (*protocol.StatusResult, error) {
 }
 
 func (m *Manager) machineLocked() *protocol.MachineStatus {
-	ms := &protocol.MachineStatus{State: "running"}
+	ms := &protocol.MachineStatus{State: "running", ConfigRevision: m.configRevision}
 	for name, rt := range m.units {
 		ms.UnitsLoaded++
 		if rt != nil && rt.unit != nil && rt.unit.Kind == unit.KindTimer {
@@ -404,6 +409,8 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 	st.LogStorageErrors = stats.StorageErrors
 	st.LogLastStorageError = stats.LastStorageError
 	if rt != nil {
+		st.ConfigRevision = rt.configRevision
+		st.InvocationConfigRevision = rt.invocationRevision
 		if rt.unavailable {
 			st.LoadState = "unavailable"
 		}
@@ -509,7 +516,7 @@ func (m *Manager) startFromOrigin(ctx context.Context, name string, origin activ
 	definitions := make(map[string]*plannedStart)
 	for _, member := range tx.Units() {
 		if rt := m.units[member]; rt != nil {
-			definitions[member] = &plannedStart{unit: rt.unit, record: rt, stopEpoch: rt.stopEpoch, gen: rt.gen, origin: origin}
+			definitions[member] = &plannedStart{unit: rt.unit, revision: rt.configRevision, record: rt, stopEpoch: rt.stopEpoch, gen: rt.gen, origin: origin}
 			rt.operations++
 		}
 	}

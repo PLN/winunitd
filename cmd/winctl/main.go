@@ -735,6 +735,9 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		m := st.Machine
 		fmt.Fprintf(c.stdout, "winunitd\n")
 		fmt.Fprintf(c.stdout, "  State: %s\n", m.State)
+		if m.ConfigRevision != "" {
+			fmt.Fprintf(c.stdout, "ConfigRevision=%s\n", m.ConfigRevision)
+		}
 		fmt.Fprintf(c.stdout, "  Units: %d loaded\n", m.UnitsLoaded)
 		fmt.Fprintf(c.stdout, "         %d active\n", m.UnitsActive)
 		fmt.Fprintf(c.stdout, "         %d failed\n", m.UnitsFailed)
@@ -766,6 +769,12 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		}
 		if u.InvocationID != "" {
 			fmt.Fprintf(c.stdout, "InvocationID=%s\n", u.InvocationID)
+		}
+		if u.ConfigRevision != "" {
+			fmt.Fprintf(c.stdout, "ConfigRevision=%s\n", u.ConfigRevision)
+		}
+		if u.InvocationConfigRevision != "" {
+			fmt.Fprintf(c.stdout, "InvocationConfigRevision=%s\n", u.InvocationConfigRevision)
 		}
 		if u.Error != "" {
 			fmt.Fprintf(c.stdout, "      Error: %s\n", u.Error)

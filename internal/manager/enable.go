@@ -213,6 +213,7 @@ func (m *Manager) rebuildGraphWithLinksLocked(links map[string][]string) error {
 		return err
 	}
 	m.graph = g
+	m.acceptConfigRevisionLocked()
 	for name, rt := range m.units {
 		targets := enabledTargetsFrom(links, name)
 		rt.enabled = len(targets) > 0

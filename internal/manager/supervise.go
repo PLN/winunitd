@@ -38,6 +38,7 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 type plannedStart struct {
 	origin    activationOrigin
 	unit      *unit.Unit
+	revision  string
 	record    *unitRuntime
 	stopEpoch uint64
 	launched  bool   // adapter work was admitted before source invalidation
@@ -89,8 +90,10 @@ func (m *Manager) launchUnitConfigOp(ctx context.Context, name string, autoResta
 	// not abandon its identity when an explicit start adopts a reloaded unit.
 	owned := rt.ownedUnit()
 	definition := rt.unit
+	revision := rt.configRevision
 	if planned != nil {
 		definition = planned.unit
+		revision = planned.revision
 	}
 	if !autoRestart && rt.invocationUnit != nil &&
 		(scmServiceName(owned) != "" || scheduledTaskName(owned) != "") &&
@@ -139,6 +142,9 @@ func (m *Manager) launchUnitConfigOp(ctx context.Context, name string, autoResta
 	u := definition
 	if autoRestart {
 		u = owned
+		if rt.invocationUnit != nil {
+			revision = rt.invocationRevision
+		}
 	}
 	m.mu.Unlock()
 	if evicted != nil {
@@ -186,13 +192,17 @@ func (m *Manager) launchUnitConfigOp(ctx context.Context, name string, autoResta
 	if u.Kind != unit.KindService || u.Service == nil {
 		return nil
 	}
+	svc := u.Service
+	native := svc.Type == unit.TypeSCM || svc.Type == unit.TypeScheduledTask
 	m.mu.Lock()
 	if rt := m.units[name]; rt != nil && rt.gen == startGen && !m.closed {
-		rt.invocationUnit = u
+		if native {
+			rt.invocationUnit = u
+			rt.invocationRevision = revision
+		}
 		m.recordStartLocked(rt)
 	}
 	m.mu.Unlock()
-	svc := u.Service
 	if svc.Type == unit.TypeSCM {
 		return m.startSCM(ctx, name, u, autoRestart)
 	}
@@ -207,6 +217,8 @@ func (m *Manager) launchUnitConfigOp(ctx context.Context, name string, autoResta
 	inv := journal.NewInvocationID()
 	m.mu.Lock()
 	if rt := m.units[name]; rt != nil {
+		rt.invocationUnit = u
+		rt.invocationRevision = revision
 		rt.invocation = inv
 	}
 	m.mu.Unlock()

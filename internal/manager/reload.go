@@ -21,6 +21,9 @@ func (m *Manager) Reload() (*protocol.DaemonReloadResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	m.mu.Lock()
+	result.ConfigRevision = m.configRevision
+	m.mu.Unlock()
 	// A candidate is accepted as a whole. An invalid file is not a removal,
 	// and valid neighbours must not become visible from a rejected directory.
 	if len(result.Errors) != 0 {
@@ -59,6 +62,7 @@ func (m *Manager) Reload() (*protocol.DaemonReloadResult, error) {
 	}
 
 	dropped := m.replaceLocked(loaded, g, links)
+	result.ConfigRevision = m.configRevision
 	m.mu.Unlock()
 	for _, td := range dropped {
 		td.closeBlocking()
@@ -180,11 +184,27 @@ func (m *Manager) replaceLocked(units []*unit.Unit, g *core.Graph, links map[str
 	m.units = next
 	m.signalStartCapacityLocked()
 	m.graph = g
+	m.acceptConfigRevisionLocked()
 	// Live and in-flight records survive independently of configuration files.
 	// Unowned vanished units are dropped and their async controls cancelled.
 	m.syncTimersLocked()
 	m.syncHubsLocked()
 	return dropped
+}
+
+// The namespace prevents identities from colliding across daemon instances.
+// Revisions identify accepted definitions plus graph/enablement, not content
+// hashes. Assign with the graph swap while m.mu is held.
+func (m *Manager) acceptConfigRevisionLocked() {
+	m.configSequence++
+	m.configRevision = fmt.Sprintf("%s/%d", m.configNamespace, m.configSequence)
+	for _, rt := range m.units {
+		if rt.unavailable {
+			rt.configRevision = ""
+		} else {
+			rt.configRevision = m.configRevision
+		}
+	}
 }
 
 // retainWithoutConfig keeps stop routing available until ownership is resolved.

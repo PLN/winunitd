@@ -86,6 +86,13 @@ accepted definitions and graph remain usable. A rejected cold load starts no
 candidate units. A valid removal retains a live unit as `LoadState=unavailable`
 for status/log/stop access and suppresses future activation until its definition
 returns. Reload errors and cycle diagnostics are returned by `daemon-reload`.
+Machine and unit status report `ConfigRevision`; service status also reports
+`InvocationConfigRevision` for its last captured service invocation. Reload and
+enablement graph acceptance produce a new opaque ID, including unchanged-content
+reloads. Running services and automatic recovery keep their captured ID; a new
+explicit start adopts the accepted one. A removed unit has no loaded revision,
+but its last invocation revision remains available. IDs are scoped across daemon
+instances and do not expose configuration content.
 
 ## Control API
 

@@ -223,6 +223,7 @@ func TestReloadDoesNotChangeAutomaticRecoveryDefinition(t *testing.T) {
 	}
 	m.mu.Lock()
 	proc := m.units["worker.service"].proc.(*fakeProc)
+	invocationRevision := m.units["worker.service"].invocationRevision
 	m.mu.Unlock()
 	writeUnit(t, m.cfg.UnitsDir(), "worker.service", "[Service]\nType=simple\nExecStart=C:\\Tools\\new.exe\nRestart=no\n")
 	if _, err := m.Reload(); err != nil {
@@ -234,6 +235,10 @@ func TestReloadDoesNotChangeAutomaticRecoveryDefinition(t *testing.T) {
 	waitCond(t, func() bool { return len(launch.specs()) >= 2 })
 	if got := launch.specs()[1].Argv[0]; got != `C:\Tools\old.exe` {
 		t.Fatalf("automatic recovery launched %q", got)
+	}
+	status, err := m.Status("worker")
+	if err != nil || invocationRevision == "" || status.Unit.InvocationConfigRevision != invocationRevision || status.Unit.ConfigRevision == invocationRevision {
+		t.Fatal("automatic recovery did not retain the captured revision")
 	}
 	if _, err := m.Stop("worker"); err != nil {
 		t.Fatal(err)

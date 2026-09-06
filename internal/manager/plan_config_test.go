@@ -19,6 +19,11 @@ func TestStartPlanRetainsDefinitionsAcrossReload(t *testing.T) {
 		"first.service": "[Service]\nExecStart=C:\\Tools\\first.exe\n",
 		"later.service": "[Unit]\nAfter=first.service\n[Service]\nExecStart=C:\\Tools\\old.exe\n",
 	})
+	initial, err := m.Status("later.service")
+	if err != nil || initial.Unit.ConfigRevision == "" {
+		t.Fatal("missing accepted revision")
+	}
+	acceptedRevision := initial.Unit.ConfigRevision
 	var once sync.Once
 	release := func() { once.Do(launch.release) }
 	defer release()
@@ -46,6 +51,10 @@ func TestStartPlanRetainsDefinitionsAcrossReload(t *testing.T) {
 	if len(specs) != 2 || specs[1].Argv[0] != `C:\Tools\old.exe` {
 		t.Fatal("accepted graph used reloaded command")
 	}
+	status, err := m.Status("later.service")
+	if err != nil || status.Unit.ConfigRevision == acceptedRevision || status.Unit.InvocationConfigRevision != acceptedRevision {
+		t.Fatal("queued plan did not retain its captured revision identity")
+	}
 	if _, err := m.Stop("later"); err != nil {
 		t.Fatal(err)
 	}
@@ -55,6 +64,10 @@ func TestStartPlanRetainsDefinitionsAcrossReload(t *testing.T) {
 	specs = launch.specs()
 	if len(specs) != 3 || specs[2].Argv[0] != `C:\Tools\new.exe` {
 		t.Fatal("new plan did not use new command")
+	}
+	status, err = m.Status("later.service")
+	if err != nil || status.Unit.InvocationConfigRevision != status.Unit.ConfigRevision {
+		t.Fatal("new plan did not capture the current revision")
 	}
 }
 
