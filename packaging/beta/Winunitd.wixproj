@@ -1,0 +1,11 @@
+<Project Sdk="WixToolset.Sdk/7.0.0">
+	<PropertyGroup>
+		<OutputType>Package</OutputType>
+		<InstallerPlatform>x64</InstallerPlatform>
+		<PackageVersion Condition="'$(PackageVersion)' == ''">0.2.0</PackageVersion>
+		<IntermediateOutputPath>obj\$(PackageVersion)\</IntermediateOutputPath>
+		<DefineConstants>PackageVersion=$(PackageVersion);Payload=$(MSBuildThisFileDirectory)..\..\dist\beta\payload;Repo=$(MSBuildThisFileDirectory)..\..</DefineConstants>
+		<OutputPath>..\..\dist\beta\$(PackageVersion)\</OutputPath>
+		<OutputName>winunitd-$(PackageVersion)-x64-beta</OutputName>
+	</PropertyGroup>
+</Project>

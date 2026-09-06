@@ -1,0 +1,53 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+	<Package Name="winunitd beta" Manufacturer="PLN" Version="$(PackageVersion)"
+		UpgradeCode="9443AE50-251B-4A46-9465-B835A3A27133" Scope="perMachine" InstallerVersion="500">
+		<MajorUpgrade DowngradeErrorMessage="A newer winunitd package is installed." Schedule="afterInstallExecute" />
+		<MediaTemplate EmbedCab="yes" />
+		<Property Id="WINUNITD_TEST_FAIL" Secure="yes" />
+		<Property Id="ARPNOMODIFY" Value="1" />
+		<StandardDirectory Id="ProgramFiles64Folder">
+			<Directory Id="INSTALLFOLDER" Name="winunitd">
+				<Component Id="Daemon" Guid="D385CB53-6D94-4209-A198-E4835B5FA84F">
+					<CreateFolder><PermissionEx Sddl="O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)" /></CreateFolder>
+					<File Id="DaemonExe" Source="$(Payload)\winunitd.exe" KeyPath="yes" />
+					<ServiceInstall Id="InstallDaemon" Name="winunitd" DisplayName="WinUnit Manager"
+						Description="Declarative Windows process supervisor (beta)" Type="ownProcess" Start="auto" ErrorControl="normal"
+						Arguments="--base-dir &quot;[DATADIR].&quot;" Vital="yes" />
+					<ServiceControl Id="ControlDaemon" Name="winunitd" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+				</Component>
+				<Component Id="Control" Guid="5AF0FE85-785D-46A1-A0E7-D1907D8D353A"><File Source="$(Payload)\winctl.exe" KeyPath="yes" /></Component>
+				<Component Id="Notify" Guid="649F33A5-E585-4560-BBAA-B486DB606E23"><File Source="$(Payload)\winunit-notify.exe" KeyPath="yes" /></Component>
+				<Component Id="License" Guid="EA7B9F3C-0E33-4BD2-A8D0-782159D5F6FB"><File Source="$(Repo)\LICENSE" KeyPath="yes" /></Component>
+				<Component Id="Notices" Guid="7F144C26-9631-4F97-B127-44E5762F63C1"><File Source="$(Payload)\THIRD-PARTY-NOTICES.txt" KeyPath="yes" /></Component>
+				<Component Id="Instructions" Guid="782A70A9-327F-46E6-B67C-864A25C7D2B0"><File Source="$(Repo)\packaging\beta\INSTALL.md" KeyPath="yes" /></Component>
+				<Component Id="UnitReference" Guid="74405B70-CE48-436B-AF67-9394C955210C"><File Source="$(Repo)\docs\UNIT-REFERENCE.md" KeyPath="yes" /></Component>
+				<Directory Id="EXAMPLES" Name="examples">
+					<Component Id="WorkerService" Guid="DCFEA53D-6399-4182-AC77-9566094E7846"><File Source="$(Repo)\examples\beta\worker.service" KeyPath="yes" /></Component>
+					<Component Id="WorkerTarget" Guid="1C0CB7C4-E01B-4366-B6A8-9312A3E99CB7"><File Source="$(Repo)\examples\beta\worker.target" KeyPath="yes" /></Component>
+					<Component Id="ExampleInstructions" Guid="9F07B1EE-FCB6-447D-8841-A7689471D079"><File Source="$(Repo)\examples\beta\README.md" KeyPath="yes" /></Component>
+				</Directory>
+			</Directory>
+		</StandardDirectory>
+		<StandardDirectory Id="CommonAppDataFolder">
+			<Directory Id="DATADIR" Name="winunitd">
+				<Component Id="RetainedData" Guid="8D986F89-7B3A-46CF-99B0-C47ED7A70ED5" Permanent="yes">
+					<CreateFolder><PermissionEx Sddl="O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" /></CreateFolder>
+				</Component>
+			</Directory>
+		</StandardDirectory>
+		<Feature Id="Main">
+			<ComponentRef Id="Daemon" /><ComponentRef Id="Control" /><ComponentRef Id="Notify" />
+			<ComponentRef Id="License" /><ComponentRef Id="Notices" /><ComponentRef Id="Instructions" />
+			<ComponentRef Id="UnitReference" /><ComponentRef Id="RetainedData" />
+			<ComponentRef Id="WorkerService" /><ComponentRef Id="WorkerTarget" /><ComponentRef Id="ExampleInstructions" />
+		</Feature>
+		<Binary Id="Preflight" SourceFile="$(Payload)\msi-check.exe" />
+		<CustomAction Id="CheckStopped" BinaryRef="Preflight" ExeCommand="check &quot;[INSTALLFOLDER].&quot; &quot;[DATADIR].&quot; &quot;[Installed][WIX_UPGRADE_DETECTED]&quot;"
+			Execute="deferred" Impersonate="no" Return="check" />
+		<CustomAction Id="TestFailure" BinaryRef="Preflight" ExeCommand="fail" Execute="deferred" Impersonate="no" Return="check" />
+		<InstallExecuteSequence>
+			<Custom Action="CheckStopped" Before="StopServices" Condition="NOT UPGRADINGPRODUCTCODE" />
+			<Custom Action="TestFailure" After="RemoveExistingProducts" Condition="WINUNITD_TEST_FAIL = &quot;1&quot; AND NOT REMOVE" />
+		</InstallExecuteSequence>
+	</Package>
+</Wix>

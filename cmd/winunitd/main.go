@@ -70,7 +70,7 @@ Flags:
                          %LOCALAPPDATA%\winunitd (user manager)
   --user-manager SID     Run as the per-user manager for SID (not an SCM service)
   -h, --help             Show this help
-  --version              Print 0.1.0-alpha and exit
+  --version              Print the binary version and exit
 `
 
 func main() {

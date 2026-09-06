@@ -18,6 +18,14 @@ Go can download the selected toolchain through its normal verified module mechan
 
 `tools/build` runs on Windows or Linux and defaults to Windows/amd64 output under `dist/`. Use `-goos` and `-goarch` to select another compilation target; compilation alone does not qualify it. The command builds all three executables with CGO disabled and source paths trimmed. It fixes the baseline architecture level and clears ambient build flags/experiments for child builds. Race tests still require the host C compiler; no C compiler is needed for the production binaries.
 
+Use `-version 0.2.0-beta` for a release candidate. The build records that version
+in the manifest and links it into the daemon/CLI version output. The beta MSI
+entry point is `./packaging/beta/build.ps1 -PackageVersion 0.2.0`; it requires
+clean source unless `-AllowDirty` is explicitly supplied for development. It uses
+the already approved WiX 7.0.0/.NET 10.0.400 build tooling. Keep `.wixpdb`, SDK
+intermediates, and build logs private. Package qualification is still required;
+a successful MSI build alone is not a release.
+
 `dist/build-manifest.json` records the compiler, target, source revision, dirty state, module-file hashes, and each binary's SHA256/size. It contains no operator identity, hostname, absolute checkout path, or environment dump. Go's embedded module/build information provides dependency versions and sums (`go version -m`). A failed build leaves no successful manifest for that attempt. Dirty builds are allowed for development and visibly marked; they must not be promoted as release artifacts. Build from a clean checkout and do not modify sources during a qualification build.
 
 CI retains native Windows artifacts and the Linux-to-Windows build manifest for 14 days. These are unsigned CI artifacts, not installation releases or provenance attestations. Compare artifact hashes with the manifest before deploying to a test guest. Pinning the Go compiler and actions does not freeze hosted runner images or the race-test C compiler; record the actual platform when interpreting results.

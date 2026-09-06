@@ -53,7 +53,7 @@ disable-linger always use the system pipe.
 Flags:
   --user          Talk to the per-user manager (current user SID)
   -h, --help      Show this help
-  --version       Print 0.1.0-alpha and exit
+  --version       Print the binary version and exit
 `
 
 const statusUsage = `winctl status — show machine or unit status

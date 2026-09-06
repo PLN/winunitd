@@ -11,8 +11,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
+
+	"github.com/PLN/winunitd/internal/version"
 )
 
 type artifact struct {
@@ -22,6 +25,7 @@ type artifact struct {
 }
 
 type manifest struct {
+	Version        string     `json:"version"`
 	Schema         int        `json:"schema"`
 	Commit         string     `json:"commit"`
 	Dirty          bool       `json:"dirty"`
@@ -46,7 +50,11 @@ func run() error {
 	out := flag.String("out", "dist", "output directory")
 	goos := flag.String("goos", "windows", "target OS")
 	arch := flag.String("goarch", "amd64", "target architecture")
+	releaseVersion := flag.String("version", version.Version, "binary release version")
 	flag.Parse()
+	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$`).MatchString(*releaseVersion) {
+		return fmt.Errorf("invalid release version")
+	}
 	if flag.NArg() != 0 {
 		return fmt.Errorf("unexpected arguments")
 	}
@@ -91,7 +99,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	m := manifest{Schema: 2, ThirdPartyHash: thirdPartyHash, Commit: commit, Dirty: status != "", Go: want,
+	m := manifest{Schema: 2, Version: *releaseVersion, ThirdPartyHash: thirdPartyHash, Commit: commit, Dirty: status != "", Go: want,
 		GOOS: *goos, GOARCH: *arch, GoModHash: modHash, GoSumHash: sumHash}
 	for _, name := range []string{"winunitd", "winctl", "winunit-notify"} {
 		file := name
@@ -99,7 +107,7 @@ func run() error {
 			file += ".exe"
 		}
 		path := filepath.Join(*out, file)
-		cmd := exec.Command(goexe, "build", "-trimpath", "-buildvcs=true", "-o", path, "./cmd/"+name)
+		cmd := exec.Command(goexe, "build", "-trimpath", "-buildvcs=true", "-ldflags", "-X github.com/PLN/winunitd/internal/version.Version="+*releaseVersion, "-o", path, "./cmd/"+name)
 		cmd.Env = buildEnv(os.Environ(), *goos, *arch)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		if err := cmd.Run(); err != nil {

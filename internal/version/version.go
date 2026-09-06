@@ -5,4 +5,5 @@
 package version
 
 // Version is printed by winctl --version and winunitd --version.
-const Version = "0.1.0-alpha"
+// Release builds set this with the Go linker's -X flag.
+var Version = "0.1.0-alpha"
