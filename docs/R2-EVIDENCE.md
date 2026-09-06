@@ -465,6 +465,22 @@ shutdown are not transaction-history entries. History does not survive manager
 restart; operation contexts, aggregate deadlines, and the remaining lifecycle
 coordinator are still pending.
 
+## Compatible start coalescing
+
+Concurrent explicit starts now join an admitted start when their unit record,
+accepted revision, and stop epoch match. They share the operation ID and outcome
+without consuming a second transaction slot. Joined callers receive separate
+reply copies; cancelling a joined wait leaves the original operation running and
+returns its ID for query. New revisions, intervening stops, trigger activations,
+and explicit restarts do not join incompatible work.
+
+A blocked native start with a one-transaction limit previously rejected a second
+compatible request for capacity exhaustion. It now joins. Twenty race repetitions
+cover cancellation of that wait, shared successful outcomes without mutable reply
+aliasing, and rejecting a new revision or intervening stop from joining an old
+start. The full repository race suite and vet pass. The original
+caller's operation context and control-connection bounds remain separate work.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

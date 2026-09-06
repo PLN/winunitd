@@ -6,6 +6,14 @@ the ID; admitted failures include it in the RPC error and CLI diagnostic.
 Participating units expose `LastOperationID` in status. Rejected requests do not
 create an operation or change that field.
 
+Concurrent explicit starts of the same unit share an admitted operation when
+the runtime record, accepted configuration revision, and stop epoch still match.
+A joined caller receives the same ID and its own reply copy. Cancelling that
+caller's wait returns the ID for later queries and does not cancel the original
+operation. A new revision or intervening stop prevents joining; trigger starts
+and explicit restarts keep separate semantics. Joining does not consume another
+start-transaction slot, though control-connection limits remain separate work.
+
 ```powershell
 winctl restart app.target
 winctl status app.target

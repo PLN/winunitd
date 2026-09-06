@@ -74,6 +74,8 @@ Start/stop/restart transactions now expose queryable IDs and bounded history,
 including after client disconnect. Explicit stops have independent bounded
 admission; shutdown bypasses it. History persistence and internal operation
 contexts/deadlines remain open; see [operation history](OPERATIONS.md).
+Compatible concurrent explicit starts share one admitted operation and outcome;
+joined wait cancellation does not cancel the original operation.
 
 Exit gate: each invariant in Design v2 §3 has a test/evidence mapping. Start/stop/restart/reload/exit/timeout/trigger permutations, late successful launches, stale probes, overload, client disconnect, and shutdown during launch preserve ownership and ordering. A source audit finds no second lifecycle authority. Independent units still perform I/O concurrently.
 

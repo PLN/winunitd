@@ -43,6 +43,7 @@ type Manager struct {
 	operationSequence    uint64
 	operations           map[string]*protocol.OperationResult
 	completedOperations  []string
+	startFlights         map[string]*startFlight
 	capacityWaiters      int
 	startCapacityChanged chan struct{}
 	scm                  runtime.SCM
@@ -523,6 +524,12 @@ func (m *Manager) startOperation(ctx context.Context, name string, origin activa
 		m.mu.Unlock()
 		return nil, protocol.ErrFailed("no units loaded")
 	}
+	if origin == nil && !restart {
+		if flight := m.startFlights[name]; flight != nil && flight.record == m.units[name] && flight.stopEpoch == flight.record.stopEpoch && flight.revision == m.configRevision {
+			m.mu.Unlock()
+			return flight.wait(ctx)
+		}
+	}
 	limit := m.cfg.MaxStartTransactions
 	if limit == 0 {
 		limit = DefaultMaxStartTransactions
@@ -584,7 +591,18 @@ func (m *Manager) startOperation(ctx context.Context, name string, origin activa
 		members = append(members, stopPlan.Units()...)
 	}
 	operationID := m.beginOperationLocked(name, action, origin, members)
-	defer func() { result, resultErr = m.finishOperation(operationID, result, resultErr) }()
+	var flight *startFlight
+	if origin == nil && !restart {
+		flight = &startFlight{id: operationID, record: m.units[name], stopEpoch: m.units[name].stopEpoch, revision: m.configRevision, done: make(chan struct{})}
+		if m.startFlights == nil {
+			m.startFlights = make(map[string]*startFlight)
+		}
+		m.startFlights[name] = flight
+	}
+	defer func() {
+		result, resultErr = m.finishOperation(operationID, result, resultErr)
+		m.finishStartFlight(name, flight, result, resultErr)
+	}()
 	m.mu.Unlock()
 	defer func() {
 		m.mu.Lock()
