@@ -341,6 +341,30 @@ suite and vet pass. Blocking cleanup still runs outside the lifecycle decision;
 this is an initial typed completion path, not migration of every state writer
 or a completed coordinator/event-admission design.
 
+## Reload and recovery build qualification
+
+Source `a6d7253289efb22f1ba56bd525e4eb6db2336a52`, GitHub CI run
+`34042191013`, passed on a disconnected disposable Windows 11 Enterprise LTSC
+Evaluation guest, build `26100.9168`, running as SYSTEM. Native Windows and Linux
+cross-build manifests matched, and all four artifact hashes were verified.
+The controller service/reboot smoke, runtime output/reload/notify checks, and
+32-start admission scenario passed again against this exact build.
+
+The new configuration scenario also passed through the real control pipe:
+an invalid candidate accepted neither its changed definition nor its new unit;
+a subsequent valid reload retained the live invocation's original revision;
+an explicit fresh start adopted and executed the new revision; removing the
+live definition preserved status and stop access while rejecting new starts.
+SCM stop left no fixture children. Configuration fixture SHA-256:
+`01e1109df77bcc793f987b76f3ff9c99d4051cae7391547fb7983d2c7d0016d2`.
+
+All three post-smoke scenarios ran through the controller's `checks` command,
+which admitted exact source/fixture identities and complete assertion sets and
+collected private evidence. Guarded retirement verified guest and disk removal.
+Baseline cloning and inherited-fixture preparation were supervised. These checks
+do not qualify later commits, MSI servicing, or the broader identity/session
+matrix; deterministic recovery interleavings remain covered by package tests.
+
 ## Control-server lifetime
 
 A listener-failure regression reproduced an accepted handler remaining active

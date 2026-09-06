@@ -193,3 +193,30 @@ guest after service smoke. It requires the isolated lab service and a fresh
 fixture namespace, verifies artifact hashes and SYSTEM identity, and stops the
 service with child-survival checks on completion or failure. Collect its result
 JSON and transcript into private evidence before retiring the guest.
+
+## Controller-driven follow-up checks
+
+After a successful `smoke`, run each scenario sequentially against the same
+owned guest and admitted artifact directory:
+
+```powershell
+go run ./tools/lab -config PRIVATE_FILE -vmid TEST_ID -artifacts ARTIFACT_DIR -commit FULL_COMMIT -scenario runtime checks
+go run ./tools/lab -config PRIVATE_FILE -vmid TEST_ID -artifacts ARTIFACT_DIR -commit FULL_COMMIT -scenario admission checks
+go run ./tools/lab -config PRIVATE_FILE -vmid TEST_ID -artifacts ARTIFACT_DIR -commit FULL_COMMIT -scenario configuration checks
+```
+
+The controller requires a matching completed smoke record, disconnected routing,
+SYSTEM identity, and a stopped isolated service. It validates the local artifact
+set and the installed manifest before uploading an embedded fixture. Each
+scenario requires a fresh namespace; reruns need a fresh guest. Configuration
+checks exercise atomic reload rejection, captured invocation revisions, fresh
+start adoption, and stop access after removing a live definition.
+
+Results must match the source commit, exact fixture hash, SYSTEM identity,
+Windows build format, completion timestamp, and complete assertion set. Console
+output, result JSON, and transcripts stay in the private controller state
+directory. Collection is attempted after a scenario failure as well. A ten-minute
+controller deadline bounds waiting; it does not forcibly terminate a guest
+command. Inspect failure evidence and retire the disposable guest before retrying.
+These commands automate post-smoke execution and collection, not baseline cloning
+or the complete release qualification matrix.

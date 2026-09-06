@@ -51,8 +51,9 @@ exit/watchdog cleanup, and automatic recovery retain the captured ownership.
 Explicit starts may adopt a new native target only after successful cleanup of
 the old one. [Initial R2 evidence](R2-EVIDENCE.md) covers retargeting, service-type
 changes, reload during native launch, failed cleanup retries, and automatic
-process recovery. Versioned configuration/graph acceptance, revision IDs,
-immutable status snapshots, and coordinator migration remain open. Start plans
+process recovery. Atomic configuration/graph acceptance and captured revision
+IDs are implemented; immutable status snapshots and coordinator migration remain
+open. Start plans
 also capture their member definitions with the graph, retain pending records,
 and reject launches/results invalidated by a later stop request. Watches and
 timers retain their armed definitions and source identities; queued trigger
