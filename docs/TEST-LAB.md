@@ -181,3 +181,15 @@ The guest is retained powered off, with host autostart disabled, for follow-up w
 The exact `40ce624` GitHub Windows artifact passed SYSTEM service installation, reboot recovery, SCM stop, and additional output/reload/notify regressions on a disposable copy of the maintained Enterprise LTSC Evaluation baseline. See [R1 qualification evidence](R1-EVIDENCE.md#offline-ltsc-system-qualification) for source and fixture identities, results, and limits. Baseline copying and cleanup preparation were supervised; this does not establish generalized-image or unattended clone provisioning.
 
 The smoke fixture now supplies its own PowerShell execution-policy argument. Failed or truncated guest commands save stdout, stderr, exit/signal status, and command hash in the private controller state directory; console errors do not include guest output or the command body. Both boolean and integer truncation flags are handled, including stderr truncation. This preserves actionable diagnostics without publishing guest data.
+
+## R2 admission qualification
+
+The exact `984fbc9` CI artifacts passed offline LTSC SYSTEM service/reboot smoke,
+the existing runtime checks, and a real-daemon 32-start saturation/stop/recovery
+scenario. See [R2 evidence](R2-EVIDENCE.md#offline-ltsc-daemon-qualification) for
+artifact and fixture identities, assertions, and limits. Run
+`tools/lab/assets/admission-checks.ps1 -DisposableLab` only inside the disposable
+guest after service smoke. It requires the isolated lab service and a fresh
+fixture namespace, verifies artifact hashes and SYSTEM identity, and stops the
+service with child-survival checks on completion or failure. Collect its result
+JSON and transcript into private evidence before retiring the guest.

@@ -203,12 +203,46 @@ intent are R5 work. RPC connection counts, stop request admission, automatic rec
 worker totals, configured watch counts, and graph/result memory remain separate
 bounds. This is not closure of R2.3 or the coordinator milestone.
 
+## Offline LTSC daemon qualification
+
+The clean `984fbc95e2d2b2f6ea6aceed572947d0071136eb` Windows artifacts from
+[CI run 34039331915](https://github.com/PLN/winunitd/actions/runs/34039331915)
+passed SYSTEM qualification on a disposable Windows 11 Enterprise LTSC Evaluation
+baseline copy, build 26100.9168, with four vCPUs and 8 GiB RAM. Native Windows
+and Linux cross-build manifests match exactly; all four artifact hashes were
+verified before transfer and by the guest. Maintenance routing was disconnected.
+
+The controller-driven service install, enabled workload reboot recovery, new
+invocation identity, single session-0 child, and SCM stop checks passed. The
+additional [admission fixture](../tools/lab/assets/admission-checks.ps1) held 32
+real oneshot starts pending through separate named-pipe clients. A 33rd start
+was explicitly rejected before child creation. Stopping one pending unit worked
+while admission was full; a fresh start reused that slot while the other 31
+remained pending. Releasing the fixture completed all remaining accepted starts,
+and SCM stop left no fixture children.
+
+The admission fixture SHA256 is
+`72371ba1dc9949549a6f2cbb73a37e0612746305b34c520bbf86abe5bd1f6ee7`.
+The existing runtime fixture also passed all 5,000 stdout and 5,000 stderr records,
+131,073 bytes of unterminated output, live reload deletion/status/log/stop/recreation,
+and ten notify-ready/stop/reopen cycles. Its SHA256 is
+`7faf7efe78ee0b73e954492492e8a4f2cd5cef9461dbb607c486594983d6f153`.
+Raw logs and ownership mappings remain in the private operator workspace.
+
+These are real daemon checks of the default admission budget and retained runtime
+behavior. They do not qualify persistent timer recovery, total memory bounds,
+interactive users, MSI servicing, or the full supported-platform matrix. Baseline
+cloning and fixture preparation were supervised; this is not generalized-image
+provisioning evidence.
+
 ## Limits
 
-This is the first R2.1 ownership slice, not the completed v2 coordinator. It does
-not add revision identifiers, atomic candidate/graph acceptance, immutable
-status snapshots, bounded operation admission, or typed completion events.
+These are incremental R2 ownership and admission slices, not the completed v2
+coordinator. They do not add revision identifiers, atomic candidate/graph
+acceptance, immutable status snapshots, admission bounds for every operation
+class, or typed completion events.
 Existing generation
 checks and lifecycle writers remain in place; the full interleaving matrix and
-source audit are still required. These adapter tests do not qualify real SCM or
-Task Scheduler behavior, the supported Windows matrix, or MSI maintenance.
+source audit are still required. The isolated adapter tests and LTSC daemon checks
+do not complete SCM/Task Scheduler proxy qualification, the supported Windows
+matrix, or MSI maintenance.
