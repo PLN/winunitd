@@ -54,7 +54,10 @@ changes, reload during native launch, failed cleanup retries, and automatic
 process recovery. Versioned configuration/graph acceptance, revision IDs,
 immutable status snapshots, and coordinator migration remain open. Start plans
 also capture their member definitions with the graph, retain pending records,
-and reject launches/results invalidated by a later stop request.
+and reject launches/results invalidated by a later stop request. Watches and
+timers retain their armed definitions and source identities; queued trigger
+starts and late results cannot cross stop/rearm. Triggered service starts share
+the restart budget. Global admission bounds and the coordinator remain pending.
 
 Exit gate: each invariant in Design v2 §3 has a test/evidence mapping. Start/stop/restart/reload/exit/timeout/trigger permutations, late successful launches, stale probes, overload, client disconnect, and shutdown during launch preserve ownership and ordering. A source audit finds no second lifecycle authority. Independent units still perform I/O concurrently.
 

@@ -101,6 +101,16 @@ func (m *Manager) launchUnitConfigOp(ctx context.Context, name string, autoResta
 	if planned != nil {
 		planned.launched = true
 	}
+	triggered := planned != nil && planned.origin != nil
+	if triggered {
+		interval, burst := startLimitOf(definition)
+		if core.StartLimitHit(rt.startTimes, m.now(), interval, burst) {
+			rt.cancelRestart()
+			m.failStartLimitLocked(rt)
+			m.mu.Unlock()
+			return errors.New(core.ReasonStartLimit)
+		}
+	}
 	rt.operations++
 	defer func(record *unitRuntime) {
 		m.mu.Lock()
@@ -111,7 +121,9 @@ func (m *Manager) launchUnitConfigOp(ctx context.Context, name string, autoResta
 		rt.stopping = false
 		rt.gen++
 		rt.cancelRestart()
-		rt.startTimes = nil
+		if !triggered {
+			rt.startTimes = nil
+		}
 	} else if m.startLimitHitLocked(rt) {
 		m.failStartLimitLocked(rt)
 		m.mu.Unlock()

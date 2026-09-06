@@ -221,3 +221,57 @@ func assertReason(t *testing.T, m *Manager, name, want string) {
 		t.Fatalf("reason = %q error=%q state=%s, want %s", st.Unit.Reason, st.Unit.Error, st.Unit.ActiveState, want)
 	}
 }
+
+func TestTriggersShareActivationBudget(t *testing.T) {
+	launch := &scriptedLauncher{exitAll: intPtr(2), holdAutoExit: true}
+	hub := newFakePathHub()
+	m, clock := managerWithFake(t, launch, map[string]string{
+		"work.service": "[Unit]\nStartLimitIntervalSec=10s\nStartLimitBurst=2\n[Service]\nExecStart=C:\\Tools\\work.exe\nRestart=no\n",
+		"work.path":    "[Path]\nPathChanged=C:\\Data\\incoming\n",
+		"work.timer":   "[Timer]\nOnStartupSec=1h\n",
+	})
+	m.pathOpen = hub.Open
+	for _, name := range []string{"work.path", "work.timer"} {
+		if _, err := m.Start(context.Background(), name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.mu.Lock()
+	watch := m.units["work.path"].hub
+	u := m.units["work.timer"].unit
+	event := timers.Fire{Name: u.Name, Unit: u.Timer.Unit, Token: m.engine.Arm(timerSpec(u))}
+	m.mu.Unlock()
+	path := func() { m.onPathChanged("work.path", watch) }
+	timer := func() { m.onTimerElapsed(event) }
+	complete := func(fire func(), want int) {
+		t.Helper()
+		fire()
+		if launch.nstarts() != want {
+			t.Fatalf("starts = %d, want %d", launch.nstarts(), want)
+		}
+		waitState(t, m, "work.service", core.Active)
+		launch.releaseExits()
+		waitState(t, m, "work.service", core.Failed)
+	}
+	complete(path, 1)
+	complete(timer, 2)
+	path()
+	if launch.nstarts() != 2 {
+		t.Fatal("watch reset the timer's activation budget")
+	}
+	assertReason(t, m, "work.service", core.ReasonStartLimit)
+	clock.Advance(11 * time.Second)
+	complete(timer, 3)
+	complete(path, 4)
+	timer()
+	if launch.nstarts() != 4 {
+		t.Fatal("timer reset the watch's activation budget")
+	}
+	assertReason(t, m, "work.service", core.ReasonStartLimit)
+	if _, err := m.Start(context.Background(), "work.service"); err != nil {
+		t.Fatal(err)
+	}
+	if launch.nstarts() != 5 {
+		t.Fatal("explicit operator start did not reset the budget")
+	}
+}

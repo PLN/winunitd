@@ -212,7 +212,10 @@ func (m *Manager) syncHubsLocked() {
 		}
 		switch rt.unit.Kind {
 		case unit.KindRegistry, unit.KindEventLog, unit.KindPath:
-			if rt.state == core.Active && !rt.unavailable {
+			// The adapter may have installed its handles before the start
+			// transaction publishes Active. Keep that exact owned generation.
+			publishing := rt.operations > 0 && rt.hub != nil && rt.hub.gen == rt.gen && !rt.stopping && !rt.stopUncertain
+			if (rt.state == core.Active || publishing) && !rt.unavailable {
 				keep[name] = true
 			}
 		}

@@ -186,3 +186,46 @@ func TestStoppedWatchPreservesAlreadyLaunchedCompanion(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestReloadPreservesWatchBeforeStartPublication(t *testing.T) {
+	launch := &fakeLauncher{}
+	hub := newFakePathHub()
+	m := managerWithPath(t, launch, hub.Open, map[string]string{
+		"input.path":    "[Path]\nPathChanged=C:\\Data\\incoming\n",
+		"input.service": "[Service]\nExecStart=C:\\Tools\\input.exe\n",
+	})
+	// Drive adapter completion separately from the start transaction's publication.
+	// The transaction still retains the record in this real unlocked interval.
+	m.mu.Lock()
+	rt := m.units["input.path"]
+	rt.operations++
+	m.mu.Unlock()
+	defer func() { m.mu.Lock(); rt.operations--; m.mu.Unlock() }()
+	if err := m.launchUnit(context.Background(), "input.path", false); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	original := rt.hub
+	m.mu.Unlock()
+	if original == nil {
+		t.Fatal("adapter did not install watch")
+	}
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	retained := rt.hub == original && !rt.stopUncertain
+	m.mu.Unlock()
+	if !retained {
+		t.Fatal("valid reload disposed a watch before start publication")
+	}
+	if _, err := m.Stop("input.path"); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	remaining := rt.hub
+	m.mu.Unlock()
+	if remaining != nil {
+		t.Fatal("explicit stop retained watch")
+	}
+}

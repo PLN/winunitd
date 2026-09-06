@@ -26,17 +26,20 @@ func TestQueryCancellationRetainsBoundedScanWorkers(t *testing.T) {
 		go func() { _, _, _, err := s.QueryPageContext(ctx, name, time.Time{}, "original", 1024); finished <- err }()
 		select {
 		case <-entered:
-		case <-time.After(time.Second):
+		case <-time.After(10 * time.Second):
 			cancel()
 			t.Fatal("scan did not start")
 		}
 		// Cancel only after admission so scheduling delay cannot skip the scan.
 		cancel()
-		if err := <-finished; !errors.Is(err, context.Canceled) {
-			cancel()
-			t.Fatalf("query cancellation: %v", err)
+		select {
+		case err := <-finished:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("query cancellation: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("canceled query did not return while its scan was blocked")
 		}
-		cancel()
 	}
 	if _, cursor, _, err := s.QueryPageContext(context.Background(), name, time.Time{}, "original", 1024); !errors.Is(err, ErrQueryBusy) || cursor != "original" {
 		t.Fatalf("overload was not rejected with unchanged cursor: %q %v", cursor, err)

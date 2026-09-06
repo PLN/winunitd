@@ -137,6 +137,25 @@ pass twenty race repetitions, including a controlled callback completion after
 replacement and reload across two different relative timer schedules. The full
 repository race suite and vet also pass after this callback-ownership slice.
 
+## Trigger admission and publication
+
+A valid reload could dispose a watch after the adapter installed it but before
+its start transaction published Active. A controlled adapter/publication gap
+reproduces the failure. Reload now retains the matching watch generation while
+its lifecycle operation is in flight; explicit stop still closes it. The
+regression and unavailable-trigger checks pass twenty race repetitions.
+
+Alternating timer and path activations previously reset a service's start budget,
+allowing a burst to bypass StartLimitBurst. Trigger-originated plans now retain
+and enforce the shared service budget before launch; ordinary operator starts
+keep the alpha reset behavior. A mixed-source regression exercises both orders,
+window expiry, and operator reset, alongside the existing automatic-recovery
+limit tests. The focused set passes twenty race repetitions. This bounds launch
+attempts, not callback goroutines or overall operation admission; those remain
+R2.3 work. The full repository race suite and vet pass. The journal cancellation
+regression now allows ten seconds for scan admission under host contention and
+separately bounds cancellation response while that scan remains blocked.
+
 ## Limits
 
 This is the first R2.1 ownership slice, not the completed v2 coordinator. It does

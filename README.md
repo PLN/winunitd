@@ -120,7 +120,7 @@ Path vs unit name: a name with no `/`, `\`, or drive prefix is always a unit nam
 
 `Restart=` supports `no` / `always` / `on-failure` / `on-watchdog`.
 
-`[Unit]` `StartLimitIntervalSec=` / `StartLimitBurst=` default to 10s / 5. `StartLimitBurst=0` is unlimited. Burst starts inside the interval fail with reason `start-limit`. Explicit `winctl start` resets the limit.
+`[Unit]` `StartLimitIntervalSec=` / `StartLimitBurst=` default to 10s / 5. `StartLimitBurst=0` is unlimited. Burst starts inside the interval fail with reason `start-limit`. Timer/watch activations and automatic recovery share this budget; a redundant activation of an already-running process does not consume another start. Explicit `winctl start` resets the limit.
 
 `RestartMaxDelaySec=` and `RestartBackoff=` are not parsed.
 
