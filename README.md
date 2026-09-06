@@ -7,7 +7,10 @@ The immediate target is a usable [public beta](docs/BETA-RELEASE.md), with the
 The [roadmap](ROADMAP.md), [Design v2](DESIGN.md), and [implementation milestones](docs/MILESTONES.md)
 retain the longer-term work. License and copyright notice: [MIT](LICENSE).
 
-The [MSI installer plan](docs/MSI-INSTALLER-PLAN.md) covers packaging, service readiness, upgrades, rollback, signing, and migration from existing installations. No MSI is shipped yet.
+The unsigned **0.2.1-beta MSI candidate** has passed focused installation and
+deployment checks; publication is pending. See [release notes](docs/RELEASE-NOTES-0.2.1-beta.md),
+[qualification](docs/BETA-QUALIFICATION.md), and [installation/recovery](packaging/beta/INSTALL.md).
+The [MSI installer plan](docs/MSI-INSTALLER-PLAN.md) retains the broader packaging and signing work.
 
 Use the [pinned build and maintenance workflow](docs/BUILDING.md) for qualification artifacts and their source/hash manifests.
 
@@ -27,7 +30,8 @@ Windows is the first-class target (`GOOS=windows`).
 
 ## Status
 
-**0.1.0-alpha** (`winctl --version` / `winunitd --version`).
+The packaged candidate reports **0.2.1-beta**. Unstamped development builds
+retain the **0.1.0-alpha** fallback; use the build manifest for exact provenance.
 
 Implemented today: unit loader, dependency graph and start transactions, JSON-RPC control API, SCM host, Job Objects, restart policies, enable/targets at boot, journal, internal timers, ordered stop, per-user managers and lingering, `Type=notify` / watchdog, `Type=scm` and `Type=scheduled-task` proxies, Job Object resource limits, and `.registry` / `.eventlog` / `.path` companions. Details below.
 
@@ -36,7 +40,8 @@ Implemented today: unit loader, dependency graph and start transactions, JSON-RP
 ## Build
 
 Qualification builds use the Go version pinned in [.go-version](.go-version).
-No product MSI is shipped yet.
+Build the candidate with `./packaging/beta/build.ps1 -PackageVersion 0.2.1` from
+clean source. See [BUILDING.md](docs/BUILDING.md) for the pinned MSI toolchain.
 
 ```text
 go test ./...

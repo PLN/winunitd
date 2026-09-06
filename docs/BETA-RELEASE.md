@@ -29,12 +29,12 @@ explicit version/migration boundary. Additive directives remain possible.
   are in-tree. Existing parser/argv/default/list/unknown-directive regressions,
   shipped-example parsing, the full local race suite, and vet pass. JSON null
   arguments now fail verification instead of silently becoming empty strings.
-- [ ] **B2 Installable candidate:** produce a versioned MSI containing the three
+- [x] **B2 Installable candidate:** produce a versioned MSI containing the three
   binaries, licenses, and usage instructions. Test fresh install, ordinary repair,
   upgrade, uninstall with retained data, and a failed upgrade/recovery path in
   disposable Enterprise/LTSC guests. Do not replace files while ownership is
   unresolved. Manual pre-stop is acceptable for this beta if enforced and documented.
-- [ ] **B3 Useful deployment:** verify start/stop/restart, logs, configuration
+- [x] **B3 Useful deployment:** verify start/stop/restart, logs, configuration
   reload, workload crash recovery, daemon restart, and reboot using the packaged
   build. Exercise the Hermes maintenance path. Record limitations and a recovery
   procedure; an exhaustive identity/failure matrix and seven-day soak are deferred.
@@ -44,11 +44,12 @@ explicit version/migration boundary. Additive directives remain possible.
   provider enrollment proceeds separately; a clearly identified unsigned beta
   is acceptable if signing would otherwise hold up usable delivery.
 
-Current evidence: runtime/configuration/admission/operation scenarios pass in an
-isolated LTSC guest; Windows/Linux CI passes; the packaging spike passes its
-fixture matrix. These establish a foundation, not a tested product MSI. The
-history repair is complete for the identified documents and published branches;
-hosted references/artifacts still need review.
+The product MSI now passes its complete two-phase lifecycle fixture on Windows
+11 Enterprise LTSC build 26100.9168. The same packaged binaries also pass the
+existing interactive Hermes pilot's maintenance rehearsal and agent response
+check. See [beta qualification](BETA-QUALIFICATION.md) for exact source, package
+hashes, evidence boundaries, and the CI test-fixture correction. Hosted artifact
+review and the explicit publication action remain under B4.
 
 ## Release blockers and follow-up
 
@@ -63,5 +64,5 @@ full R7 soak. Keep limitations visible and avoid supporting scenarios whose know
 failures would make the beta misleading. Stop currently terminates the owned job;
 applications requiring a graceful shutdown hook are outside the core beta scope.
 
-Next work follows B1, then B2 and B3, then B4. Revisit broader architecture only
-when it fixes a concrete beta blocker or after the beta ships.
+Next work is B4. Revisit broader architecture only when it fixes a concrete beta
+blocker or after the beta ships.
