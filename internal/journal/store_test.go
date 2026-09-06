@@ -523,7 +523,13 @@ func TestFollowerOn10MiBDoesNotStallAppend(t *testing.T) {
 	s.append(Entry{Timestamp: old.Add(time.Hour), Unit: unit, Message: "tail"})
 	s.syncUnit(unit)
 
-	all, cur, err := s.Query(unit, time.Time{}, "")
+	// Decode the fixture outside the production query deadline: under -race,
+	// a busy runner can take over five seconds to seed this 10 MiB cursor.
+	// The timed follower/append assertions below still use the public Query.
+	seedCtx, cancelSeed := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelSeed()
+	all, cur, _, err := s.QueryPageContext(seedCtx, unit, time.Time{}, "", 0)
+	cancelSeed()
 	if err != nil || len(all) < 2 || cur == "" {
 		t.Fatalf("seed query = %d %q %v", len(all), cur, err)
 	}
