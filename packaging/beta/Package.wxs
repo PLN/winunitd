@@ -33,12 +33,16 @@
 				<Component Id="RetainedData" Guid="8D986F89-7B3A-46CF-99B0-C47ED7A70ED5" Permanent="yes">
 					<CreateFolder><PermissionEx Sddl="O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" /></CreateFolder>
 				</Component>
+				<Directory Id="UNITSDIR" Name="units">
+					<Component Id="RetainedUnits" Guid="CA729EC7-49D3-4816-A947-1C8C8DA4524A" Permanent="yes"><CreateFolder /></Component>
+				</Directory>
 			</Directory>
 		</StandardDirectory>
 		<Feature Id="Main">
 			<ComponentRef Id="Daemon" /><ComponentRef Id="Control" /><ComponentRef Id="Notify" />
 			<ComponentRef Id="License" /><ComponentRef Id="Notices" /><ComponentRef Id="Instructions" />
 			<ComponentRef Id="UnitReference" /><ComponentRef Id="RetainedData" />
+			<ComponentRef Id="RetainedUnits" />
 			<ComponentRef Id="WorkerService" /><ComponentRef Id="WorkerTarget" /><ComponentRef Id="ExampleInstructions" />
 		</Feature>
 		<Binary Id="Preflight" SourceFile="$(Payload)\msi-check.exe" />

@@ -89,7 +89,11 @@ try {
 			try { $afterCrash = Invocation } catch { $afterCrash = '' }
 			if ([datetime]::UtcNow -ge $deadline) { throw 'Workload recovery timeout' }
 		} while (!$afterCrash -or $afterCrash -eq $beforeCrash)
-		if ((Control 'logs worker.service') -notmatch 'worker is running') { throw 'Worker output missing' }
+		$deadline = [datetime]::UtcNow.AddSeconds(30)
+		while ((Control 'logs worker.service') -notmatch 'worker is running') {
+			if ([datetime]::UtcNow -ge $deadline) { throw 'Worker output missing' }
+			Start-Sleep 1
+		}
 		$unitHash = (Get-FileHash "$data\units\worker.service").Hash
 		Msi 'running-upgrade-rejected' '/i' '0.2.1' '' 1603
 		Verify-Payload '0.2.0'
