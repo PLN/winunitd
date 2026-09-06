@@ -335,16 +335,26 @@ func TestDaemonSelfCloseHelper(t *testing.T) {
 	original := job.handle
 	const protectFromClose = 0x2
 	var protected windows.Handle
+	var terminateHandle windows.Handle
 	switch fault {
 	case "query":
 		job.handle = windows.InvalidHandle
 	case "terminate", "captured-close":
-		access := uint32(windows.SYNCHRONIZE | windows.PROCESS_QUERY_LIMITED_INFORMATION)
-		if fault == "captured-close" {
-			access |= windows.PROCESS_TERMINATE
-		}
+		access := uint32(windows.SYNCHRONIZE | windows.PROCESS_QUERY_LIMITED_INFORMATION | windows.PROCESS_TERMINATE)
 		if err := job.exits.prepareExcept(original, access, os.Getpid()); err != nil {
 			t.Fatal(err)
+		}
+		if fault == "terminate" {
+			// Restrict only the handle restored below. A failed breakaway
+			// launch can briefly leave another exiting process in the job;
+			// restricting every captured handle injected unrepaired faults.
+			terminateHandle = job.exits.handles[pid]
+			var restricted windows.Handle
+			if err := windows.DuplicateHandle(windows.CurrentProcess(), terminateHandle, windows.CurrentProcess(), &restricted,
+				windows.SYNCHRONIZE|windows.PROCESS_QUERY_LIMITED_INFORMATION, false, 0); err != nil {
+				t.Fatal(err)
+			}
+			job.exits.handles[pid] = restricted
 		}
 		if fault == "captured-close" {
 			protected = job.exits.handles[pid]
@@ -375,14 +385,10 @@ func TestDaemonSelfCloseHelper(t *testing.T) {
 			}
 		}
 		if fault == "terminate" {
-			h, err := windows.OpenProcess(windows.SYNCHRONIZE|windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_TERMINATE, false, uint32(pid))
-			if err != nil {
-				t.Fatal(err)
-			}
 			if err := windows.CloseHandle(job.exits.handles[pid]); err != nil {
 				t.Fatal(err)
 			}
-			job.exits.handles[pid] = h
+			job.exits.handles[pid] = terminateHandle
 		}
 		err = job.Close()
 	}
