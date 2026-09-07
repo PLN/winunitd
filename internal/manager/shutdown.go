@@ -234,34 +234,16 @@ func (m *Manager) stopAcceptedUnit(ctx context.Context, name string) (*protocol.
 
 // Caller owns the unit gate; release is idempotent and runs before journal waits.
 func (m *Manager) stopUnitAfterLock(ctx context.Context, name string, release func()) (*protocol.UnitResult, error) {
-	m.mu.Lock()
-	rt, err := m.lookup(name)
+	effect, err := m.acceptStopCleanup(name)
 	if err != nil {
-		m.mu.Unlock()
 		return nil, err
 	}
-	name = rt.unit.Name
-	rt.operations++
-	defer func(record *unitRuntime) {
-		m.mu.Lock()
-		record.operations--
-		m.mu.Unlock()
-	}(rt)
-	proc := rt.proc
-	rt.stopping = true
-	rt.gen++
-	stopGen := rt.gen
-	stopOwner := runtimeIdentity{name: name, record: rt, gen: stopGen}
-	rt.cancelRestart()
-	wdCancel := rt.watchdog
-	rt.watchdog = nil
-	timeout := stopTimeout(rt.ownedUnit())
-	rt.step(core.EventStopRequested)
-	rt.err = ""
-	kind := rt.ownedUnit().Kind
-	scmName := scmServiceName(rt.ownedUnit())
-	taskName := scheduledTaskName(rt.ownedUnit())
-	m.mu.Unlock()
+	defer m.releaseStopCleanup(effect)
+	name = effect.owner.name
+	proc, stopOwner, wdCancel := effect.process, effect.owner, effect.cancel
+	timeout := stopTimeout(effect.unit)
+	kind := effect.unit.Kind
+	scmName, taskName := scmServiceName(effect.unit), scheduledTaskName(effect.unit)
 
 	if wdCancel != nil {
 		wdCancel()

@@ -159,17 +159,7 @@ func (m *Manager) closeHub(ctx context.Context, name string, h *watchRuntime, ti
 		h.cancel()
 	}
 	err := m.stops.wait(ctx, m.clock(), stopKey{hub: h}, timeout, h.stop)
-	m.mu.Lock()
-	if rt := m.units[name]; rt != nil && rt.hub == h {
-		if err == nil {
-			rt.hub = nil
-			rt.stopUncertain = false
-		} else {
-			rt.stopUncertain = true
-			rt.err = fmt.Sprintf("watch cleanup: %v", err)
-		}
-	}
-	m.mu.Unlock()
+	m.applyHubCleanup(hubCleanup{name: name, hub: h, err: err})
 	return err
 }
 

@@ -305,3 +305,117 @@ func (m *Manager) disarmStartLocked(name string) {
 		rt.cancelRestart()
 	}
 }
+
+// stopEffect retains the runtime record and captured invocation definition for
+// the entire native cleanup and journal wait. The worker does not choose policy.
+type stopEffect struct {
+	owner   runtimeIdentity
+	unit    *unit.Unit
+	process runtime.Process
+	cancel  context.CancelFunc
+}
+
+func (m *Manager) acceptStopCleanup(name string) (*stopEffect, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rt, err := m.lookup(name)
+	if err != nil {
+		return nil, err
+	}
+	rt.operations++
+	rt.stopping = true
+	rt.gen++
+	effect := &stopEffect{
+		owner: runtimeIdentity{name: rt.unit.Name, record: rt, gen: rt.gen},
+		unit:  rt.ownedUnit(), process: rt.proc, cancel: rt.watchdog,
+	}
+	rt.cancelRestart()
+	rt.watchdog = nil
+	rt.step(core.EventStopRequested)
+	rt.err = ""
+	return effect, nil
+}
+
+func (m *Manager) releaseStopCleanup(effect *stopEffect) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	effect.owner.record.operations--
+}
+
+type failedProcessEffect struct {
+	owner   runtimeIdentity
+	process runtime.Process
+}
+
+func (m *Manager) reapFailedLocked() {
+	for name, rt := range m.units {
+		if rt == nil || rt.state != core.Failed || rt.proc == nil || rt.stopUncertain {
+			continue
+		}
+		effect := failedProcessEffect{owner: runtimeIdentity{name: name, record: rt, gen: rt.gen}, process: rt.proc}
+		rt.stopUncertain = true
+		go m.reapFailed(effect)
+	}
+}
+
+func (m *Manager) acceptFailedProcessCleanup(effect failedProcessEffect) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return !m.closed && effect.owner.currentLocked(m) && effect.owner.record.proc == effect.process
+}
+
+func (m *Manager) applyFailedProcessCleanup(effect failedProcessEffect, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !effect.owner.currentLocked(m) || effect.owner.record.proc != effect.process {
+		return
+	}
+	rt := effect.owner.record
+	if err != nil {
+		rt.err = fmt.Sprintf("failed-state cleanup: %v", err)
+		return
+	}
+	rt.proc = nil
+	rt.stopUncertain = false
+}
+
+// A stop retry may change the operation generation while joining the same
+// native close. Handle completion therefore matches the exact retained handle.
+type notifyCleanup struct {
+	name   string
+	notify *notifyRuntime
+	err    error
+}
+
+func (m *Manager) applyNotifyCleanup(event notifyCleanup) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if rt := m.units[event.name]; rt != nil && rt.notify == event.notify {
+		if event.err == nil {
+			rt.notify = nil
+		} else {
+			rt.stopUncertain = true
+			rt.err = fmt.Sprintf("notification cleanup: %v", event.err)
+		}
+	}
+}
+
+type hubCleanup struct {
+	name string
+	hub  *watchRuntime
+	err  error
+}
+
+func (m *Manager) applyHubCleanup(event hubCleanup) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if rt := m.units[event.name]; rt != nil && rt.hub == event.hub {
+		if event.err == nil {
+			rt.hub = nil
+			rt.stopUncertain = false
+		} else {
+			rt.stopUncertain = true
+			rt.err = fmt.Sprintf("watch cleanup: %v", event.err)
+		}
+	}
+}

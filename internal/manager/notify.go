@@ -300,16 +300,7 @@ func (m *Manager) closeNotifyContext(ctx context.Context, name string, timeout t
 		return nil
 	}
 	err := m.stops.wait(ctx, m.clock(), stopKey{notify: nrt}, timeout, nrt.Close)
-	m.mu.Lock()
-	if rt := m.units[name]; rt != nil && rt.notify == nrt {
-		if err == nil {
-			rt.notify = nil
-		} else {
-			rt.stopUncertain = true
-			rt.err = fmt.Sprintf("notification cleanup: %v", err)
-		}
-	}
-	m.mu.Unlock()
+	m.applyNotifyCleanup(notifyCleanup{name: name, notify: nrt, err: err})
 	return err
 }
 
