@@ -52,131 +52,37 @@ func (m *Manager) launchUnitConfigOp(ctx context.Context, name string, autoResta
 	return m.launchUnitOwnedOp(ctx, name, autoRestart, planned, nil)
 }
 
-func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestart bool, planned *plannedStart, recovery *runtimeIdentity) error {
+// The caller holds the unit gate while observing its current process. Native
+// liveness work must not hold the lifecycle mutex and delay unrelated commands.
+func (m *Manager) observeLaunch(name string) launchObservation {
 	m.mu.Lock()
-	if recovery != nil && (ctx.Err() != nil || !recovery.currentLocked(m)) {
-		m.mu.Unlock()
-		return nil
+	observation := launchObservation{record: m.units[name]}
+	if observation.record != nil {
+		observation.process = observation.record.proc
 	}
-	if m.closed {
-		m.mu.Unlock()
-		if autoRestart {
-			return nil
-		}
-		return fmt.Errorf("manager is shutting down or closed")
-	}
-	rt := m.units[name]
-	if rt == nil {
-		m.mu.Unlock()
-		if autoRestart {
-			return nil
-		}
-		return fmt.Errorf("unit %q is not loaded", name)
-	}
-	if autoRestart && rt.stopping {
-		m.mu.Unlock()
-		return nil
-	}
-	if planned != nil && (planned.record != rt || planned.stopEpoch != rt.stopEpoch || (planned.origin != nil && !planned.origin.validLocked(m))) {
-		m.mu.Unlock()
-		return fmt.Errorf("unit %q start superseded by stop", name)
-	}
-	if rt.stopUncertain {
-		m.mu.Unlock()
-		return fmt.Errorf("unit %q termination is unconfirmed; retry stop before starting", name)
-	}
-	// Bump gen only for a real launch. A redundant Start on a live
-	// process must not invalidate the running watchdog (issue #23).
-	if live := rt.proc; live != nil && live.Alive() {
-		m.mu.Unlock()
-		return nil
-	}
-	if rt.unavailable {
-		m.mu.Unlock()
-		return fmt.Errorf("unit %q has no valid configuration; reload a valid unit before starting", name)
-	}
-	// Native start failures can still leave an external resource running. Do
-	// not abandon its identity when an explicit start adopts a reloaded unit.
-	owned := rt.ownedUnit()
-	definition := rt.unit
-	revision := rt.configRevision
-	if planned != nil {
-		definition = planned.unit
-		revision = planned.revision
-	}
-	if !autoRestart && rt.invocationUnit != nil &&
-		(scmServiceName(owned) != "" || scheduledTaskName(owned) != "") &&
-		(scmServiceName(owned) != scmServiceName(definition) || scheduledTaskName(owned) != scheduledTaskName(definition)) {
-		m.mu.Unlock()
-		return fmt.Errorf("unit %q still owns a previous native target; stop it before starting the new definition", name)
-	}
-	if planned != nil {
-		planned.launched = true
-	}
-	triggered := planned != nil && planned.origin != nil && planned.origin.countsStartLimit()
-	if triggered {
-		interval, burst := startLimitOf(definition)
-		if core.StartLimitHit(rt.startTimes, m.now(), interval, burst) {
-			rt.cancelRestart()
-			m.failStartLimitLocked(rt)
-			m.mu.Unlock()
-			return errors.New(core.ReasonStartLimit)
-		}
-	}
-	rt.operations++
-	defer func(record *unitRuntime) {
-		m.mu.Lock()
-		record.operations--
-		m.mu.Unlock()
-	}(rt)
-	if !autoRestart {
-		rt.stopping = false
-		rt.cancelRestart()
-		if !triggered {
-			rt.startTimes = nil
-		}
-	} else if m.startLimitHitLocked(rt) {
-		m.failStartLimitLocked(rt)
-		m.mu.Unlock()
-		return nil
-	}
-	// Every real invocation, including automatic recovery, has a fresh
-	// generation. Callbacks from the previous process must become stale.
-	rt.gen++
-	startGen := rt.gen
-	if planned != nil {
-		planned.launchGen = startGen
-	}
-	// A start can win the operation lock before the exit watcher. Retain the
-	// old invocation until cleanup succeeds; a dead main PID is not sufficient.
-	evicted := rt.proc
-	if evicted != nil {
-		rt.stopUncertain = true
-	}
-	u := definition
-	if autoRestart {
-		u = owned
-		if rt.invocationUnit != nil {
-			revision = rt.invocationRevision
-		}
-	}
+	inspect := !m.closed && observation.record != nil && !observation.record.stopUncertain
 	m.mu.Unlock()
+	if inspect && observation.process != nil {
+		observation.alive = observation.process.Alive()
+	}
+	return observation
+}
+
+func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestart bool, planned *plannedStart, recovery *runtimeIdentity) error {
+	observation := m.observeLaunch(name)
+	effect, err := m.acceptLaunch(ctx, name, autoRestart, planned, recovery, observation)
+	if err != nil || effect == nil {
+		return err
+	}
+	defer m.releaseLaunch(effect)
+	rt, startGen := effect.owner.record, effect.owner.gen
+	u, revision, evicted, owned := effect.unit, effect.revision, effect.previous, effect.previousUnit
 	if evicted != nil {
 		cleanupErr := m.stopProcess(evicted, stopTimeout(owned))
 		if cleanupErr == nil && evicted.Alive() {
 			cleanupErr = fmt.Errorf("process remains alive after previous invocation cleanup")
 		}
-		m.mu.Lock()
-		stillOwned := m.units[name] == rt && rt.sameOp(startGen, evicted) && !m.closed
-		if stillOwned {
-			if cleanupErr == nil {
-				rt.proc = nil
-				rt.stopUncertain = false
-			} else {
-				rt.err = fmt.Sprintf("previous invocation cleanup: %v", cleanupErr)
-			}
-		}
-		m.mu.Unlock()
+		stillOwned := m.applyPreviousCleanup(effect, cleanupErr)
 		if cleanupErr != nil {
 			return fmt.Errorf("previous invocation cleanup: %w", cleanupErr)
 		}
@@ -208,15 +114,7 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 	}
 	svc := u.Service
 	native := svc.Type == unit.TypeSCM || svc.Type == unit.TypeScheduledTask
-	m.mu.Lock()
-	if rt := m.units[name]; rt != nil && rt.gen == startGen && !m.closed {
-		if native {
-			rt.invocationUnit = u
-			rt.invocationRevision = revision
-		}
-		m.recordStartLocked(rt)
-	}
-	m.mu.Unlock()
+	m.recordServiceLaunch(effect, native)
 	if svc.Type == unit.TypeSCM {
 		return m.startSCM(ctx, name, u, autoRestart, runtimeIdentity{name: name, record: rt, gen: startGen})
 	}
@@ -229,13 +127,7 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 	m.stopWatchdog(name)
 
 	inv := journal.NewInvocationID()
-	m.mu.Lock()
-	if rt := m.units[name]; rt != nil {
-		rt.invocationUnit = u
-		rt.invocationRevision = revision
-		rt.invocation = inv
-	}
-	m.mu.Unlock()
+	m.recordInvocation(effect, inv)
 
 	env := journal.InjectEnv(mergeEnv(svc.Environment), inv)
 	var nrt *notifyRuntime
@@ -245,12 +137,7 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		if err != nil {
 			return errors.Join(err, m.disposeNotify(nrt))
 		}
-		m.mu.Lock()
-		if rt := m.units[name]; rt != nil && !m.closed {
-			rt.notify = nrt
-			m.mu.Unlock()
-		} else {
-			m.mu.Unlock()
+		if !m.adoptLaunchNotify(effect, nrt) {
 			return errors.Join(fmt.Errorf("manager closed during notification open"), m.disposeNotify(nrt))
 		}
 		wd := time.Duration(0)
@@ -280,12 +167,7 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 			// The launcher could not finish cleanup after process creation.
 			// This operation retains the record, and the unit lock excludes a
 			// replacement. Preserve ownership even if stop/close overtook it.
-			m.mu.Lock()
-			rt := m.units[name]
-			rt.proc = proc
-			rt.stopUncertain = true
-			rt.err = err.Error()
-			m.mu.Unlock()
+			m.retainLaunchFailure(effect, proc, err)
 			m.journal.SetOrigin(m.journalOrigin())
 			m.journal.Attach(name, proc.PID(), inv, proc.Stdout(), proc.Stderr())
 		}

@@ -1,0 +1,192 @@
+package manager
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/unit"
+)
+
+type launchObservation struct {
+	record  *unitRuntime
+	process runtime.Process
+	alive   bool
+}
+
+type launchEffect struct {
+	owner        runtimeIdentity
+	unit         *unit.Unit
+	revision     string
+	previous     runtime.Process
+	previousUnit *unit.Unit
+}
+
+func (m *Manager) acceptLaunch(ctx context.Context, name string, autoRestart bool, planned *plannedStart, recovery *runtimeIdentity, observation launchObservation) (*launchEffect, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if recovery != nil && (ctx.Err() != nil || !recovery.currentLocked(m)) {
+		return nil, nil
+	}
+	if m.closed {
+		if autoRestart {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("manager is shutting down or closed")
+	}
+	rt := m.units[name]
+	if rt == nil {
+		if autoRestart {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("unit %q is not loaded", name)
+	}
+	if autoRestart && rt.stopping {
+		return nil, nil
+	}
+	if planned != nil && (planned.record != rt || planned.stopEpoch != rt.stopEpoch || (planned.origin != nil && !planned.origin.validLocked(m))) {
+		return nil, fmt.Errorf("unit %q start superseded by stop", name)
+	}
+	if rt.stopUncertain {
+		return nil, fmt.Errorf("unit %q termination is unconfirmed; retry stop before starting", name)
+	}
+	// Bump gen only for a real launch. A redundant Start on a live
+	// process must not invalidate the running watchdog (issue #23).
+	if rt != observation.record || rt.proc != observation.process {
+		return nil, fmt.Errorf("launch observation superseded")
+	}
+	if observation.alive {
+		return nil, nil
+	}
+	if rt.unavailable {
+		return nil, fmt.Errorf("unit %q has no valid configuration; reload a valid unit before starting", name)
+	}
+	// Native start failures can still leave an external resource running. Do
+	// not abandon its identity when an explicit start adopts a reloaded unit.
+	owned := rt.ownedUnit()
+	definition := rt.unit
+	revision := rt.configRevision
+	if planned != nil {
+		definition = planned.unit
+		revision = planned.revision
+	}
+	if !autoRestart && rt.invocationUnit != nil &&
+		(scmServiceName(owned) != "" || scheduledTaskName(owned) != "") &&
+		(scmServiceName(owned) != scmServiceName(definition) || scheduledTaskName(owned) != scheduledTaskName(definition)) {
+		return nil, fmt.Errorf("unit %q still owns a previous native target; stop it before starting the new definition", name)
+	}
+	if planned != nil {
+		planned.launched = true
+	}
+	triggered := planned != nil && planned.origin != nil && planned.origin.countsStartLimit()
+	if triggered {
+		interval, burst := startLimitOf(definition)
+		if core.StartLimitHit(rt.startTimes, m.now(), interval, burst) {
+			rt.cancelRestart()
+			m.failStartLimitLocked(rt)
+			return nil, errors.New(core.ReasonStartLimit)
+		}
+	}
+	if !autoRestart {
+		rt.stopping = false
+		rt.cancelRestart()
+		if !triggered {
+			rt.startTimes = nil
+		}
+	} else if m.startLimitHitLocked(rt) {
+		m.failStartLimitLocked(rt)
+		return nil, nil
+	}
+	// Every real invocation, including automatic recovery, has a fresh
+	// generation. Callbacks from the previous process must become stale.
+	rt.operations++
+	rt.gen++
+	startGen := rt.gen
+	if planned != nil {
+		planned.launchGen = startGen
+	}
+	// A start can win the operation lock before the exit watcher. Retain the
+	// old invocation until cleanup succeeds; a dead main PID is not sufficient.
+	evicted := rt.proc
+	if evicted != nil {
+		rt.stopUncertain = true
+	}
+	u := definition
+	if autoRestart {
+		u = owned
+		if rt.invocationUnit != nil {
+			revision = rt.invocationRevision
+		}
+	}
+	return &launchEffect{owner: runtimeIdentity{name: name, record: rt, gen: startGen}, unit: u, revision: revision, previous: evicted, previousUnit: owned}, nil
+}
+
+func (m *Manager) releaseLaunch(effect *launchEffect) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	effect.owner.record.operations--
+}
+
+func (m *Manager) applyPreviousCleanup(effect *launchEffect, err error) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rt := effect.owner.record
+	if m.closed || !effect.owner.currentLocked(m) || !rt.sameOp(effect.owner.gen, effect.previous) {
+		return false
+	}
+	if err == nil {
+		rt.proc = nil
+		rt.stopUncertain = false
+	} else {
+		rt.err = fmt.Sprintf("previous invocation cleanup: %v", err)
+	}
+	return true
+}
+
+func (m *Manager) recordServiceLaunch(effect *launchEffect, native bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || !effect.owner.currentLocked(m) {
+		return
+	}
+	rt := effect.owner.record
+	if native {
+		rt.invocationUnit = effect.unit
+		rt.invocationRevision = effect.revision
+	}
+	m.recordStartLocked(rt)
+}
+
+func (m *Manager) recordInvocation(effect *launchEffect, invocation string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if effect.owner.currentLocked(m) {
+		rt := effect.owner.record
+		rt.invocationUnit = effect.unit
+		rt.invocationRevision = effect.revision
+		rt.invocation = invocation
+	}
+}
+
+func (m *Manager) adoptLaunchNotify(effect *launchEffect, notify *notifyRuntime) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || !effect.owner.currentLocked(m) {
+		return false
+	}
+	effect.owner.record.notify = notify
+	return true
+}
+
+func (m *Manager) retainLaunchFailure(effect *launchEffect, proc runtime.Process, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// The retained record and unit gate exclude removal/replacement. Adopt
+	// partial creations even when stop/close has superseded their activation.
+	rt := effect.owner.record
+	rt.proc = proc
+	rt.stopUncertain = true
+	rt.err = err.Error()
+}

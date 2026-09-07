@@ -651,6 +651,26 @@ recovery/watchdog/scope coverage passed five. Full-suite/integration results are
 recorded in the associated PR. Remaining launch, readiness, trigger and configuration
 writers and aggregate snapshots still prevent closure of #96.
 
+## Captured launch admission
+
+September 7, 2026; continuation of #96.
+Launch admission now produces a retained effect with the exact runtime/generation,
+accepted configuration and previous-invocation cleanup policy. Dedicated handlers
+publish previous cleanup, service attempt accounting, invocation metadata,
+notification adoption and partial-launch failures. Late partial creations remain
+owned even when activation has been superseded.
+
+Liveness is observed by the worker outside the manager mutex, with the unit gate
+retained and the record/process revalidated at admission. A delayed-liveness
+regression reproduced a manager-wide admission stall before the change. Afterward,
+an independent target starts while that observation remains blocked, and the
+redundant start does not replace its live process. The regression and late cleanup
+coverage passed twenty local Windows race repetitions; launch/stop/restart/operation
+coverage passed three. Full-suite/integration evidence is recorded in the PR.
+
+Successful process adoption and readiness/oneshot completion remain direct writers
+for the next slice. This is not closure of #96 or the aggregate snapshot work.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2
