@@ -126,7 +126,7 @@ WorkingDirectory=C:\Tools
 	}
 }
 
-func TestApplyRunLockedDoesNotFailLiveActive(t *testing.T) {
+func TestRejectedStartDoesNotFailLiveActive(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}
 	m := managerWith(t, launch, map[string]string{
@@ -142,10 +142,11 @@ WorkingDirectory=C:\Tools
 	assertState(t, m, "web.service", core.Active)
 	m.mu.Lock()
 	proc := m.procOfLocked("web.service")
-	m.applyRunLocked(&core.Run{
-		States: map[string]core.State{"web.service": core.Failed},
-		Errors: map[string]error{"web.service": errors.New("required db.service failed")},
-	})
+	rt := m.units["web.service"]
+	plan := &plannedStart{record: rt, gen: rt.gen, stopEpoch: rt.stopEpoch}
+	m.mu.Unlock()
+	m.applyStartRejection(startCompletion{name: "web.service", plan: plan, err: errors.New("required db.service failed")})
+	m.mu.Lock()
 	if m.stateOfLocked("web.service") != core.Active {
 		t.Fatalf("state = %s, want active (live requirer)", m.stateOfLocked("web.service"))
 	}

@@ -539,6 +539,29 @@ calculation, cancellation ownership, pending-cleanup diagnostics and remaining
 resource-bound limitations. Native calls can outlive cancellation while retaining
 their existing cleanup owner; this is not a hard real-time termination guarantee.
 
+## Transaction outcomes without lifecycle replay
+
+September 7, 2026; [issue #96](https://github.com/PLN/winunitd/issues/96).
+The graph executor reports never-launched failures synchronously through an
+optional rejection observer. The manager checks the accepted record, generation,
+stop epoch and origin, then publishes one member outcome. Adapter completions
+still publish under the unit gate; canceled gate waits publish rejection too.
+The final transaction Run is no longer applied to unit lifecycle state.
+
+A deterministic regression leaves an independent worker blocked, observes the
+root's dependency failure immediately, stops that root, and then releases the
+worker. The old transaction retains its failed outcome without rewriting the
+new stop. Further regressions preserve replacement invocation diagnostics and
+failure visibility for expired gate waits. These and the existing dependency and
+late transaction tests passed twenty local Windows race repetitions. The full
+local Windows race suite and vet passed. Exact reviewed revision and integration
+checks are recorded on the linked issue/PR; no new VM/MSI qualification is claimed.
+
+The [lifecycle writer inventory](LIFECYCLE-WRITERS.md) maps remaining mutation paths
+to Design v2 invariants and tests. It explicitly retains coordinator admission,
+worker-state migration, UserHost coordination and immutable aggregate snapshots
+as open work. This slice does not close #96 or R2.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2
