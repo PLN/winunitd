@@ -127,7 +127,7 @@ PathChanged=C:\Data\incoming
 		t.Fatal(err)
 	}
 	hub.Fire(`C:\Data\other`)
-	time.Sleep(200 * time.Millisecond)
+	// Fake dispatch returns synchronously without sending to an unrelated watch.
 	if launch.nstarts() != 0 {
 		t.Fatal("unrelated path must not start the oneshot")
 	}
@@ -137,7 +137,14 @@ func TestPathDoesNotRestartRunningSimple(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}
 	hub := newFakePathHub()
-	m := managerWithPath(t, launch, hub.Open, map[string]string{
+	waiting := make(chan struct{}, 8)
+	m := managerWithPath(t, launch, func(spec pathwatch.Spec) (pathwatch.Watch, error) {
+		w, err := hub.Open(spec)
+		if err != nil {
+			return nil, err
+		}
+		return &acknowledgedWatch{watchIO: w, waiting: waiting}, nil
+	}, map[string]string{
 		"foo.service": `
 [Service]
 Type=simple
@@ -159,8 +166,9 @@ PathChanged=C:\Data\incoming
 		t.Fatalf("starts = %d, want 1", n)
 	}
 	gen := genOf(t, m, "foo.service")
+	waitWatchCycle(t, waiting) // Initial receive is armed.
 	hub.Fire(`C:\Data\incoming`)
-	time.Sleep(200 * time.Millisecond)
+	waitWatchCycle(t, waiting) // Callback returned and the next receive is armed.
 	if n := len(launch.units()); n != 1 {
 		t.Fatalf("running simple must not restart; starts = %d", n)
 	}
@@ -269,7 +277,7 @@ WantedBy=default.target
 	}
 	assertState(t, m, "foo.path", core.Inactive)
 	hub.Fire(`C:\Data\incoming`)
-	time.Sleep(200 * time.Millisecond)
+	// Boot completed synchronously; the disabled watch was never armed.
 	if launch.nstarts() != 0 {
 		t.Fatal("disabled path unit must not start the oneshot")
 	}
@@ -388,7 +396,7 @@ func TestPathExistsMissingDoesNotFailUnit(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertState(t, m, "foo.path", core.Active)
-	time.Sleep(200 * time.Millisecond)
+	// Synchronous startup found no satisfied condition and queued no activation.
 	if launch.nstarts() != 0 {
 		t.Fatal("missing PathExists must wait, not start the oneshot")
 	}
@@ -411,6 +419,7 @@ func TestPathExistsAlreadyPresentStartsOnce(t *testing.T) {
 	t.Parallel()
 	launch := &scriptedLauncher{exitAll: intPtr(0)}
 	hub := newFakePathHub()
+	hub.acknowledgements = map[string]chan struct{}{`C:\Data\ready.flag`: make(chan struct{}, 8)}
 	hub.exists[`C:\Data\ready.flag`] = true
 	m := managerWithExists(t, launch, hub, pathExistsPair())
 	if _, err := m.Start(context.Background(), "foo.path"); err != nil {
@@ -423,8 +432,9 @@ func TestPathExistsAlreadyPresentStartsOnce(t *testing.T) {
 		proc := m.procOfLocked("foo.service")
 		return proc == nil || !proc.Alive()
 	})
+	waitWatchCycle(t, hub.acknowledgements[`C:\Data\ready.flag`])
 	hub.SetExists(`C:\Data\ready.flag`, true)
-	time.Sleep(200 * time.Millisecond)
+	waitWatchCycle(t, hub.acknowledgements[`C:\Data\ready.flag`])
 	if launch.nstarts() != 1 {
 		t.Fatalf("still-satisfied PathExists must not retrigger; starts = %d", launch.nstarts())
 	}
@@ -434,6 +444,7 @@ func TestPathExistsRepeatableAND(t *testing.T) {
 	t.Parallel()
 	launch := &scriptedLauncher{exitAll: intPtr(0)}
 	hub := newFakePathHub()
+	hub.acknowledgements = map[string]chan struct{}{`C:\Data\a`: make(chan struct{}, 8), `C:\Data\b`: make(chan struct{}, 8)}
 	m := managerWithExists(t, launch, hub, map[string]string{
 		"foo.service": `
 [Service]
@@ -450,11 +461,13 @@ PathExists=C:\Data\b
 	if _, err := m.Start(context.Background(), "foo.path"); err != nil {
 		t.Fatal(err)
 	}
+	waitWatchCycle(t, hub.acknowledgements[`C:\Data\a`])
 	hub.SetExists(`C:\Data\a`, true)
-	time.Sleep(200 * time.Millisecond)
+	waitWatchCycle(t, hub.acknowledgements[`C:\Data\a`])
 	if launch.nstarts() != 0 {
 		t.Fatal("PathExists AND must not start until every path exists")
 	}
+	waitWatchCycle(t, hub.acknowledgements[`C:\Data\b`])
 	hub.SetExists(`C:\Data\b`, true)
 	waitStarts(t, launch, 1, 2*time.Second)
 }
@@ -463,6 +476,7 @@ func TestPathExistsDeletionDoesNotStopSimple(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}
 	hub := newFakePathHub()
+	hub.acknowledgements = map[string]chan struct{}{`C:\Data\ready.flag`: make(chan struct{}, 8)}
 	hub.exists[`C:\Data\ready.flag`] = true
 	m := managerWithExists(t, launch, hub, map[string]string{
 		"foo.service": `
@@ -490,8 +504,9 @@ PathExists=C:\Data\ready.flag
 	pid := proc.PID()
 	m.mu.Unlock()
 	gen := genOf(t, m, "foo.service")
+	waitWatchCycle(t, hub.acknowledgements[`C:\Data\ready.flag`])
 	hub.SetExists(`C:\Data\ready.flag`, false)
-	time.Sleep(200 * time.Millisecond)
+	waitWatchCycle(t, hub.acknowledgements[`C:\Data\ready.flag`])
 	m.mu.Lock()
 	got := m.procOfLocked("foo.service")
 	m.mu.Unlock()
@@ -513,6 +528,7 @@ func TestPathExistsDoesNotRestartRunningSimple(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}
 	hub := newFakePathHub()
+	hub.acknowledgements = map[string]chan struct{}{`C:\Data\ready.flag`: make(chan struct{}, 8)}
 	m := managerWithExists(t, launch, hub, map[string]string{
 		"foo.service": `
 [Service]
@@ -535,8 +551,9 @@ PathExists=C:\Data\ready.flag
 		t.Fatalf("starts = %d, want 1", n)
 	}
 	gen := genOf(t, m, "foo.service")
+	waitWatchCycle(t, hub.acknowledgements[`C:\Data\ready.flag`])
 	hub.SetExists(`C:\Data\ready.flag`, true)
-	time.Sleep(200 * time.Millisecond)
+	waitWatchCycle(t, hub.acknowledgements[`C:\Data\ready.flag`])
 	if n := len(launch.units()); n != 1 {
 		t.Fatalf("running simple must not restart; starts = %d", n)
 	}
@@ -664,7 +681,7 @@ WantedBy=default.target
 		t.Fatal(err)
 	}
 	assertState(t, m, "foo.path", core.Inactive)
-	time.Sleep(200 * time.Millisecond)
+	// Synchronous startup found no satisfied condition and queued no activation.
 	if launch.nstarts() != 0 {
 		t.Fatal("disabled path unit must not start the oneshot")
 	}
@@ -782,12 +799,13 @@ func managerWithPathCfg(t *testing.T, cfg Config, files map[string]string) *Mana
 }
 
 type fakePathHub struct {
-	mu            sync.Mutex
-	openErr       error
-	existsOpenErr error
-	byKey         map[string]*fakePathWatch
-	existsWatches map[string]*fakePathWatch
-	exists        map[string]bool
+	mu               sync.Mutex
+	openErr          error
+	existsOpenErr    error
+	byKey            map[string]*fakePathWatch
+	existsWatches    map[string]*fakePathWatch
+	exists           map[string]bool
+	acknowledgements map[string]chan struct{}
 }
 
 func newFakePathHub() *fakePathHub {
@@ -817,6 +835,9 @@ func (h *fakePathHub) OpenExists(s pathwatch.Spec) (pathwatch.Watch, error) {
 	}
 	w := &fakePathWatch{ch: make(chan struct{}, 8)}
 	h.existsWatches[s.Raw] = w
+	if ack := h.acknowledgements[s.Raw]; ack != nil {
+		return &acknowledgedWatch{watchIO: w, waiting: ack}, nil
+	}
 	return w, nil
 }
 

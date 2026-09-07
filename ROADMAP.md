@@ -1,12 +1,14 @@
 # winunitd roadmap
 
-**Immediate target: public beta.** The maintainer-approved
-[beta delivery plan](docs/BETA-RELEASE.md) supersedes the full milestone sequence
-as the first release gate. Preserve the documented current unit syntax and ship
-the useful core with known limitations. R0-R8 below remain the longer-term
-architecture and qualification backlog; full completion is not required for beta.
+**Current priority: post-beta stabilization.** Public `0.2.1-beta` shipped on
+September 6, 2026; the [B1-B4 delivery gates](docs/BETA-RELEASE.md) are complete.
+Prioritize adopter feedback and reproducible defects in the supported core,
+preserve documented beta syntax, and continue the R0-R8 architecture and
+qualification backlog. [Post-beta tracking](docs/POST-BETA-TRACKING.md) links
+GitHub milestones and the next focused work.
 
-Revision 2 — September 5, 2026. Baseline: `98abb80`, `0.1.0-alpha`.
+Revision 2 - status refreshed September 7, 2026. Original review baseline:
+`98abb80`, `0.1.0-alpha`; current published release: `0.2.1-beta`.
 
 This roadmap adopts the direction of the [architecture review](docs/DESIGN-REVIEW.md). It defines future work; it does not mark reviewed defects as fixed. [DESIGN.md](DESIGN.md) specifies the target architecture. [Milestones](docs/MILESTONES.md) define work packages, dependencies, and completion evidence. The [installer plan](docs/MSI-INSTALLER-PLAN.md) specifies package servicing details.
 
@@ -29,11 +31,11 @@ Feature expansion is paused through the stabilization milestones. Existing trigg
 
 ## Milestone sequence
 
-R0, R1, and R2 are **in progress**; later milestones contain groundwork but remain open. Their IDs track the longer-term design, not beta release prerequisites or deadlines. See the milestones for completed work packages and qualification evidence; use B1-B4 for immediate release work.
+R0, R1, and R2 are **in progress**; later milestones contain groundwork but remain open. Their IDs track the longer-term design, not beta release prerequisites or deadlines. See the milestones for completed work packages and qualification evidence; B1-B4 record the completed first beta delivery. Use the post-beta tracking for current work.
 
 | ID | Outcome | Depends on | Completion signal |
 | --- | --- | --- | --- |
-| R0 | Reproducible baseline and isolated verification | — | Supported compiler pinned; test endpoints isolated; review reproductions retained; Windows qualification harness and packaging spike recorded |
+| R0 | Reproducible baseline and isolated verification | â€” | Supported compiler pinned; test endpoints isolated; review reproductions retained; Windows qualification harness and packaging spike recorded |
 | R1 | Owned workloads remain controllable | R0 | Output deadlock and reload ownership regressions pass; stop failures remain visible; bounded capture |
 | R2 | One lifecycle coordinator | R1 | Every lifecycle mutation goes through the coordinator; operation interleavings and stale completions pass invariant tests |
 | R3 | Explicit unit and health semantics | R2 | Compatibility matrix, graceful stop, dependency propagation, readiness/liveness, and versioned configuration migration pass conformance tests |
@@ -47,14 +49,19 @@ R0 packaging research may proceed alongside runtime stabilization. R4 and R5 may
 
 ## Release policy
 
-The public beta follows B1-B4 in the beta delivery plan. Label it as a prerelease
-and publish its limitations. R6-R8 describe the later fully qualified installation
+The published public beta completed B1-B4 in the beta delivery plan. Keep beta
+updates labeled as prereleases and publish their limitations. R6-R8 describe the later fully qualified installation
 release; they no longer block beta delivery. A beta does not confer a stable
 `1.0` API, but documented core unit syntax should remain compatible across betas.
 
 Supported targets must be backed by evidence. The first desktop release targets Windows 11 Enterprise and Enterprise LTSC x64 only. Windows Server 2022/2025 x64, including Core, remain qualification candidates. An untested target is excluded from release claims rather than inferred from compilation. Boot-time linger modes are separately qualified and explicit opt-in. GUI/session attachment, ARM64, and additional account types remain deferred.
 
-Keep the repository private while the basics are proved. Making source public is separate from publishing a supported installer. A public source preview may precede R8 completion after a history/artifact review, with experimental binaries clearly identified. No visibility change, enrollment, or purchase is performed by adopting these documents.
+The repository is public and the unsigned beta is published. The targeted
+history/artifact review and maintainer publication decision are recorded in the
+[beta delivery plan](docs/BETA-RELEASE.md#publication-decision). Preserve those
+evidence boundaries; public source and beta publication do not close the R8
+signed-release gate. Future release inputs still require privacy review. Signing
+enrollment and purchases remain separate actions.
 
 Investigate SignPath Foundation first after public-source readiness. Verify its existing-release/reputation requirements and publisher display; acceptance is not guaranteed. Retain Microsoft Artifact Signing for an eligible identity or another trusted signing provider as alternatives. Internal testing does not wait for enrollment. The [signing plan](docs/MSI-INSTALLER-PLAN.md#public-release-and-signing-roadmap) retains provider requirements and references.
 

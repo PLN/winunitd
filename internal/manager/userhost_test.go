@@ -273,26 +273,14 @@ func TestUserHostListenLogonLogoff(t *testing.T) {
 		h.Listen(ctx, ch)
 	}()
 	ch <- runtime.SessionChange{SessionID: 9, Logon: true}
-	waitAlive := time.Now().Add(2 * time.Second)
-	for time.Now().Before(waitAlive) {
-		if h.Alive(testSIDA) {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if !h.Alive(testSIDA) {
-		t.Fatal("logon did not start a manager")
-	}
+	waitCond(t, func() bool { return h.Alive(testSIDA) })
 	ch <- runtime.SessionChange{SessionID: 9, Logon: false}
-	waitDead := time.Now().Add(2 * time.Second)
-	for time.Now().Before(waitDead) {
-		if !h.Alive(testSIDA) {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	close(ch)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("session listener did not drain logoff and stop")
 	}
-	cancel()
-	<-done
 	if starts.Load() != 1 {
 		t.Fatalf("starts = %d", starts.Load())
 	}

@@ -103,7 +103,7 @@ EventLogTrigger=Application:EventID=1234
 		t.Fatal(err)
 	}
 	hub.Fire("Application:EventID=9999")
-	time.Sleep(200 * time.Millisecond)
+	// Fake dispatch returns synchronously without sending to an unrelated watch.
 	if launch.nstarts() != 0 {
 		t.Fatal("unrelated EventID must not start the oneshot")
 	}
@@ -113,7 +113,14 @@ func TestEventLogDoesNotRestartRunningSimple(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}
 	hub := newFakeEvtHub()
-	m := managerWithEventLog(t, launch, hub.Open, map[string]string{
+	waiting := make(chan struct{}, 8)
+	m := managerWithEventLog(t, launch, func(spec eventlog.Trigger) (eventlog.Subscription, error) {
+		w, err := hub.Open(spec)
+		if err != nil {
+			return nil, err
+		}
+		return &acknowledgedWatch{watchIO: w, waiting: waiting}, nil
+	}, map[string]string{
 		"foo.service": `
 [Service]
 Type=simple
@@ -135,8 +142,9 @@ EventLogTrigger=Application:EventID=1234
 		t.Fatalf("starts = %d, want 1", n)
 	}
 	gen := genOf(t, m, "foo.service")
+	waitWatchCycle(t, waiting) // Initial receive is armed.
 	hub.Fire("Application:EventID=1234")
-	time.Sleep(200 * time.Millisecond)
+	waitWatchCycle(t, waiting) // Callback returned and the next receive is armed.
 	if n := len(launch.units()); n != 1 {
 		t.Fatalf("running simple must not restart; starts = %d", n)
 	}
@@ -283,7 +291,7 @@ WantedBy=default.target
 	}
 	assertState(t, m, "foo.eventlog", core.Inactive)
 	hub.Fire("Application:EventID=1234")
-	time.Sleep(200 * time.Millisecond)
+	// Boot completed synchronously; the disabled watch was never armed.
 	if launch.nstarts() != 0 {
 		t.Fatal("disabled eventlog unit must not start the oneshot")
 	}
