@@ -52,7 +52,7 @@ Status: in progress (invocation-definition groundwork; coordinator pending). Dep
 - [ ] **R2.1 Records/events:** implement immutable configuration revisions, stable runtime records, invocation/operation IDs, generations, typed completion events, and immutable status snapshots. Atomic reload acceptance and opaque accepted/service-invocation revision IDs are implemented; queued plans and automatic recovery retain their captured identity. Armed triggers report their captured revision, and start/stop/restart transactions expose queryable operation IDs. Remaining event migration and immutable aggregate snapshots are open.
 - [ ] **R2.2 Coordinator:** migrate start/stop/restart, process exit, notify, watchdog, timer/native trigger activation, reload, and user-host lifecycle decisions. Remove direct worker state writes and transaction-result overwrites. Process-exit decisions now use typed completions; watchdog/recovery callbacks carry exact runtime-record/generation identity and revalidate after waiting for the unit gate. Other direct state writers and coordinator admission remain open.
 - [ ] **R2.3 Scheduling:** bound admission/workers, preserve completion delivery under overload, coalesce redundant starts, and ensure stop/maintenance precedence. Keep blocking I/O outside the coordinator.
-- [ ] **R2.4 Operations:** retain accepted operations across client disconnect; expose queryable outcomes; apply internal deadlines and explicit cancellation; version protocol changes with client compatibility tests. Bounded in-memory transaction history and query/CLI compatibility tests are implemented; independent operation contexts, internal aggregate deadlines, and cancellation controls remain open.
+- [ ] **R2.4 Operations:** retain accepted operations across client disconnect; expose queryable outcomes; apply internal deadlines and explicit cancellation; version protocol changes with client compatibility tests. Bounded in-memory transaction history and query/CLI compatibility tests are implemented; manager-owned contexts, aggregate cancellation deadlines, queryable deadline/cancellation metadata, and late-launch cleanup now cover accepted start/stop/restart operations. A separate cancellation command and the remaining coordinator migration stay open; see [operation lifetime evidence](R2-EVIDENCE.md#accepted-operation-lifetimes).
 - [ ] **R2.5 Interleavings:** build deterministic operation-sequence tests with fake clocks and delayed workers; migrate existing tests rather than replacing them with implementation-mirroring tests.
 
 The first R2.1 slice now separates the latest loaded service definition from the
@@ -77,13 +77,12 @@ Explicit restart now admits captured stop/start plans before teardown, restores
 active/activating reverse members including `PartOf`, and retains their records
 and revisions through cleanup. Invalid plans and full start admission reject
 before interruption; later stops invalidate pending restart launches.
-Whole-operation deadlines and the remaining coordinator migration are open.
+Whole-operation cancellation deadlines now span restart teardown and startup; the remaining coordinator migration is open.
 Stop cleanup and final results now use typed completion events; late failed stops
 retain their own error without overwriting a newer operation's lifecycle state.
 Start/stop/restart transactions now expose queryable IDs and bounded history,
 including after client disconnect. Explicit stops have independent bounded
-admission; shutdown bypasses it. History persistence and internal operation
-contexts/deadlines remain open; see [operation history](OPERATIONS.md).
+admission; shutdown bypasses it. History persistence and a separate cancellation command remain open; see [operation history](OPERATIONS.md).
 Compatible concurrent explicit starts share one admitted operation and outcome;
 joined wait cancellation does not cancel the original operation.
 

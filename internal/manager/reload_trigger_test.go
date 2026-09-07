@@ -58,6 +58,7 @@ func TestLateWatchOpenCannotSurviveReloadOrClose(t *testing.T) {
 				if err == nil {
 					t.Fatal("late watch installed after configuration loss/shutdown")
 				}
+				waitOperationErrorCompleted(t, m, err)
 			case <-time.After(time.Second):
 				t.Fatal("late watch start did not finish")
 			}

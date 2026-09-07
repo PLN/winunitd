@@ -11,13 +11,14 @@ import (
 // Compatible explicit starts share one admitted plan. Trigger activations and
 // restarts retain their own semantics and do not join this flight.
 type startFlight struct {
-	id        string
-	record    *unitRuntime
-	stopEpoch uint64
-	revision  string
-	done      chan struct{}
-	result    *protocol.UnitResult
-	err       error
+	operationContext context.Context
+	id               string
+	record           *unitRuntime
+	stopEpoch        uint64
+	revision         string
+	done             chan struct{}
+	result           *protocol.UnitResult
+	err              error
 }
 
 func copyOperationReply(result *protocol.UnitResult, err error) (*protocol.UnitResult, error) {
@@ -34,7 +35,26 @@ func copyOperationReply(result *protocol.UnitResult, err error) (*protocol.UnitR
 }
 
 func (f *startFlight) wait(ctx context.Context) (*protocol.UnitResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var operationDone <-chan struct{}
+	if f.operationContext != nil {
+		operationDone = f.operationContext.Done()
+	}
 	select {
+	case <-f.done:
+		return copyOperationReply(f.result, f.err)
+	default:
+	}
+	select {
+	case <-operationDone:
+		select {
+		case <-f.done:
+			return copyOperationReply(f.result, f.err)
+		default:
+		}
+		return nil, &protocol.Error{Code: protocol.CodeFailed, Message: fmt.Sprintf("operation canceled; cleanup may remain: %v", context.Cause(f.operationContext)), OperationID: f.id}
 	case <-f.done:
 		return copyOperationReply(f.result, f.err)
 	case <-ctx.Done():

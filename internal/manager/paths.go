@@ -3,6 +3,7 @@ package manager
 import (
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/PLN/winunitd/internal/eventlog"
 	"github.com/PLN/winunitd/internal/notify"
@@ -23,6 +24,10 @@ const (
 
 // Config is the on-disk layout for a manager instance.
 type Config struct {
+	// OperationTimeout overrides the aggregate accepted-operation budget.
+	// Zero derives a budget from the captured plan, with a five-minute floor.
+	// It bounds response waiting; uncancellable native work retains ownership.
+	OperationTimeout time.Duration
 	// MaxStartTransactions bounds admitted start plans; zero selects 32.
 	// Stop/shutdown do not consume this capacity.
 	MaxStartTransactions int
@@ -38,7 +43,7 @@ type Config struct {
 	// Daemon is the M4 daemon Job Object. Unit processes nest under it.
 	Daemon *runtime.DaemonJob
 	// Clock drives the timer scheduler and manager waits for RestartSec,
-	// WatchdogSec, TimeoutStartSec, and TimeoutStopSec. Zero uses
+	// WatchdogSec, TimeoutStartSec, TimeoutStopSec, and operation budgets. Zero uses
 	// timers.DefaultClock(). Tests inject timers.Fake so Advance fires
 	// those waits without sleeping on the real clock (issue #28).
 	Clock timers.Clock

@@ -27,6 +27,12 @@ func (c *cli) operation(args []string) int {
 		return c.rpcError(err)
 	}
 	fmt.Fprintf(c.stdout, "OperationID=%s\nUnit=%s\nAction=%s\nOrigin=%s\nState=%s\nConfigRevision=%s\nStartedAt=%s\n", op.ID, op.Unit, op.Action, op.Origin, op.State, op.ConfigRevision, op.StartedAt)
+	if op.DeadlineAt != "" {
+		fmt.Fprintf(c.stdout, "DeadlineAt=%s\n", op.DeadlineAt)
+	}
+	if op.CancellationReason != "" {
+		fmt.Fprintf(c.stdout, "CancellationReason=%s\n", op.CancellationReason)
+	}
 	if op.CompletedAt != "" {
 		fmt.Fprintf(c.stdout, "CompletedAt=%s\n", op.CompletedAt)
 	}

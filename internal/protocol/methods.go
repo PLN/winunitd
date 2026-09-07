@@ -169,16 +169,18 @@ type OperationParams struct {
 // OperationResult is a copied operation outcome, independent of current unit
 // lifecycle state. Completed history is bounded and does not survive restart.
 type OperationResult struct {
-	ID             string `json:"id"`
-	Unit           string `json:"unit"`
-	Action         string `json:"action"`
-	Origin         string `json:"origin"`
-	State          string `json:"state"`
-	ConfigRevision string `json:"configRevision"`
-	StartedAt      string `json:"startedAt"`
-	CompletedAt    string `json:"completedAt,omitempty"`
-	Error          string `json:"error,omitempty"`
-	ErrorTruncated bool   `json:"errorTruncated,omitempty"`
+	DeadlineAt         string `json:"deadlineAt,omitempty"`
+	CancellationReason string `json:"cancellationReason,omitempty"`
+	ID                 string `json:"id"`
+	Unit               string `json:"unit"`
+	Action             string `json:"action"`
+	Origin             string `json:"origin"`
+	State              string `json:"state"`
+	ConfigRevision     string `json:"configRevision"`
+	StartedAt          string `json:"startedAt"`
+	CompletedAt        string `json:"completedAt,omitempty"`
+	Error              string `json:"error,omitempty"`
+	ErrorTruncated     bool   `json:"errorTruncated,omitempty"`
 }
 
 // EnableResult is the payload for enable and disable.

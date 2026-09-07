@@ -41,7 +41,8 @@ The following issues make the next work visible without replacing the full gates
 | R2 | [R2.4: Give accepted operations internal deadlines and cancellation ownership](https://github.com/PLN/winunitd/issues/98) |
 | R5 | [R5.1: Make persistent timer state atomic and failures observable](https://github.com/PLN/winunitd/issues/99) |
 
-The next lifecycle implementation should be a bounded R2.4 operation-lifetime
-slice, coordinated with the R2.1-R2.2 migration. Graceful stop, semantic migration,
+The R2.4 operation-lifetime slice is implemented; see [behavior and limits](OPERATIONS.md).
+The next lifecycle work is the R2.1-R2.2 state-writer inventory and coordinator
+migration in #96. Graceful stop, semantic migration,
 SYSTEM/user qualification, full MSI servicing and signing keep their separate
 gates. Successful beta installation and maintenance tests do not close them.

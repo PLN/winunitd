@@ -462,8 +462,9 @@ protocol round trips and the full repository race suite and vet pass.
 [Operation history](OPERATIONS.md) documents optional protocol fields, older
 server behavior, retention, and limits. Automatic process recovery and daemon
 shutdown are not transaction-history entries. History does not survive manager
-restart; operation contexts, aggregate deadlines, and the remaining lifecycle
-coordinator are still pending.
+restart. Operation contexts and aggregate deadlines were pending at this stage;
+the later operation-lifetime slice below supersedes that limitation. The lifecycle
+coordinator remains pending.
 
 ### Windows operation qualification
 
@@ -497,7 +498,46 @@ compatible request for capacity exhaustion. It now joins. Twenty race repetition
 cover cancellation of that wait, shared successful outcomes without mutable reply
 aliasing, and rejecting a new revision or intervening stop from joining an old
 start. The full repository race suite and vet pass. The original
-caller's operation context and control-connection bounds remain separate work.
+caller's context is addressed by the next slice; control-connection bounds remain
+separate work.
+
+## Accepted operation lifetimes
+
+September 7, 2026; [R2.4 issue #98](https://github.com/PLN/winunitd/issues/98).
+Accepted start/stop/restart transactions now own their contexts and aggregate
+cancellation budgets. Caller or serving-context cancellation ends the response
+wait without canceling accepted work. Shutdown/close cancels launches and restarts;
+accepted stops retain their own cleanup lifetime. DeadlineAt and CancellationReason
+are optional protocol fields with CLI output; the protocol version and existing
+success/error shapes are preserved.
+
+Deadline cancellation and member completion publish under the same manager lock.
+Completed members are preserved; incomplete launches disarm recovery and retain
+ownership. Late process/proxy/watch completions are cleaned up under the unit gate.
+The operation captures the actual launch generation, which may differ from plan
+acceptance after a queued stop. Cleanup failures retain truthful status and stop
+retry. A response timeout never implies that native handles have been released.
+
+Deterministic regressions cover first-caller and serving-context cancellation,
+pre-admission rejection, expired unit-gate waits, late process creation with retained
+admission, preserved completed dependencies, stop/restart caller-versus-deadline
+behavior, and one budget across ordered stop members. A queued-stop/new-launch
+case proves that cancellation follows the actual invocation generation. Delayed fake
+SCM/task starts and watch opens verify cleanup after late native completion. Existing
+shutdown and cleanup-failure regressions now query final operation completion
+before inspecting late resources, rather than treating a canceled response wait
+as a cleanup barrier. Existing joined-caller and protocol compatibility tests remain.
+
+The focused operation/CLI regressions passed ten local Windows race repetitions;
+queued-generation, partial dependency, stop/restart and late native/watch cases passed twenty. The
+full local Windows race suite and vet passed with Go 1.27.1. Final cross-platform
+CI and exact revision identity are recorded in the linked issue/PR. No new
+SYSTEM/session, VM, MSI or pilot qualification is claimed for this change.
+
+[Operation behavior](OPERATIONS.md#accepted-work-and-cancellation) specifies budget
+calculation, cancellation ownership, pending-cleanup diagnostics and remaining
+resource-bound limitations. Native calls can outlive cancellation while retaining
+their existing cleanup owner; this is not a hard real-time termination guarantee.
 
 ## Limits
 
