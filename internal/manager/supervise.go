@@ -131,7 +131,6 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 	}(rt)
 	if !autoRestart {
 		rt.stopping = false
-		rt.gen++
 		rt.cancelRestart()
 		if !triggered {
 			rt.startTimes = nil
@@ -141,6 +140,9 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		m.mu.Unlock()
 		return nil
 	}
+	// Every real invocation, including automatic recovery, has a fresh
+	// generation. Callbacks from the previous process must become stale.
+	rt.gen++
 	startGen := rt.gen
 	if planned != nil {
 		planned.launchGen = startGen

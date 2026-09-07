@@ -562,6 +562,22 @@ to Design v2 invariants and tests. It explicitly retains coordinator admission,
 worker-state migration, UserHost coordination and immutable aggregate snapshots
 as open work. This slice does not close #96 or R2.
 
+## Automatic replacement generations
+
+September 7, 2026; follow-up to the writer audit in #96.
+Automatic launches previously reused the prior invocation's generation. A delayed
+watchdog, restart request or process-exit event could therefore match a replacement
+on the same runtime record. A fake-clock regression demonstrated all three failures.
+Every real launch now advances the generation after recovery admission checks;
+redundant starts still preserve the live invocation and watchdog identity.
+
+The new regression starts a service, observes an automatic replacement, then
+delivers each old callback. The replacement remains live and active without new
+failure diagnostics or recovery. These cases and existing recovery, restart and
+watchdog regressions passed twenty local Windows race repetitions. Full-suite and
+integration evidence is recorded in the associated PR. This fixes an identity
+boundary; it does not claim the remaining coordinator migration is complete.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

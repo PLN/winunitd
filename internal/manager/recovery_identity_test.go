@@ -72,6 +72,66 @@ type failSecondRecoveryLauncher struct {
 	calls atomic.Int32
 }
 
+func TestLateCallbackCannotAffectAutomaticReplacement(t *testing.T) {
+	for _, callback := range []string{"watchdog", "restart", "exit"} {
+		t.Run(callback, func(t *testing.T) {
+			const name = "work.service"
+			m, clock := managerWithFake(t, &fakeLauncher{}, map[string]string{name: "[Service]\nExecStart=C:\\Tools\\work.exe\nRestart=always\nRestartSec=1s\n"})
+			if _, err := m.Start(context.Background(), name); err != nil {
+				t.Fatal(err)
+			}
+			m.mu.Lock()
+			rt := m.units[name]
+			owner := runtimeIdentity{name: name, record: rt, gen: rt.gen}
+			old := rt.proc.(*fakeProc)
+			m.mu.Unlock()
+			old.die(1)
+			waitCond(t, func() bool {
+				m.mu.Lock()
+				defer m.mu.Unlock()
+				return rt.sub == core.SubAutoRestart && clock.WaitingAt(time.Second)
+			})
+			clock.Advance(time.Second)
+			waitCond(t, func() bool {
+				m.mu.Lock()
+				defer m.mu.Unlock()
+				return rt.proc != nil && rt.proc != old && rt.state == core.Active
+			})
+			m.mu.Lock()
+			replacement := rt.proc
+			m.mu.Unlock()
+			delivered := make(chan struct{})
+			go func() {
+				defer close(delivered)
+				switch callback {
+				case "watchdog":
+					m.onWatchdogTimeout(owner)
+				case "restart":
+					m.beginRestart(recoveryRequest{owner: owner})
+				case "exit":
+					m.applyProcessExit(processExitCompletion{owner: owner, waitErr: errors.New("old exit")})
+				}
+			}()
+			waitCond(t, func() bool {
+				select {
+				case <-delivered:
+					return true
+				default:
+				}
+				m.mu.Lock()
+				defer m.mu.Unlock()
+				return rt.proc != replacement || rt.state != core.Active || rt.sub == core.SubAutoRestart
+			})
+			m.mu.Lock()
+			unchanged := rt.proc == replacement && rt.state == core.Active && rt.sub != core.SubAutoRestart && rt.err == "" && !rt.stopUncertain
+			m.mu.Unlock()
+			if !unchanged || !replacement.Alive() {
+				t.Fatal("old callback changed the automatic replacement")
+			}
+		})
+	}
+}
+
 func (l *failSecondRecoveryLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
 	if l.calls.Add(1) == 2 {
 		return nil, errors.New("injected fresh start failure")

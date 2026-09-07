@@ -16,7 +16,8 @@ Graph execution now reports never-launched failures through StartRejectionObserv
 The manager delivers those failures using the accepted runtime record, generation,
 stop epoch and origin. Successful/failed adapter calls publish their member outcome
 while still holding the unit gate. A canceled gate wait also publishes a rejection.
-No final transaction Run is applied to manager lifecycle state. Run remains a graph
+Each real automatic or explicit launch receives a fresh generation; redundant
+starts retain the live invocation identity. No final transaction Run is applied to manager lifecycle state. Run remains a graph
 execution result; a failed operation does not rewrite successfully started members.
 
 ## Writer inventory
