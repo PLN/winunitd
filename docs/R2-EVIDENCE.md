@@ -594,6 +594,22 @@ watchdog/exit/recovery coverage. Full-suite and integration results are recorded
 in the associated PR. Notification/watch handle helpers, launch/readiness, reaping
 and other rows in the writer inventory remain to migrate; this is not R2 closure.
 
+## Stop-scope precedence at admission
+
+September 7, 2026; follow-up from #96's stop-writer audit.
+Accepted stop/restart operations now invalidate pending activation and suppress
+recovery for every member of the captured stop plan before dispatching workers.
+Previously, an ordered member could still enter automatic recovery while an earlier
+member's stop blocked. The new regression reproduced that behavior for both stop
+and restart before the fix, and passes afterward.
+
+Plan validation and capacity checks still happen before suppression. Ordered
+workers use the accepted scope without incrementing its stop epochs again, keeping
+the restart's own captured start plan valid. Standalone internal stops retain their
+pre-gate suppression helper. Rejection, restart and queued-generation tests passed
+twenty local Windows race repetitions; full-suite/integration evidence is recorded
+in the associated PR. This advances stop precedence without closing #96 or R2.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

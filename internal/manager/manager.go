@@ -570,6 +570,9 @@ func (m *Manager) startOperation(ctx context.Context, name string, origin activa
 		return nil, protocol.ErrFailed(waitFailMessage(err))
 	}
 	m.activeStarts++
+	if stopPlan != nil {
+		m.disarmStopScopeLocked(stopPlan)
+	}
 	definitions := make(map[string]*plannedStart)
 	for _, member := range tx.Units() {
 		if rt := m.units[member]; rt != nil {
@@ -627,7 +630,7 @@ func (m *Manager) startOperation(ctx context.Context, name string, origin activa
 
 func (m *Manager) executeStartOperation(ctx context.Context, name string, origin activationOrigin, tx, stopPlan *core.Transaction, definitions map[string]*plannedStart) (*protocol.UnitResult, error) {
 	if stopPlan != nil {
-		if _, err := stopPlan.ExecuteStop(ctx, core.StopFunc(m.stopUnitCtx)); err != nil {
+		if _, err := stopPlan.ExecuteStop(ctx, core.StopFunc(m.stopAcceptedUnitCtx)); err != nil {
 			return nil, protocol.ErrFailed(waitFailMessage(err))
 		}
 	}
