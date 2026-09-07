@@ -539,7 +539,13 @@ func TestOperationDeadlineCleansLateNativeStart(t *testing.T) {
 					return err == nil && st.ActiveState() == "inactive"
 				}
 			}
-			m := managerWithPathCfg(t, cfg, map[string]string{"work.service": body})
+			m := managerWithPathCfg(t, cfg, map[string]string{
+				"work.service": body,
+				"work.timer":   "[Timer]\nOnUnitActiveSec=7s\n",
+			})
+			if _, err := m.Start(context.Background(), "work.timer"); err != nil {
+				t.Fatal(err)
+			}
 			done := make(chan error, 1)
 			go func() { _, err := m.Start(context.Background(), "work"); done <- err }()
 			select {
@@ -559,6 +565,9 @@ func TestOperationDeadlineCleansLateNativeStart(t *testing.T) {
 			m.mu.Unlock()
 			if uncertain {
 				t.Fatal("successful native cleanup retained uncertainty")
+			}
+			if !m.engine.Status("work.timer").Next.IsZero() {
+				t.Fatal("canceled native start scheduled a new timer activation")
 			}
 		})
 	}

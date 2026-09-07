@@ -218,10 +218,10 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 	}
 	m.mu.Unlock()
 	if svc.Type == unit.TypeSCM {
-		return m.startSCM(ctx, name, u, autoRestart)
+		return m.startSCM(ctx, name, u, autoRestart, runtimeIdentity{name: name, record: rt, gen: startGen})
 	}
 	if svc.Type == unit.TypeScheduledTask {
-		return m.startTask(ctx, name, u, autoRestart)
+		return m.startTask(ctx, name, u, autoRestart, runtimeIdentity{name: name, record: rt, gen: startGen})
 	}
 	if err := m.closeNotify(name); err != nil {
 		return err
@@ -556,24 +556,10 @@ func (m *Manager) maybeRestart(name string, kind core.ExitKind, svc *unit.Servic
 
 func (m *Manager) beginRestart(request recoveryRequest) {
 	name, owner := request.owner.name, request.owner
-	m.mu.Lock()
-	rt := m.units[name]
-	if m.closed || !owner.currentLocked(m) || rt.stopping || rt.unavailable {
-		m.mu.Unlock()
+	ctx := m.acceptRecovery(request)
+	if ctx == nil {
 		return
 	}
-	if m.startLimitHitLocked(rt) {
-		m.failStartLimitLocked(rt)
-		m.mu.Unlock()
-		return
-	}
-	if rt.step(core.EventAutoRestart) {
-		rt.err = ""
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	rt.cancelRestart()
-	rt.restartCancel = cancel
-	m.mu.Unlock()
 
 	if request.delay > 0 {
 		timer := m.clock().Timer(request.delay)
@@ -588,7 +574,7 @@ func (m *Manager) beginRestart(request recoveryRequest) {
 	}
 
 	m.mu.Lock()
-	rt = m.units[name]
+	rt := m.units[name]
 	if m.closed || !owner.currentLocked(m) || rt.stopping || rt.unavailable {
 		m.mu.Unlock()
 		return
