@@ -1,6 +1,14 @@
 # winunitd design — revision 2
 
-September 5, 2026. Target architecture for the [roadmap](ROADMAP.md), based on the [architecture review](docs/DESIGN-REVIEW.md). This supersedes [revision 1](docs/archive/DESIGN-v1.md). It specifies intended behavior; the existing alpha does not yet implement this contract. Current behavior remains described in [README.md](README.md), with known gaps in the review and [milestones](docs/MILESTONES.md).
+September 5, 2026; status refreshed September 7, 2026. Target architecture for
+the [roadmap](ROADMAP.md), based on the [architecture review](docs/DESIGN-REVIEW.md).
+This supersedes [revision 1](docs/archive/DESIGN-v1.md). The published `0.2.1-beta`
+implements a narrower supported contract; this document specifies intended
+behavior, not the shipped unit-file reference. Use [UNIT-REFERENCE.md](docs/UNIT-REFERENCE.md)
+and [RUNTIME-REFERENCE.md](docs/RUNTIME-REFERENCE.md) for current behavior, and
+[milestones](docs/MILESTONES.md) and [post-beta tracking](docs/POST-BETA-TRACKING.md)
+for remaining implementation and qualification. Existing beta syntax remains
+compatible until an explicit versioned migration is designed and accepted.
 
 ## 1. Purpose and boundaries
 
@@ -67,7 +75,7 @@ Timers and native watchers submit activation requests with their origin. They do
 
 Retain systemd-shaped INI, strict unknown-directive errors, literal environment values, and absolute executable paths. Prefer an explicit executable with repeated arguments or a JSON argv array. Shell execution requires an explicit shell executable. Do not infer command syntax from filesystem existence. Validate configuration independently of whether the target executable currently exists; existence/access checks are separately reported validation and activation results.
 
-Introduce an explicit unit-format version before changing ambiguous semantics. Unversioned files retain the current alpha interpretation during migration; a converter/validator reports required changes and writes an explicit new version only on request. No silent AND-to-OR or CPU-unit conversion on reload or MSI upgrade. Resolve exact syntax and conversion rules in R3 before enabling new semantics in production.
+Introduce an explicit unit-format version before changing ambiguous semantics. Unversioned files retain the documented beta interpretation during migration; a converter/validator reports required changes and writes an explicit new version only on request. No silent AND-to-OR or CPU-unit conversion on reload or MSI upgrade. Resolve exact syntax and conversion rules in R3 before enabling new semantics in production.
 
 Parse and validate a full candidate revision outside the coordinator. Reject invalid replacements atomically and keep the last accepted revision, reporting all diagnostics. A cold load with invalid configuration exposes diagnostics and control but starts no units from an unaccepted revision. A valid removal is allowed: keep any live runtime as `not-found` load state with its captured invocation configuration, status, logs, and stop capability. Removal disarms future automatic restart and activation for that unit. Once stopped, it cannot start until a valid definition returns.
 

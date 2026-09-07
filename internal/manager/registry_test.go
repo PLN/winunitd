@@ -87,7 +87,14 @@ func TestRegistryChangeDoesNotRestartRunningSimple(t *testing.T) {
 	t.Parallel()
 	launch := &fakeLauncher{}
 	hub := newFakeRegHub()
-	m := managerWithRegistry(t, launch, hub.Open, map[string]string{
+	waiting := make(chan struct{}, 8)
+	m := managerWithRegistry(t, launch, func(spec registry.Key) (registry.Watch, error) {
+		w, err := hub.Open(spec)
+		if err != nil {
+			return nil, err
+		}
+		return &acknowledgedWatch{watchIO: w, waiting: waiting}, nil
+	}, map[string]string{
 		"foo.service": `
 [Service]
 Type=simple
@@ -108,8 +115,9 @@ RegistryChanged=HKLM\Software\Example
 	if n := len(launch.units()); n != 1 {
 		t.Fatalf("starts = %d, want 1", n)
 	}
+	waitWatchCycle(t, waiting)
 	hub.Fire(`HKLM\Software\Example`)
-	time.Sleep(200 * time.Millisecond)
+	waitWatchCycle(t, waiting)
 	if n := len(launch.units()); n != 1 {
 		t.Fatalf("running simple must not restart; starts = %d", n)
 	}
@@ -284,7 +292,7 @@ WantedBy=default.target
 	}
 	assertState(t, m, "foo.registry", core.Inactive)
 	hub.Fire(`HKLM\Software\Example`)
-	time.Sleep(200 * time.Millisecond)
+	// Boot completed synchronously; the disabled watch was never armed.
 	if launch.nstarts() != 0 {
 		t.Fatal("disabled registry unit must not start the oneshot")
 	}

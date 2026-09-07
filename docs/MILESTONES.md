@@ -1,11 +1,16 @@
 # Revision 2 implementation milestones
 
-**Delivery priority:** [B1-B4 public beta gates](BETA-RELEASE.md) now govern the
-first release. The R0-R8 completion rules below govern the longer-term design;
-their unchecked items do not automatically block beta. In particular, complete
-coordinator migration, exhaustive qualification, and the seven-day soak are deferred.
+**Delivery status:** [B1-B4 public beta gates](BETA-RELEASE.md) completed with
+`0.2.1-beta` on September 6, 2026. Prioritize supported-path defects and adopter
+feedback while continuing the R0-R8 design and qualification work. Complete
+coordinator migration, exhaustive qualification and the seven-day soak remain
+separate acceptance requirements; beta publication does not close them.
 
-September 6, 2026. Implements [ROADMAP.md](../ROADMAP.md) and [Design v2](../DESIGN.md). R0, R1, and the initial R2 ownership work are **in progress**; later milestones remain planned. Documentation adoption does not complete implementation. Work-package IDs are suitable issue-title prefixes. This file defines repository milestones; no GitHub milestone objects or implementation issues have been created by this documentation change.
+September 7, 2026. Implements [ROADMAP.md](../ROADMAP.md) and [Design v2](../DESIGN.md).
+R0, R1 and the initial R2 ownership work are **in progress**; later milestones
+remain planned with some groundwork delivered. [Post-beta tracking](POST-BETA-TRACKING.md)
+maps the GitHub milestones and focused issues to these gates. Documentation and
+issue creation do not complete implementation or substitute for acceptance.
 
 ## Acceptance rules
 
@@ -151,7 +156,7 @@ Exit gate: all three components meet their health/authentication checks under MS
 
 Status: planned. Dependencies for release: R7. Public-source/provider preparation may begin earlier under roadmap policy.
 
-- [ ] **R8.1 Public readiness:** review source history and release inputs for credentials, personal names, real machine names, internal addresses, and host artifacts; sanitize historical content before making the repository public. Complete behavior, installation, recovery, support, license, and security-reporting documentation. Record qualified platforms/modes. Source visibility changes remain a separate action.
+- [ ] **R8.1 Public readiness:** public source and unsigned beta publication are complete under the recorded [B4 review and decision](BETA-RELEASE.md#publication-decision). For the signed release, review source history and release inputs for credentials, personal names, real machine names, internal addresses, and host artifacts; review historical content against the recorded publication decision and resolve newly discovered exposure before publishing new artifacts. Complete behavior, installation, recovery, support, license, and security-reporting documentation. Record qualified platforms/modes. Source visibility changes remain a separate action.
 - [ ] **R8.2 Provider:** investigate/apply to SignPath Foundation once eligible; record terms, roles, MFA, manual signing approval, required policy, verifiable build origin, and Windows publisher display. If not accepted, select an eligible alternative. Do not claim acceptance before enrollment succeeds.
 - [ ] **R8.3 Pipeline:** build with pinned tools/actions in a protected release workflow; sign/timestamp payloads, assemble/sign MSI, verify payload/package signatures, then hash and attest final bytes. Protect signing authority from untrusted PR execution.
 - [ ] **R8.4 Publish/verify:** assemble complete draft assets, publish an immutable release, and independently verify the downloaded MSI, attestations, checksums, and clean-machine installation. Document reputation warnings without promising they disappear.
@@ -171,4 +176,4 @@ The former M0–M5 sequence was packaging-focused. Use R0–R8 for all new track
 | M4 release pipeline | R8 |
 | M5 pilot replacement | R7 |
 
-Pilot qualification now precedes public release acceptance. Package prototypes can still be built earlier without being declared installation-ready.
+Full pilot qualification precedes the R8 signed-release acceptance gate; the narrower B1-B4 beta has already shipped. Package prototypes can still be built earlier without being declared installation-ready.
