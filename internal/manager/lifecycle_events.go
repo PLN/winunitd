@@ -1,7 +1,9 @@
 package manager
 
 import (
+	"context"
 	"errors"
+	"fmt"
 
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/protocol"
@@ -174,4 +176,112 @@ func (m *Manager) applyProcessExit(event processExitCompletion) {
 			rt.err = mainExitMessage(event.waitErr)
 		}
 	}
+}
+
+// watchdogEffect is an accepted cleanup instruction. The worker only performs
+// I/O against these captured resources and reports the result back.
+type watchdogEffect struct {
+	owner   runtimeIdentity
+	unit    *unit.Unit
+	process runtime.Process
+	cancel  context.CancelFunc
+}
+
+type watchdogCleanup struct {
+	effect *watchdogEffect
+	err    error
+}
+
+// Called after acquiring the unit gate; a queued timeout revalidates its owner.
+func (m *Manager) acceptWatchdogFailure(owner runtimeIdentity) *watchdogEffect {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rt := m.units[owner.name]
+	if !owner.currentLocked(m) || rt.stopping || m.closed || rt.stopUncertain {
+		return nil
+	}
+	if !rt.step(core.EventWatchdogFailed) {
+		return nil
+	}
+	rt.err = "watchdog timed out"
+	rt.terminated = true
+	effect := &watchdogEffect{owner: owner, unit: rt.ownedUnit(), process: rt.proc, cancel: rt.watchdog}
+	rt.stopUncertain = effect.process != nil
+	rt.watchdog = nil
+	return effect
+}
+
+// Cleanup can release only its exact invocation; recovery checks the same owner
+// again after the worker releases the unit gate.
+func (m *Manager) applyWatchdogCleanup(event watchdogCleanup) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owner, proc := event.effect.owner, event.effect.process
+	rt := m.units[owner.name]
+	if !owner.currentLocked(m) || !rt.sameOp(owner.gen, proc) {
+		return false
+	}
+	if event.err != nil {
+		rt.err = fmt.Sprintf("watchdog cleanup: %v", event.err)
+		return false
+	}
+	rt.proc = nil
+	rt.stopUncertain = false
+	rt.terminated = false
+	return true
+}
+
+// processExitEffect captures cleanup policy before the worker leaves the
+// lifecycle decision. Reload cannot retarget its resources or recovery policy.
+type processExitEffect struct {
+	owner      runtimeIdentity
+	unit       *unit.Unit
+	process    runtime.Process
+	cancel     context.CancelFunc
+	suppressed bool
+}
+
+type processExitCleanup struct {
+	effect *processExitEffect
+	err    error
+}
+
+func (m *Manager) acceptProcessExitCleanup(name string, proc runtime.Process) *processExitEffect {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rt := m.units[name]
+	if rt == nil || rt.proc != proc || rt.stopUncertain {
+		// A stale watcher must not repeat completed cleanup. An uncertain stop
+		// keeps its resource owner even when the main process has exited.
+		return nil
+	}
+	effect := &processExitEffect{
+		owner: runtimeIdentity{name: name, record: rt, gen: rt.gen},
+		unit:  rt.ownedUnit(), process: proc, cancel: rt.watchdog,
+		suppressed: rt.stopping || rt.terminated,
+	}
+	rt.stopUncertain = true
+	rt.terminated = false
+	rt.watchdog = nil
+	return effect
+}
+
+func (m *Manager) applyProcessExitCleanup(event processExitCleanup) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owner, proc := event.effect.owner, event.effect.process
+	rt := m.units[owner.name]
+	if !owner.currentLocked(m) || !rt.sameOp(owner.gen, proc) || rt.proc != proc {
+		return false
+	}
+	if event.err != nil {
+		if rt.state != core.Failed {
+			rt.step(core.EventStartFailed)
+		}
+		rt.err = fmt.Sprintf("exit cleanup: %v", event.err)
+		return false
+	}
+	rt.proc = nil
+	rt.stopUncertain = false
+	return true
 }

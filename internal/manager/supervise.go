@@ -465,32 +465,11 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 		}
 	}
 	defer release()
-	m.mu.Lock()
-	rt := m.units[name]
-	if rt == nil || rt.proc != proc {
-		m.mu.Unlock()
-		// Ownership only moves after confirmed cleanup. A stale watcher must
-		// not repeat termination/handle closure after another operation did it.
+	effect := m.acceptProcessExitCleanup(name, proc)
+	if effect == nil {
 		return
 	}
-	if rt.stopUncertain {
-		// A cleanup operation (or its explicit retry) owns this process.
-		// Main-process exit alone does not confirm descendant termination;
-		// keep the reference until that operation reports success.
-		m.mu.Unlock()
-		return
-	}
-	rt.stopUncertain = true
-	owner := runtimeIdentity{name: name, record: rt, gen: rt.gen}
-	stopping := rt.stopping
-	terminated := rt.terminated
-	rt.terminated = false
-	u := rt.ownedUnit()
-	gen := rt.gen
-	wdCancel := rt.watchdog
-	rt.watchdog = nil
-	m.mu.Unlock()
-
+	u, wdCancel := effect.unit, effect.cancel
 	if wdCancel != nil {
 		wdCancel()
 	}
@@ -500,23 +479,9 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 		cleanupErr = fmt.Errorf("process remains alive after exit cleanup")
 	}
 	cleanupErr = errors.Join(cleanupErr, notifyErr)
-	m.mu.Lock()
-	rt = m.units[name]
-	if rt == nil || !rt.sameOp(gen, proc) || rt.proc != proc {
-		m.mu.Unlock()
+	if !m.applyProcessExitCleanup(processExitCleanup{effect: effect, err: cleanupErr}) {
 		return
 	}
-	if cleanupErr != nil {
-		if rt.state != core.Failed {
-			rt.step(core.EventStartFailed)
-		}
-		rt.err = fmt.Sprintf("exit cleanup: %v", cleanupErr)
-		m.mu.Unlock()
-		return
-	}
-	rt.proc = nil
-	rt.stopUncertain = false
-	m.mu.Unlock()
 	// Restart waits and relaunches through the same operation lock.
 	release()
 
@@ -524,7 +489,7 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 	if u != nil {
 		svc = u.Service
 	}
-	m.applyProcessExit(processExitCompletion{owner: owner, service: svc, waitErr: err, limitHit: limitHit, suppressed: stopping || terminated})
+	m.applyProcessExit(processExitCompletion{owner: effect.owner, service: svc, waitErr: err, limitHit: limitHit, suppressed: effect.suppressed})
 }
 
 func waitProcOrLimit(proc runtime.Process) (error, bool) {

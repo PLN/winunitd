@@ -578,6 +578,22 @@ watchdog regressions passed twenty local Windows race repetitions. Full-suite an
 integration evidence is recorded in the associated PR. This fixes an identity
 boundary; it does not claim the remaining coordinator migration is complete.
 
+## Watchdog and process-exit cleanup events
+
+September 7, 2026; next migration slice for #96.
+Watchdog timeout and process-exit workers now request a captured cleanup effect,
+perform native cleanup outside the manager lock, and deliver a typed result.
+Lifecycle handlers own failure state, uncertainty, process removal and recovery
+permission. Results validate runtime record, generation and process ownership.
+Reload does not change the captured cleanup or recovery configuration.
+
+Stale successful and failed cleanup results are tested after stop and replacement;
+neither can release the new process, change its diagnostics or authorize recovery.
+These regressions passed twenty local Windows race repetitions, alongside repeated
+watchdog/exit/recovery coverage. Full-suite and integration results are recorded
+in the associated PR. Notification/watch handle helpers, launch/readiness, reaping
+and other rows in the writer inventory remain to migrate; this is not R2 closure.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2
