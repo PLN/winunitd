@@ -727,6 +727,25 @@ This adds real-daemon regression evidence for the migration slices through proce
 adoption/readiness; it does not close #96 or establish fresh installation,
 generalized provisioning, MSI servicing, interactive-session or release acceptance.
 
+## Watch lifecycle decisions
+
+September 7, 2026; continuation of #96. Watch admission, failure, disarm,
+partial-open ownership, cleanup retention and configuration reconciliation now
+use lifecycle handlers. Path-existence observations update their latch only
+through the current armed-generation handler. Blocking open/close and predicate
+I/O remain outside lifecycle decisions.
+
+A deterministic regression reproduced a late watch failure replacing an accepted
+stop decision with failed state and a new diagnostic. Failure admission now
+rejects observations after stop, removal, shutdown or generation replacement.
+Twenty race-enabled repetitions passed for stop precedence, stale predicates and
+failures, and independent start while watch cleanup is blocked. Existing watch
+and path tests, the full local Windows race suite
+(`go test -race -parallel 1 ./... -timeout 180s`) and `go vet ./...` passed.
+This slice is not included in the preceding SYSTEM
+artifact qualification; coordinator routing and the remaining writer inventory
+are still open.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2
