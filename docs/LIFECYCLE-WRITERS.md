@@ -9,7 +9,7 @@ This is an incremental migration map, not evidence that R2 is complete.
 The manager mutex serializes record access, but callers and workers still make
 lifecycle decisions in several files. A mutex is not the design's coordinator.
 The per-unit gate serializes native work for one name while independent units
-perform I/O concurrently. Typed start, stop and exit handlers are migration
+perform I/O concurrently. Typed start, stop, watchdog and exit handlers are migration
 boundaries; they currently execute on the delivering goroutine under that mutex.
 
 Graph execution now reports never-launched failures through StartRejectionObserver.
@@ -31,10 +31,10 @@ writes as well as state/substate assignment when migrating each row.
 | operation_lifetime.go: beginOperationTaskLocked, cancelOperationLocked, finishOperationTask | Accepted context, deadline, stop epoch, recovery suppression, uncertainty, slot release | Coordinator-owned operation records; timer callbacks submit cancellation events |
 | lifecycle_events.go: start/rejection, stop cleanup/completion, process exit handlers | Member state/error, matching generation, cleanup ownership, restart decision | Typed boundary exists; route through the coordinator after remaining workers stop writing records |
 | supervise.go: launchUnitOwnedOp | Invocation generation/configuration, process adoption, notify ownership, readiness/oneshot results, start cancellation, late cleanup | Split admission, native observations and cleanup completion into typed decisions |
-| supervise.go: watch, reapFailedLocked, reapFailed | Exit cleanup ownership, uncertainty, process removal, failure diagnostics | Move cleanup admission/results; preserve cleanup-before-replacement |
+| supervise.go: watch, reapFailedLocked, reapFailed | Exit cleanup ownership, uncertainty, process removal, failure diagnostics | watch now uses typed cleanup admission/results in lifecycle_events.go; failed-process reaping remains a direct writer |
 | supervise.go: maybeRestart, beginRestart; startlimit.go | Recovery eligibility, start history/budget, restart cancellation, auto-restart state | Coordinator decides recovery; delay and launch remain workers |
 | shutdown.go: Shutdown, stopTransaction, stopUnitWithContext, stopUnitAfterLock | Scope suppression, stop epochs/generations, retained records, stop request state, watchdog detach | Coordinator accepts scope before gates; typed stop results already exist |
-| notify.go: closeNotifyContext, disposeNotify, startWatchdog, stopWatchdog, onWatchdogTimeout | Notify/watchdog handles, termination intent, watchdog failure, cleanup result | Separate watchdog decision and cleanup events; notifyRuntime's message channels remain adapter observations |
+| notify.go: closeNotifyContext, disposeNotify, startWatchdog, stopWatchdog, onWatchdogTimeout | Notify/watchdog handles, termination intent, watchdog failure, cleanup result | Watchdog timeout now uses typed decision/cleanup events; handle helpers and watchdog registration remain direct writers. notifyRuntime's message channels remain adapter observations |
 | scm.go: startSCM; task.go: startTask | Native recovery start success; timer activation notification | Capture owner in native completion events; external status queries remain observations |
 | reload.go: replaceLocked, acceptConfigRevisionLocked; enable.go: rebuildGraphWithLinksLocked | Accepted graph/configuration, stable record creation/removal, load state, enablement and revisions | Commit validated candidates through coordinator; parsing/persistence outside it |
 | watchhub.go: installHub, failHub, disarmHubContext, closeHub, disposeHub, syncHubsLocked | Watch ownership, failure, uncertainty, configuration reconciliation | Typed arm/fail/close observations; preserve late handle disposal |

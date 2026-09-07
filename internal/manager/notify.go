@@ -485,7 +485,7 @@ func (m *Manager) probeWatchdogLoop(ctx context.Context, owner runtimeIdentity, 
 }
 
 func (m *Manager) onWatchdogTimeout(owner runtimeIdentity) {
-	name, gen := owner.name, owner.gen
+	name := owner.name
 	unlock := m.ops.lock(name)
 	released := false
 	release := func() {
@@ -495,24 +495,11 @@ func (m *Manager) onWatchdogTimeout(owner runtimeIdentity) {
 		}
 	}
 	defer release()
-	m.mu.Lock()
-	rt := m.units[name]
-	if !owner.currentLocked(m) || rt.stopping || m.closed || rt.stopUncertain {
-		m.mu.Unlock()
+	effect := m.acceptWatchdogFailure(owner)
+	if effect == nil {
 		return
 	}
-	if !rt.step(core.EventWatchdogFailed) {
-		m.mu.Unlock()
-		return
-	}
-	rt.err = "watchdog timed out"
-	rt.terminated = true
-	u := rt.ownedUnit()
-	proc := rt.proc
-	rt.stopUncertain = proc != nil
-	wdCancel := rt.watchdog
-	rt.watchdog = nil
-	m.mu.Unlock()
+	u, proc, wdCancel := effect.unit, effect.process, effect.cancel
 	if wdCancel != nil {
 		wdCancel()
 	}
@@ -522,21 +509,9 @@ func (m *Manager) onWatchdogTimeout(owner runtimeIdentity) {
 		stopErr = fmt.Errorf("process remains alive after watchdog cleanup")
 	}
 	stopErr = errors.Join(stopErr, notifyErr)
-	m.mu.Lock()
-	rt = m.units[name]
-	if !owner.currentLocked(m) || !rt.sameOp(gen, proc) {
-		m.mu.Unlock()
+	if !m.applyWatchdogCleanup(watchdogCleanup{effect: effect, err: stopErr}) {
 		return
 	}
-	if stopErr != nil {
-		rt.err = fmt.Sprintf("watchdog cleanup: %v", stopErr)
-		m.mu.Unlock()
-		return
-	}
-	rt.proc = nil
-	rt.stopUncertain = false
-	rt.terminated = false
-	m.mu.Unlock()
 	release()
 
 	var svc *unit.ServiceSpec
