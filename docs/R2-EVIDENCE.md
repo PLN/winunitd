@@ -671,6 +671,26 @@ coverage passed three. Full-suite/integration evidence is recorded in the PR.
 Successful process adoption and readiness/oneshot completion remain direct writers
 for the next slice. This is not closure of #96 or the aggregate snapshot work.
 
+## Process adoption and readiness completion
+
+September 7, 2026; continuation of #96.
+Successful process adoption, late-launch cleanup, oneshot wait registration/results,
+readiness failure/cleanup and final activation now use lifecycle handlers.
+Supervision workers no longer assign runtime lifecycle fields directly. Their
+blocking process, readiness, job and journal work remains outside the decisions.
+Late creations are adopted before cleanup under the retained record and unit gate.
+
+Final activation validates cancellation, stopping, exact runtime/generation and
+process identity before producing timer/watchdog effects. Stale readiness, oneshot,
+late-launch cleanup and activation results are tested after stop and replacement;
+the replacement remains live with unchanged diagnostics. These cases passed twenty
+local Windows race repetitions; notify/oneshot/late/stop/restart/operation coverage
+passed three. Full-suite/integration evidence is recorded in the associated PR.
+
+Trigger/configuration/user-host decisions, coordinator admission and aggregate
+snapshot publication remain open in #96. This does not change beta oneshot syntax
+or claim new native qualification.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/runtime"
@@ -189,4 +190,127 @@ func (m *Manager) retainLaunchFailure(effect *launchEffect, proc runtime.Process
 	rt.proc = proc
 	rt.stopUncertain = true
 	rt.err = err.Error()
+}
+
+type processAdoption struct {
+	effect      *launchEffect
+	process     runtime.Process
+	autoRestart bool
+	alive       bool
+}
+
+func (m *Manager) adoptProcess(event processAdoption) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rt := event.effect.owner.record
+	// Retention and the unit gate protect the record. Late creations must be
+	// adopted before cleanup so failure remains reachable through Stop.
+	rt.proc = event.process
+	if m.closed || rt.stopping || !event.effect.owner.currentLocked(m) {
+		rt.stopUncertain = true
+		return false
+	}
+	rt.terminated = false
+	if event.effect.unit.Service.Type == unit.TypeNotify {
+		rt.step(core.EventStartRequested)
+	} else if event.autoRestart && event.alive {
+		if rt.step(core.EventStartSucceeded) {
+			rt.err = ""
+		}
+	}
+	return true
+}
+
+func (m *Manager) applyLateLaunchCleanup(effect *launchEffect, proc runtime.Process, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !effect.owner.currentLocked(m) || effect.owner.record.proc != proc {
+		return
+	}
+	rt := effect.owner.record
+	if err == nil {
+		rt.proc = nil
+		rt.stopUncertain = false
+	} else {
+		rt.step(core.EventStartFailed)
+		rt.err = fmt.Sprintf("late launch cleanup: %v", err)
+	}
+}
+
+func (m *Manager) registerStartWait(effect *launchEffect, cancel context.CancelFunc) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || !effect.owner.currentLocked(m) || effect.owner.record.stopping {
+		return false
+	}
+	effect.owner.record.startCancel = cancel
+	return true
+}
+
+func (m *Manager) clearStartWait(effect *launchEffect) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if effect.owner.currentLocked(m) {
+		effect.owner.record.startCancel = nil
+	}
+}
+
+func (m *Manager) applyOneshotCleanup(effect *launchEffect, proc runtime.Process, err error, terminated bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !effect.owner.currentLocked(m) || effect.owner.record.proc != proc {
+		return
+	}
+	rt := effect.owner.record
+	if terminated {
+		rt.terminated = true
+	}
+	rt.stopUncertain = err != nil
+}
+
+func (m *Manager) acceptReadinessFailure(effect *launchEffect, proc runtime.Process, err error) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !effect.owner.currentLocked(m) || effect.owner.record.proc != proc {
+		return true
+	}
+	rt := effect.owner.record
+	rt.terminated = true
+	rt.stopUncertain = true
+	if !rt.stopping && rt.step(core.EventStartFailed) {
+		rt.err = err.Error()
+	}
+	return rt.stopping
+}
+
+func (m *Manager) applyReadinessCleanup(effect *launchEffect, proc runtime.Process, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !effect.owner.currentLocked(m) || !effect.owner.record.sameOp(effect.owner.gen, proc) {
+		return
+	}
+	rt := effect.owner.record
+	if err == nil {
+		rt.proc = nil
+		rt.stopUncertain = false
+		rt.terminated = false
+	} else {
+		rt.err = fmt.Sprintf("readiness cleanup: %v", err)
+	}
+}
+
+func (m *Manager) acceptProcessActivation(ctx context.Context, effect *launchEffect, proc runtime.Process) (time.Time, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ctx.Err() != nil || m.closed || !effect.owner.currentLocked(m) || effect.owner.record.stopping || effect.owner.record.proc != proc {
+		return time.Time{}, false
+	}
+	rt := effect.owner.record
+	if effect.unit.Service.Type == unit.TypeNotify {
+		if !rt.step(core.EventStartSucceeded) {
+			return time.Time{}, false
+		}
+		rt.err = ""
+	}
+	return m.now(), true
 }
