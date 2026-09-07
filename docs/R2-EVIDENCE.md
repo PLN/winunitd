@@ -610,6 +610,27 @@ pre-gate suppression helper. Rejection, restart and queued-generation tests pass
 twenty local Windows race repetitions; full-suite/integration evidence is recorded
 in the associated PR. This advances stop precedence without closing #96 or R2.
 
+## Stop, failed-process and handle cleanup boundaries
+
+September 7, 2026; continuation of #96.
+Per-member stop admission now captures a retained runtime record, exact generation,
+process, invocation definition and watchdog cancellation in one cleanup effect.
+Workers perform native teardown and journal waits from that capture; lifecycle
+handlers retain/release records and publish the existing stop results.
+
+Failed-process reaping now captures the runtime record as well as generation and
+process, revalidates after its gate wait, and reports cleanup results to a handler.
+Notification and watch-close results also use typed handlers. Those match the
+exact retained handle rather than a generation, since retries may advance the
+operation generation while joining the same pending native close.
+
+Stale successful/failed reaping results are covered after stop and replacement,
+with twenty local Windows race repetitions. Existing stop, close, cleanup-failure
+and restart regressions passed three repetitions. Full-suite and integration
+results are recorded in the associated PR. These boundaries preserve the current
+cleanup contract; coordinator admission and remaining launch/trigger/configuration
+writers remain open.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

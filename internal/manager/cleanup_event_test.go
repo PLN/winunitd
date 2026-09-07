@@ -9,7 +9,7 @@ import (
 )
 
 func TestStaleCleanupEventCannotChangeReplacement(t *testing.T) {
-	for _, source := range []string{"watchdog", "exit"} {
+	for _, source := range []string{"watchdog", "exit", "failed-process"} {
 		for _, failed := range []bool{false, true} {
 			label := source + "/success"
 			if failed {
@@ -34,12 +34,15 @@ func TestStaleCleanupEventCannotChangeReplacement(t *testing.T) {
 						t.Fatal("watchdog cleanup was not accepted")
 					}
 					deliver = func(err error) bool { return m.applyWatchdogCleanup(watchdogCleanup{effect: effect, err: err}) }
-				} else {
+				} else if source == "exit" {
 					effect := m.acceptProcessExitCleanup(name, proc)
 					if effect == nil {
 						t.Fatal("exit cleanup was not accepted")
 					}
 					deliver = func(err error) bool { return m.applyProcessExitCleanup(processExitCleanup{effect: effect, err: err}) }
+				} else {
+					effect := failedProcessEffect{owner: owner, process: proc}
+					deliver = func(err error) bool { m.applyFailedProcessCleanup(effect, err); return false }
 				}
 				if _, err := m.Stop(name); err != nil {
 					t.Fatal(err)

@@ -609,44 +609,17 @@ func (m *Manager) subOfLocked(name string) core.Substate {
 	return core.SubNone
 }
 
-func (m *Manager) reapFailedLocked() {
-	for name, rt := range m.units {
-		if rt == nil || rt.state != core.Failed || rt.proc == nil || rt.stopUncertain {
-			continue
-		}
-		proc := rt.proc
-		gen := rt.gen
-		rt.stopUncertain = true
-		go m.reapFailed(name, proc, gen)
-	}
-}
-
-func (m *Manager) reapFailed(name string, proc runtime.Process, gen uint64) {
-	unlock := m.ops.lock(name)
+func (m *Manager) reapFailed(effect failedProcessEffect) {
+	unlock := m.ops.lock(effect.owner.name)
 	defer unlock()
-	m.mu.Lock()
-	rt := m.units[name]
-	if rt == nil || !rt.sameOp(gen, proc) || rt.proc != proc || m.closed {
-		m.mu.Unlock()
+	if !m.acceptFailedProcessCleanup(effect) {
 		return
 	}
-	m.mu.Unlock()
-	err := m.stopProcess(proc, defaultStopTimeout)
-	if err == nil && proc.Alive() {
+	err := m.stopProcess(effect.process, defaultStopTimeout)
+	if err == nil && effect.process.Alive() {
 		err = fmt.Errorf("process remains alive after failed-state cleanup")
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	rt = m.units[name]
-	if rt == nil || !rt.sameOp(gen, proc) || rt.proc != proc {
-		return
-	}
-	if err != nil {
-		rt.err = fmt.Sprintf("failed-state cleanup: %v", err)
-		return
-	}
-	rt.proc = nil
-	rt.stopUncertain = false
+	m.applyFailedProcessCleanup(effect, err)
 }
 
 func classifyWait(err error) core.ExitKind {
