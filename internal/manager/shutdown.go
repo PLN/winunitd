@@ -142,6 +142,7 @@ func (m *Manager) stopTransaction(ctx context.Context, name string) (*protocol.U
 		return nil, protocol.ErrFailed(err.Error())
 	}
 	m.activeStops++
+	m.disarmStopScopeLocked(plan)
 	var retained []*unitRuntime
 	for _, member := range plan.Units() {
 		if rt := m.units[member]; rt != nil {
@@ -166,7 +167,7 @@ func (m *Manager) stopTransaction(ctx context.Context, name string) (*protocol.U
 }
 
 func (m *Manager) executeStopOperation(ctx context.Context, name string, plan *core.Transaction) (*protocol.UnitResult, error) {
-	_, err := plan.ExecuteStop(ctx, core.StopFunc(m.stopUnitCtx))
+	_, err := plan.ExecuteStop(ctx, core.StopFunc(m.stopAcceptedUnitCtx))
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err != nil {
@@ -200,18 +201,22 @@ func (m *Manager) stopUnitWithContext(ctx context.Context, name string) (*protoc
 		// waitReady waits for stopping — a deadlock on a fake
 		// clock that never Advances TimeoutStartSec.
 		m.mu.Lock()
-		if rt := m.units[name]; rt != nil {
-			rt.stopping = true
-			rt.stopEpoch++
-			m.signalStartCapacityLocked()
-			if rt.startCancel != nil {
-				rt.startCancel()
-			}
-			rt.cancelRestart()
-		}
+		m.disarmStartLocked(name)
 		m.mu.Unlock()
 	}
 
+	return m.stopAcceptedUnit(ctx, name)
+}
+
+func (m *Manager) stopAcceptedUnitCtx(ctx context.Context, name string) error {
+	_, err := m.stopAcceptedUnit(ctx, name)
+	return err
+}
+
+// The transaction already disarmed its entire scope at admission. Do not bump
+// the epoch again when an ordered member reaches its gate: that would invalidate
+// newer requests and the restart's own captured start intent.
+func (m *Manager) stopAcceptedUnit(ctx context.Context, name string) (*protocol.UnitResult, error) {
 	unlock, lockErr := m.ops.lockContext(ctx, name)
 	if lockErr != nil {
 		return nil, lockErr

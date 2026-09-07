@@ -285,3 +285,23 @@ func (m *Manager) applyProcessExitCleanup(event processExitCleanup) bool {
 	rt.stopUncertain = false
 	return true
 }
+
+// Accept stop precedence for the complete captured scope before dispatching any
+// teardown worker. Ordered members cannot recover while an earlier stop waits.
+func (m *Manager) disarmStopScopeLocked(plan *core.Transaction) {
+	for _, name := range plan.Units() {
+		m.disarmStartLocked(name)
+	}
+}
+
+func (m *Manager) disarmStartLocked(name string) {
+	if rt := m.units[name]; rt != nil {
+		rt.stopping = true
+		rt.stopEpoch++
+		m.signalStartCapacityLocked()
+		if rt.startCancel != nil {
+			rt.startCancel()
+		}
+		rt.cancelRestart()
+	}
+}

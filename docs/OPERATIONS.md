@@ -85,8 +85,9 @@ Inspect status and retry stop; neither a timeout nor a failed history entry gran
 permission to replace live files. Transaction budgets do not bound every native
 worker or control connection; that broader admission work remains R2.3.
 
-Explicit stop continues to invalidate pending activation for its scope before
-acquiring the unit gate. Manager shutdown/close also cancels accepted starts and
+Accepted stop and restart invalidate pending activation and suppress recovery for
+their complete captured stop scope before dispatching ordered teardown workers.
+Plan validation and capacity rejection happen before this change in eligibility. Manager shutdown/close also cancels accepted starts and
 restarts. Already accepted stops retain their own bounded cleanup lifetime, and
 shutdown can join their pending native calls. Durable history, a separate operation
 cancellation command and the remaining coordinator migration stay open.
