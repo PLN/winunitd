@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/protocol"
@@ -418,4 +419,68 @@ func (m *Manager) applyHubCleanup(event hubCleanup) {
 			rt.err = fmt.Sprintf("watch cleanup: %v", event.err)
 		}
 	}
+}
+
+// Recovery admission decides eligibility and installs cancellation before the
+// worker waits. Delay and launch never run inside this lifecycle decision.
+func (m *Manager) acceptRecovery(request recoveryRequest) context.Context {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owner := request.owner
+	rt := m.units[owner.name]
+	if m.closed || !owner.currentLocked(m) || rt.stopping || rt.unavailable {
+		return nil
+	}
+	if m.startLimitHitLocked(rt) {
+		m.failStartLimitLocked(rt)
+		return nil
+	}
+	if rt.step(core.EventAutoRestart) {
+		rt.err = ""
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	rt.cancelRestart()
+	rt.restartCancel = cancel
+	return ctx
+}
+
+func (m *Manager) acceptWatchdog(name string, gen uint64, cancel context.CancelFunc) (runtimeIdentity, context.CancelFunc, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rt := m.units[name]
+	if rt == nil || m.closed || rt.stopping || rt.gen != gen {
+		return runtimeIdentity{}, nil, false
+	}
+	previous := rt.watchdog
+	rt.watchdog = cancel
+	return runtimeIdentity{name: name, record: rt, gen: gen}, previous, true
+}
+
+func (m *Manager) detachWatchdog(name string) context.CancelFunc {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if rt := m.units[name]; rt != nil {
+		cancel := rt.watchdog
+		rt.watchdog = nil
+		return cancel
+	}
+	return nil
+}
+
+// Accept native completion before producing a timer activation observation.
+// Persistence/scheduler work stays outside the decision; the returned timestamp
+// belongs to this accepted observation, not a later worker delivery time.
+func (m *Manager) acceptNativeStart(ctx context.Context, owner runtimeIdentity, autoRestart bool) (time.Time, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ctx.Err() != nil || m.closed || !owner.currentLocked(m) || owner.record.stopping {
+		return time.Time{}, false
+	}
+	if autoRestart {
+		if !owner.record.step(core.EventStartSucceeded) {
+			return time.Time{}, false
+		}
+		owner.record.err = ""
+	}
+	return m.now(), true
 }

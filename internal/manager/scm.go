@@ -52,7 +52,7 @@ func (m *Manager) overlaySCM(st *protocol.UnitStatus, serviceName string) {
 	st.InvocationID = ""
 }
 
-func (m *Manager) startSCM(ctx context.Context, name string, u *unit.Unit, autoRestart bool) error {
+func (m *Manager) startSCM(ctx context.Context, name string, u *unit.Unit, autoRestart bool, owner runtimeIdentity) error {
 	if m.cfg.UserScope {
 		return scmUserScopeError()
 	}
@@ -75,17 +75,14 @@ func (m *Manager) startSCM(ctx context.Context, name string, u *unit.Unit, autoR
 		return err
 	}
 	_ = st
-	m.mu.Lock()
-	if autoRestart {
-		if rt := m.units[name]; rt != nil && !rt.stopping {
-			if rt.step(core.EventStartSucceeded) {
-				rt.err = ""
-			}
-		}
+	when, accepted := m.acceptNativeStart(ctx, owner, autoRestart)
+	if !accepted {
+		// Preserve the adapter outcome for a concurrent explicit stop. The
+		// owning operation separately reports its own deadline/cancellation.
+		return nil
 	}
-	m.mu.Unlock()
 	if m.engine != nil {
-		m.engine.UnitActive(name, m.now())
+		m.engine.UnitActive(name, when)
 	}
 	return nil
 }

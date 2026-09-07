@@ -52,7 +52,7 @@ func (m *Manager) overlayTask(st *protocol.UnitStatus, taskName string) {
 	st.InvocationID = ""
 }
 
-func (m *Manager) startTask(ctx context.Context, name string, u *unit.Unit, autoRestart bool) error {
+func (m *Manager) startTask(ctx context.Context, name string, u *unit.Unit, autoRestart bool, owner runtimeIdentity) error {
 	if m.cfg.UserScope {
 		return scheduledTaskUserScopeError()
 	}
@@ -75,17 +75,14 @@ func (m *Manager) startTask(ctx context.Context, name string, u *unit.Unit, auto
 		return err
 	}
 	_ = st
-	m.mu.Lock()
-	if autoRestart {
-		if rt := m.units[name]; rt != nil && !rt.stopping {
-			if rt.step(core.EventStartSucceeded) {
-				rt.err = ""
-			}
-		}
+	when, accepted := m.acceptNativeStart(ctx, owner, autoRestart)
+	if !accepted {
+		// Preserve the adapter outcome for a concurrent explicit stop. The
+		// owning operation separately reports its own deadline/cancellation.
+		return nil
 	}
-	m.mu.Unlock()
 	if m.engine != nil {
-		m.engine.UnitActive(name, m.now())
+		m.engine.UnitActive(name, when)
 	}
 	return nil
 }

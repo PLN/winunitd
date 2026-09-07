@@ -631,6 +631,26 @@ results are recorded in the associated PR. These boundaries preserve the current
 cleanup contract; coordinator admission and remaining launch/trigger/configuration
 writers remain open.
 
+## Recovery admission and native completion decisions
+
+September 7, 2026; continuation of #96.
+Recovery acceptance and watchdog registration/detach now use lifecycle handlers;
+workers retain delay, probe and launch I/O. Native SCM/task completion carries the
+captured runtime identity and checks cancellation, shutdown and stopping before
+publishing lifecycle success or an activation observation to the timer engine.
+A concurrent explicit stop still preserves the native adapter outcome; operation
+deadline/cancellation remains owned by the operation record.
+
+The extended late-native regression demonstrated that both adapters previously
+scheduled OnUnitActiveSec after their operation deadline. Both now clean up late
+work without scheduling that activation. Accepted observations retain their
+acceptance timestamp while scheduler/persistence work stays outside the decision.
+
+Native/deadline/restart regressions passed ten local Windows race repetitions;
+recovery/watchdog/scope coverage passed five. Full-suite/integration results are
+recorded in the associated PR. Remaining launch, readiness, trigger and configuration
+writers and aggregate snapshots still prevent closure of #96.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

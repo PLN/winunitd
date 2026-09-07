@@ -380,17 +380,11 @@ func (m *Manager) startWatchdog(name string, svc *unit.ServiceSpec, gen uint64) 
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m.mu.Lock()
-	rt := m.units[name]
-	if rt == nil || m.closed || rt.stopping || rt.gen != gen {
-		m.mu.Unlock()
+	owner, previous, accepted := m.acceptWatchdog(name, gen, cancel)
+	if !accepted {
 		cancel()
 		return
 	}
-	owner := runtimeIdentity{name: name, record: rt, gen: gen}
-	previous := rt.watchdog
-	rt.watchdog = cancel
-	m.mu.Unlock()
 	if previous != nil {
 		previous()
 	}
@@ -403,13 +397,7 @@ func (m *Manager) startWatchdog(name string, svc *unit.ServiceSpec, gen uint64) 
 }
 
 func (m *Manager) stopWatchdog(name string) {
-	m.mu.Lock()
-	var cancel context.CancelFunc
-	if rt := m.units[name]; rt != nil {
-		cancel = rt.watchdog
-		rt.watchdog = nil
-	}
-	m.mu.Unlock()
+	cancel := m.detachWatchdog(name)
 	if cancel != nil {
 		cancel()
 	}
