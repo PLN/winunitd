@@ -149,6 +149,7 @@ func (m *Manager) publishOperationStart(ctx context.Context, event startCompleti
 func (m *Manager) executeOperationStart(ctx context.Context, member string, planned *plannedStart) error {
 	unlock, err := m.ops.lockContext(ctx, member)
 	if err != nil {
+		m.applyStartRejection(startCompletion{name: member, plan: planned, err: err})
 		return err
 	}
 	released := false
@@ -178,4 +179,19 @@ func (m *Manager) executeOperationStart(ctx context.Context, member string, plan
 	}
 	m.applyStartCompletion(startCompletion{name: member, plan: planned, err: err})
 	return err
+}
+
+// operationStarter publishes both adapter completions and never-launched graph
+// failures as individual events. Execute's aggregate Run remains diagnostic only.
+type operationStarter struct {
+	manager     *Manager
+	definitions map[string]*plannedStart
+}
+
+func (s operationStarter) Start(ctx context.Context, name string) error {
+	return s.manager.executeOperationStart(ctx, name, s.definitions[name])
+}
+
+func (s operationStarter) StartRejected(name string, err error) {
+	s.manager.applyStartRejection(startCompletion{name: name, plan: s.definitions[name], err: err})
 }

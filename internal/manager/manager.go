@@ -631,80 +631,17 @@ func (m *Manager) executeStartOperation(ctx context.Context, name string, origin
 			return nil, protocol.ErrFailed(waitFailMessage(err))
 		}
 	}
-	run, err := tx.Execute(ctx, core.StartFunc(func(ctx context.Context, member string) error {
-		return m.executeOperationStart(ctx, member, definitions[member])
-	}))
+	_, err := tx.Execute(ctx, operationStarter{manager: m, definitions: definitions})
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// A stop invalidates this plan's results as well as its queued launches.
-	// Return the transaction outcome without rewriting the newer runtime state.
-	if run != nil {
-		for member, planned := range definitions {
-			if (planned.origin != nil && !planned.origin.validLocked(m)) || planned.completed || m.units[member] != planned.record || planned.record.stopEpoch != planned.stopEpoch || planned.record.gen != planned.gen {
-				delete(run.States, member)
-				delete(run.Errors, member)
-			}
-		}
-	}
-	m.applyRunLocked(run)
-	m.reapFailedLocked()
-	rootCurrent := (origin == nil || origin.validLocked(m)) && definitions[name] != nil && !definitions[name].completed && m.units[name] == definitions[name].record && definitions[name].stopEpoch == definitions[name].record.stopEpoch && definitions[name].gen == definitions[name].record.gen
 	if err != nil {
-		if rootCurrent {
-			m.setErrLocked(name, waitFailMessage(err))
-		}
 		return &protocol.UnitResult{
 			Unit:        name,
 			ActiveState: m.stateOfLocked(name).String(),
 			Error:       waitFailMessage(err),
 		}, protocol.ErrFailed(waitFailMessage(err))
 	}
-	if rootCurrent {
-		m.clearErrLocked(name)
-	}
 	return &protocol.UnitResult{Unit: name, ActiveState: m.stateOfLocked(name).String()}, nil
-}
-
-func (m *Manager) applyRunLocked(run *core.Run) {
-	if run == nil {
-		return
-	}
-	for name, st := range run.States {
-		rt := m.units[name]
-		if rt == nil || rt.sub == core.SubAutoRestart {
-			continue
-		}
-		// Do not stamp Failed over an already-Active unit (Requires=
-		// failure of a dependency after this unit started). Issue #35.
-		if st == core.Failed && rt.state == core.Active {
-			continue
-		}
-		// Do not stamp Active onto a unit stopped mid-transaction (#24).
-		if st == core.Active && rt.stopping {
-			continue
-		}
-		// Do not stamp Inactive over a unit that started after this run's
-		// stop (stop-transaction apply vs a later Start).
-		if st == core.Inactive && !rt.stopping {
-			if rt.state == core.Active || rt.state == core.Activating {
-				continue
-			}
-			if live := rt.proc; live != nil && live.Alive() {
-				continue
-			}
-		}
-		rt.state = st
-	}
-	for name, err := range run.Errors {
-		rt := m.units[name]
-		if rt == nil || err == nil {
-			continue
-		}
-		if rt.state == core.Active {
-			continue
-		}
-		rt.err = waitFailMessage(err)
-	}
 }
 
 // Stop stops the named unit plus reverse requirers (units that

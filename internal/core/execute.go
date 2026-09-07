@@ -21,6 +21,14 @@ func (f StartFunc) Start(ctx context.Context, name string) error {
 	return f(ctx, name)
 }
 
+// StartRejectionObserver optionally receives failures for jobs whose Start was
+// never called. Delivery is synchronous on the transaction executor, once per
+// rejected job, before dependent jobs are released. It must not wait for work
+// that depends on this executor. Adapter completions still belong to Starter.
+type StartRejectionObserver interface {
+	StartRejected(name string, err error)
+}
+
 // Stopper deactivates a unit. KillMode=job (TerminateJobObject) lives in
 // the manager; graph execution stays free of Windows APIs.
 type Stopper interface {
@@ -399,6 +407,9 @@ func (e *executor) markFailed(name string, err error) {
 	e.run.Errors[name] = err
 	e.run.States[name] = Failed
 	if !e.launched[name] {
+		if observer, ok := e.starter.(StartRejectionObserver); ok {
+			observer.StartRejected(name, err)
+		}
 		e.releaseAfter(name)
 	}
 	for _, other := range e.tx.jobNames() {

@@ -35,11 +35,47 @@ func (m *Manager) applyStartCompletionLocked(event startCompletion) {
 	} else if event.err != nil {
 		state = core.Failed
 	}
-	m.applyRunLocked(&core.Run{States: map[string]core.State{event.name: state}, Errors: map[string]error{event.name: event.err}})
+	m.applyStartOutcomeLocked(event.name, state, event.err)
 	if event.err == nil {
 		m.clearErrLocked(event.name)
 	}
 	m.reapFailedLocked()
+}
+
+// applyStartOutcomeLocked handles one identity-checked member outcome. Graph
+// transaction snapshots are diagnostic results, never lifecycle input.
+func (m *Manager) applyStartOutcomeLocked(name string, state core.State, err error) {
+	rt := m.units[name]
+	if rt == nil || rt.sub == core.SubAutoRestart {
+		return
+	}
+	if state == core.Failed && rt.state == core.Active {
+		return // successful members survive a later dependency failure
+	}
+	if state == core.Active && rt.stopping {
+		return
+	}
+	if state == core.Inactive && !rt.stopping {
+		if rt.state == core.Active || rt.state == core.Activating || rt.proc != nil {
+			return
+		}
+	}
+	rt.state = state
+	if err != nil && rt.state != core.Active {
+		rt.err = waitFailMessage(err)
+	}
+}
+
+// Jobs blocked by dependencies or cancellation never acquire a unit gate.
+// Their accepted record/generation must still match at event delivery.
+func (m *Manager) applyStartRejection(event startCompletion) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	plan := event.plan
+	if plan.completed || m.units[event.name] != plan.record || plan.record.gen != plan.gen {
+		return
+	}
+	m.applyStartCompletionLocked(event)
 }
 
 type stopCompletion struct {
