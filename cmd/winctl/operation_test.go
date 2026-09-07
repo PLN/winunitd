@@ -13,9 +13,10 @@ import (
 
 func TestOperationCLIQueryAndExitCodes(t *testing.T) {
 	for _, tc := range []struct {
-		state string
-		code  int
-	}{{"succeeded", 0}, {"running", 3}, {"failed", 1}, {"missing", 4}, {"old-server", 1}} {
+		state   string
+		code    int
+		details bool
+	}{{"succeeded", 0, false}, {"running", 3, false}, {"failed", 1, false}, {"missing", 4, false}, {"old-server", 1, false}, {"running", 3, true}} {
 		t.Run(tc.state, func(t *testing.T) {
 			const id = "example/op/7"
 			dial := func(ctx context.Context) (net.Conn, error) {
@@ -33,7 +34,12 @@ func TestOperationCLIQueryAndExitCodes(t *testing.T) {
 						if tc.state == "old-server" {
 							return nil, protocol.ErrMethodNotFound(method)
 						}
-						return &protocol.OperationResult{ID: id, Unit: "work.service", Action: "restart", Origin: "explicit", State: tc.state}, nil
+						op := &protocol.OperationResult{ID: id, Unit: "work.service", Action: "restart", Origin: "explicit", State: tc.state}
+						if tc.details {
+							op.DeadlineAt = "2026-09-07T12:00:00Z"
+							op.CancellationReason = "operation deadline exceeded"
+						}
+						return op, nil
 					}), protocol.AllowAdmin)
 				}()
 				return client, nil
@@ -41,6 +47,9 @@ func TestOperationCLIQueryAndExitCodes(t *testing.T) {
 			var out, errb bytes.Buffer
 			if code := runCLI([]string{"operation", id}, &out, &errb, dial); code != tc.code {
 				t.Fatalf("exit=%d stderr=%s", code, errb.String())
+			}
+			if tc.details && (!strings.Contains(out.String(), "DeadlineAt=2026-09-07T12:00:00Z") || !strings.Contains(out.String(), "CancellationReason=operation deadline exceeded")) {
+				t.Fatal("operation deadline/cancellation omitted")
 			}
 			if tc.state != "missing" && tc.state != "old-server" && !strings.Contains(out.String(), "OperationID="+id) {
 				t.Fatal("missing operation identity")

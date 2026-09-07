@@ -32,6 +32,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	// in the stop plan, which waits for adoption and confirmed cleanup.
 	m.mu.Lock()
 	m.closed = true
+	m.cancelOperationsLocked()
 	m.signalStartCapacityLocked()
 	for _, rt := range m.units {
 		rt.stopping = true
@@ -112,8 +113,12 @@ func (m *Manager) shutdownRootsLocked() []string {
 	return roots
 }
 
-func (m *Manager) stopTransaction(name string) (result *protocol.UnitResult, resultErr error) {
+func (m *Manager) stopTransaction(ctx context.Context, name string) (*protocol.UnitResult, error) {
 	m.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		m.mu.Unlock()
+		return nil, protocol.ErrFailed(err.Error())
+	}
 	g := m.graph
 	if _, ok := m.units[name]; !ok {
 		m.mu.Unlock()
@@ -145,17 +150,23 @@ func (m *Manager) stopTransaction(name string) (result *protocol.UnitResult, res
 		}
 	}
 	operationID := m.beginOperationLocked(name, protocol.MethodStop, nil, plan.Units())
+	flight := &startFlight{id: operationID, done: make(chan struct{})}
+	task := m.beginOperationTaskLocked(flight, m.operationTimeoutLocked(nil, plan), nil)
 	m.mu.Unlock()
-	defer func() {
-		result, resultErr = m.finishOperation(operationID, result, resultErr)
-		m.mu.Lock()
-		m.activeStops--
-		for _, rt := range retained {
-			rt.operations--
-		}
-		m.mu.Unlock()
+	go func() {
+		result, err := m.executeStopOperation(task.ctx, name, plan)
+		m.finishOperationTask(name, task, result, err, func() {
+			m.activeStops--
+			for _, rt := range retained {
+				rt.operations--
+			}
+		})
 	}()
-	_, err = plan.ExecuteStop(context.Background(), core.StopFunc(m.stopUnitCtx))
+	return flight.wait(ctx)
+}
+
+func (m *Manager) executeStopOperation(ctx context.Context, name string, plan *core.Transaction) (*protocol.UnitResult, error) {
+	_, err := plan.ExecuteStop(ctx, core.StopFunc(m.stopUnitCtx))
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err != nil {
@@ -213,7 +224,11 @@ func (m *Manager) stopUnitWithContext(ctx context.Context, name string) (*protoc
 		}
 	}
 	defer release()
+	return m.stopUnitAfterLock(ctx, name, release)
+}
 
+// Caller owns the unit gate; release is idempotent and runs before journal waits.
+func (m *Manager) stopUnitAfterLock(ctx context.Context, name string, release func()) (*protocol.UnitResult, error) {
 	m.mu.Lock()
 	rt, err := m.lookup(name)
 	if err != nil {

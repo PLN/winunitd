@@ -44,6 +44,7 @@ type plannedStart struct {
 	launched  bool   // adapter work was admitted before source invalidation
 	completed bool   // completion already published while holding the unit gate
 	gen       uint64 // generation at plan acceptance, for members never launched
+	launchGen uint64 // exact generation captured when this worker acquires an invocation
 }
 
 // A transaction passes its captured definition; recovery uses ownedUnit.
@@ -141,6 +142,9 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		return nil
 	}
 	startGen := rt.gen
+	if planned != nil {
+		planned.launchGen = startGen
+	}
 	// A start can win the operation lock before the exit watcher. Retain the
 	// old invocation until cleanup succeeds; a dead main PID is not sufficient.
 	evicted := rt.proc

@@ -319,6 +319,8 @@ func TestLateLaunchCleanupFailureRetainsOwnership(t *testing.T) {
 			release()
 			if err := waitErr(t, done); err == nil {
 				t.Fatal("superseded launch reported success")
+			} else {
+				waitOperationErrorCompleted(t, m, err)
 			}
 			if stopped != nil && waitErr(t, stopped) == nil {
 				t.Fatal("failed late-process stop reported success")

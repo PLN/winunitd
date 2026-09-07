@@ -20,6 +20,10 @@ type startCompletion struct {
 func (m *Manager) applyStartCompletion(event startCompletion) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.applyStartCompletionLocked(event)
+}
+
+func (m *Manager) applyStartCompletionLocked(event startCompletion) {
 	planned := event.plan
 	planned.completed = true
 	if m.units[event.name] != planned.record || planned.record.stopEpoch != planned.stopEpoch || m.closed || (!planned.launched && planned.origin != nil && !planned.origin.validLocked(m)) {

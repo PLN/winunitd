@@ -40,6 +40,7 @@ type Manager struct {
 	closed               bool
 	activeStarts         int
 	activeStops          int
+	activeOperations     map[string]*operationTask
 	operationSequence    uint64
 	operations           map[string]*protocol.OperationResult
 	completedOperations  []string
@@ -61,6 +62,9 @@ type Manager struct {
 
 // New creates a manager. Reload must be called to load units.
 func New(cfg Config) (*Manager, error) {
+	if cfg.OperationTimeout < 0 {
+		return nil, fmt.Errorf("OperationTimeout must not be negative")
+	}
 	if cfg.MaxStartTransactions < 0 {
 		return nil, fmt.Errorf("MaxStartTransactions must not be negative")
 	}
@@ -172,6 +176,7 @@ func (m *Manager) CloseContext(ctx context.Context) error {
 	}
 	m.mu.Lock()
 	m.closed = true
+	m.cancelOperationsLocked()
 	m.signalStartCapacityLocked()
 	for _, rt := range m.units {
 		if rt.startCancel != nil {
@@ -252,7 +257,7 @@ func (m *Manager) Handle(ctx context.Context, method string, params json.RawMess
 		if err := protocol.DecodeParams(params, &p); err != nil {
 			return nil, err
 		}
-		return m.Stop(p.Unit)
+		return m.StopContext(ctx, p.Unit)
 	case protocol.MethodRestart:
 		var p protocol.UnitParams
 		if err := protocol.DecodeParams(params, &p); err != nil {
@@ -500,13 +505,23 @@ func (m *Manager) startFromOrigin(ctx context.Context, name string, origin activ
 	return m.startOperation(ctx, name, origin, false)
 }
 
-func (m *Manager) startOperation(ctx context.Context, name string, origin activationOrigin, restart bool) (result *protocol.UnitResult, resultErr error) {
+func (m *Manager) startOperation(ctx context.Context, name string, origin activationOrigin, restart bool) (*protocol.UnitResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, protocol.ErrFailed(err.Error())
+	}
 	name, err := requireUnit(name)
 	if err != nil {
 		return nil, err
 	}
 
 	m.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		m.mu.Unlock()
+		return nil, protocol.ErrFailed(err.Error())
+	}
 	if m.closed {
 		m.mu.Unlock()
 		return nil, protocol.ErrFailed("manager is shutting down or closed")
@@ -538,13 +553,6 @@ func (m *Manager) startOperation(ctx context.Context, name string, origin activa
 		m.mu.Unlock()
 		return nil, errStartCapacity
 	}
-	m.activeStarts++
-	defer func() {
-		m.mu.Lock()
-		m.activeStarts--
-		m.signalStartCapacityLocked()
-		m.mu.Unlock()
-	}()
 	roots := []string{name}
 	var stopPlan *core.Transaction
 	if restart {
@@ -561,6 +569,7 @@ func (m *Manager) startOperation(ctx context.Context, name string, origin activa
 		m.mu.Unlock()
 		return nil, protocol.ErrFailed(waitFailMessage(err))
 	}
+	m.activeStarts++
 	definitions := make(map[string]*plannedStart)
 	for _, member := range tx.Units() {
 		if rt := m.units[member]; rt != nil {
@@ -591,41 +600,39 @@ func (m *Manager) startOperation(ctx context.Context, name string, origin activa
 		members = append(members, stopPlan.Units()...)
 	}
 	operationID := m.beginOperationLocked(name, action, origin, members)
-	var flight *startFlight
+	flight := &startFlight{id: operationID, record: m.units[name], stopEpoch: m.units[name].stopEpoch, revision: m.configRevision, done: make(chan struct{})}
 	if origin == nil && !restart {
-		flight = &startFlight{id: operationID, record: m.units[name], stopEpoch: m.units[name].stopEpoch, revision: m.configRevision, done: make(chan struct{})}
 		if m.startFlights == nil {
 			m.startFlights = make(map[string]*startFlight)
 		}
 		m.startFlights[name] = flight
 	}
-	defer func() {
-		result, resultErr = m.finishOperation(operationID, result, resultErr)
-		m.finishStartFlight(name, flight, result, resultErr)
-	}()
+	task := m.beginOperationTaskLocked(flight, m.operationTimeoutLocked(tx, stopPlan), definitions)
 	m.mu.Unlock()
-	defer func() {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		for _, planned := range definitions {
-			planned.record.operations--
-		}
-		for _, record := range retainedStops {
-			record.operations--
-		}
+	go func() {
+		result, err := m.executeStartOperation(task.ctx, name, origin, tx, stopPlan, definitions)
+		m.finishOperationTask(name, task, result, err, func() {
+			m.activeStarts--
+			m.signalStartCapacityLocked()
+			for _, planned := range definitions {
+				planned.record.operations--
+			}
+			for _, record := range retainedStops {
+				record.operations--
+			}
+		})
 	}()
+	return flight.wait(ctx)
+}
+
+func (m *Manager) executeStartOperation(ctx context.Context, name string, origin activationOrigin, tx, stopPlan *core.Transaction, definitions map[string]*plannedStart) (*protocol.UnitResult, error) {
 	if stopPlan != nil {
-		if _, err := stopPlan.ExecuteStop(context.Background(), core.StopFunc(m.stopUnitCtx)); err != nil {
+		if _, err := stopPlan.ExecuteStop(ctx, core.StopFunc(m.stopUnitCtx)); err != nil {
 			return nil, protocol.ErrFailed(waitFailMessage(err))
 		}
 	}
 	run, err := tx.Execute(ctx, core.StartFunc(func(ctx context.Context, member string) error {
-		unlock := m.ops.lock(member)
-		defer unlock()
-		planned := definitions[member]
-		err := m.launchUnitConfigOp(ctx, member, false, planned)
-		m.applyStartCompletion(startCompletion{name: member, plan: planned, err: err})
-		return err
+		return m.executeOperationStart(ctx, member, definitions[member])
 	}))
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -705,6 +712,17 @@ func (m *Manager) applyRunLocked(run *core.Run) {
 // and pure After=/Before= neighbors are not stopped (DESIGN.md §10, §42).
 // Manager.Shutdown is a separate plan (full reverse After=/Before=).
 func (m *Manager) Stop(name string) (*protocol.UnitResult, error) {
+	return m.StopContext(context.Background(), name)
+}
+
+// StopContext cancels only this caller's wait after admission.
+func (m *Manager) StopContext(ctx context.Context, name string) (*protocol.UnitResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, protocol.ErrFailed(err.Error())
+	}
 	m.mu.Lock()
 	rt, err := m.lookup(name)
 	if err != nil {
@@ -713,7 +731,7 @@ func (m *Manager) Stop(name string) (*protocol.UnitResult, error) {
 	}
 	name = rt.unit.Name
 	m.mu.Unlock()
-	return m.stopTransaction(name)
+	return m.stopTransaction(ctx, name)
 }
 
 // Restart admits captured stop/start plans as one operation.
