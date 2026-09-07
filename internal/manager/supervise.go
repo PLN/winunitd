@@ -75,7 +75,6 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		return err
 	}
 	defer m.releaseLaunch(effect)
-	rt, startGen := effect.owner.record, effect.owner.gen
 	u, revision, evicted, owned := effect.unit, effect.revision, effect.previous, effect.previousUnit
 	if evicted != nil {
 		cleanupErr := m.stopProcess(evicted, stopTimeout(owned))
@@ -116,10 +115,10 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 	native := svc.Type == unit.TypeSCM || svc.Type == unit.TypeScheduledTask
 	m.recordServiceLaunch(effect, native)
 	if svc.Type == unit.TypeSCM {
-		return m.startSCM(ctx, name, u, autoRestart, runtimeIdentity{name: name, record: rt, gen: startGen})
+		return m.startSCM(ctx, name, u, autoRestart, effect.owner)
 	}
 	if svc.Type == unit.TypeScheduledTask {
-		return m.startTask(ctx, name, u, autoRestart, runtimeIdentity{name: name, record: rt, gen: startGen})
+		return m.startTask(ctx, name, u, autoRestart, effect.owner)
 	}
 	if err := m.closeNotify(name); err != nil {
 		return err
@@ -188,74 +187,38 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 	m.journal.SetOrigin(m.journalOrigin())
 	m.journal.Attach(name, proc.PID(), inv, proc.Stdout(), proc.Stderr())
 
-	m.mu.Lock()
-	// operations retains this record across reload, and the per-unit operation
-	// lock prevents another launch from installing a process. Adopt even a late
-	// completion before attempting cleanup so failure remains reachable by Stop.
-	rt = m.units[name]
-	rt.proc = proc
-	if m.closed || rt.stopping || rt.gen != startGen {
-		rt.stopUncertain = true
-		m.mu.Unlock()
+	alive := false
+	if autoRestart && svc.Type != unit.TypeNotify {
+		alive = proc.Alive()
+	}
+	if !m.adoptProcess(processAdoption{effect: effect, process: proc, autoRestart: autoRestart, alive: alive}) {
 		stopErr := m.stopProcess(proc, stopTimeout(u))
 		if stopErr == nil && proc.Alive() {
 			stopErr = fmt.Errorf("process remains alive after late launch cleanup")
 		}
 		stopErr = errors.Join(stopErr, m.closeNotify(name))
-		m.mu.Lock()
-		if stopErr == nil {
-			rt.proc = nil
-			rt.stopUncertain = false
-		} else {
-			rt.step(core.EventStartFailed)
-			rt.err = fmt.Sprintf("late launch cleanup: %v", stopErr)
-		}
-		m.mu.Unlock()
+		m.applyLateLaunchCleanup(effect, proc, stopErr)
 		return errors.Join(fmt.Errorf("start superseded during process creation"), stopErr)
 	}
-	rt.terminated = false
-	if svc.Type == unit.TypeNotify {
-		rt.step(core.EventStartRequested)
-	} else if autoRestart {
-		if proc.Alive() {
-			if rt.step(core.EventStartSucceeded) {
-				rt.err = ""
-			}
-		}
-	}
-	gen := rt.gen
-	m.mu.Unlock()
+	gen := effect.owner.gen
 
 	if svc.Type == unit.TypeOneshot {
 		waitCtx, cancel := m.clockTimeout(ctx, svc.TimeoutStartSec)
-		m.mu.Lock()
-		if rt := m.units[name]; rt != nil && !rt.stopping && !m.closed {
-			rt.startCancel = cancel
-		} else {
+		if !m.registerStartWait(effect, cancel) {
 			cancel()
 		}
-		m.mu.Unlock()
 		err := proc.Wait(waitCtx)
 		if waitCtx.Err() != nil {
 			err = fmt.Errorf("TimeoutStartSec exceeded: %w", waitCtx.Err())
 		}
 		cancel()
-		m.mu.Lock()
-		if rt := m.units[name]; rt != nil && rt.gen == gen {
-			rt.startCancel = nil
-		}
-		m.mu.Unlock()
+		m.clearStartWait(effect)
 		if err != nil {
 			stopErr := m.stopProcess(proc, stopTimeout(u))
 			if stopErr == nil && proc.Alive() {
 				stopErr = fmt.Errorf("process remains alive after stop")
 			}
-			m.mu.Lock()
-			if rt := m.units[name]; rt != nil && rt.proc == proc {
-				rt.terminated = true
-				rt.stopUncertain = stopErr != nil
-			}
-			m.mu.Unlock()
+			m.applyOneshotCleanup(effect, proc, stopErr, true)
 			go m.watch(name, proc)
 			if stopErr == nil {
 				m.maybeRestart(name, classifyWait(err), svc)
@@ -265,11 +228,7 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		// Drain the final bytes before watch closes the process's pipe handles.
 		if job := proc.Job(); job != nil {
 			if err := job.Kill(); err != nil {
-				m.mu.Lock()
-				if rt := m.units[name]; rt != nil && rt.proc == proc {
-					rt.stopUncertain = true
-				}
-				m.mu.Unlock()
+				m.applyOneshotCleanup(effect, proc, err, false)
 				return err
 			}
 		}
@@ -278,55 +237,27 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 
 	if svc.Type == unit.TypeNotify {
 		if err := m.waitReady(ctx, name, proc, svc.TimeoutStartSec); err != nil {
-			m.mu.Lock()
-			rt = m.units[name]
-			if rt != nil && rt.proc == proc {
-				rt.terminated = true
-				rt.stopUncertain = true
-			}
-			stopping := rt != nil && rt.stopping
-			if rt != nil && !rt.stopping && rt.gen == startGen {
-				if rt.step(core.EventStartFailed) {
-					rt.err = err.Error()
-				}
-			}
-			m.mu.Unlock()
+			stopping := m.acceptReadinessFailure(effect, proc, err)
 			stopErr := m.stopProcess(proc, stopTimeout(u))
 			if stopErr == nil && proc.Alive() {
 				stopErr = fmt.Errorf("process remains alive after readiness cleanup")
 			}
 			stopErr = errors.Join(stopErr, m.closeNotify(name))
-			m.mu.Lock()
-			if rt := m.units[name]; rt != nil && rt.sameOp(startGen, proc) {
-				if stopErr == nil {
-					rt.proc = nil
-					rt.stopUncertain = false
-					rt.terminated = false
-				} else {
-					rt.err = fmt.Sprintf("readiness cleanup: %v", stopErr)
-				}
-			}
-			m.mu.Unlock()
+			m.applyReadinessCleanup(effect, proc, stopErr)
 			if !stopping && stopErr == nil {
 				m.maybeRestart(name, core.ExitFailure, svc)
 			}
 			return errors.Join(err, stopErr)
 		}
-		m.mu.Lock()
-		if rt := m.units[name]; rt != nil && !rt.stopping && rt.gen == startGen && rt.proc == proc {
-			if rt.step(core.EventStartSucceeded) {
-				rt.err = ""
-			}
+	}
+
+	if when, accepted := m.acceptProcessActivation(ctx, effect, proc); accepted {
+		if m.engine != nil {
+			m.engine.UnitActive(name, when)
 		}
-		m.mu.Unlock()
-	}
-
-	if m.engine != nil {
-		m.engine.UnitActive(name, m.now())
-	}
-
-	if svc.WatchdogEnabled() {
-		m.startWatchdog(name, svc, gen)
+		if svc.WatchdogEnabled() {
+			m.startWatchdog(name, svc, gen)
+		}
 	}
 
 	go m.watch(name, proc)
