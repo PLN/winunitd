@@ -12,7 +12,7 @@ A joined caller receives the same ID and its own reply copy. Cancelling that
 caller's wait returns the ID for later queries and does not cancel the original
 operation. A new revision or intervening stop prevents joining; trigger starts
 and explicit restarts keep separate semantics. Joining does not consume another
-start-transaction slot, though control-connection limits remain separate work.
+start-transaction slot; each waiting RPC still occupies a control-handler slot.
 
 ```powershell
 winctl restart app.target
@@ -83,7 +83,8 @@ A final failed operation may still leave uncertain unit cleanup: timed-out nativ
 stop attempts retain their resource ownership and retries join pending calls.
 Inspect status and retry stop; neither a timeout nor a failed history entry grants
 permission to replace live files. Transaction budgets do not bound every native
-worker or control connection; that broader admission work remains R2.3.
+worker; that broader admission work remains R2.3. Control transport limits are
+described below.
 
 Accepted stop and restart invalidate pending activation and suppress recovery for
 their complete captured stop scope before dispatching ordered teardown workers.
@@ -93,7 +94,32 @@ shutdown can join their pending native calls. Durable history, a separate operat
 cancellation command and the remaining coordinator migration stay open.
 
 The protocol keeps its current version. IDs and deadline/cancellation metadata are optional JSON additions, and
-`operation` is a new method. Existing methods retain their response shape and
-error codes. Older servers reject the new query with `method-not-found`; the CLI
+`operation` is a new method. Existing methods retain their response shape; transport overload adds the
+`busy` error code. Older servers reject the new query with `method-not-found`; the CLI
 reports that failure rather than pretending that history is available. Queries
 use the same authenticated manager pipe and authorization as other unit verbs.
+
+## Control transport capacity
+
+Development builds bound each serving endpoint to 128 accepted connections,
+64 ordinary handlers, eight stop/disable-linger handlers, and eight diagnostic
+handlers (status, operation, list-units and list-timers). These budgets are per
+endpoint, separate from manager transaction budgets. Embedders can use
+`protocol.ServeWithLimits`; the daemon uses the defaults. The standalone
+`ServeConn` helper assumes an already-admitted connection and adds no limits.
+
+Authenticated requests beyond their handler class receive `busy` before the
+manager handler runs, so rejection does not create an operation or change unit
+state. Stop and diagnostic slots cannot be consumed by ordinary requests.
+Accepted handlers finish without acquiring another transport slot, and manager
+shutdown bypasses transport admission. Slots remain occupied until handlers
+actually return, even after a client disconnects.
+
+At the hard connection cap, new connections close without a protocol response.
+Idle or incomplete requests have a 30-second read deadline; response writes have
+a five-second deadline. Neither deadline limits handler execution. Persistent
+clients must reconnect after idle expiry. Authentication/native calls that stall
+still retain their connection slots; deadlines do not forcibly terminate them.
+Raw connections can therefore exhaust the hard cap even when reserved handler
+slots are free. These bounds limit resource growth and isolate handler classes;
+they do not guarantee remote stop access under connection-flood overload.

@@ -776,6 +776,40 @@ linger and admission tests passed with race detection. The uncached full local
 Windows race suite and vet passed; the manager package took 45.1 seconds and the
 full command 56.7 seconds. Hosted evidence is recorded in the associated PR.
 
+## September 9 control transport admission
+
+Each serving endpoint now caps accepted connections and concurrent handlers,
+with independent stop and diagnostic capacity. Authenticated overload receives
+`busy` before dispatch to the manager. Raw connection overflow closes immediately;
+bounded request reads and response writes release stalled transport workers.
+Handler completion does not acquire another admission slot. Standalone ServeConn
+retains its already-admitted helper contract. OPERATIONS documents exact defaults
+and the remaining hard-connection-cap limitation for remote stop access.
+
+Twenty race-enabled protocol repetitions passed for ordinary/diagnostic overload,
+reserved stop progress, rejected-request side-effect exclusion, slot reuse,
+authorization precedence, hard connection overflow, idle reads, stalled responses,
+and long handlers outliving request-read deadlines. This does not close #97:
+end-to-end native worker bounds and timer/session admission remain open. It also
+postdates the retained SYSTEM qualification.
+
+## September 9 status observation lock boundaries
+
+Status and list-units now capture process references alongside lifecycle fields
+under the manager mutex, then observe process liveness/PID and journal counters
+after unlocking. List-timers no longer performs unused process/journal observations.
+UserHost Alive/Running likewise capture process references before observing them
+outside the host mutex. Delayed observations cannot block unrelated stop or host
+shutdown decisions. Responses remain best-effort overlays of captured lifecycle
+fields and later external observations; immutable aggregate publication is open.
+
+Twenty focused race repetitions passed for blocked status/list liveness with an
+independent public stop and blocked user Alive/Running with a shutdown decision.
+The uncached full Windows race suite and vet passed for the combined slice
+(manager package: 43.5 seconds); exact hosted validation is recorded in the
+associated PR. No newer SYSTEM
+qualification is claimed.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

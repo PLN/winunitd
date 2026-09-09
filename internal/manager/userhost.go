@@ -489,9 +489,12 @@ func (h *UserHost) Alive(sid string) bool {
 		return false
 	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	inst := h.bySID[sid]
-	return inst != nil && inst.proc != nil && inst.proc.Alive()
+	var proc runtime.UserManagerProc
+	if inst := h.bySID[sid]; inst != nil {
+		proc = inst.proc
+	}
+	h.mu.Unlock()
+	return proc != nil && proc.Alive()
 }
 
 // Running returns SIDs with a live manager.
@@ -500,10 +503,16 @@ func (h *UserHost) Running() []string {
 		return nil
 	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	out := make([]string, 0, len(h.bySID))
+	procs := make(map[string]runtime.UserManagerProc, len(h.bySID))
 	for sid, inst := range h.bySID {
-		if inst != nil && inst.proc != nil && inst.proc.Alive() {
+		if inst != nil && inst.proc != nil {
+			procs[sid] = inst.proc
+		}
+	}
+	h.mu.Unlock()
+	out := make([]string, 0, len(procs))
+	for sid, proc := range procs {
+		if proc.Alive() {
 			out = append(out, sid)
 		}
 	}

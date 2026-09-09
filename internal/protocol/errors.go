@@ -11,6 +11,7 @@ const (
 	CodePermissionDenied = "permission-denied"
 	CodeFailed           = "failed"
 	CodeProtocolMismatch = "protocol-mismatch"
+	CodeBusy             = "busy"
 )
 
 // Error is a protocol-level failure. It is the RPC error object, not CLI text.
@@ -69,6 +70,11 @@ func ErrNotFound(unit string) *Error {
 // ErrFailed is a generic handler failure.
 func ErrFailed(msg string) *Error {
 	return &Error{Code: CodeFailed, Message: msg}
+}
+
+// ErrBusy rejects excess work before entering a handler or creating side effects.
+func ErrBusy() *Error {
+	return &Error{Code: CodeBusy, Message: "control request capacity exhausted; retry later"}
 }
 
 func asError(err error) *Error {
