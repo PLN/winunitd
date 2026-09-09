@@ -46,3 +46,19 @@ The next lifecycle work is the R2.1-R2.2 state-writer inventory and coordinator
 migration in #96. Graceful stop, semantic migration,
 SYSTEM/user qualification, full MSI servicing and signing keep their separate
 gates. Successful beta installation and maintenance tests do not close them.
+
+## Dependency and CI follow-up
+
+September 9, 2026: [go-winio PR #369](https://github.com/microsoft/go-winio/pull/369)
+is still open and unmerged. Retain the documented local v0.6.2 patch and its
+100-repeat Windows regression. Recheck by October 9, 2026, or sooner on an
+upstream merge/release notification; replacement requires equivalent close-race
+coverage and dependency/source-hash review. A clean vulnerability scan alone does
+not audit a local module replacement.
+
+Keep hosted CI on deliberate dispatch for now: the recorded workflow cost is
+roughly 9-10 runner-minutes per full run, so nightly runs would add about 270-300
+minutes per month. Require a successful exact-head dispatch before merging code;
+record its run ID in the PR and handoff. Reconsider scheduled CI if the cost
+budget changes or unverified merges recur. This is a reviewed cost decision,
+not a claim that pushing automatically tests main.

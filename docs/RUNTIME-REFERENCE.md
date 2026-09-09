@@ -47,6 +47,14 @@ Versioned JSON-RPC on `\\.\pipe\winunitd\control` (LocalSystem and Administrator
 
 `start`, `stop`, `restart`, `status`, `operation`, `enable`, `disable`, `list-units`, `list-timers`, `logs`, `daemon-reload`, `enable-linger`, `disable-linger`, `verify`.
 
+Unit status and list-units responses add optional `subState` and
+`terminationUncertain` fields. `winctl status` shows the manager phase and
+`Termination: unconfirmed; retry stop` while owned cleanup is pending or failed,
+even when there is no error string yet. A successful stop clears uncertainty.
+The phase belongs to manager lifecycle; a native proxy's ActiveState is a separate
+external observation. Missing fields from an older daemon remain supported.
+These fields do not claim immutable aggregate snapshots or new health semantics.
+
 `winctl status UNIT` exit codes are systemctl-shaped: **0** active, **3** loaded but inactive/failed, **4** not loaded. Transport/protocol errors keep their existing non-zero exit. Machine status (no unit) exits 0 on success.
 
 Start/stop/restart replies and admitted failures include `OperationID`; unit

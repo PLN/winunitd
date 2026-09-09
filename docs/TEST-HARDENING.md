@@ -55,3 +55,26 @@ Local Windows amd64, Go 1.27.1:
 SYSTEM-only and other identity-gated tests retain explicit skip behavior. This
 work does not claim new SYSTEM/session, VM, MSI or pilot qualification and does
 not close R0-R8 acceptance gates. Raw local test output stays outside the repository.
+
+## Suite runtime budget and remaining timing work
+
+September 9, 2026: use `go test -race -parallel 1 ./... -timeout 180s` on Windows.
+Record uncached full-command wall time and the manager package time beside the
+source identity. The September 7 manager baseline was 45.1 seconds; compilation
+and package scheduling make it different from total command wall time.
+A provisional review budget is 90 seconds for the manager package and 180 seconds
+for a warm-toolchain full command. Exceeding it triggers profiling and test
+consolidation, not skipped assertions or larger timeouts. Hosted cold setup is
+measured separately under the existing 15-minute job deadline.
+
+The September 9 review follow-up measured 56.7 seconds for the uncached full
+command (`-count=1`) and 45.1 seconds for internal/manager on the local Windows
+worker; both remain within this provisional budget. The exact source revision
+and cross-platform run belong in the associated PR.
+
+Issue #40 follow-up: inventory remaining scheduler-sensitive notify/watchdog and
+native-event windows, run them on a constrained Windows worker, and replace policy
+waits with fake-clock/delayed-adapter handshakes. Keep real native-delivery smoke
+windows explicitly identified. Prefer extending public Start/Stop/Reload tests
+over adding a new test for every extracted handler; keep only table-level tests
+needed to define transition or rejection contracts.

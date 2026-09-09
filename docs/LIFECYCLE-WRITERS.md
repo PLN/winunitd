@@ -1,16 +1,19 @@
 # Lifecycle writer audit
 
-September 7, 2026. Working inventory for [issue #96](https://github.com/PLN/winunitd/issues/96),
+September 9, 2026. Working inventory for [issue #96](https://github.com/PLN/winunitd/issues/96),
 against [Design v2 sections 2-3](../DESIGN.md#3-records-and-invariants).
 This is an incremental migration map, not evidence that R2 is complete.
 
 ## Current authority and migration boundary
 
-The manager mutex serializes record access, but callers and workers still make
-lifecycle decisions in several files. A mutex is not the design's coordinator.
-The per-unit gate serializes native work for one name while independent units
-perform I/O concurrently. Typed start, stop, watchdog and exit handlers are migration
-boundaries; they currently execute on the delivering goroutine under that mutex.
+Design section 2 selects mutex-serialized decision handlers as the R2 end-state.
+The mutex supplies ordering; it is not sufficient without one audited handler set,
+bounded command admission, reserved completion progress, and immutable snapshots.
+Handlers execute on the delivering goroutine, capture effects and never wait on
+workers or perform blocking OS/persistence work. The unit gate serializes native
+work for one name while independent units perform I/O concurrently. A dedicated
+event-loop goroutine is not required. Migration remains incomplete where this
+inventory still names direct policy writers or blocking status observations.
 
 Graph execution now reports never-launched failures through StartRejectionObserver.
 The manager delivers those failures using the accepted runtime record, generation,
@@ -29,19 +32,19 @@ writes as well as state/substate assignment when migrating each row.
 | --- | --- | --- |
 | manager.go: startOperation, CloseContext; operations.go; start_coalescing.go | Admission counters, retained operation records, captured plans, shared waiters, history, manager close barrier | Coordinator command admission and completion publication |
 | operation_lifetime.go: beginOperationTaskLocked, cancelOperationLocked, finishOperationTask | Accepted context, deadline, stop epoch, recovery suppression, uncertainty, slot release | Coordinator-owned operation records; timer callbacks submit cancellation events |
-| lifecycle_events.go, lifecycle_launch.go and lifecycle_watch.go: admission and completion handlers | Member state/error, matching generation, cleanup ownership, restart decision, watch ownership and predicate latch | Handler boundary exists; route through the coordinator after remaining workers stop writing records |
+| lifecycle_events.go, lifecycle_launch.go, lifecycle_watch.go and lifecycle_config.go: admission and completion handlers | Member state/error, matching generation, cleanup ownership, restart decision, watch ownership and predicate latch | Serialized handler boundary exists; finish the remaining writers, bounded admission and immutable snapshot publication |
 | supervise.go: launchUnitOwnedOp | Invocation generation/configuration, process adoption, notify ownership, readiness/oneshot results, start cancellation, late cleanup | Launch admission, previous cleanup, invocation metadata and partial-failure adoption now use captured effects/handlers. Successful process adoption, readiness/oneshot cleanup and activation now use lifecycle handlers; supervise.go has no direct runtime lifecycle writes |
 | supervise.go: watch, reapFailedLocked, reapFailed | Exit cleanup ownership, uncertainty, process removal, failure diagnostics | watch now uses typed cleanup admission/results in lifecycle_events.go; failed-process reaping also uses captured effects and typed results |
-| supervise.go: maybeRestart, beginRestart; startlimit.go | Recovery eligibility, start history/budget, restart cancellation, auto-restart state | Recovery acceptance now uses a lifecycle handler; delay and launch remain workers. Start-limit accounting at launch still needs migration |
+| supervise.go: maybeRestart, beginRestart; startlimit.go | Recovery eligibility, start history/budget, restart cancellation, auto-restart state | Recovery acceptance now uses a lifecycle handler; delay and launch remain workers. Start-limit accounting and failure publication now reside in lifecycle_launch.go |
 | shutdown.go: Shutdown, stopTransaction, stopUnitWithContext, stopUnitAfterLock | Scope suppression, stop epochs/generations, retained records, stop request state, watchdog detach | Complete stop/restart scope is now disarmed at admission through a lifecycle helper; per-member teardown now receives a retained stop effect. Typed stop results already exist |
-| notify.go: closeNotifyContext, disposeNotify, startWatchdog, stopWatchdog, onWatchdogTimeout | Notify/watchdog handles, termination intent, watchdog failure, cleanup result | Watchdog timeout now uses typed decision/cleanup events; close results now use typed handlers; watchdog registration/detach now use handlers; handle admission/disposal remain direct writers. notifyRuntime's message channels remain adapter observations |
+| notify.go: closeNotifyContext, disposeNotify, startWatchdog, stopWatchdog, onWatchdogTimeout | Notify/watchdog handles, termination intent, watchdog failure, cleanup result | Watchdog timeout now uses typed decision/cleanup events; close results now use typed handlers; watchdog registration/detach now use handlers; partial-open handle admission/disposal now use lifecycle handlers. notifyRuntime's message channels remain adapter observations |
 | scm.go: startSCM; task.go: startTask | Native recovery start success; timer activation notification | Native completions now validate captured owner and cancellation before publishing timer activation; external status queries remain observations |
-| reload.go: replaceLocked, acceptConfigRevisionLocked; enable.go: rebuildGraphWithLinksLocked | Accepted graph/configuration, stable record creation/removal, load state, enablement and revisions | Commit validated candidates through coordinator; parsing/persistence outside it |
+| lifecycle_config.go: replaceLocked, acceptConfigRevisionLocked, rebuildGraphWithLinksLocked | Accepted graph/configuration, stable record creation/removal, load state, enablement and revisions | Commit decisions now reside in lifecycle_config.go; parsing/persistence remain outside. Move retained-graph planning out of the lock with snapshot validation before closure |
 | watchhub.go: installHub, failHub, disarmHubContext, closeHub, disposeHub, syncHubsLocked | Watch ownership, failure, uncertainty, configuration reconciliation | Admission, failure, disarm, disposal and reconciliation use lifecycle handlers; no direct unitRuntime writes remain in watchhub.go. Watch I/O remains in workers |
-| pathwatch.go, registry.go, eventlog.go | Origin validation and trigger dispatch; path predicate latch on current hub | Predicate results now use an exact-generation lifecycle handler. Origin-bearing dispatch still needs coordinator routing; probes and watch I/O stay outside it |
+| pathwatch.go, registry.go, eventlog.go | Origin validation and trigger dispatch; path predicate latch on current hub | Predicate results now use an exact-generation lifecycle handler. Origin-bearing dispatch still needs bounded admission integration; probes and watch I/O stay outside it |
 | timer.go; internal/timers engine | Armed timer definitions and persistence state, activation origins, reload/stop reconciliation | Coordinate arm/disarm/dispatch; scheduler timing and persistence stay outside lifecycle authority |
-| unitruntime.go: step, cancelRestart, detachAsync, error helpers | State/substate transition primitive, cancellation and handle transfer | Restrict calls to coordinator decision handlers; helpers are not separate authorities |
-| userhost.go; admission.go; linger.go | Separate UserHost mutex, session/admission/linger policy, bySID instances, launch placeholders, uncertainty and cleanup | Per-SID records/events must join system-manager coordination; keep tokens, process creation and persistence outside it |
+| unitruntime.go: step, publishStartOutcome, cancelRestart, detachAsync, error helpers | Event transitions and explicit-member publication, cancellation and handle transfer | Restrict calls to coordinator decision handlers; helpers are not separate authorities |
+| userhost.go; admission.go; linger.go | Separate UserHost mutex, session/admission/linger policy, bySID instances, launch placeholders, uncertainty and cleanup | Instance launch/cleanup/shutdown now use lifecycle_userhost.go handlers and startup liveness is outside h.mu. Session/admission/linger policy, aggregate status observations and system-manager admission integration remain open |
 
 Status assembly in manager.go copies records and then overlays timer/native
 observations. It does not publish immutable aggregate coordinator snapshots yet.
@@ -62,7 +65,7 @@ remaining SYSTEM/session and VM qualification.
 | 4. Stop/maintenance disarms recovery and late activation | shutdown_test.go; reload_trigger_test.go; timer_revision_test.go; operation_lifetime_test.go |
 | 5. Concurrent independent I/O, ordered transitions | internal/core/transaction_test.go and stop_test.go; TestRejectedMemberPublishesBeforeIndependentWorkerReturns in start_rejection_test.go; shutdown_test.go |
 | 6. Output drain independent of activation | TestReviewReproOneshotDrainsOutput in review_repro_windows_test.go; shutdown_test.go; internal/journal tests |
-| 7. Honest lifecycle, operation outcome and uncertain stop diagnostics | stop_failure_test.go; stop_completion_test.go; operations_test.go; operation_lifetime_test.go; immutable aggregate status remains open |
+| 7. Honest lifecycle, operation outcome and uncertain stop diagnostics | stop_failure_test.go; stop_completion_test.go; operations_test.go; operation_lifetime_test.go; review_status_test.go covers protocol-visible uncertainty during a real stop; immutable aggregate status remains open |
 
 ## Audit procedure and completion gate
 
@@ -71,7 +74,7 @@ stop epoch, process/notify/watch handles, invocation/configuration pointers,
 uncertainty, cancellation and restart history. Also inspect step calls, runtime
 construction, map replacement/deletion, accepted operations, timer engine updates
 and UserHost instance/session updates. Review the containing functions and their
-lock/I/O boundaries; text search alone cannot establish authority or ownership.
+lock/I/O boundaries; text search alone cannot establish authority or ownership. Explicit member outcomes use publishStartOutcome with documented state/substate pairs; process events use step. Both are restricted to identity-checked handlers, not transaction snapshots.
 
 Repeat this inventory after each migration. R2 closes only after every row has one
 coordinator decision path, worker observations cannot mutate records, bounded
