@@ -44,14 +44,14 @@ func (m *Manager) Enable(name string) (*protocol.EnableResult, error) {
 		return nil, protocol.ErrFailed(err.Error())
 	}
 
+	if err := m.rebuildGraphWithLinks(links, core.Build); err != nil {
+		return nil, protocol.ErrFailed(err.Error())
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rt, err = m.lookup(name)
 	if err != nil {
 		return nil, err
-	}
-	if err := m.rebuildGraphWithLinksLocked(links); err != nil {
-		return nil, protocol.ErrFailed(err.Error())
 	}
 	return &protocol.EnableResult{Unit: name, Enabled: true, Targets: normalized}, nil
 }
@@ -94,14 +94,14 @@ func (m *Manager) Disable(name string) (*protocol.EnableResult, error) {
 		return nil, protocol.ErrFailed(err.Error())
 	}
 
+	if err := m.rebuildGraphWithLinks(links, core.Build); err != nil {
+		return nil, protocol.ErrFailed(err.Error())
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rt, err = m.lookup(name)
 	if err != nil {
 		return nil, err
-	}
-	if err := m.rebuildGraphWithLinksLocked(links); err != nil {
-		return nil, protocol.ErrFailed(err.Error())
 	}
 	return &protocol.EnableResult{Unit: name, Enabled: rt.enabled, Targets: rt.targets}, nil
 }
@@ -212,4 +212,20 @@ func (m *Manager) parsedUnitsLocked() []*unit.Unit {
 		}
 	}
 	return out
+}
+
+// Caller holds configMu so accepted definitions and links cannot change while
+// graph planning runs. Lifecycle state may change and is not a graph input here.
+func (m *Manager) rebuildGraphWithLinks(links map[string][]string, build func([]*unit.Unit) (*core.Graph, error)) error {
+	m.mu.Lock()
+	parsed := m.parsedUnitsLocked()
+	m.mu.Unlock()
+	g, err := build(withEnabledWants(parsed, links))
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.acceptEnabledGraphLocked(g, links)
+	return nil
 }

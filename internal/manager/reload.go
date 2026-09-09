@@ -13,8 +13,14 @@ import (
 // Reload reparses unit files and rebuilds the graph. Live processes and
 // in-flight lifecycle operations retain their runtime record even if the
 // configuration disappears. Parse and directory reads happen outside m.mu;
-// graph construction and the runtime map swap share the lock.
+// graph construction uses a captured retention set outside m.mu. Publication
+// validates that set before swapping the graph and runtime records.
 func (m *Manager) Reload() (*protocol.DaemonReloadResult, error) {
+	return m.reloadWithBuilder(core.Build)
+}
+
+// The builder is pure graph planning; it must not mutate accepted definitions.
+func (m *Manager) reloadWithBuilder(build func([]*unit.Unit) (*core.Graph, error)) (*protocol.DaemonReloadResult, error) {
 	m.configMu.Lock()
 	defer m.configMu.Unlock()
 	loaded, result, err := m.parseUnitDir()
@@ -35,41 +41,51 @@ func (m *Manager) Reload() (*protocol.DaemonReloadResult, error) {
 	if err != nil {
 		return nil, protocol.ErrFailed(err.Error())
 	}
-	m.mu.Lock()
-	// Retained configurations keep stop/dependency planning possible even when
-	// the latest directory no longer supplies a valid unit. Start admission is
-	// checked against the runtime record, not merely graph membership.
-	graphUnits := append([]*unit.Unit(nil), loaded...)
 	accepted := make(map[string]bool, len(loaded))
 	for _, u := range loaded {
 		accepted[core.NormalizeName(u.Name)] = true
 	}
-	for name, rt := range m.units {
-		if !accepted[name] && rt.retainWithoutConfig() {
-			graphUnits = append(graphUnits, rt.unit)
+	// Lifecycle work continues during planning. Retry a bounded number of times
+	// if ownership changed; never publish a graph missing newly retained units.
+	for attempt := 0; attempt < 3; attempt++ {
+		m.mu.Lock()
+		snapshot := m.captureReloadOwnershipLocked(accepted)
+		m.mu.Unlock()
+		graphUnits := append([]*unit.Unit(nil), loaded...)
+		for _, u := range snapshot.retained {
+			graphUnits = append(graphUnits, u)
 		}
-	}
-	graphUnits = withEnabledWants(graphUnits, links)
-	g, err := core.Build(graphUnits)
-	if err != nil {
+		g, buildErr := build(withEnabledWants(graphUnits, links))
+		cycle := ""
+		if buildErr == nil {
+			if c := g.OrderingCycle(); c != nil {
+				cycle = c.Error()
+			}
+		}
+		m.mu.Lock()
+		if !m.reloadOwnershipCurrentLocked(accepted, snapshot) {
+			m.mu.Unlock()
+			continue
+		}
+		if buildErr != nil {
+			m.mu.Unlock()
+			return nil, protocol.ErrFailed(buildErr.Error())
+		}
+		if cycle != "" {
+			result.Cycle = cycle
+			m.mu.Unlock()
+			return result, nil
+		}
+		dropped := m.replaceLocked(loaded, g, links)
+		result.ConfigRevision = m.configRevision
 		m.mu.Unlock()
-		return nil, protocol.ErrFailed(err.Error())
-	}
-	if c := g.OrderingCycle(); c != nil {
-		result.Cycle = c.Error()
-		m.mu.Unlock()
+		for _, td := range dropped {
+			td.closeBlocking()
+		}
+		result.Loaded = len(loaded)
 		return result, nil
 	}
-
-	dropped := m.replaceLocked(loaded, g, links)
-	result.ConfigRevision = m.configRevision
-	m.mu.Unlock()
-	for _, td := range dropped {
-		td.closeBlocking()
-	}
-
-	result.Loaded = len(loaded)
-	return result, nil
+	return nil, &protocol.Error{Code: protocol.CodeBusy, Message: "configuration ownership changed during reload; retry"}
 }
 
 func (m *Manager) parseUnitDir() ([]*unit.Unit, *protocol.DaemonReloadResult, error) {

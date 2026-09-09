@@ -69,12 +69,7 @@ func (m *Manager) acceptConfigRevisionLocked() {
 	}
 }
 
-func (m *Manager) rebuildGraphWithLinksLocked(links map[string][]string) error {
-	parsed := m.parsedUnitsLocked()
-	g, err := core.Build(withEnabledWants(parsed, links))
-	if err != nil {
-		return err
-	}
+func (m *Manager) acceptEnabledGraphLocked(g *core.Graph, links map[string][]string) {
 	m.graph = g
 	m.acceptConfigRevisionLocked()
 	for name, rt := range m.units {
@@ -82,5 +77,38 @@ func (m *Manager) rebuildGraphWithLinksLocked(links map[string][]string) error {
 		rt.enabled = len(targets) > 0
 		rt.targets = targets
 	}
-	return nil
+}
+
+// Reload planning only needs the definitions whose ownership prevents removal.
+// Loaded definitions are protected by configMu. Lifecycle ownership is not;
+// validate the exact retained set again while holding m.mu before publication.
+type reloadOwnership struct {
+	revision string
+	retained map[string]*unit.Unit
+}
+
+func (m *Manager) captureReloadOwnershipLocked(accepted map[string]bool) reloadOwnership {
+	snapshot := reloadOwnership{revision: m.configRevision, retained: make(map[string]*unit.Unit)}
+	for name, rt := range m.units {
+		if !accepted[name] && rt != nil && rt.retainWithoutConfig() {
+			snapshot.retained[name] = rt.unit
+		}
+	}
+	return snapshot
+}
+
+func (m *Manager) reloadOwnershipCurrentLocked(accepted map[string]bool, snapshot reloadOwnership) bool {
+	if m.configRevision != snapshot.revision {
+		return false
+	}
+	count := 0
+	for name, rt := range m.units {
+		if !accepted[name] && rt != nil && rt.retainWithoutConfig() {
+			if u, ok := snapshot.retained[name]; !ok || u != rt.unit {
+				return false
+			}
+			count++
+		}
+	}
+	return count == len(snapshot.retained)
 }
