@@ -37,6 +37,7 @@ Commands:
                       Show unit logs (poll --follow; --since RFC3339 / 1d / "1 hour ago")
   daemon-reload       Reload unit files
   operation ID        Query a retained start/stop/restart outcome
+  cancel ID           Cancel unfinished start/restart work
   verify <path|unit>  Verify a unit file path (no daemon) or a loaded unit
   enable-linger <user>
                       Persist a user manager across logoff and at boot
@@ -200,7 +201,9 @@ func (c *cli) run(args []string) int {
 	case "status":
 		return c.status(rest)
 	case "operation":
-		return c.operation(rest)
+		return c.operation(rest, false)
+	case "cancel":
+		return c.operation(rest, true)
 	case "enable":
 		return c.unitCmd(rest, protocol.MethodEnable, c.printEnable)
 	case "disable":

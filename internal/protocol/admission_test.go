@@ -20,7 +20,7 @@ func TestServerReservedAdmission(t *testing.T) {
 	release := make(chan struct{})
 	h := HandlerFunc(func(ctx context.Context, method string, _ json.RawMessage) (any, error) {
 		entered <- method
-		if method != MethodStop {
+		if method != MethodStop && method != MethodCancelOperation {
 			select {
 			case <-release:
 			case <-ctx.Done():
@@ -78,6 +78,10 @@ func TestServerReservedAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitEntered(MethodStop)
+	if err := call(MethodCancelOperation); err != nil {
+		t.Fatal(err)
+	}
+	waitEntered(MethodCancelOperation)
 	close(release)
 	if err := <-startDone; err != nil {
 		t.Fatal(err)

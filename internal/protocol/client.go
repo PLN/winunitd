@@ -31,6 +31,15 @@ func (c *Client) Operation(ctx context.Context, id string) (*OperationResult, er
 	return &out, nil
 }
 
+// CancelOperation requests cancellation; the returned state can still be running.
+func (c *Client) CancelOperation(ctx context.Context, id string) (*OperationResult, error) {
+	var out OperationResult
+	if err := c.Call(ctx, MethodCancelOperation, OperationParams{ID: id}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // Call sends a versioned request and decodes the result into out (optional).
 func (c *Client) Call(ctx context.Context, method string, params, out any) error {
 	if err := ctx.Err(); err != nil {

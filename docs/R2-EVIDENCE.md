@@ -828,6 +828,25 @@ also passed with race detection. The uncached full Windows race suite passed
 associated PR. Timer/session policy and immutable aggregate publication remain
 open; this slice is not included in the retained SYSTEM qualification.
 
+## September 9 explicit operation cancellation
+
+The selected cancellation contract preserves successfully completed units.
+`winctl cancel ID` / cancel-operation requests cancellation of unfinished
+start/restart work using the same serialized handler as deadline expiry. It
+returns a copied operation record, retains late cleanup ownership and uses
+reserved stop transport capacity. Accepted stops cannot be canceled; completed
+operations return their existing outcome. No unit rollback is introduced.
+
+Focused race regressions cover joined callers, completed dependency preservation,
+late creation cleanup, queued-adapter cancellation, restart teardown without
+relaunch, accepted stop progress, repeated/completed/invalid/unknown IDs, CLI
+exit codes and old-server rejection. Reserved transport tests exercise cancel
+while ordinary and diagnostic admission are occupied. Twenty focused race
+repetitions, the uncached full Windows race suite (manager: 46.3 seconds), vet
+and 128 local Markdown links passed. Exact hosted evidence is recorded in the
+associated PR. Coordinator-wide lifetime coverage
+and the remaining R2 acceptance work are still open.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

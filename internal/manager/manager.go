@@ -222,10 +222,13 @@ func (m *Manager) closePass() error {
 // Handle implements protocol.Handler.
 func (m *Manager) Handle(ctx context.Context, method string, params json.RawMessage) (any, error) {
 	switch method {
-	case protocol.MethodOperation:
+	case protocol.MethodOperation, protocol.MethodCancelOperation:
 		var p protocol.OperationParams
 		if err := protocol.DecodeParams(params, &p); err != nil {
 			return nil, err
+		}
+		if method == protocol.MethodCancelOperation {
+			return m.CancelOperation(ctx, p.ID)
 		}
 		return m.Operation(p.ID)
 	case protocol.MethodListUnits:
