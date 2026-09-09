@@ -123,3 +123,10 @@ still retain their connection slots; deadlines do not forcibly terminate them.
 Raw connections can therefore exhaust the hard cap even when reserved handler
 slots are free. These bounds limit resource growth and isolate handler classes;
 they do not guarantee remote stop access under connection-flood overload.
+
+Reload constructs candidate dependency graphs outside the lifecycle mutex and
+rechecks ownership before accepting them. If concurrent lifecycle changes
+invalidate three consecutive candidates, daemon-reload returns `busy`; retry the
+command. This rejection leaves the accepted graph and configuration revision
+unchanged. Enable/disable planning also allows lifecycle work to continue while
+configuration changes remain serialized.

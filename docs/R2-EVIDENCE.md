@@ -810,6 +810,24 @@ The uncached full Windows race suite and vet passed for the combined slice
 associated PR. No newer SYSTEM
 qualification is claimed.
 
+## September 9 configuration graph planning
+
+Reload captures definitions required by retained ownership, constructs and checks
+its candidate graph outside m.mu, then validates the retention set and configuration
+revision before publication. A concurrent start or completed cleanup invalidates
+the candidate, including its errors, and causes a rebuild. Three invalidated
+attempts return busy without changing accepted graph, availability or revision.
+Enable/disable graph construction also runs outside m.mu; configMu protects its
+accepted definition inputs while unrelated lifecycle work continues.
+
+Twenty race-enabled repetitions passed for newly retained ownership, completed
+cleanup, obsolete build errors, bounded rejection without publication, and stop
+progress during enable graph planning. Existing reload/enable/disable regressions
+also passed with race detection. The uncached full Windows race suite passed
+(manager: 44.3 seconds), as did vet. Exact hosted evidence belongs to the
+associated PR. Timer/session policy and immutable aggregate publication remain
+open; this slice is not included in the retained SYSTEM qualification.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2
