@@ -129,16 +129,7 @@ func (m *Manager) onPathExistsForHub(name string, h *watchRuntime) {
 		return
 	}
 
-	m.mu.Lock()
-	rt = m.units[name]
-	if rt == nil || rt.hub != h || rt.gen != h.gen || rt.stopping || rt.unavailable || rt.stopUncertain || m.closed || m.stateOfLocked(name) != core.Active {
-		m.mu.Unlock()
-		return
-	}
-	was := rt.hub.existsSatisfied
-	rt.hub.existsSatisfied = ok
-	m.mu.Unlock()
-	if ok && !was {
+	if m.applyPathPredicate(name, h, ok) {
 		m.startPathCompanion(name, h, activated)
 	}
 }

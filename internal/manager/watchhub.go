@@ -77,18 +77,11 @@ func toWatchIO[W watchIO](ws []W) []watchIO {
 }
 
 func (m *Manager) installHub(u *unit.Unit, revision string, opened []watchIO, cancel context.CancelFunc, existsSatisfied bool) (*watchRuntime, error) {
-	name := u.Name
-	rt := &watchRuntime{unit: u, revision: revision, cancel: cancel, watches: opened, existsSatisfied: existsSatisfied}
-	m.mu.Lock()
-	unitRT := m.units[name]
-	if unitRT == nil || unitRT.unavailable || unitRT.stopping || m.closed || unitRT.hub != nil {
-		m.mu.Unlock()
-		return nil, errors.Join(fmt.Errorf("unit %q is unavailable, already watched, or manager is closed", name), m.disposeHub(name, rt))
+	h := &watchRuntime{unit: u, revision: revision, cancel: cancel, watches: opened, existsSatisfied: existsSatisfied}
+	if err := m.acceptHub(h); err != nil {
+		return nil, errors.Join(err, m.disposeHub(u.Name, h))
 	}
-	rt.gen = unitRT.gen
-	unitRT.hub = rt
-	m.mu.Unlock()
-	return rt, nil
+	return h, nil
 }
 
 func (m *Manager) runWatch(ctx context.Context, name, failMsg string, h *watchRuntime, w watchIO, onFire func(string, *watchRuntime)) {
@@ -115,20 +108,9 @@ func (m *Manager) runWatch(ctx context.Context, name, failMsg string, h *watchRu
 }
 
 func (m *Manager) failHub(name string, h *watchRuntime, err error) {
-	m.mu.Lock()
-	rt := m.units[name]
-	if rt == nil || h == nil || rt.hub != h || rt.gen != h.gen {
-		m.mu.Unlock()
-		return
+	if m.acceptHubFailure(hubCleanup{name: name, hub: h, err: err}) {
+		_ = m.closeHub(context.Background(), name, h, defaultStopTimeout)
 	}
-	rt.stopUncertain = true
-	if rt.state == core.Active || rt.state == core.Activating {
-		if rt.step(core.EventStartFailed) {
-			rt.err = err.Error()
-		}
-	}
-	m.mu.Unlock()
-	_ = m.closeHub(context.Background(), name, h, defaultStopTimeout)
 }
 
 func (m *Manager) disarmHub(name string) error {
@@ -139,15 +121,7 @@ func (m *Manager) disarmHubContext(ctx context.Context, name string, timeout tim
 	if m == nil {
 		return nil
 	}
-	m.mu.Lock()
-	var h *watchRuntime
-	if rt := m.units[name]; rt != nil {
-		h = rt.hub
-		if h != nil {
-			rt.stopUncertain = true
-		}
-	}
-	m.mu.Unlock()
+	h := m.acceptHubDisarm(name)
 	return m.closeHub(ctx, name, h, timeout)
 }
 
@@ -166,69 +140,19 @@ func (m *Manager) closeHub(ctx context.Context, name string, h *watchRuntime, ti
 // disposeHub keeps partial opens on their unit for stop retry when possible.
 // Rejected groups without a unit owner remain in manager close ownership.
 func (m *Manager) disposeHub(name string, h *watchRuntime) error {
-	m.mu.Lock()
-	if rt := m.units[name]; rt != nil && rt.hub == nil && !m.closed {
-		rt.hub = h
-		rt.stopUncertain = true
-		m.mu.Unlock()
+	if m.retainHubDisposal(name, h) {
 		return m.closeHub(context.Background(), name, h, defaultStopTimeout)
 	}
-	m.mu.Unlock()
 	if h.cancel != nil {
 		h.cancel()
 	}
-	m.mu.Lock()
-	m.closePending = append(m.closePending, unitTeardown{hub: h})
-	m.mu.Unlock()
 	err := m.stops.wait(context.Background(), m.clock(), stopKey{hub: h}, defaultStopTimeout, h.stop)
-	if err == nil {
-		m.mu.Lock()
-		kept := m.closePending[:0]
-		for _, td := range m.closePending {
-			if td.hub != h {
-				kept = append(kept, td)
-			}
-		}
-		m.closePending = kept
-		m.mu.Unlock()
-	}
+	m.applyPendingHubCleanup(h, err)
 	return err
 }
 
 func (m *Manager) syncHubsLocked() {
-	keep := make(map[string]bool)
-	for name, rt := range m.units {
-		if rt == nil || rt.unit == nil {
-			continue
-		}
-		switch rt.unit.Kind {
-		case unit.KindRegistry, unit.KindEventLog, unit.KindPath:
-			// The adapter may have installed its handles before the start
-			// transaction publishes Active. Keep that exact owned generation.
-			publishing := rt.operations > 0 && rt.hub != nil && rt.hub.gen == rt.gen && !rt.stopping && !rt.stopUncertain
-			if (rt.state == core.Active || publishing) && !rt.unavailable {
-				keep[name] = true
-			}
-		}
-	}
-	type staleHub struct {
-		name string
-		hub  *watchRuntime
-	}
-	var stale []staleHub
-	for name, rt := range m.units {
-		if rt == nil || rt.hub == nil {
-			continue
-		}
-		if keep[name] {
-			continue
-		}
-		stale = append(stale, staleHub{name, rt.hub})
-		rt.stopUncertain = true
-		if rt.hub.cancel != nil {
-			rt.hub.cancel()
-		}
-	}
+	stale := m.reconcileHubsLocked()
 	go func() {
 		for _, h := range stale {
 			_ = m.closeHub(context.Background(), h.name, h.hub, defaultStopTimeout)

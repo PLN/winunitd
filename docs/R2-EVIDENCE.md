@@ -691,6 +691,61 @@ Trigger/configuration/user-host decisions, coordinator admission and aggregate
 snapshot publication remain open in #96. This does not change beta oneshot syntax
 or claim new native qualification.
 
+## Lifecycle migration SYSTEM qualification
+
+September 7, 2026. Reviewed source
+`1293a006c433ec9bd685615912132f8c45cdd76c`, from successful GitHub CI run
+`34155003017`, passed offline SYSTEM qualification on Windows 11 Enterprise LTSC
+Evaluation build **26100.9168**. Merge commit
+`2ea79ad44751a9a14f6caf7bdcb15b0d8dfd704a` has the same source tree.
+The clean Windows/amd64 artifact manifest, all file sizes and SHA256 hashes,
+module hashes and dependency source tree hash were verified before admission.
+
+| Binary | SHA256 |
+| --- | --- |
+| winunitd.exe | `cdddcb1142598816780e9578c4e8d55646c31c800489cdd2b087120c99486322` |
+| winctl.exe | `6f3a7815851d2a4a7cf26df516d33037c6c64e5456e8fe088d773ddc34d5bfff` |
+| winunit-notify.exe | `8db74ea0085cbb735c889671002b6a79fafe5f4591c764b388219bcf08b4fe3c` |
+
+The disposable guest was a supervised full copy of the stopped maintained baseline.
+Preflight confirmed SYSTEM identity, active evaluation with more than one day
+remaining, Secure Boot, synchronized clock and no default route. The inherited
+stopped, disabled lab fixture was archived before testing.
+
+Service installation/start/stop, reboot recovery with a new invocation and exactly
+one session-0 fixture process, and SCM-stop cleanup passed. Controller-driven
+runtime, admission, configuration and operations checks passed all **21** expected
+assertions, with exact source and fixture identities verified. These cover output
+handling, reload/removal/recreation, notify cycles, saturation rejection and stop
+access, slot reuse, configuration revision retention and adoption, PartOf restart
+participation, retained operation outcomes and history expiry. Raw results and
+transcripts remain private. Guarded retirement verified guest and disk removal.
+
+The accepted baseline Windows Update anomaly remains as documented in
+[TEST-LAB.md](TEST-LAB.md#maintained-baseline-observations--september-5-2026).
+This adds real-daemon regression evidence for the migration slices through process
+adoption/readiness; it does not close #96 or establish fresh installation,
+generalized provisioning, MSI servicing, interactive-session or release acceptance.
+
+## Watch lifecycle decisions
+
+September 7, 2026; continuation of #96. Watch admission, failure, disarm,
+partial-open ownership, cleanup retention and configuration reconciliation now
+use lifecycle handlers. Path-existence observations update their latch only
+through the current armed-generation handler. Blocking open/close and predicate
+I/O remain outside lifecycle decisions.
+
+A deterministic regression reproduced a late watch failure replacing an accepted
+stop decision with failed state and a new diagnostic. Failure admission now
+rejects observations after stop, removal, shutdown or generation replacement.
+Twenty race-enabled repetitions passed for stop precedence, stale predicates and
+failures, and independent start while watch cleanup is blocked. Existing watch
+and path tests, the full local Windows race suite
+(`go test -race -parallel 1 ./... -timeout 180s`) and `go vet ./...` passed.
+This slice is not included in the preceding SYSTEM
+artifact qualification; coordinator routing and the remaining writer inventory
+are still open.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2
