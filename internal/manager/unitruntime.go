@@ -72,6 +72,25 @@ func (rt *unitRuntime) step(ev core.Event) bool {
 	return true
 }
 
+// publishStartOutcome publishes an identity-checked explicit member result.
+// Unlike step, it also covers target/watch/native starts and never-launched
+// rejections which have no process start-requested event. Its callers enforce
+// stop precedence and cannot replay a transaction snapshot. Keep the state and
+// substate pair coherent; preserve the cause of an already failed watchdog.
+func (rt *unitRuntime) publishStartOutcome(state core.State) {
+	switch state {
+	case core.Active:
+		rt.state, rt.sub = core.Active, core.SubRunning
+	case core.Inactive:
+		rt.state, rt.sub = core.Inactive, core.SubNone
+	case core.Failed:
+		if rt.state != core.Failed || rt.sub != core.SubWatchdog {
+			rt.sub = core.SubNone
+		}
+		rt.state = core.Failed
+	}
+}
+
 func logIllegalTransition(name string, err error) {
 	if name == "" {
 		name = "?"

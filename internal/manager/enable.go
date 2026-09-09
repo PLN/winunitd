@@ -53,8 +53,6 @@ func (m *Manager) Enable(name string) (*protocol.EnableResult, error) {
 	if err := m.rebuildGraphWithLinksLocked(links); err != nil {
 		return nil, protocol.ErrFailed(err.Error())
 	}
-	rt.enabled = true
-	rt.targets = normalized
 	return &protocol.EnableResult{Unit: name, Enabled: true, Targets: normalized}, nil
 }
 
@@ -204,22 +202,6 @@ func withEnabledWants(units []*unit.Unit, enabled map[string][]string) []*unit.U
 		out[i] = &c
 	}
 	return out
-}
-
-func (m *Manager) rebuildGraphWithLinksLocked(links map[string][]string) error {
-	parsed := m.parsedUnitsLocked()
-	g, err := core.Build(withEnabledWants(parsed, links))
-	if err != nil {
-		return err
-	}
-	m.graph = g
-	m.acceptConfigRevisionLocked()
-	for name, rt := range m.units {
-		targets := enabledTargetsFrom(links, name)
-		rt.enabled = len(targets) > 0
-		rt.targets = targets
-	}
-	return nil
 }
 
 func (m *Manager) parsedUnitsLocked() []*unit.Unit {

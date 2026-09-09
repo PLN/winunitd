@@ -404,36 +404,23 @@ func (h *UserHost) startLinger(rec runtime.LingerRecord) error {
 func (h *UserHost) ensureRunning(sid string, tok *runtime.UserToken, stillWanted func() bool) error {
 	unlock := h.ops.lock(sid)
 	defer unlock()
-	h.mu.Lock()
-	if h.closed || !stillWanted() {
-		h.mu.Unlock()
-		return fmt.Errorf("user manager launch is no longer requested")
+	inst, err := h.inspectUserLaunch(sid, stillWanted)
+	if err != nil {
+		return err
 	}
-	inst := h.bySID[sid]
-	if inst != nil && inst.uncertain {
-		h.mu.Unlock()
-		return fmt.Errorf("user manager termination is unconfirmed; retry cleanup")
-	}
+	// The SID gate retains this instance while liveness is observed outside h.mu.
 	if inst != nil && inst.proc != nil && inst.proc.Alive() {
-		h.mu.Unlock()
 		return nil
 	}
-	h.mu.Unlock()
 	if inst != nil && inst.proc != nil {
 		if err := h.killUserInstance(context.Background(), sid, inst); err != nil {
 			return err
 		}
 	}
-	// Publish the accepted launch before leaving the lock for process creation.
-	// Shutdown includes this placeholder even though no process exists yet.
-	h.mu.Lock()
-	if h.closed || !stillWanted() {
-		h.mu.Unlock()
-		return fmt.Errorf("user manager launch is no longer requested")
+	inst, err = h.acceptUserLaunch(sid, stillWanted)
+	if err != nil {
+		return err
 	}
-	inst = &userInstance{sid: sid}
-	h.bySID[sid] = inst
-	h.mu.Unlock()
 	spec := runtime.UserManagerSpec{
 		SID: sid, Token: tok, Exe: h.cfg.Exe,
 		ExtraArgs: append([]string(nil), h.cfg.ExtraArgs...), Daemon: h.cfg.Daemon,
@@ -442,16 +429,7 @@ func (h *UserHost) ensureRunning(sid string, tok *runtime.UserToken, stillWanted
 		spec.Env = runtime.MergeDeterministicUserEnv(os.Environ(), tok.Info)
 	}
 	proc, err := h.cfg.Start(spec)
-	h.mu.Lock()
-	inst.proc = proc
-	superseded := h.closed || !stillWanted()
-	if proc == nil {
-		delete(h.bySID, sid)
-	} else if err != nil {
-		inst.uncertain = true
-		inst.err = err.Error()
-	}
-	h.mu.Unlock()
+	superseded := h.applyUserLaunch(sid, inst, proc, err, stillWanted)
 	if err != nil {
 		return err
 	}
@@ -496,23 +474,12 @@ func (h *UserHost) killUserInstance(ctx context.Context, sid string, inst *userI
 	if inst == nil || inst.proc == nil {
 		return nil
 	}
-	h.mu.Lock()
-	inst.uncertain = true
-	h.mu.Unlock()
-	proc := inst.proc
+	proc := h.acceptUserCleanup(inst)
 	err := h.stops.wait(ctx, timers.DefaultClock(), stopKey{user: proc}, defaultStopTimeout, proc.Kill)
 	if err == nil && proc.Alive() {
 		err = fmt.Errorf("user manager remains alive after termination")
 	}
-	h.mu.Lock()
-	if h.bySID[sid] == inst {
-		if err == nil {
-			delete(h.bySID, sid)
-		} else {
-			inst.err = err.Error()
-		}
-	}
-	h.mu.Unlock()
+	h.applyUserCleanup(sid, inst, err)
 	return err
 }
 
@@ -565,15 +532,7 @@ func (h *UserHost) Shutdown(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	h.mu.Lock()
-	h.closed = true
-	sids := make([]string, 0, len(h.bySID))
-	for sid := range h.bySID {
-		sids = append(sids, sid)
-	}
-	h.sessions = make(map[uint32]string)
-	h.sessionRequests = make(map[uint32]uint64)
-	h.mu.Unlock()
+	sids := h.acceptUserShutdown()
 	var result error
 	for _, sid := range sids {
 		if err := h.stopUser(ctx, sid, false); err != nil {

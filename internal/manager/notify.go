@@ -308,26 +308,11 @@ func (m *Manager) disposeNotify(nrt *notifyRuntime) error {
 	if nrt == nil {
 		return nil
 	}
-	m.mu.Lock()
-	if rt := m.units[nrt.name]; rt != nil && rt.notify == nil && !m.closed {
-		rt.notify = nrt
-		m.mu.Unlock()
+	if m.retainNotifyDisposal(nrt) {
 		return m.closeNotify(nrt.name)
 	}
-	m.closePending = append(m.closePending, unitTeardown{notify: nrt})
-	m.mu.Unlock()
 	err := m.stops.wait(context.Background(), m.clock(), stopKey{notify: nrt}, defaultStopTimeout, nrt.Close)
-	if err == nil {
-		m.mu.Lock()
-		kept := m.closePending[:0]
-		for _, td := range m.closePending {
-			if td.notify != nrt {
-				kept = append(kept, td)
-			}
-		}
-		m.closePending = kept
-		m.mu.Unlock()
-	}
+	m.applyPendingNotifyCleanup(nrt, err)
 	return err
 }
 

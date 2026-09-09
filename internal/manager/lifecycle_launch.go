@@ -314,3 +314,22 @@ func (m *Manager) acceptProcessActivation(ctx context.Context, effect *launchEff
 	}
 	return m.now(), true
 }
+
+func (m *Manager) recordStartLocked(rt *unitRuntime) {
+	if rt == nil {
+		return
+	}
+	interval, burst := startLimitOf(rt.ownedUnit())
+	rt.startTimes = core.RecordStart(rt.startTimes, m.now(), interval, burst)
+}
+
+func (m *Manager) failStartLimitLocked(rt *unitRuntime) {
+	if rt == nil {
+		return
+	}
+	switch rt.state {
+	case core.Active, core.Activating, core.Inactive:
+		_ = rt.step(core.EventMainExited)
+	}
+	rt.err = core.ReasonStartLimit
+}

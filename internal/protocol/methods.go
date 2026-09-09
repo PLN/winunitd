@@ -130,23 +130,27 @@ type UnitStatus struct {
 	InvocationConfigRevision string `json:"invocationConfigRevision,omitempty"`
 	ArmedConfigRevision      string `json:"armedConfigRevision,omitempty"`
 
-	Name                string `json:"name"`
-	Description         string `json:"description,omitempty"`
-	Kind                string `json:"kind"`
-	Path                string `json:"path,omitempty"`
-	LoadState           string `json:"loadState"`
-	ActiveState         string `json:"activeState"`
-	Enabled             bool   `json:"enabled"`
-	MainPID             int    `json:"mainPid,omitempty"`
-	InvocationID        string `json:"invocationId,omitempty"`
-	Error               string `json:"error,omitempty"`
-	LogDroppedRecords   uint64 `json:"logDroppedRecords,omitempty"`
-	LogDroppedBytes     uint64 `json:"logDroppedBytes,omitempty"`
-	LogStorageErrors    uint64 `json:"logStorageErrors,omitempty"`
-	LogLastStorageError string `json:"logLastStorageError,omitempty"`
-	Reason              string `json:"reason,omitempty"` // DESIGN.md §44
-	Next                string `json:"next,omitempty"`
-	Last                string `json:"last,omitempty"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Kind        string `json:"kind"`
+	Path        string `json:"path,omitempty"`
+	LoadState   string `json:"loadState"`
+	ActiveState string `json:"activeState"`
+	// SubState is the manager lifecycle phase; native proxy queries may overlay ActiveState.
+	SubState string `json:"subState,omitempty"`
+	// TerminationUncertain means owned resource cleanup is pending or unconfirmed.
+	TerminationUncertain bool   `json:"terminationUncertain,omitempty"`
+	Enabled              bool   `json:"enabled"`
+	MainPID              int    `json:"mainPid,omitempty"`
+	InvocationID         string `json:"invocationId,omitempty"`
+	Error                string `json:"error,omitempty"`
+	LogDroppedRecords    uint64 `json:"logDroppedRecords,omitempty"`
+	LogDroppedBytes      uint64 `json:"logDroppedBytes,omitempty"`
+	LogStorageErrors     uint64 `json:"logStorageErrors,omitempty"`
+	LogLastStorageError  string `json:"logLastStorageError,omitempty"`
+	Reason               string `json:"reason,omitempty"` // DESIGN.md §44
+	Next                 string `json:"next,omitempty"`
+	Last                 string `json:"last,omitempty"`
 	// Configured [Service] R2 limits (unit file; not a live Job Object query).
 	CPUWeight  uint32 `json:"cpuWeight,omitempty"`
 	CPUQuota   uint32 `json:"cpuQuota,omitempty"` // N from CPUQuota=N%
