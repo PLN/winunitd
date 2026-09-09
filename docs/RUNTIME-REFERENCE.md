@@ -45,7 +45,7 @@ Versioned JSON-RPC on `\\.\pipe\winunitd\control` (LocalSystem and Administrator
 
 ### `winctl` commands
 
-`start`, `stop`, `restart`, `status`, `operation`, `enable`, `disable`, `list-units`, `list-timers`, `logs`, `daemon-reload`, `enable-linger`, `disable-linger`, `verify`.
+`start`, `stop`, `restart`, `status`, `operation`, `cancel`, `enable`, `disable`, `list-units`, `list-timers`, `logs`, `daemon-reload`, `enable-linger`, `disable-linger`, `verify`.
 
 Unit status and list-units responses add optional `subState` and
 `terminationUncertain` fields. `winctl status` shows the manager phase and
@@ -205,3 +205,5 @@ Unit tests and GitHub Actions `go test ./...` on `windows-latest` are not a live
 - **Admin vs non-admin pipe Peer / elevated `winctl --user`** — token Peer and DACL tests exist. UAC-filtered vs elevated token on the user pipe is unverified. CI runners are typically already Administrators.
 - **Live SYSTEM S4U** — `TestSYSTEMLingerTokenDuplicatePrimaryAndCreateProcessAsUser` skips unless LocalSystem (`psexec -s`). GitHub Actions `windows-latest` is not SYSTEM.
 - **SCM TIMECHANGE / POWEREVENT** — the service accepts those controls. Live delivery to a running service (calendar `Next` recompute) is unverified. Console mode falls back to a 30s poll.
+
+Development builds support `winctl cancel ID`; see [explicit cancellation](OPERATIONS.md#explicit-cancellation) for completed-member preservation, pending cleanup and exit codes.

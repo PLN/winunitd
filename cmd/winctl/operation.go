@@ -8,15 +8,23 @@ import (
 	"github.com/PLN/winunitd/internal/protocol"
 )
 
-func (c *cli) operation(args []string) int {
+func (c *cli) operation(args []string, cancel bool) int {
 	if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
-		fmt.Fprintln(c.stderr, "winctl operation: operation ID required")
+		verb := "operation"
+		if cancel {
+			verb = "cancel"
+		}
+		fmt.Fprintf(c.stderr, "winctl %s: operation ID required\n", verb)
 		return 2
 	}
 	var op *protocol.OperationResult
 	err := c.call(func(ctx context.Context, cl *protocol.Client) error {
 		var err error
-		op, err = cl.Operation(ctx, args[0])
+		if cancel {
+			op, err = cl.CancelOperation(ctx, args[0])
+		} else {
+			op, err = cl.Operation(ctx, args[0])
+		}
 		return err
 	})
 	if err != nil {

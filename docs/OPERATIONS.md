@@ -90,8 +90,8 @@ Accepted stop and restart invalidate pending activation and suppress recovery fo
 their complete captured stop scope before dispatching ordered teardown workers.
 Plan validation and capacity rejection happen before this change in eligibility. Manager shutdown/close also cancels accepted starts and
 restarts. Already accepted stops retain their own bounded cleanup lifetime, and
-shutdown can join their pending native calls. Durable history, a separate operation
-cancellation command and the remaining coordinator migration stay open.
+shutdown can join their pending native calls. Durable history, coordinator-wide cancellation coverage and the remaining
+migration stay open.
 
 The protocol keeps its current version. IDs and deadline/cancellation metadata are optional JSON additions, and
 `operation` is a new method. Existing methods retain their response shape; transport overload adds the
@@ -102,7 +102,7 @@ use the same authenticated manager pipe and authorization as other unit verbs.
 ## Control transport capacity
 
 Development builds bound each serving endpoint to 128 accepted connections,
-64 ordinary handlers, eight stop/disable-linger handlers, and eight diagnostic
+64 ordinary handlers, eight stop/disable-linger/cancel-operation handlers, and eight diagnostic
 handlers (status, operation, list-units and list-timers). These budgets are per
 endpoint, separate from manager transaction budgets. Embedders can use
 `protocol.ServeWithLimits`; the daemon uses the defaults. The standalone
@@ -130,3 +130,28 @@ invalidate three consecutive candidates, daemon-reload returns `busy`; retry the
 command. This rejection leaves the accepted graph and configuration revision
 unchanged. Enable/disable planning also allows lifecycle work to continue while
 configuration changes remain serialized.
+
+## Explicit cancellation
+
+Development builds add `winctl cancel OPERATION_ID` (`cancel-operation` RPC),
+using the same authenticated system/user pipe as operation queries. It cancels
+unfinished start/restart work. Successfully completed members remain running,
+matching deadline expiry and partial-start failure; shared start callers all
+receive the same cancellation outcome. No dependency rollback is performed.
+
+For example, if db.service started successfully and web.service is still waiting
+for readiness, cancel cleans up the unfinished web invocation and leaves db
+running. Cancel during restart teardown prevents its subsequent start phase;
+ongoing native cleanup stays owned and may still need an explicit stop retry.
+Accepted explicit stop operations reject cancellation and keep their cleanup
+budget. Completed operations return their unchanged outcome, and repeated
+cancellation preserves the first cancellation reason.
+
+The response is a copy of the current operation record. Running with a
+CancellationReason means cancellation was requested and cleanup may remain;
+it does not confirm termination. Late native creations remain tracked and cleaned
+up. Use `operation` and unit status to inspect completion/uncertainty. Exit codes
+match `operation`: 0 succeeded, 3 running, 1 failed or RPC error, 2 invalid usage,
+and 4 unknown/evicted ID. During the short completion-publication boundary,
+cancel can return busy; query or retry. Older servers return method-not-found.
+Cancellation uses the reserved stop handler budget and allocates no worker.

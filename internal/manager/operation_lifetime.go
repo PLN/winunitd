@@ -87,31 +87,6 @@ func (m *Manager) beginOperationTaskLocked(flight *startFlight, timeout time.Dur
 	return task
 }
 
-func (m *Manager) cancelOperationLocked(task *operationTask, reason error) {
-	if task.ctx.Err() != nil {
-		return
-	}
-	// Successful members keep running, as with ordinary partial start failure.
-	// In-flight members disarm recovery before a late completion can publish.
-	for name, plan := range task.plans {
-		rt := m.units[name]
-		if plan.completed || !plan.launched || plan.launchGen == 0 || rt != plan.record || rt.gen != plan.launchGen || rt.stopEpoch != plan.stopEpoch {
-			continue
-		}
-		rt.stopping = true
-		rt.stopEpoch++
-		rt.cancelRestart()
-		if rt.startCancel != nil {
-			rt.startCancel()
-		}
-		if rt.proc != nil || rt.invocationUnit != nil {
-			rt.stopUncertain = true
-		}
-	}
-	m.operations[task.flight.id].CancellationReason = reason.Error()
-	task.cancel(reason)
-}
-
 func (m *Manager) cancelOperationsLocked() {
 	for _, task := range m.activeOperations {
 		// Accepted stops retain their independent cleanup budget.

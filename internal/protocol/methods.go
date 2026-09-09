@@ -2,20 +2,21 @@ package protocol
 
 // Control methods match the winctl verbs (DESIGN.md §13, §74).
 const (
-	MethodStart         = "start"
-	MethodStop          = "stop"
-	MethodRestart       = "restart"
-	MethodStatus        = "status"
-	MethodEnable        = "enable"
-	MethodDisable       = "disable"
-	MethodListUnits     = "list-units"
-	MethodListTimers    = "list-timers"
-	MethodLogs          = "logs"
-	MethodDaemonReload  = "daemon-reload"
-	MethodVerify        = "verify"
-	MethodEnableLinger  = "enable-linger"
-	MethodDisableLinger = "disable-linger"
-	MethodOperation     = "operation"
+	MethodStart           = "start"
+	MethodStop            = "stop"
+	MethodRestart         = "restart"
+	MethodStatus          = "status"
+	MethodEnable          = "enable"
+	MethodDisable         = "disable"
+	MethodListUnits       = "list-units"
+	MethodListTimers      = "list-timers"
+	MethodLogs            = "logs"
+	MethodDaemonReload    = "daemon-reload"
+	MethodVerify          = "verify"
+	MethodEnableLinger    = "enable-linger"
+	MethodDisableLinger   = "disable-linger"
+	MethodOperation       = "operation"
+	MethodCancelOperation = "cancel-operation"
 )
 
 // Methods is the full set of control verbs.
@@ -34,6 +35,7 @@ var Methods = []string{
 	MethodEnableLinger,
 	MethodDisableLinger,
 	MethodOperation,
+	MethodCancelOperation,
 }
 
 var knownMethods = func() map[string]bool {
