@@ -63,7 +63,7 @@ func (m *Manager) applyStartOutcomeLocked(name string, state core.State, err err
 			return
 		}
 	}
-	rt.state = state
+	rt.publishStartOutcome(state)
 	if err != nil && rt.state != core.Active {
 		rt.err = waitFailMessage(err)
 	}
@@ -428,7 +428,7 @@ func (m *Manager) acceptRecovery(request recoveryRequest) context.Context {
 	defer m.mu.Unlock()
 	owner := request.owner
 	rt := m.units[owner.name]
-	if m.closed || !owner.currentLocked(m) || rt.stopping || rt.unavailable {
+	if m.closed || !owner.currentLocked(m) || rt.stopping || rt.unavailable || rt.stopUncertain || rt.proc != nil {
 		return nil
 	}
 	if m.startLimitHitLocked(rt) {
@@ -483,4 +483,30 @@ func (m *Manager) acceptNativeStart(ctx context.Context, owner runtimeIdentity, 
 		owner.record.err = ""
 	}
 	return m.now(), true
+}
+
+func (m *Manager) retainNotifyDisposal(nrt *notifyRuntime) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if rt := m.units[nrt.name]; rt != nil && rt.notify == nil && !m.closed {
+		rt.notify = nrt
+		return true
+	}
+	m.closePending = append(m.closePending, unitTeardown{notify: nrt})
+	return false
+}
+
+func (m *Manager) applyPendingNotifyCleanup(nrt *notifyRuntime, err error) {
+	if err != nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	kept := m.closePending[:0]
+	for _, td := range m.closePending {
+		if td.notify != nrt {
+			kept = append(kept, td)
+		}
+	}
+	m.closePending = kept
 }

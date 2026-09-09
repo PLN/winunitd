@@ -151,6 +151,13 @@ func TestRecoveryRevalidatesAfterWaitingForUnitGate(t *testing.T) {
 	owner := runtimeIdentity{name: name, record: rt, gen: rt.gen}
 	proc := rt.proc.(*fakeProc)
 	m.mu.Unlock()
+	// Recovery is eligible only after exit cleanup releases the old process.
+	proc.die(1)
+	waitCond(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return rt.proc == nil && rt.state == core.Failed && !rt.stopUncertain
+	})
 	unlock := m.ops.lock(name)
 	var once sync.Once
 	release := func() { once.Do(unlock) }
@@ -164,7 +171,6 @@ func TestRecoveryRevalidatesAfterWaitingForUnitGate(t *testing.T) {
 	})
 	// The gate holder completes a newer explicit attempt while recovery is
 	// already queued. Its failure must not authorize the old recovery request.
-	proc.die(1)
 	if err := m.launchUnitOp(context.Background(), name, false); err == nil {
 		t.Fatal("fresh adapter start did not hit injected failure")
 	}

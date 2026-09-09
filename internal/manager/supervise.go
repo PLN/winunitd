@@ -401,13 +401,6 @@ func (m *Manager) beginRestart(request recoveryRequest) {
 	_ = m.launchUnitOwnedOp(ctx, name, true, nil, &owner)
 }
 
-func (m *Manager) subOfLocked(name string) core.Substate {
-	if rt := m.units[name]; rt != nil {
-		return rt.sub
-	}
-	return core.SubNone
-}
-
 func (m *Manager) reapFailed(effect failedProcessEffect) {
 	unlock := m.ops.lock(effect.owner.name)
 	defer unlock()

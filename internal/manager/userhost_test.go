@@ -27,6 +27,64 @@ type fakeUserMgr struct {
 	starts *atomic.Int32
 }
 
+type gatedUserLiveness struct {
+	fakeUserMgr
+	block   atomic.Bool
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (p *gatedUserLiveness) Alive() bool {
+	if p.block.Load() {
+		p.entered <- struct{}{}
+		<-p.release
+	}
+	return p.fakeUserMgr.Alive()
+}
+
+func TestUserHostIndependentLogonWhileLivenessBlocked(t *testing.T) {
+	p := &gatedUserLiveness{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	p.sid = testSIDA
+	p.alive.Store(true)
+	h := NewUserHost(UserHostConfig{
+		Admission:      UserAdmission{Mode: "unit-files"},
+		ProbeUserUnits: func(*runtime.UserToken) (bool, error) { return true, nil },
+		QueryToken: func(session uint32) (*runtime.UserToken, error) {
+			sid := testSIDA
+			if session == 2 {
+				sid = testSIDB
+			}
+			return &runtime.UserToken{Info: runtime.UserInfo{SID: sid}}, nil
+		},
+		Start: func(spec runtime.UserManagerSpec) (runtime.UserManagerProc, error) {
+			if spec.SID == testSIDA {
+				return p, nil
+			}
+			other := &fakeUserMgr{sid: spec.SID}
+			other.alive.Store(true)
+			return other, nil
+		},
+	})
+	defer h.Close()
+	defer close(p.release)
+	h.Logon(1)
+	p.block.Store(true)
+	first := make(chan struct{})
+	go func() { h.Logon(1); close(first) }()
+	select {
+	case <-p.entered:
+	case <-time.After(time.Second):
+		t.Fatal("liveness not reached")
+	}
+	second := make(chan struct{})
+	go func() { h.Logon(2); close(second) }()
+	select {
+	case <-second:
+	case <-time.After(time.Second):
+		t.Fatal("independent logon blocked")
+	}
+}
+
 func (p *fakeUserMgr) PID() int    { return 1 }
 func (p *fakeUserMgr) SID() string { return p.sid }
 func (p *fakeUserMgr) Alive() bool { return p.alive.Load() }

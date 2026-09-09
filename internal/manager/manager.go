@@ -437,6 +437,8 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 	st.LogStorageErrors = stats.StorageErrors
 	st.LogLastStorageError = stats.LastStorageError
 	if rt != nil {
+		st.SubState = rt.sub.String()
+		st.TerminationUncertain = rt.stopUncertain
 		st.LastOperationID = rt.lastOperationID
 		st.ConfigRevision = rt.configRevision
 		st.InvocationConfigRevision = rt.invocationRevision

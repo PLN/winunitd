@@ -1293,6 +1293,15 @@ func TestPrintStatusStartLimit(t *testing.T) {
 	}
 }
 
+func TestPrintStatusTerminationUncertain(t *testing.T) {
+	var out bytes.Buffer
+	c := &cli{stdout: &out}
+	c.printStatus(&protocol.StatusResult{Unit: &protocol.UnitStatus{Name: "work.path", ActiveState: "deactivating", SubState: "stop", TerminationUncertain: true}})
+	if !strings.Contains(out.String(), "Substate: stop") || !strings.Contains(out.String(), "Termination: unconfirmed; retry stop") {
+		t.Fatal(out.String())
+	}
+}
+
 func TestPrintStatusResourceLimit(t *testing.T) {
 	var out bytes.Buffer
 	c := &cli{stdout: &out}

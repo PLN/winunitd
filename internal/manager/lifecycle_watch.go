@@ -27,7 +27,9 @@ func (m *Manager) acceptHubFailure(event hubCleanup) bool {
 	defer m.mu.Unlock()
 	rt := m.units[event.name]
 	h := event.hub
-	// Stop owns cleanup after admission; late observations cannot replace its decision.
+	// Explicit stop owns cleanup after admission; reload reconciliation owns removed
+	// hubs, and manager shutdown owns its retained hubs. A mismatched generation
+	// belongs to the newer owner. Late observations cannot replace those decisions.
 	if rt == nil || h == nil || rt.hub != h || rt.gen != h.gen || rt.stopping || rt.unavailable || m.closed {
 		return false
 	}

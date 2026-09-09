@@ -7,7 +7,7 @@ preserve documented beta syntax, and continue the R0-R8 architecture and
 qualification backlog. [Post-beta tracking](docs/POST-BETA-TRACKING.md) links
 GitHub milestones and the next focused work.
 
-Revision 2 - status refreshed September 7, 2026. Original review baseline:
+Revision 2 - status refreshed September 9, 2026. Original review baseline:
 `98abb80`, `0.1.0-alpha`; current published release: `0.2.1-beta`.
 
 This roadmap adopts the direction of the [architecture review](docs/DESIGN-REVIEW.md). It defines future work; it does not mark reviewed defects as fixed. [DESIGN.md](DESIGN.md) specifies the target architecture. [Milestones](docs/MILESTONES.md) define work packages, dependencies, and completion evidence. The [installer plan](docs/MSI-INSTALLER-PLAN.md) specifies package servicing details.
@@ -37,13 +37,20 @@ R0, R1, and R2 are **in progress**; later milestones contain groundwork but rema
 | --- | --- | --- | --- |
 | R0 | Reproducible baseline and isolated verification | â€” | Supported compiler pinned; test endpoints isolated; review reproductions retained; Windows qualification harness and packaging spike recorded |
 | R1 | Owned workloads remain controllable | R0 | Output deadlock and reload ownership regressions pass; stop failures remain visible; bounded capture |
-| R2 | One lifecycle coordinator | R1 | Every lifecycle mutation goes through the coordinator; operation interleavings and stale completions pass invariant tests |
+| R2 | One lifecycle coordinator | R1.1-R1.3 ownership/cleanup invariants | Every lifecycle mutation goes through the coordinator; operation interleavings and stale completions pass invariant tests |
 | R3 | Explicit unit and health semantics | R2 | Compatibility matrix, graceful stop, dependency propagation, readiness/liveness, and versioned configuration migration pass conformance tests |
 | R4 | Qualified Windows identities and managers | R2, R3 | Real SCM/SYSTEM/user launches, environment, crash recovery, logoff, and bounded maintenance verified |
 | R5 | Durable scheduling and operational diagnostics | R2, R3 | Timer crash policy, bounded resource use, storage errors, structured status, and daemon diagnostics verified |
 | R6 | Serviceable internal MSI | R3, R4, R5 | Clean install, repair, retained-data uninstall, N-1 upgrade, and injected rollback pass in disposable VMs |
 | R7 | Hermes migrated and exercised | R6 | The dev machine uses MSI/SCM ownership; reboot, crash recovery, upgrade, and rollback checks pass; pilot soak recorded |
 | R8 | Public release and supply-chain verification | R7 | Public-readiness review complete; signing provider integrated; final signed MSI, attestations, and immutable release verified |
+
+Dependencies describe acceptance, not a ban on overlapping implementation.
+R2 closure requires the R1.1-R1.3 ownership/cleanup regressions to remain passing;
+it does not wait for R1.4 aggregate fairness, unattended R0 provisioning, or R4
+identity/session qualification. Those retain their own release gates. R6's R3-R5
+dependencies apply to the fully qualified installer, not the completed narrower
+B1-B4 beta MSI contract.
 
 R0 packaging research may proceed alongside runtime stabilization. R4 and R5 may proceed independently once their predecessors close. R8 provider research and public-source preparation may start earlier, but do not waive release gates. No date is promised until the Windows qualification work establishes a reliable estimate.
 

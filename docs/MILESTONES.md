@@ -6,7 +6,7 @@ feedback while continuing the R0-R8 design and qualification work. Complete
 coordinator migration, exhaustive qualification and the seven-day soak remain
 separate acceptance requirements; beta publication does not close them.
 
-September 7, 2026. Implements [ROADMAP.md](../ROADMAP.md) and [Design v2](../DESIGN.md).
+September 9, 2026. Implements [ROADMAP.md](../ROADMAP.md) and [Design v2](../DESIGN.md).
 R0, R1 and the initial R2 ownership work are **in progress**; later milestones
 remain planned with some groundwork delivered. [Post-beta tracking](POST-BETA-TRACKING.md)
 maps the GitHub milestones and focused issues to these gates. Documentation and
@@ -25,7 +25,7 @@ Status: in progress. Dependencies: none. Outcome: a safe, repeatable way to prov
 - [x] **R0.1 Toolchain:** implemented in `7b788e9` and `40858a8`; local checks and all CI lanes pass, and native Windows/Linux cross-build artifact hashes match. Compiler/action pins, artifact metadata, and vulnerability/update policy are recorded in [build policy and evidence](BUILDING.md).
 - [x] **R0.2 Isolation:** prevent integration tests from connecting to the real system/user manager; give fixtures dedicated endpoint/data namespaces and bounded process cleanup. Implemented in `15ccd9d`; test-daemon endpoint guards and isolated user-manager scenarios pass.
 - [x] **R0.3 Review reproductions:** retain opt-in failing reproductions for reload ownership and large-output oneshots with small-output controls. Recorded in `15ccd9d`; deletion/invalid replacement and large stdout/stderr reproduce the defects, small-output controls pass, independent cleanup completes. R1 converts them into passing required regressions.
-- [ ] **R0.4 Windows harness:** implement the [qualification lab plan](TEST-LAB.md) for disposable VM setup and evidence collection for SCM, SYSTEM, standard users, sessions, reboot, and installer failure injection. Fresh Server Core, Enterprise LTSC, and Enterprise evaluation guests passed controller-driven SYSTEM/SCM/reboot smoke using exact CI artifacts. Trusted Gitea artifact dispatch/download/guest consumption and guarded guest/disk retirement passed; ownership/expiry reconciliation is implemented. Server maintenance converged; LTSC is accepted for development testing with the repeatedly offered Windows Security app update recorded as a non-blocking known issue. Media preparation remains supervised; broader identity/session scenarios and unattended operation remain pending.
+- [ ] **R0.4 Windows harness:** Remaining to close: automate supervised media/baseline preparation and qualify standard-user/session and failure-injection lanes with repeatable cleanup. [Delivered lab evidence](TEST-LAB.md).
 - [x] **R0.5 Packaging spike:** implemented in `ea7fb35`; clean-commit SYSTEM qualification passed install, repair, running/stopped rollback after old-product removal, stop-deadline failure, slow upgrade, and uninstall. Tooling terms, native MSI limitations, helper strategy, exact artifacts, and remaining production requirements are recorded in the [packaging spike](PACKAGING-SPIKE.md).
 
 Exit gate: supported builds and existing isolated test lanes pass; the two review defects are reproducible without touching Hermes; VM provisioning/smoke and packaging-spike evidence can be repeated. Runtime defects remain open for R1. This milestone does not qualify the application for installation.
@@ -34,57 +34,26 @@ Exit gate: supported builds and existing isolated test lanes pass; the two revie
 
 Status: in progress alongside remaining supervised R0 qualification. Dependencies for closure: R0. Outcome: urgent correctness fixes in the existing implementation before structural refactoring.
 
-- [ ] **R1.1 Reload:** live processes, in-flight operations, and active/unresolved SCM/task proxies retain their records and last accepted configuration. Accepted removals report `LoadState=unavailable`; status/log/stop remain accessible, restarts are suppressed, and new launches require valid configuration. R2 now rejects invalid/cyclic candidates as a whole, retaining the previous loaded definitions and start eligibility. Required Windows deletion/recreation regressions and portable proxy/trigger interleavings pass. Late watch installation is rejected and its handles closed; unavailable timers/hubs cannot activate companions. Accepted, service-invocation, and armed-trigger revision identities are recorded in R2; coordinator migration remains open.
-- [ ] **R1.2 Activation:** process creation returns before oneshot completion; output capture attaches before waiting for exit. Required Windows tests verify all 5,000 stdout/stderr lines, no-newline fragments, startup timeout cleanup, and explicit stop while waiting. Existing completed-oneshot active state is preserved until R3. Post-creation unit launch failures preserve process/thread handles; if cleanup fails, the launcher returns the process with its error and the manager retains it for status/stop retry. Broader failure qualification remains coupled to R1.3.
-- [ ] **R1.3 Stop results:** retain process, job, and watcher ownership until cleanup succeeds; preserve status/stop retry and block replacement while cleanup is unresolved. Process/native/watch stop retries join pending adapter calls. Shutdown rejects new starts, accounts for accepted launches, and shares its deadline across user-host, unit, manager, and daemon-job cleanup. Partial launches/opens and failed native close calls remain owned. Implemented behavior and failure-injection evidence are recorded in [R1 evidence](R1-EVIDENCE.md). Accepted notification clients now remain owned across failed closes and late accepts, with manager stop retry coverage. Partial watcher/listener opens transfer unfinished cleanup to the manager, with portable and protected-handle regressions. Windows identity/session qualification remains open; stop remains forced Job Object termination until R3.
-- [ ] **R1.4 Capture bounds:** stdout/stderr capture emits UTF-8 fragments of at most 64 KiB before newline/EOF, with continuation/partial metadata in journal v3 and the logs API. Queued message data is capped at 4 MiB per invocation and 16 MiB per store, with 12,288 pending fragments per invocation and a 16,384-fragment shared queue cap. Capture keeps draining on overflow; unit status exposes drops and storage errors. Capture/sync waits and journal close have deadlines; at most four sync workers can remain blocked. Tests cover Unicode reconstruction, old journal readers, blocked writes/sync, overflow, failed writes, and recovery after a close timeout. A real child also drains large stdout/stderr and exits while storage is stalled, with observable drops within the invocation budget. Injected disk-full/short-write tests verify loss reporting and recovery after reopening; a missing final newline is restored without rewriting existing bytes or swallowing the next record. A noisy short-line invocation leaves capacity for another unit. Live write failures now retain the exact unwritten record suffix and retry with bounded backoff without reopening; failed close counts abandoned pending records. Actual NTFS volume exhaustion and automatic recovery passed as SYSTEM on a disposable Server Core baseline copy; exact identities are in [R1 evidence](R1-EVIDENCE.md). Queries now use a five-second default deadline and at most four workers; timed-out native operations retain their slots until completion. Injected scan/flush-lock stalls verify bounded admission and recovery. Remaining qualification includes fairness under aggregate overload and total lifecycle admission bounds.
+- [ ] **R1.1 Reload:** Remaining to close: consolidate the required real-process/native ownership matrix and obtain maintainer acceptance of retained status/log/stop and suppressed restart after removal. [Evidence](R1-EVIDENCE.md), [revision/trigger coverage](R2-EVIDENCE.md).
+- [ ] **R1.2 Activation:** Remaining to close: finish the post-creation failure/exit-before-attach qualification matrix jointly with R1.3; retain passing large-output/stop-during-start regressions. Completed-oneshot beta semantics remain unchanged until R3. [Evidence](R1-EVIDENCE.md).
+- [ ] **R1.3 Stop results:** Remaining to close: finish the exact-identity termination/handle-failure matrix and confirm every failed cleanup remains owned, observable and retryable. SYSTEM-to-user session qualification belongs to R4; graceful stop belongs to R3. [Evidence](R1-EVIDENCE.md).
+- [ ] **R1.4 Capture bounds:** Remaining to close: qualify fairness and bounded aggregate capture under simultaneous noisy producers and storage stalls. Overall lifecycle admission bounds belong to R2.3. [Capture, NTFS-full and query-bound evidence](R1-EVIDENCE.md).
 
-Additional R1 finding: notification tests exposed an early-disconnect transport race and an idle-client shutdown hang. The notify helper now waits for a server-acceptance banner before writing; canceled listeners close accepted clients. The single-send Windows manager test passed 100 race-enabled repetitions, with portable acceptance/cancellation regressions. This alpha transport change requires upgrading the helper and daemon together; it does not acknowledge readiness or replace the invocation/authentication work in R2/R3.
-
-Evidence: local race tests, vet, CI results, focused repetitions, and remaining gaps are recorded in [R1 evidence](R1-EVIDENCE.md). These results do not close the milestone or qualify installation.
+Implementation history and exact qualification identities are in [R1 evidence](R1-EVIDENCE.md).
 
 Exit gate: real-process tests cover deletion, invalid replacement, recreation while an old invocation lives, large stdout/stderr, no-newline output, exit-before-attach, and failed termination. The previously reproduced failures now pass required regression tests. Race tests and cleanup assertions pass; no owned process becomes unreachable through status/stop and no ambiguous termination is reported as successful.
 
 ## R2 — Authoritative lifecycle coordinator
 
-Status: in progress (invocation-definition groundwork; coordinator pending). Dependencies: R1. Outcome: one state owner, concurrent I/O, explicit operation identity.
+Status: in progress (handler migration; admission/snapshots pending). Closure depends on preserved R1.1-R1.3 ownership/cleanup invariants, not completion of unrelated R1.4 or R4 qualification. Outcome: one state owner, concurrent I/O, explicit operation identity.
 
-- [ ] **R2.1 Records/events:** implement immutable configuration revisions, stable runtime records, invocation/operation IDs, generations, typed completion events, and immutable status snapshots. Atomic reload acceptance and opaque accepted/service-invocation revision IDs are implemented; queued plans and automatic recovery retain their captured identity. Armed triggers report their captured revision, and start/stop/restart transactions expose queryable operation IDs. Remaining event migration and immutable aggregate snapshots are open.
-- [ ] **R2.2 Coordinator:** migrate start/stop/restart, process exit, notify, watchdog, timer/native trigger activation, reload, and user-host lifecycle decisions. Remove direct worker state writes and transaction-result overwrites. Process-exit decisions now use typed completions; watchdog/recovery callbacks carry exact runtime-record/generation identity and revalidate after waiting for the unit gate. Transaction results no longer apply lifecycle state; dependency-blocked members publish identity-checked rejection events. Other direct state writers and coordinator admission remain open; see the [writer inventory](LIFECYCLE-WRITERS.md).
-- [ ] **R2.3 Scheduling:** bound admission/workers, preserve completion delivery under overload, coalesce redundant starts, and ensure stop/maintenance precedence. Keep blocking I/O outside the coordinator.
-- [ ] **R2.4 Operations:** retain accepted operations across client disconnect; expose queryable outcomes; apply internal deadlines and explicit cancellation; version protocol changes with client compatibility tests. Bounded in-memory transaction history and query/CLI compatibility tests are implemented; manager-owned contexts, aggregate cancellation deadlines, queryable deadline/cancellation metadata, and late-launch cleanup now cover accepted start/stop/restart operations. A separate cancellation command and the remaining coordinator migration stay open; see [operation lifetime evidence](R2-EVIDENCE.md#accepted-operation-lifetimes).
-- [ ] **R2.5 Interleavings:** build deterministic operation-sequence tests with fake clocks and delayed workers; migrate existing tests rather than replacing them with implementation-mirroring tests.
+- [ ] **R2.1 Records/events:** Remaining to close: publish immutable aggregate status snapshots and complete identity-bearing event coverage. Accepted/invocation/armed revisions and operation IDs are implemented. [Evidence](R2-EVIDENCE.md).
+- [ ] **R2.2 Coordinator:** Remaining to close: finish the [writer audit](LIFECYCLE-WRITERS.md), including timer/session policy and admission decisions, using the mutex-serialized handler contract in Design section 2. Preserve independent blocking I/O and prohibit transaction-result replay. [Evidence](R2-EVIDENCE.md).
+- [ ] **R2.3 Scheduling:** Remaining to close: bound every command/worker class and prove completion progress under saturated admission, with stop/maintenance precedence. Handler extraction alone does not satisfy this gate. [Admission groundwork](R2-EVIDENCE.md).
+- [ ] **R2.4 Operations:** Remaining to close: decide/implement the separate cancellation command and reconcile coordinator-wide lifetime coverage. Accepted operation contexts, deadlines, disconnection behavior and bounded history are delivered; history is intentionally nonpersistent. [Contract](OPERATIONS.md), [evidence](R2-EVIDENCE.md#accepted-operation-lifetimes).
+- [ ] **R2.5 Interleavings:** Remaining to close: complete the invariant/operation-sequence matrix through public paths and delayed adapters; replace overlapping handler-only tests rather than duplicating them. Track the [race-suite budget](TEST-HARDENING.md).
 
-The first R2.1 slice now separates the latest loaded service definition from the
-configuration captured before invocation side effects. Status, stop, shutdown,
-exit/watchdog cleanup, and automatic recovery retain the captured ownership.
-Explicit starts may adopt a new native target only after successful cleanup of
-the old one. [Initial R2 evidence](R2-EVIDENCE.md) covers retargeting, service-type
-changes, reload during native launch, failed cleanup retries, and automatic
-process recovery. Atomic configuration/graph acceptance and captured revision
-IDs are implemented; immutable status snapshots and coordinator migration remain
-open. Start plans
-also capture their member definitions with the graph, retain pending records,
-and reject launches/results invalidated by a later stop request. Watches and
-timers retain their armed definitions and source identities; queued trigger
-starts and late results cannot cross stop/rearm. Triggered service starts share
-the restart budget. Transactions default to sixteen concurrent adapter calls
-and bounded completion channels. Managers default to 32 admitted start plans;
-overloaded watches retain their activation and timers retry with bounded callback
-work. Broader admission/resource bounds and the coordinator remain pending.
-
-Explicit restart now admits captured stop/start plans before teardown, restores
-active/activating reverse members including `PartOf`, and retains their records
-and revisions through cleanup. Invalid plans and full start admission reject
-before interruption; later stops invalidate pending restart launches.
-Whole-operation cancellation deadlines now span restart teardown and startup; the remaining coordinator migration is open.
-Stop cleanup and final results now use typed completion events; late failed stops
-retain their own error without overwriting a newer operation's lifecycle state.
-Start/stop/restart transactions now expose queryable IDs and bounded history,
-including after client disconnect. Explicit stops have independent bounded
-admission; shutdown bypasses it. History persistence and a separate cancellation command remain open; see [operation history](OPERATIONS.md).
-Compatible concurrent explicit starts share one admitted operation and outcome;
-joined wait cancellation does not cancel the original operation.
+Implementation history, operation/admission limits and exact qualification identities are in [R2 evidence](R2-EVIDENCE.md) and [OPERATIONS.md](OPERATIONS.md).
 
 Exit gate: each invariant in Design v2 §3 has a test/evidence mapping. Start/stop/restart/reload/exit/timeout/trigger permutations, late successful launches, stale probes, overload, client disconnect, and shutdown during launch preserve ownership and ordering. A source audit finds no second lifecycle authority. Independent units still perform I/O concurrently.
 

@@ -131,3 +131,10 @@ func genOf(t *testing.T, m *Manager, name string) uint64 {
 	}
 	return rt.gen
 }
+
+func (m *Manager) subOfLocked(name string) core.Substate {
+	if rt := m.units[name]; rt != nil {
+		return rt.sub
+	}
+	return core.SubNone
+}

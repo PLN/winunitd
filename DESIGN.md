@@ -1,6 +1,6 @@
 # winunitd design — revision 2
 
-September 5, 2026; status refreshed September 7, 2026. Target architecture for
+September 5, 2026; status refreshed September 9, 2026. Target architecture for
 the [roadmap](ROADMAP.md), based on the [architecture review](docs/DESIGN-REVIEW.md).
 This supersedes [revision 1](docs/archive/DESIGN-v1.md). The published `0.2.1-beta`
 implements a narrower supported contract; this document specifies intended
@@ -39,7 +39,24 @@ Each manager has one serialized coordinator. Only that coordinator changes lifec
 
 Keep existing packages. `core` defines lifecycle transitions and graph plans; `manager` hosts the coordinator; `runtime` owns Windows handles and execution; `unit` produces validated configuration; `timers` and native watchers produce events; `journal` owns capture/storage; `protocol` owns transport and authorization. Adapters report observations and typed errors instead of mutating manager records.
 
-Commands enter a bounded admission queue. Reject excess control work with an explicit busy result. Worker concurrency is bounded. Exit/completion notifications must never be silently dropped or blocked behind a queue of new starts; provide a reserved completion path and coalesce replaceable notifications. The coordinator must never wait synchronously for a worker whose completion requires that coordinator.
+The R2 end-state is a mutex-serialized set of decision handlers, not a required
+single-goroutine event loop. The lock is the serialization mechanism; the audited
+handler set is the sole authority. Handlers validate identity, update records and
+return retained effects. They do not wait for unit gates, workers, process I/O,
+client contexts or persistence. Workers perform those effects and deliver results
+through the same handlers. A future event loop is optional, not a second migration
+gate. User-host instance handlers follow this discipline; their remaining session
+policy and integration with system-manager admission remain explicit audit items.
+
+Commands acquire bounded admission slots before allocating worker work; a bounded
+queue is optional. Reject excess control work with an explicit busy result. Worker
+concurrency is bounded. Completion/exit delivery bypasses command admission and
+must retain reserved capacity under overload; coalesce replaceable notifications.
+Stop and maintenance retain independent admission/precedence. A handler must never
+wait synchronously for a worker whose completion needs the same authority.
+Removing scattered writers alone cannot close R2: R2.3 additionally requires
+measured overload/completion progress and bounded work for every operation class,
+and R2.1 still requires immutable aggregate snapshots.
 
 ## 3. Records and invariants
 
@@ -85,7 +102,14 @@ For a valid changed definition, the running invocation keeps its captured config
 
 The launcher creates a suspended process, assigns its Job Object and resource policy, installs output handling, and resumes it. It returns an owned process handle promptly. The manager, not the launcher, implements readiness and oneshot completion. Main-process exit triggers teardown of remaining owned descendants before replacement. Unowned external services are handled only by their adapters.
 
-Lifecycle states remain inactive, activating, active, deactivating, and failed, with explicit substates and termination uncertainty. Health is separate: unknown, ready, degraded, or unhealthy. A process may be running while not ready. A successful oneshot normally becomes inactive with a successful last result; `RemainAfterExit=yes` explicitly retains active state.
+Lifecycle states remain inactive, activating, active, deactivating, and failed, with explicit substates and termination uncertainty.
+The existing beta manager uses `step` for process lifecycle events and a separate,
+identity-checked `publishStartOutcome` for explicit member results, including
+non-process starts and never-launched rejections. Publication produces active/running,
+inactive/no-substate, or failed/no-substate; an already failed watchdog retains its
+watchdog cause. The handler guards apply before publication, and transaction
+snapshots are never publication inputs. This is a documented transition adapter,
+not a second lifecycle authority. Health is separate: unknown, ready, degraded, or unhealthy. A process may be running while not ready. A successful oneshot normally becomes inactive with a successful last result; `RemainAfterExit=yes` explicitly retains active state.
 
 Stop uses a deadline shared across the operation's phases:
 
@@ -93,6 +117,11 @@ Stop uses a deadline shared across the operation's phases:
 2. Run configured `ExecStop` under the workload's identity and captured configuration. It has its own tracked helper job and remaining deadline; it cannot obtain additional privilege through the system manager.
 3. Wait for the workload to exit within the remaining graceful budget. If no cooperative stop is configured, use documented forced-stop behavior immediately.
 4. Force termination of the owned job, wait for confirmation within the overall budget, and bound capture finalization.
+
+Before implementing tracked `ExecStop` helper jobs, replace the aggregate cleanup
+uncertainty flag with per-resource obligations. Completion of one helper/process
+must not clear another resource's uncertainty. This belongs to R3.2 conformance;
+the current process-plus-notify or watch ownership model is unchanged.
 
 Reserve part of the total deadline for forced termination and confirmation; the cooperative phase cannot consume the entire budget. Do not discard kill/wait/close errors. If termination cannot be established, retain ownership and failed/stopping diagnostics, refuse a replacement invocation, and fail maintenance. Console CTRL_BREAK and GUI messages remain deferred until a compatible console/session arrangement is implemented and tested; `CREATE_NEW_PROCESS_GROUP` alone is insufficient.
 

@@ -746,6 +746,36 @@ This slice is not included in the preceding SYSTEM
 artifact qualification; coordinator routing and the remaining writer inventory
 are still open.
 
+## September 9 review follow-up
+
+The watch slice passed hosted Windows/Linux CI run `34337011949` at
+`f003a0d7efbe1fb485815c219955777a9a8ecdbe` and merged as PR #110.
+The following changes postdate that CI and the September 7 SYSTEM artifact:
+
+- UnitStatus and winctl expose the manager substate and termination uncertainty.
+  A public path Start/Stop with blocked native close verifies JSON status/list
+  visibility, no diagnostic overwrite from a late failure, and successful cleanup.
+- Explicit member publication now has documented, coherent state/substate pairs;
+  failed watchdog causes remain retained. Beta oneshot active-after-success and
+  repeated PathExists AND semantics are unchanged.
+- Recovery admission independently rejects owned processes and unconfirmed cleanup.
+  The gate-race regression now reaches recovery only after genuine exit cleanup.
+- Start-limit accounting, notify partial-open retention, accepted configuration
+  publication and user-host instance launch/cleanup/shutdown use lifecycle handlers.
+  User launch liveness runs outside the host mutex; an independent logon test
+  confirms progress while another liveness observation is delayed.
+
+The mutex-serialized end-state is explicit in Design section 2. Timer/session
+policy, broader admission guarantees, nonblocking aggregate observations and
+immutable snapshots remain open. Per-resource cleanup accounting is a prerequisite
+for R3 helper jobs, not a new beta behavior claim.
+
+Validation: ten focused race repetitions passed, including the protocol status,
+recovery, transition-pair and independent-user-logon tests. Existing user-host,
+linger and admission tests passed with race detection. The uncached full local
+Windows race suite and vet passed; the manager package took 45.1 seconds and the
+full command 56.7 seconds. Hosted evidence is recorded in the associated PR.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

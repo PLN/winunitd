@@ -771,6 +771,12 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		fmt.Fprintf(c.stdout, "● %s\n", title)
 		fmt.Fprintf(c.stdout, "     Loaded: %s (%s; %s)\n", u.LoadState, u.Path, enabled)
 		fmt.Fprintf(c.stdout, "     Active: %s\n", u.ActiveState)
+		if u.SubState != "" {
+			fmt.Fprintf(c.stdout, "   Substate: %s\n", u.SubState)
+		}
+		if u.TerminationUncertain {
+			fmt.Fprintln(c.stdout, "Termination: unconfirmed; retry stop")
+		}
 		if u.Reason != "" {
 			fmt.Fprintf(c.stdout, "     Reason: %s\n", u.Reason)
 		}
