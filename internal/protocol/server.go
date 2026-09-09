@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"time"
 )
 
 // Handler serves one control method. result is JSON-encoded on success.
@@ -24,9 +25,22 @@ func (f HandlerFunc) Handle(ctx context.Context, method string, params json.RawM
 
 // Serve accepts connections on lis until ctx is cancelled or Accept fails.
 func Serve(ctx context.Context, lis net.Listener, h Handler, auth Authorizer) error {
+	return ServeWithLimits(ctx, lis, h, auth, ServerLimits{})
+}
+
+// ServeWithLimits bounds accepted connections and concurrent handler calls.
+// A connection beyond the hard cap is closed without decoding; an authenticated
+// request beyond its class budget receives a versioned busy response.
+func ServeWithLimits(ctx context.Context, lis net.Listener, h Handler, auth Authorizer, limits ServerLimits) error {
 	if h == nil {
 		return ErrFailed("nil handler")
 	}
+	limits, err := limits.defaults()
+	if err != nil {
+		return err
+	}
+	h = &admittedHandler{next: h, requests: make(chan struct{}, limits.Requests), stops: make(chan struct{}, limits.Stops), diagnostics: make(chan struct{}, limits.Diagnostics)}
+	connections := make(chan struct{}, limits.Connections)
 	// Accepted connections belong to this serving lifetime, including when
 	// Accept fails before the caller cancels its own context.
 	ctx, cancel := context.WithCancel(ctx)
@@ -43,15 +57,26 @@ func Serve(ctx context.Context, lis net.Listener, h Handler, auth Authorizer) er
 			}
 			return err
 		}
+		select {
+		case connections <- struct{}{}:
+		default:
+			_ = conn.Close()
+			continue
+		}
 		go func() {
+			defer func() { <-connections }()
 			defer conn.Close()
-			ServeConn(ctx, conn, h, auth)
+			serveConnWithTimeouts(ctx, conn, h, auth, limits.ReadTimeout, limits.WriteTimeout)
 		}()
 	}
 }
 
 // ServeConn handles requests on one connection until it closes or ctx is done.
 func ServeConn(ctx context.Context, conn io.ReadWriteCloser, h Handler, auth Authorizer) {
+	serveConnWithTimeouts(ctx, conn, h, auth, 0, 0)
+}
+
+func serveConnWithTimeouts(ctx context.Context, conn io.ReadWriteCloser, h Handler, auth Authorizer, readTimeout, writeTimeout time.Duration) {
 	if nc, ok := conn.(net.Conn); ok {
 		stop := context.AfterFunc(ctx, func() { _ = nc.Close() })
 		defer stop()
@@ -73,15 +98,35 @@ func ServeConn(ctx context.Context, conn io.ReadWriteCloser, h Handler, auth Aut
 			return
 		}
 		var req Request
+		if netConn != nil && readTimeout > 0 {
+			if err := netConn.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
+				return
+			}
+		}
 		if err := decodeMessage(br, &req); err != nil {
 			if isDisconnect(err) {
 				return
 			}
 			resp := newResponse(req.ID, nil, ErrInvalidRequest("malformed request"))
+			if netConn != nil && writeTimeout > 0 {
+				if err := netConn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+					return
+				}
+			}
 			_ = encodeMessage(conn, resp)
 			return
 		}
+		if netConn != nil && readTimeout > 0 {
+			if err := netConn.SetReadDeadline(time.Time{}); err != nil {
+				return
+			}
+		}
 		resp := dispatch(ctx, h, peer, &req)
+		if netConn != nil && writeTimeout > 0 {
+			if err := netConn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+				return
+			}
+		}
 		if err := encodeMessage(conn, resp); err != nil {
 			return
 		}

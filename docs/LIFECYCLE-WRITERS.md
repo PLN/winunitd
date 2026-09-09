@@ -44,10 +44,10 @@ writes as well as state/substate assignment when migrating each row.
 | pathwatch.go, registry.go, eventlog.go | Origin validation and trigger dispatch; path predicate latch on current hub | Predicate results now use an exact-generation lifecycle handler. Origin-bearing dispatch still needs bounded admission integration; probes and watch I/O stay outside it |
 | timer.go; internal/timers engine | Armed timer definitions and persistence state, activation origins, reload/stop reconciliation | Coordinate arm/disarm/dispatch; scheduler timing and persistence stay outside lifecycle authority |
 | unitruntime.go: step, publishStartOutcome, cancelRestart, detachAsync, error helpers | Event transitions and explicit-member publication, cancellation and handle transfer | Restrict calls to coordinator decision handlers; helpers are not separate authorities |
-| userhost.go; admission.go; linger.go | Separate UserHost mutex, session/admission/linger policy, bySID instances, launch placeholders, uncertainty and cleanup | Instance launch/cleanup/shutdown now use lifecycle_userhost.go handlers and startup liveness is outside h.mu. Session/admission/linger policy, aggregate status observations and system-manager admission integration remain open |
+| userhost.go; admission.go; linger.go | Separate UserHost mutex, session/admission/linger policy, bySID instances, launch placeholders, uncertainty and cleanup | Instance launch/cleanup/shutdown now use lifecycle_userhost.go handlers and startup liveness is outside h.mu. Alive/Running capture process references under h.mu and observe liveness outside it. Session/admission/linger policy and system-manager admission integration remain open |
 
-Status assembly in manager.go copies records and then overlays timer/native
-observations. It does not publish immutable aggregate coordinator snapshots yet.
+Status assembly in manager.go copies records and process references, then overlays
+process/journal/timer/native observations outside m.mu. It does not publish immutable aggregate coordinator snapshots yet.
 Native query results can describe a different observation time from the copied
 manager fields; retaining the existing response format does not close R2.1.
 
