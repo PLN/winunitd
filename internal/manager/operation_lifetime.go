@@ -65,7 +65,7 @@ func (m *Manager) operationTimeoutLocked(start, stop *core.Transaction) time.Dur
 
 // Call with m.mu held, after admission and before handing work to a goroutine.
 func (m *Manager) beginOperationTaskLocked(flight *startFlight, timeout time.Duration, plans map[string]*plannedStart) *operationTask {
-	ctx, cancel := context.WithCancelCause(context.Background())
+	ctx, cancel := context.WithCancelCause(m.withClockBudget(context.Background(), timeout))
 	task := &operationTask{ctx: ctx, cancel: cancel, timer: m.clock().Timer(timeout), flight: flight, plans: plans}
 	flight.operationContext = ctx
 	if m.activeOperations == nil {

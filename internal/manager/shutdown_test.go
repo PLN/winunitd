@@ -399,8 +399,8 @@ TimeoutStopSec=30s
 	fk.Advance(30 * time.Second)
 	select {
 	case err := <-stopErr:
-		if err != nil {
-			t.Fatalf("Stop: %v", err)
+		if err == nil {
+			t.Fatal("Stop did not report exhausted journal finalization budget")
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Stop did not return after TimeoutStopSec")

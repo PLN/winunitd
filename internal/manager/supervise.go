@@ -229,6 +229,12 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 			}
 			return errors.Join(err, stopErr)
 		}
+		var helperErr error
+		stopCtx, cancelStop := m.clockTimeout(ctx, stopTimeout(u))
+		defer cancelStop()
+		if !svc.RemainAfterExit {
+			helperErr = m.cooperativeStop(stopCtx, effect.owner, u, proc, true)
+		}
 		// Drain the final bytes before watch closes the process's pipe handles.
 		if job := proc.Job(); job != nil {
 			if err := job.Kill(); err != nil {
@@ -236,13 +242,14 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 				return err
 			}
 		}
-		m.waitJournal(name, stopTimeout(u))
-		cleanupErr := m.stopProcess(proc, stopTimeout(u))
+		m.waitJournalContext(stopCtx, name, stopTimeout(u))
+		cleanupErr := m.stopProcessContext(stopCtx, proc, stopTimeout(u))
 		if cleanupErr == nil && proc.Alive() {
 			cleanupErr = fmt.Errorf("process remains alive after oneshot cleanup")
 		}
-		notifyErr := m.closeNotify(name)
+		notifyErr := m.closeNotifyContext(stopCtx, name, stopTimeout(u))
 		when, err := m.completeOneshot(ctx, effect, proc, cleanupErr)
+		err = errors.Join(err, helperErr)
 		if err != nil || notifyErr != nil {
 			return errors.Join(err, notifyErr)
 		}
@@ -304,16 +311,22 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 	if wdCancel != nil {
 		wdCancel()
 	}
-	notifyErr := m.closeNotify(name)
-	cleanupErr := m.stopProcess(proc, stopTimeout(u))
+	stopCtx, cancelStop := m.clockTimeout(context.Background(), stopTimeout(u))
+	defer cancelStop()
+	helperErr := m.cooperativeStop(stopCtx, effect.owner, u, proc, effect.stopEligible)
+	cleanupErr := m.stopProcessContext(stopCtx, proc, stopTimeout(u))
 	if cleanupErr == nil && proc.Alive() {
 		cleanupErr = fmt.Errorf("process remains alive after exit cleanup")
 	}
+	notifyErr := m.closeNotifyContext(stopCtx, name, stopTimeout(u))
 	if !m.applyProcessExitCleanup(processExitCleanup{effect: effect, err: cleanupErr}) {
 		return
 	}
 	if notifyErr != nil {
 		return
+	}
+	if helperErr != nil {
+		err = errors.Join(err, helperErr)
 	}
 	// Restart waits and relaunches through the same operation lock.
 	release()

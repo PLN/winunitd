@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -462,10 +463,16 @@ func (m *Manager) onWatchdogTimeout(owner runtimeIdentity) {
 	if wdCancel != nil {
 		wdCancel()
 	}
-	notifyErr := m.closeNotify(name)
-	stopErr := m.stopProcess(proc, stopTimeout(u))
+	stopCtx, cancelStop := m.clockTimeout(context.Background(), stopTimeout(u))
+	defer cancelStop()
+	helperErr := m.cooperativeStop(stopCtx, owner, u, proc, effect.stopEligible)
+	stopErr := m.stopProcessContext(stopCtx, proc, stopTimeout(u))
 	if stopErr == nil && proc != nil && proc.Alive() {
 		stopErr = fmt.Errorf("process remains alive after watchdog cleanup")
+	}
+	notifyErr := m.closeNotifyContext(stopCtx, name, stopTimeout(u))
+	if helperErr != nil {
+		log.Printf("winunitd: %s: %v", name, helperErr)
 	}
 	if !m.applyWatchdogCleanup(watchdogCleanup{effect: effect, err: stopErr}) {
 		return

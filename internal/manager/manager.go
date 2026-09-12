@@ -59,6 +59,7 @@ type Manager struct {
 	ops                  unitOps    // per-unit start/stop/restart (issue #24)
 	stops                stopSet
 	closePending         []unitTeardown
+	stopHelpers          map[*stopHelperWork]struct{}
 }
 
 // New creates a manager. Reload must be called to load units.
@@ -179,6 +180,9 @@ func (m *Manager) CloseContext(ctx context.Context) error {
 	m.closed = true
 	m.cancelOperationsLocked()
 	m.signalStartCapacityLocked()
+	for h := range m.stopHelpers {
+		h.cancel()
+	}
 	for _, rt := range m.units {
 		if rt.startCancel != nil {
 			rt.startCancel()
@@ -198,6 +202,20 @@ func (m *Manager) closePass() error {
 	if configWork != nil {
 		<-configWork
 	}
+	// Shutdown normally finishes helper jobs first. If Close overtakes an
+	// accepted helper, retain and join its late launch before closing output.
+	m.mu.Lock()
+	helpers := make([]*stopHelperWork, 0, len(m.stopHelpers))
+	for h := range m.stopHelpers {
+		helpers = append(helpers, h)
+		h.cancel()
+	}
+	m.mu.Unlock()
+	var helperErr error
+	for _, h := range helpers {
+		<-h.done
+		helperErr = errors.Join(helperErr, m.retryStopHelperCleanup(context.Background(), h, defaultStopTimeout))
+	}
 	m.mu.Lock()
 	tds := m.closePending
 	m.closePending = nil
@@ -208,7 +226,7 @@ func (m *Manager) closePass() error {
 	for _, td := range tds {
 		td.cancelNonblocking()
 	}
-	var result error
+	result := helperErr
 	var pending []unitTeardown
 	for _, td := range tds {
 		if err := td.closeBlocking(); err != nil {

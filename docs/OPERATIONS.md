@@ -88,7 +88,7 @@ described below.
 
 Unit status derives `terminationUncertain` from separate pending resource classes.
 `pendingCleanup` identifies `workload` (process/job or native proxy),
-`notification`, and `watch`. Each exact-owner completion releases only its own
+`notification`, `watch`, and `stop-helper`. Each exact-owner completion releases only its own
 class. For example, confirmed process termination releases the process reference
 even if notification close fails; that listener remains owned and blocks restart
 until cleanup succeeds. Successful watch close cannot erase notification failure.

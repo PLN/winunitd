@@ -39,7 +39,7 @@ func (m *Manager) clockTimeout(parent context.Context, d time.Duration) (context
 	if parent == nil {
 		parent = context.Background()
 	}
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel := context.WithCancel(m.withClockBudget(parent, d))
 	if d <= 0 {
 		return ctx, cancel
 	}

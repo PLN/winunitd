@@ -32,6 +32,8 @@ var knownDirectives = map[string]map[string]bool{
 		"TaskName":               true,
 		"ExecStart":              true,
 		"ExecStartArg":           true,
+		"ExecStop":               true,
+		"ExecStopArg":            true,
 		"WorkingDirectory":       true,
 		"Environment":            true,
 		"Restart":                true,
@@ -86,19 +88,23 @@ type serviceBuilder struct {
 	remainAfterExit     string
 	remainAfterExitLine int
 
-	typ      string
-	typLine  int
-	execRaw  string
-	execLine int
-	execSet  bool
-	execArgs []string
-	wd       string
-	wdLine   int
-	wdSet    bool
-	env      []EnvVar
-	restart  string
-	restLine int
-	restSet  bool
+	typ          string
+	typLine      int
+	execRaw      string
+	execLine     int
+	execSet      bool
+	execArgs     []string
+	execStopRaw  string
+	execStopLine int
+	execStopSet  bool
+	execStopArgs []string
+	wd           string
+	wdLine       int
+	wdSet        bool
+	env          []EnvVar
+	restart      string
+	restLine     int
+	restSet      bool
 
 	restartSec    string
 	restartSecL   int
@@ -375,6 +381,13 @@ func (p *parser) applyService(e iniEntry) {
 		s.execSet = true
 	case "ExecStartArg":
 		s.execArgs = append(s.execArgs, e.value)
+	case "ExecStop":
+		if s.execStopSet {
+			p.errorf(e.line, "multiple ExecStop commands are not supported")
+		}
+		s.execStopRaw, s.execStopLine, s.execStopSet = e.value, e.line, true
+	case "ExecStopArg":
+		s.execStopArgs = append(s.execStopArgs, e.value)
 	case "WorkingDirectory":
 		s.wd = e.value
 		s.wdLine = e.line
@@ -667,6 +680,26 @@ func (p *parser) finishService() {
 	}
 
 	spec.Environment = s.env
+	if s.execStopSet || len(s.execStopArgs) > 0 {
+		if spec.Type.IsExternalProxy() {
+			p.errorf(s.execStopLine, "ExecStop is not valid for Type=%s", spec.Type)
+		} else if !s.execStopSet || strings.TrimSpace(s.execStopRaw) == "" {
+			p.errorf(s.execStopLine, "ExecStop requires an executable path")
+		} else {
+			if len(s.execStopArgs) > 0 && execStartArgFootgun(s.execStopRaw, p.stat) {
+				p.errorf(s.execStopLine, "ExecStop must be an executable path when ExecStopArg is set")
+			}
+			argv, err := buildArgv(s.execStopRaw, s.execStopArgs)
+			if err != nil {
+				p.errorf(s.execStopLine, "invalid ExecStop: %s", err)
+			} else {
+				spec.ExecStop = argv
+				if !WindowsAbs(argv[0]) {
+					p.errorf(s.execStopLine, "ExecStop must be an absolute path (SearchPath=no)")
+				}
+			}
+		}
+	}
 
 	rest := strings.ToLower(strings.TrimSpace(s.restart))
 	if rest == "" {
@@ -709,6 +742,9 @@ func (p *parser) finishService() {
 	}
 
 	p.finishJobLimits(spec, s)
+	if len(spec.ExecStop) > 0 && spec.TimeoutStopSecSet && spec.TimeoutStopSec <= 0 {
+		p.errorf(s.timeoutStopL, "ExecStop requires a positive TimeoutStopSec")
+	}
 
 	if spec.Type.IsExternalProxy() {
 		tag := string(spec.Type)

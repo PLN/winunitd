@@ -199,6 +199,7 @@ type ServiceSpec struct {
 	ServiceName            string   // Type=scm: existing SCM service (DESIGN.md §51)
 	TaskName               string   // Type=scheduled-task: existing task path (DESIGN.md §52)
 	ExecStart              []string // argv: executable then arguments
+	ExecStop               []string // optional cooperative-stop command, same identity
 	WorkingDirectory       string
 	Environment            []EnvVar
 	Restart                RestartPolicy
