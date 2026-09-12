@@ -246,14 +246,13 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 				return err
 			}
 		}
-		m.waitJournalContext(stopCtx, name, stopTimeout(u))
+		journalErr := m.waitJournalContext(stopCtx, name, stopTimeout(u))
 		cleanupErr := m.stopProcessContext(stopCtx, proc, stopTimeout(u))
 		if cleanupErr == nil && proc.Alive() {
 			cleanupErr = fmt.Errorf("process remains alive after oneshot cleanup")
 		}
 		notifyErr := m.closeNotifyContext(stopCtx, name, stopTimeout(u))
-		when, err := m.completeOneshot(ctx, effect, proc, cleanupErr)
-		err = errors.Join(err, helperErr)
+		when, err := m.completeOneshot(ctx, effect, proc, cleanupErr, errors.Join(helperErr, journalErr))
 		if err != nil || notifyErr != nil {
 			return errors.Join(err, notifyErr)
 		}

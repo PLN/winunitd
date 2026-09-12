@@ -299,7 +299,7 @@ func (m *Manager) applyOneshotCleanup(effect *launchEffect, proc runtime.Process
 
 // Successful completion owns cleanup and final state before releasing the unit
 // gate. A later invocation cannot race the old process's exit watcher.
-func (m *Manager) completeOneshot(ctx context.Context, effect *launchEffect, proc runtime.Process, cleanupErr error) (time.Time, error) {
+func (m *Manager) completeOneshot(ctx context.Context, effect *launchEffect, proc runtime.Process, cleanupErr, completionErr error) (time.Time, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rt := effect.owner.record
@@ -320,6 +320,11 @@ func (m *Manager) completeOneshot(ctx context.Context, effect *launchEffect, pro
 	}
 	if ctx.Err() != nil || m.closed || rt.stopping {
 		return time.Time{}, fmt.Errorf("oneshot completion canceled: %w", context.Canceled)
+	}
+	if completionErr != nil {
+		rt.step(core.EventStartFailed)
+		rt.err = completionErr.Error()
+		return time.Time{}, completionErr
 	}
 	state := core.Inactive
 	if effect.unit.Service.RemainAfterExit {

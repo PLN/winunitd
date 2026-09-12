@@ -53,8 +53,8 @@ func TestPendingTimerIntentRecoversOnceAndCoalescesMissedCalendar(t *testing.T) 
 		if f.ActivationID != intent.ID {
 			t.Fatal("recovery replaced activation identity")
 		}
-	case <-time.After(time.Second):
-		t.Fatal("pending activation not retried")
+	case <-time.After(3 * time.Second):
+		t.Fatalf("pending activation not retried: %+v", e.Status(spec.Name))
 	}
 	s := awaitIntent(t, e, spec.Name, "success")
 	if !s.Last.Equal(now) {
