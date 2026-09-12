@@ -51,10 +51,12 @@ func (c *Control) Handle(ctx context.Context, method string, params json.RawMess
 			sr.Machine.Maintenance = c.maintenanceSnapshot()
 		}
 		if ok && sr != nil && sr.Machine != nil && c.Users != nil {
-			sr.Machine.UserManagers = len(c.Users.Running())
+			users := c.Users.decisionSnapshot()
+			sr.Machine.UserManagers = users.running
 			sr.Machine.Lingering = c.Users.LingerCount()
-			sr.Machine.UserNativeWork = c.Users.NativeWorkCount()
-			sr.Machine.UserRecovery = c.Users.RecoveryStatus()
+			sr.Machine.UserNativeWork = users.native
+			sr.Machine.UserRecovery = users.recovery
+			sr.Machine.UserInstances = users.instances
 		}
 		return res, nil
 	default:

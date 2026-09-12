@@ -58,6 +58,9 @@ type UserHost struct {
 }
 
 type userInstance struct {
+	mode         string
+	session      uint32
+	pid          int
 	uncertain    bool
 	err          string
 	sid          string
@@ -572,7 +575,8 @@ func (h *UserHost) ensureRunning(sid string, tok *runtime.UserToken, stillWanted
 			return err
 		}
 	}
-	inst, err = h.acceptUserLaunch(sid, stillWanted)
+	mode, session := userLaunchMode(tok)
+	inst, err = h.acceptUserLaunch(sid, mode, session, stillWanted)
 	if err != nil {
 		return err
 	}

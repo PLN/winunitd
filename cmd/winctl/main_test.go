@@ -1612,3 +1612,14 @@ func (p *cliFakeMgr) Wait(ctx context.Context) error {
 	_ = ctx
 	return nil
 }
+
+func TestPrintUserManagerLaunchMode(t *testing.T) {
+	var out bytes.Buffer
+	c := &cli{stdout: &out}
+	c.printStatus(&protocol.StatusResult{Machine: &protocol.MachineStatus{State: "running", UserManagers: 1, UserInstances: []protocol.UserManagerStatus{{SID: "S-1-5-21-1-2-3-1001", Mode: "headless-s4u", State: "running", PID: 42, InteractiveSessions: 1}}}})
+	for _, part := range []string{"mode=headless-s4u", "session=0", "pid=42", "interactive sessions=1"} {
+		if !strings.Contains(out.String(), part) {
+			t.Fatalf("missing %q in %s", part, out.String())
+		}
+	}
+}

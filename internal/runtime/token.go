@@ -17,6 +17,8 @@ var ErrNoUserToken = errors.New("no user token (fail closed)")
 // environment. Interactive acquisition uses WTS; headless acquisition uses S4U.
 type UserToken struct {
 	Info UserInfo
+	// SessionID is the selected interactive session; headless tokens use zero.
+	SessionID uint32
 	// Source is how a linger token was obtained: "s4u" or "store-uri".
 	// Empty for WTS interactive tokens and test fakes.
 	Source string
