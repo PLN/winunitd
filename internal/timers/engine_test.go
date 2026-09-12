@@ -3,6 +3,7 @@ package timers
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -255,77 +256,53 @@ func TestEngineStopWaitsForFire(t *testing.T) {
 	}
 }
 
-func TestStatusUnlocksBeforeNextDeadline(t *testing.T) {
-	t.Parallel()
-	e, fk := testEngine(t, nil)
+func TestCalendarPlanningDoesNotBlockDecisions(t *testing.T) {
+	e, _ := testEngine(t, nil)
 	cal, err := ParseCalendar("*-12-25 00:00:00")
 	if err != nil {
 		t.Fatal(err)
 	}
+	started, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	e.onNextDeadline = func() { close(started); <-release }
 	e.Arm(Spec{Name: "cal.timer", OnCalendar: []Calendar{cal}})
-	want := time.Date(2026, 12, 25, 0, 0, 0, 0, time.UTC)
-	waitNext(t, e, "cal.timer", want)
-
-	e.mu.Lock()
-	e.clockGen++
-	e.mu.Unlock()
-
-	started := make(chan struct{})
-	release := make(chan struct{})
-	var once atomic.Bool
-	e.onStatusDeadline = func() {
-		if !once.CompareAndSwap(false, true) {
-			return
-		}
-		close(started)
-		<-release
-	}
-
-	errc := make(chan Snapshot, 1)
-	go func() { errc <- e.Status("cal.timer") }()
-
 	select {
 	case <-started:
 	case <-time.After(2 * time.Second):
-		t.Fatal("Status did not reach NextDeadline")
+		t.Fatal("planner did not enter")
 	}
-
-	armDone := make(chan struct{})
-	// Arm must acquire e.mu while Status is blocked in the callback. This
-	// proves Status released the lock; TryLock could instead observe an
-	// unrelated engine goroutine briefly holding it.
+	done := make(chan Snapshot, 1)
 	go func() {
+		s := e.Status("cal.timer")
 		e.Arm(Spec{Name: "other.timer", OnStartupSec: time.Second, OnStartupSecSet: true})
-		close(armDone)
+		e.Disarm("other.timer")
+		done <- s
 	}()
 	select {
-	case <-armDone:
-	case <-time.After(500 * time.Millisecond):
-		close(release)
-		t.Fatal("Arm stalled while Status computed NextDeadline")
+	case s := <-done:
+		if s.ScheduleState != "planning" || !s.Next.IsZero() {
+			t.Fatalf("pending snapshot: %+v", s)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("calendar worker blocked decisions")
 	}
-
-	tickDone := make(chan struct{})
-	go func() {
-		fk.Advance(time.Millisecond)
-		close(tickDone)
-	}()
+	stopped := make(chan struct{})
+	go func() { e.Stop(); close(stopped) }()
 	select {
-	case <-tickDone:
-	case <-time.After(500 * time.Millisecond):
-		close(release)
-		t.Fatal("timer tick stalled while Status computed NextDeadline")
+	case <-stopped:
+		t.Fatal("Stop abandoned accepted calendar work")
+	case <-time.After(20 * time.Millisecond):
 	}
-
-	close(release)
-	var snap Snapshot
+	unblock()
 	select {
-	case snap = <-errc:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Status did not return")
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("Stop did not join calendar work")
 	}
-	if !snap.Next.Equal(want) {
-		t.Fatalf("Next = %v, want %v", snap.Next, want)
+	if !e.Status("cal.timer").Next.IsZero() {
+		t.Fatal("stopped planner published a late deadline")
 	}
 }
 
@@ -358,6 +335,7 @@ func TestStatusUsesCachedNextUnlessClockChanged(t *testing.T) {
 	}
 
 	e.ClockChanged()
+	waitNext(t, e, "cal.timer", want)
 	afterClock := n.Load()
 	if afterClock <= afterArm {
 		t.Fatal("ClockChanged did not recompute NextDeadline")
@@ -379,10 +357,6 @@ func TestStatusNextAfterFireAndArmMatchesHeap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var n atomic.Int64
-	// Callback completion can reschedule concurrently with Status. Count only
-	// Status's uncached path, not unrelated scheduler deadline calculations.
-	e.onStatusDeadline = func() { n.Add(1) }
 	e.Arm(Spec{Name: "cal.timer", OnCalendar: []Calendar{cal}})
 	today := time.Date(2026, 9, 1, 15, 0, 0, 0, time.UTC)
 	waitNext(t, e, "cal.timer", today)
@@ -394,11 +368,7 @@ func TestStatusNextAfterFireAndArmMatchesHeap(t *testing.T) {
 	}
 	tomorrow := time.Date(2026, 9, 2, 15, 0, 0, 0, time.UTC)
 	waitNext(t, e, "cal.timer", tomorrow)
-	afterFire := n.Load()
 	snap := e.Status("cal.timer")
-	if n.Load() != afterFire {
-		t.Fatalf("Status after fire called NextDeadline (%d -> %d)", afterFire, n.Load())
-	}
 	if !snap.Next.Equal(tomorrow) {
 		t.Fatalf("Next after fire = %v, want %v", snap.Next, tomorrow)
 	}
@@ -418,12 +388,8 @@ func TestStatusNextAfterFireAndArmMatchesHeap(t *testing.T) {
 	e.Arm(Spec{Name: "cal.timer", OnCalendar: []Calendar{newCal}})
 	newYears := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
 	waitNext(t, e, "cal.timer", newYears)
-	afterArm := n.Load()
 	if e.Status("cal.timer").Next.Equal(tomorrow) {
 		t.Fatal("Arm left stale cached next from the previous spec")
-	}
-	if n.Load() != afterArm {
-		t.Fatalf("Status after re-Arm called NextDeadline (%d -> %d)", afterArm, n.Load())
 	}
 }
 

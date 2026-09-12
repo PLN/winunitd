@@ -323,7 +323,13 @@ OnStartupSec=1s
 	}
 	assertState(t, m, "wd.service", core.Active)
 	gen := genOf(t, m, "wd.service")
+	// The watchdog's 2s wait does not prove the asynchronous timer-state
+	// load and scheduler's 1s wait are ready. Advance only after that wait.
+	waitCond(t, func() bool { return fk.WaitingAt(time.Second) })
 	advanceArmed(t, fk, time.Second)
+	// A scheduler wake can replace its relative wait concurrently with the
+	// instantaneous fake advance. Deliver the clock observation explicitly.
+	m.ClockChanged()
 	waitCond(t, func() bool {
 		st, err := m.Status("wd.timer")
 		return err == nil && st.Unit != nil && st.Unit.Last != ""

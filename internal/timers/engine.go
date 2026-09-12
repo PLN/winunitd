@@ -15,6 +15,7 @@ const maxWait = 30 * time.Second
 // Callback work is bounded separately from the number of armed timers.
 const maxTimerCallbacks = 32
 const MaxArmedTimers = 1024
+const MaxCalendarExpressions = 64
 const admissionRetryDelay = 250 * time.Millisecond
 
 // Fire captures the source arm and target when a deadline is consumed.
@@ -37,6 +38,9 @@ type Engine struct {
 	mu             sync.Mutex
 	storageIO      sync.Mutex // persistence only; never held by a decision handler
 	storageWork    sync.WaitGroup
+	scheduleWork   sync.WaitGroup
+	scheduling     bool
+	scheduleCursor string
 	loading        bool // one loader drains pending arms within the arm budget
 	namespace      string
 	nextActivation uint64
@@ -52,13 +56,8 @@ type Engine struct {
 	nextArm        uint64 // unique callback identity across refresh/disarm/rearm
 	nextGen        uint64 // unique schedule identity across disarm/rearm of the same name
 
-	// onStatusDeadline is a test hook (nil in production). It fires after
-	// e.mu is released and before NextDeadline on the dirty-cache path.
-	// Status must not hold the engine lock across calendar search.
-	onStatusDeadline func()
-
-	// onNextDeadline is a test hook (nil in production). It fires when
-	// NextDeadline runs from reschedule or from a dirty Status.
+	// onNextDeadline is a test hook, called outside decision locks by the
+	// reserved calendar worker. Configure before submitting calendar work.
 	onNextDeadline func()
 }
 
@@ -69,6 +68,7 @@ type pendingRetry struct {
 
 type armed struct {
 	item         *pqItem
+	planning     bool
 	loading      bool
 	storageError string
 	firing       bool
@@ -135,6 +135,7 @@ func (e *Engine) Stop() {
 		<-e.stopped
 		e.fires.Wait()
 		e.storageWork.Wait()
+		e.scheduleWork.Wait()
 		return
 	}
 	e.running = false
@@ -143,6 +144,7 @@ func (e *Engine) Stop() {
 	<-e.stopped
 	e.fires.Wait()
 	e.storageWork.Wait()
+	e.scheduleWork.Wait()
 }
 
 // ClockChanged recomputes wall-clock (OnCalendar / OnUnitActiveSec)
@@ -433,25 +435,33 @@ func (e *Engine) monotonicWaitLocked(spec Spec, rt Runtime) time.Duration {
 
 func (e *Engine) rescheduleLocked(a *armed) {
 	e.removeDeadlineLocked(a)
+	e.nextGen++
+	a.gen = e.nextGen
+	a.planning = false
+	a.ok = false
+	a.next = time.Time{}
 	if a.loading || a.storageError != "" {
-		a.ok = false
-		a.next = time.Time{}
-		e.nextGen++
-		a.gen = e.nextGen
 		return
 	}
-	if e.onNextDeadline != nil {
-		e.onNextDeadline()
+	if a.retry == nil && len(a.spec.OnCalendar) > 0 {
+		a.planning = true
+		if e.running && !e.scheduling {
+			e.scheduling = true
+			e.scheduleWork.Add(1)
+			go e.planCalendars()
+		}
+		return
 	}
-	next, ok := NextDeadline(a.spec, a.rt, e.clk)
+	var next time.Time
+	var ok bool
 	if a.retry != nil {
 		next, ok = e.clk.now().Add(max(0, a.retry.after-e.clk.sinceStart())), true
+	} else {
+		next, ok = NextDeadline(a.spec, a.rt, e.clk)
 	}
 	a.next = next
 	a.ok = ok
 	a.schedGen = e.clockGen
-	e.nextGen++
-	a.gen = e.nextGen
 	if ok {
 		e.installDeadlineLocked(a, next, a.gen)
 	}
@@ -477,9 +487,10 @@ func (e *Engine) installDeadlineLocked(a *armed, when time.Time, gen uint64) {
 // unit-active time are kept so refresh does not re-fire one-shot relatives.
 // Each arm receives a new callback identity, returned to the caller.
 func (e *Engine) Arm(spec Spec) uint64 {
-	if e == nil || spec.Name == "" {
+	if e == nil || spec.Name == "" || len(spec.OnCalendar) > MaxCalendarExpressions {
 		return 0
 	}
+	spec.OnCalendar = append([]Calendar(nil), spec.OnCalendar...)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if !e.running {
@@ -626,6 +637,7 @@ func (e *Engine) RecordResult(event Fire, success bool) {
 
 // Snapshot is next/last for status and list-timers.
 type Snapshot struct {
+	ScheduleState  string
 	Activation     Activation
 	StorageState   string
 	StorageError   string
@@ -636,58 +648,33 @@ type Snapshot struct {
 	Last time.Time
 }
 
-// Status returns next and last actual elapse for an armed timer.
-// Next is the scheduled a.next so Status and the heap agree. Paths that
-// change schedule state (Arm, Disarm, fire, UnitActive, ClockChanged)
-// recompute a.next. If ClockChanged has incremented clockGen since the
-// last reschedule, NextDeadline runs unlocked so a calendar search does
-// not nest e.mu inside the manager lock or stall the scheduler loop (H8).
+// Status copies accepted next/last state without performing calendar searches.
+// Next is absent while storage or calendar planning is pending, and otherwise
+// matches the indexed heap deadline.
 func (e *Engine) Status(name string) Snapshot {
 	if e == nil {
 		return Snapshot{}
 	}
 	e.mu.Lock()
+	defer e.mu.Unlock()
 	a := e.armed[name]
 	if a == nil {
-		e.mu.Unlock()
 		return Snapshot{}
 	}
-	last := a.rt.LastActual
+	out := Snapshot{Activation: a.rt.Activation, ConfigRevision: a.spec.ConfigRevision, Unit: a.spec.Unit, Last: a.rt.LastActual, StorageState: "ready", ScheduleState: "ready", StorageError: a.storageError}
 	if a.loading || a.storageError != "" {
-		state := "loading"
+		out.StorageState, out.ScheduleState = "loading", "waiting"
 		if a.storageError != "" {
-			state = "failed"
+			out.StorageState, out.ScheduleState = "failed", "failed"
 		}
-		out := Snapshot{Activation: a.rt.Activation, ConfigRevision: a.spec.ConfigRevision, Unit: a.spec.Unit, Last: last, StorageState: state, StorageError: a.storageError}
-		e.mu.Unlock()
 		return out
 	}
-	if a.retry != nil {
-		out := Snapshot{Activation: a.rt.Activation, StorageState: "ready", ConfigRevision: a.spec.ConfigRevision, Unit: a.spec.Unit, Last: last, Next: e.clk.now().Add(max(0, a.retry.after-e.clk.sinceStart()))}
-		e.mu.Unlock()
+	if a.planning || (wallSensitive(a.spec) && a.schedGen != e.clockGen) {
+		out.ScheduleState = "planning"
 		return out
 	}
-	if a.schedGen == e.clockGen {
-		out := Snapshot{Activation: a.rt.Activation, StorageState: "ready", ConfigRevision: a.spec.ConfigRevision, Unit: a.spec.Unit, Last: last}
-		if a.ok {
-			out.Next = a.next
-		}
-		e.mu.Unlock()
-		return out
-	}
-	spec := a.spec
-	rt := a.rt
-	clk := e.clk
-	e.mu.Unlock()
-	if e.onStatusDeadline != nil {
-		e.onStatusDeadline()
-	}
-	if e.onNextDeadline != nil {
-		e.onNextDeadline()
-	}
-	out := Snapshot{Activation: rt.Activation, StorageState: "ready", ConfigRevision: spec.ConfigRevision, Unit: spec.Unit, Last: last}
-	if next, ok := NextDeadline(spec, rt, clk); ok {
-		out.Next = next
+	if a.ok {
+		out.Next = a.next
 	}
 	return out
 }
