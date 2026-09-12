@@ -113,7 +113,7 @@ func TestOperationDeadlineRetainsLateLaunchAndAdmission(t *testing.T) {
 		t.Fatalf("deadline outcome lost: %+v", op)
 	}
 	m.mu.Lock()
-	proc, uncertain, restarting := m.units["work.service"].proc, m.units["work.service"].stopUncertain, m.units["work.service"].sub == core.SubAutoRestart
+	proc, uncertain, restarting := m.units["work.service"].proc, m.units["work.service"].cleanupPending(), m.units["work.service"].sub == core.SubAutoRestart
 	m.mu.Unlock()
 	if proc != nil || uncertain || restarting {
 		t.Fatal("late process survived cleanup or armed recovery")
@@ -488,7 +488,7 @@ func TestOperationDeadlineUsesLaunchGenerationAfterQueuedStop(t *testing.T) {
 	release()
 	waitOperationErrorCompleted(t, m, err)
 	m.mu.Lock()
-	proc, uncertain := m.units["work.service"].proc, m.units["work.service"].stopUncertain
+	proc, uncertain := m.units["work.service"].proc, m.units["work.service"].cleanupPending()
 	m.mu.Unlock()
 	if proc != nil || uncertain {
 		t.Fatal("changed generation escaped operation deadline cleanup")
@@ -569,7 +569,7 @@ func TestOperationDeadlineCleansLateNativeStart(t *testing.T) {
 				t.Fatal("late native activation survived deadline cleanup")
 			}
 			m.mu.Lock()
-			uncertain := m.units["work.service"].stopUncertain
+			uncertain := m.units["work.service"].cleanupPending()
 			m.mu.Unlock()
 			if uncertain {
 				t.Fatal("successful native cleanup retained uncertainty")

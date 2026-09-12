@@ -469,7 +469,8 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 	}
 	if rt != nil {
 		st.SubState = rt.sub.String()
-		st.TerminationUncertain = rt.stopUncertain
+		st.TerminationUncertain = rt.cleanupPending()
+		st.PendingCleanup = rt.pendingCleanupNames()
 		st.LastOperationID = rt.lastOperationID
 		st.ConfigRevision = rt.configRevision
 		st.InvocationConfigRevision = rt.invocationRevision

@@ -47,10 +47,14 @@ func TestNotificationCloseFailureRetainsStopOwnership(t *testing.T) {
 	}
 	m.mu.Lock()
 	rt := m.units[name]
-	retained := rt.notify == nrt && rt.proc == proc && rt.stopUncertain
+	retained := rt.notify == nrt && rt.proc == nil && rt.cleanupPending()
 	m.mu.Unlock()
 	if !retained || proc.Alive() {
 		t.Fatal("failed notification close lost ownership or prevented process termination")
+	}
+	st, err := m.Status(name)
+	if err != nil || !st.Unit.TerminationUncertain || len(st.Unit.PendingCleanup) != 1 || st.Unit.PendingCleanup[0] != "notification" {
+		t.Fatalf("confirmed process cleanup conflated with notification failure: %+v %v", st, err)
 	}
 	if _, err := m.Start(context.Background(), name); err == nil {
 		t.Fatal("unresolved notification cleanup admitted replacement")
@@ -60,7 +64,7 @@ func TestNotificationCloseFailureRetainsStopOwnership(t *testing.T) {
 		t.Fatal("notification retry", err)
 	}
 	m.mu.Lock()
-	retained = m.units[name].notify != nil || m.units[name].proc != nil || m.units[name].stopUncertain
+	retained = m.units[name].notify != nil || m.units[name].proc != nil || m.units[name].cleanupPending()
 	m.mu.Unlock()
 	if retained || lis.calls.Load() != 2 {
 		t.Fatal("notification retry did not finish cleanup")
@@ -133,11 +137,12 @@ func TestNotificationFailureDuringExitAndWatchdogRetainsOwnership(t *testing.T) 
 			waitUntil(t, time.Second, func() bool {
 				m.mu.Lock()
 				defer m.mu.Unlock()
-				return strings.HasPrefix(m.units[name].err, cause+" cleanup:")
+				rt := m.units[name]
+				return rt.proc == nil && rt.cleanup == cleanupNotify && strings.HasPrefix(rt.err, "notification cleanup:")
 			})
 			m.mu.Lock()
 			rt := m.units[name]
-			retained := rt.notify == nrt && rt.proc == proc && rt.stopUncertain
+			retained := rt.notify == nrt && rt.proc == nil && rt.cleanup == cleanupNotify && rt.state == core.Failed
 			m.mu.Unlock()
 			if !retained || proc.Alive() {
 				t.Fatal("health cleanup lost ownership or left process alive")
@@ -165,7 +170,7 @@ func TestNotificationReadinessFailureRetainsListener(t *testing.T) {
 	}
 	m.mu.Lock()
 	rt := m.units[name]
-	retained := rt.notify != nil && rt.proc != nil && rt.stopUncertain
+	retained := rt.notify != nil && rt.proc == nil && rt.cleanup == cleanupNotify
 	m.mu.Unlock()
 	if !retained {
 		t.Fatal("readiness cleanup discarded failed listener")
@@ -202,7 +207,7 @@ func TestWatchStopFailureRetainsReloadRouting(t *testing.T) {
 	}
 	m.mu.Lock()
 	rt := m.units[name]
-	retained := rt != nil && rt.hub != nil && rt.stopUncertain && rt.unavailable
+	retained := rt != nil && rt.hub != nil && rt.cleanupPending() && rt.unavailable
 	m.mu.Unlock()
 	if !retained {
 		t.Fatal("reload lost failed watch stop routing")
@@ -219,7 +224,7 @@ func TestWatchStopFailureRetainsReloadRouting(t *testing.T) {
 		}
 	}
 	m.mu.Lock()
-	retained = m.units[name].hub != nil || m.units[name].stopUncertain
+	retained = m.units[name].hub != nil || m.units[name].cleanupPending()
 	m.mu.Unlock()
 	if retained {
 		t.Fatal("successful retry retained watch ownership")
@@ -283,7 +288,7 @@ func TestPartialWatchOpenRetainsFailedCleanup(t *testing.T) {
 		t.Fatal("partial open reported success")
 	}
 	m.mu.Lock()
-	retained := m.units[name].hub != nil && m.units[name].stopUncertain
+	retained := m.units[name].hub != nil && m.units[name].cleanupPending()
 	m.mu.Unlock()
 	if !retained {
 		t.Fatal("partial open discarded failed cleanup")
@@ -412,7 +417,7 @@ func TestShutdownDeadlineJoinsBlockedNotificationClose(t *testing.T) {
 		}
 	}
 	m.mu.Lock()
-	retained := m.units[name].proc == proc && m.units[name].stopUncertain
+	retained := m.units[name].proc == proc && m.units[name].cleanupPending()
 	m.mu.Unlock()
 	if !retained {
 		t.Fatal("pending control close lost process ownership")

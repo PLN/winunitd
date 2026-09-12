@@ -59,7 +59,7 @@ func (m *Manager) sealShutdownLocked() {
 		// Publish uncertainty before an outer deadline can return while the
 		// stop pass is still blocked in a control/resource close.
 		if rt.proc != nil || (rt.unit != nil && rt.state != core.Inactive && (scmServiceName(rt.ownedUnit()) != "" || scheduledTaskName(rt.ownedUnit()) != "")) {
-			rt.stopUncertain = true
+			rt.setCleanup(cleanupWorkload, true)
 		}
 		if rt.startCancel != nil {
 			rt.startCancel()
@@ -111,7 +111,7 @@ func (m *Manager) shutdownRootsLocked() []string {
 		if rt != nil && rt.state != core.Inactive {
 			add(name)
 		}
-		if rt != nil && (rt.proc != nil || rt.operations != 0 || rt.stopUncertain) {
+		if rt != nil && (rt.proc != nil || rt.operations != 0 || rt.cleanupPending()) {
 			add(name)
 		}
 	}
@@ -258,9 +258,9 @@ func (m *Manager) stopUnitAfterLock(ctx context.Context, name string, release fu
 	if kind == unit.KindTimer && m.engine != nil {
 		m.engine.Disarm(name)
 	}
-	var stopErr error
+	var stopErr, hubErr error
 	if kind == unit.KindRegistry || kind == unit.KindEventLog || kind == unit.KindPath {
-		stopErr = m.disarmHubContext(ctx, name, timeout)
+		hubErr = m.disarmHubContext(ctx, name, timeout)
 	}
 	if scmName != "" {
 		ctx, cancel := m.clockTimeout(ctx, timeout)
@@ -276,10 +276,10 @@ func (m *Manager) stopUnitAfterLock(ctx context.Context, name string, release fu
 			stopErr = fmt.Errorf("process remains alive after stop")
 		}
 	}
-	stopErr = errors.Join(stopErr, notifyErr)
 	// Publish uncertainty before releasing the operation lock: a queued Start
 	// must not replace a process whose termination has not been confirmed.
-	m.applyStopCleanup(stopCompletion{owner: stopOwner, process: proc, err: stopErr})
+	m.applyStopCleanup(workloadCleanup{owner: stopOwner, process: proc, err: stopErr})
+	stopErr = errors.Join(stopErr, notifyErr, hubErr)
 	// Release the per-unit op lock before journal.Wait so a hung
 	// capture cannot block later Start/Stop (issue #68).
 	release()

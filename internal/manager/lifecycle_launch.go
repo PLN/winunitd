@@ -50,7 +50,7 @@ func (m *Manager) acceptLaunch(ctx context.Context, name string, autoRestart boo
 	if planned != nil && (planned.record != rt || planned.stopEpoch != rt.stopEpoch || (planned.origin != nil && !planned.origin.validLocked(m))) {
 		return nil, fmt.Errorf("unit %q start superseded by stop", name)
 	}
-	if rt.stopUncertain {
+	if rt.cleanupPending() {
 		return nil, fmt.Errorf("unit %q termination is unconfirmed; retry stop before starting", name)
 	}
 	// Bump gen only for a real launch. A redundant Start on a live
@@ -131,7 +131,7 @@ func (m *Manager) acceptLaunch(ctx context.Context, name string, autoRestart boo
 	// old invocation until cleanup succeeds; a dead main PID is not sufficient.
 	evicted := rt.proc
 	if evicted != nil {
-		rt.stopUncertain = true
+		rt.setCleanup(cleanupWorkload, true)
 	}
 	u := definition
 	if autoRestart {
@@ -158,7 +158,7 @@ func (m *Manager) applyPreviousCleanup(effect *launchEffect, err error) bool {
 	}
 	if err == nil {
 		rt.proc = nil
-		rt.stopUncertain = false
+		rt.setCleanup(cleanupWorkload, false)
 	} else {
 		rt.err = fmt.Sprintf("previous invocation cleanup: %v", err)
 	}
@@ -210,7 +210,7 @@ func (m *Manager) retainLaunchFailure(effect *launchEffect, proc runtime.Process
 	// partial creations even when stop/close has superseded their activation.
 	rt := effect.owner.record
 	rt.proc = proc
-	rt.stopUncertain = true
+	rt.setCleanup(cleanupWorkload, true)
 	rt.err = err.Error()
 }
 
@@ -229,7 +229,7 @@ func (m *Manager) adoptProcess(event processAdoption) bool {
 	// adopted before cleanup so failure remains reachable through Stop.
 	rt.proc = event.process
 	if m.closed || rt.stopping || !event.effect.owner.currentLocked(m) {
-		rt.stopUncertain = true
+		rt.setCleanup(cleanupWorkload, true)
 		return false
 	}
 	rt.terminated = false
@@ -252,7 +252,7 @@ func (m *Manager) applyLateLaunchCleanup(effect *launchEffect, proc runtime.Proc
 	rt := effect.owner.record
 	if err == nil {
 		rt.proc = nil
-		rt.stopUncertain = false
+		rt.setCleanup(cleanupWorkload, false)
 	} else {
 		rt.step(core.EventStartFailed)
 		rt.err = fmt.Sprintf("late launch cleanup: %v", err)
@@ -287,7 +287,7 @@ func (m *Manager) applyOneshotCleanup(effect *launchEffect, proc runtime.Process
 	if waitErr != nil {
 		rt.terminated = true
 	}
-	rt.stopUncertain = cleanupErr != nil
+	rt.setCleanup(cleanupWorkload, cleanupErr != nil)
 	if err := errors.Join(waitErr, cleanupErr); err != nil && !rt.stopping {
 		rt.step(core.EventStartFailed)
 		rt.err = err.Error()
@@ -304,13 +304,17 @@ func (m *Manager) completeOneshot(ctx context.Context, effect *launchEffect, pro
 		return time.Time{}, fmt.Errorf("oneshot completion superseded")
 	}
 	if cleanupErr != nil {
-		rt.stopUncertain = true
+		rt.setCleanup(cleanupWorkload, true)
 		rt.step(core.EventStartFailed)
 		rt.err = fmt.Sprintf("oneshot cleanup: %v", cleanupErr)
 		return time.Time{}, cleanupErr
 	}
 	rt.proc = nil
-	rt.stopUncertain = false
+	rt.setCleanup(cleanupWorkload, false)
+	if rt.cleanupPending() {
+		rt.step(core.EventStartFailed)
+		return time.Time{}, fmt.Errorf("oneshot cleanup remains pending: %s", rt.err)
+	}
 	if ctx.Err() != nil || m.closed || rt.stopping {
 		return time.Time{}, fmt.Errorf("oneshot completion canceled: %w", context.Canceled)
 	}
@@ -331,7 +335,7 @@ func (m *Manager) acceptReadinessFailure(effect *launchEffect, proc runtime.Proc
 	}
 	rt := effect.owner.record
 	rt.terminated = true
-	rt.stopUncertain = true
+	rt.setCleanup(cleanupWorkload, true)
 	if !rt.stopping && rt.step(core.EventStartFailed) {
 		rt.err = err.Error()
 	}
@@ -347,7 +351,7 @@ func (m *Manager) applyReadinessCleanup(effect *launchEffect, proc runtime.Proce
 	rt := effect.owner.record
 	if err == nil {
 		rt.proc = nil
-		rt.stopUncertain = false
+		rt.setCleanup(cleanupWorkload, false)
 		rt.terminated = false
 	} else {
 		rt.err = fmt.Sprintf("readiness cleanup: %v", err)

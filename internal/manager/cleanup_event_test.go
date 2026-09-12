@@ -78,7 +78,7 @@ func TestStaleCleanupEventCannotChangeReplacement(t *testing.T) {
 					t.Fatal("stale cleanup authorized recovery")
 				}
 				m.mu.Lock()
-				unchanged := rt.proc == replacement && rt.state == core.Active && rt.err == "" && !rt.stopUncertain
+				unchanged := rt.proc == replacement && rt.state == core.Active && rt.err == "" && !rt.cleanupPending()
 				m.mu.Unlock()
 				if !unchanged || !replacement.Alive() {
 					t.Fatal("stale cleanup changed replacement ownership or diagnostics")

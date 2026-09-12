@@ -56,7 +56,7 @@ func (m *Manager) cancelOperationLocked(task *operationTask, reason error) {
 			rt.startCancel()
 		}
 		if rt.proc != nil || rt.invocationUnit != nil {
-			rt.stopUncertain = true
+			rt.setCleanup(cleanupWorkload, true)
 		}
 	}
 	m.operations[task.flight.id].CancellationReason = reason.Error()

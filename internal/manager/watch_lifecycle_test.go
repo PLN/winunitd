@@ -53,7 +53,7 @@ func TestWatchFailureCleanupDoesNotBlockIndependentStart(t *testing.T) {
 		t.Fatal("independent start blocked by watch close", err)
 	}
 	m.mu.Lock()
-	if rt.hub != h || !rt.stopUncertain || rt.state != core.Failed {
+	if rt.hub != h || !rt.cleanupPending() || rt.state != core.Failed {
 		t.Error("pending close lost failed watch ownership")
 	}
 	m.mu.Unlock()

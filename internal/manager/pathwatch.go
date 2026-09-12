@@ -115,7 +115,7 @@ func (m *Manager) onPathExistsForHub(name string, h *watchRuntime) {
 		return
 	}
 	rt := m.units[name]
-	if rt == nil || h == nil || rt.hub != h || rt.gen != h.gen || rt.stopping || rt.unavailable || rt.stopUncertain || m.closed || h.unit == nil || h.unit.PathWatch == nil {
+	if rt == nil || h == nil || rt.hub != h || rt.gen != h.gen || rt.stopping || rt.unavailable || rt.cleanupPending() || m.closed || h.unit == nil || h.unit.PathWatch == nil {
 		m.mu.Unlock()
 		return
 	}

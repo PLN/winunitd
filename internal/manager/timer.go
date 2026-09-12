@@ -159,5 +159,5 @@ func (*timerOrigin) countsStartLimit() bool { return true }
 
 func (o *timerOrigin) validLocked(m *Manager) bool {
 	rt := m.units[o.name]
-	return !m.closed && rt != nil && !rt.stopping && !rt.unavailable && !rt.stopUncertain && m.engine.Current(o.name, o.token)
+	return !m.closed && rt != nil && !rt.stopping && !rt.unavailable && !rt.cleanupPending() && m.engine.Current(o.name, o.token)
 }

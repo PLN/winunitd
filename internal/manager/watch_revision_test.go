@@ -274,7 +274,7 @@ func TestReloadPreservesWatchBeforeStartPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.mu.Lock()
-	retained := rt.hub == original && !rt.stopUncertain
+	retained := rt.hub == original && !rt.cleanupPending()
 	m.mu.Unlock()
 	if !retained {
 		t.Fatal("valid reload disposed a watch before start publication")

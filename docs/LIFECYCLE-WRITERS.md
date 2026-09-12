@@ -51,6 +51,13 @@ process/journal/timer/native observations outside m.mu. It does not publish immu
 Native query results can describe a different observation time from the copied
 manager fields; retaining the existing response format does not close R2.1.
 
+Cleanup uncertainty is now a per-record resource set, with independent workload,
+notification and watch entries. `cleanup_resources.go` supplies the nonblocking
+set/projection helpers; exact-owner lifecycle handlers are the writers. Workload
+results exclude notification/watch errors, and confirmed process termination
+releases its process reference while unrelated failed closes remain owned.
+Status derives the aggregate flag and copies resource names under m.mu.
+
 ## Invariants and regression evidence
 
 All test paths below are relative to internal/manager unless noted. These tests

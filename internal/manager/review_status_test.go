@@ -88,7 +88,8 @@ func TestRecoveryAdmissionRetainsUnresolvedProcess(t *testing.T) {
 		}
 		m.mu.Lock()
 		rt := m.units["work.service"]
-		rt.stopUncertain, rt.err = uncertain, "retained cleanup diagnostic"
+		rt.setCleanup(cleanupWorkload, uncertain)
+		rt.err = "retained cleanup diagnostic"
 		owner := runtimeIdentity{name: "work.service", record: rt, gen: rt.gen}
 		m.mu.Unlock()
 		ctx := m.acceptRecovery(recoveryRequest{owner: owner})
@@ -104,7 +105,7 @@ func TestRecoveryAdmissionRetainsUnresolvedProcess(t *testing.T) {
 }
 
 func TestRecoveryAdmissionRetainsUncertainCleanupWithoutProcess(t *testing.T) {
-	rt := &unitRuntime{state: core.Failed, stopUncertain: true, err: "watch cleanup pending"}
+	rt := &unitRuntime{state: core.Failed, cleanup: cleanupWatch, err: "watch cleanup pending"}
 	m := &Manager{units: map[string]*unitRuntime{"work.service": rt}}
 	if m.acceptRecovery(recoveryRequest{owner: runtimeIdentity{name: "work.service", record: rt}}) != nil {
 		t.Fatal("recovery accepted unresolved cleanup")

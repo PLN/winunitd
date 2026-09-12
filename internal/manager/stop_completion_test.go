@@ -40,7 +40,7 @@ func TestLateFailedStopKeepsOutcomeAfterSuccessfulRetry(t *testing.T) {
 	go func() { _, err := m.Stop("work"); first <- err }()
 	waitCond(t, func() bool {
 		m.mu.Lock()
-		uncertain := m.units["work.service"].stopUncertain
+		uncertain := m.units["work.service"].cleanupPending()
 		m.mu.Unlock()
 		if !uncertain {
 			return false

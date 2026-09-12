@@ -93,19 +93,29 @@ type stopCompletion struct {
 	err     error
 }
 
+// Workload result excludes notification/watch errors; those exact-handle
+// decisions retain their own cleanup authority.
+type workloadCleanup struct {
+	owner   runtimeIdentity
+	process runtime.Process
+	err     error
+}
+
 // Cleanup ownership is published before releasing the unit gate; journal
 // draining may finish later, after another operation has acquired that gate.
-func (m *Manager) applyStopCleanup(event stopCompletion) {
+func (m *Manager) applyStopCleanup(event workloadCleanup) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rt := m.units[event.owner.name]
 	if !event.owner.currentLocked(m) || !rt.sameOp(event.owner.gen, event.process) {
 		return
 	}
-	rt.stopUncertain = event.err != nil
+	rt.setCleanup(cleanupWorkload, event.err != nil)
 	if event.err == nil && rt.proc == event.process {
 		rt.proc = nil
-		rt.invocationUnit = nil
+		if !rt.cleanupPending() {
+			rt.invocationUnit = nil
+		}
 	}
 }
 
@@ -204,7 +214,7 @@ func (m *Manager) acceptWatchdogFailure(owner runtimeIdentity) *watchdogEffect {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rt := m.units[owner.name]
-	if !owner.currentLocked(m) || rt.stopping || m.closed || rt.stopUncertain {
+	if !owner.currentLocked(m) || rt.stopping || m.closed || rt.cleanupPending() {
 		return nil
 	}
 	if !rt.step(core.EventWatchdogFailed) {
@@ -213,7 +223,7 @@ func (m *Manager) acceptWatchdogFailure(owner runtimeIdentity) *watchdogEffect {
 	rt.err = "watchdog timed out"
 	rt.terminated = true
 	effect := &watchdogEffect{owner: owner, unit: rt.ownedUnit(), process: rt.proc, cancel: rt.watchdog}
-	rt.stopUncertain = effect.process != nil
+	rt.setCleanup(cleanupWorkload, effect.process != nil)
 	rt.watchdog = nil
 	return effect
 }
@@ -233,9 +243,9 @@ func (m *Manager) applyWatchdogCleanup(event watchdogCleanup) bool {
 		return false
 	}
 	rt.proc = nil
-	rt.stopUncertain = false
+	rt.setCleanup(cleanupWorkload, false)
 	rt.terminated = false
-	return true
+	return !rt.cleanupPending()
 }
 
 // processExitEffect captures cleanup policy before the worker leaves the
@@ -257,7 +267,7 @@ func (m *Manager) acceptProcessExitCleanup(name string, proc runtime.Process) *p
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rt := m.units[name]
-	if rt == nil || rt.proc != proc || rt.stopUncertain {
+	if rt == nil || rt.proc != proc || rt.cleanupPending() {
 		// A stale watcher must not repeat completed cleanup. An uncertain stop
 		// keeps its resource owner even when the main process has exited.
 		return nil
@@ -267,7 +277,7 @@ func (m *Manager) acceptProcessExitCleanup(name string, proc runtime.Process) *p
 		unit:  rt.ownedUnit(), process: proc, cancel: rt.watchdog,
 		suppressed: rt.stopping || rt.terminated,
 	}
-	rt.stopUncertain = true
+	rt.setCleanup(cleanupWorkload, true)
 	rt.terminated = false
 	rt.watchdog = nil
 	return effect
@@ -289,7 +299,13 @@ func (m *Manager) applyProcessExitCleanup(event processExitCleanup) bool {
 		return false
 	}
 	rt.proc = nil
-	rt.stopUncertain = false
+	rt.setCleanup(cleanupWorkload, false)
+	if rt.cleanupPending() {
+		if rt.state != core.Failed {
+			rt.step(core.EventStartFailed)
+		}
+		return false
+	}
 	return true
 }
 
@@ -339,6 +355,11 @@ func (m *Manager) acceptStopCleanup(name string) (*stopEffect, error) {
 	rt.cancelRestart()
 	rt.watchdog = nil
 	rt.step(core.EventStopRequested)
+	if rt.proc != nil || scmServiceName(effect.unit) != "" || scheduledTaskName(effect.unit) != "" {
+		rt.setCleanup(cleanupWorkload, true)
+	}
+	rt.setCleanup(cleanupNotify, rt.notify != nil)
+	rt.setCleanup(cleanupWatch, rt.hub != nil)
 	rt.err = ""
 	return effect, nil
 }
@@ -356,11 +377,11 @@ type failedProcessEffect struct {
 
 func (m *Manager) reapFailedLocked() {
 	for name, rt := range m.units {
-		if rt == nil || rt.state != core.Failed || rt.proc == nil || rt.stopUncertain {
+		if rt == nil || rt.state != core.Failed || rt.proc == nil || rt.cleanupPending() {
 			continue
 		}
 		effect := failedProcessEffect{owner: runtimeIdentity{name: name, record: rt, gen: rt.gen}, process: rt.proc}
-		rt.stopUncertain = true
+		rt.setCleanup(cleanupWorkload, true)
 		go m.reapFailed(effect)
 	}
 }
@@ -383,7 +404,7 @@ func (m *Manager) applyFailedProcessCleanup(effect failedProcessEffect, err erro
 		return
 	}
 	rt.proc = nil
-	rt.stopUncertain = false
+	rt.setCleanup(cleanupWorkload, false)
 }
 
 // A stop retry may change the operation generation while joining the same
@@ -394,14 +415,25 @@ type notifyCleanup struct {
 	err    error
 }
 
+func (m *Manager) acceptNotifyCleanup(name string) *notifyRuntime {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if rt := m.units[name]; rt != nil && rt.notify != nil {
+		rt.setCleanup(cleanupNotify, true)
+		return rt.notify
+	}
+	return nil
+}
+
 func (m *Manager) applyNotifyCleanup(event notifyCleanup) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if rt := m.units[event.name]; rt != nil && rt.notify == event.notify {
 		if event.err == nil {
 			rt.notify = nil
+			rt.setCleanup(cleanupNotify, false)
 		} else {
-			rt.stopUncertain = true
+			rt.setCleanup(cleanupNotify, true)
 			rt.err = fmt.Sprintf("notification cleanup: %v", event.err)
 		}
 	}
@@ -419,9 +451,9 @@ func (m *Manager) applyHubCleanup(event hubCleanup) {
 	if rt := m.units[event.name]; rt != nil && rt.hub == event.hub {
 		if event.err == nil {
 			rt.hub = nil
-			rt.stopUncertain = false
+			rt.setCleanup(cleanupWatch, false)
 		} else {
-			rt.stopUncertain = true
+			rt.setCleanup(cleanupWatch, true)
 			rt.err = fmt.Sprintf("watch cleanup: %v", event.err)
 		}
 	}
@@ -434,7 +466,7 @@ func (m *Manager) acceptRecovery(request recoveryRequest) context.Context {
 	defer m.mu.Unlock()
 	owner := request.owner
 	rt := m.units[owner.name]
-	if m.closed || !owner.currentLocked(m) || rt.stopping || rt.unavailable || rt.stopUncertain || rt.proc != nil {
+	if m.closed || !owner.currentLocked(m) || rt.stopping || rt.unavailable || rt.cleanupPending() || rt.proc != nil {
 		return nil
 	}
 	if m.startLimitHitLocked(rt) {

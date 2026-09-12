@@ -33,7 +33,7 @@ func (m *Manager) acceptHubFailure(event hubCleanup) bool {
 	if rt == nil || h == nil || rt.hub != h || rt.gen != h.gen || rt.stopping || rt.unavailable || m.closed {
 		return false
 	}
-	rt.stopUncertain = true
+	rt.setCleanup(cleanupWatch, true)
 	if rt.state == core.Active || rt.state == core.Activating {
 		if rt.step(core.EventStartFailed) {
 			rt.err = event.err.Error()
@@ -46,7 +46,7 @@ func (m *Manager) acceptHubDisarm(name string) *watchRuntime {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if rt := m.units[name]; rt != nil && rt.hub != nil {
-		rt.stopUncertain = true
+		rt.setCleanup(cleanupWatch, true)
 		return rt.hub
 	}
 	return nil
@@ -59,7 +59,7 @@ func (m *Manager) retainHubDisposal(name string, h *watchRuntime) bool {
 	defer m.mu.Unlock()
 	if rt := m.units[name]; rt != nil && rt.hub == nil && !m.closed {
 		rt.hub = h
-		rt.stopUncertain = true
+		rt.setCleanup(cleanupWatch, true)
 		return true
 	}
 	m.closePending = append(m.closePending, unitTeardown{hub: h})
@@ -93,7 +93,7 @@ func (m *Manager) reconcileHubsLocked() []hubCleanup {
 		case unit.KindRegistry, unit.KindEventLog, unit.KindPath:
 			// The adapter may have installed its handles before the start
 			// transaction publishes Active. Keep that exact owned generation.
-			publishing := rt.operations > 0 && rt.hub != nil && rt.hub.gen == rt.gen && !rt.stopping && !rt.stopUncertain
+			publishing := rt.operations > 0 && rt.hub != nil && rt.hub.gen == rt.gen && !rt.stopping && !rt.cleanupPending()
 			if (rt.state == core.Active || publishing) && !rt.unavailable {
 				keep[name] = true
 			}
@@ -108,7 +108,7 @@ func (m *Manager) reconcileHubsLocked() []hubCleanup {
 			continue
 		}
 		stale = append(stale, hubCleanup{name: name, hub: rt.hub})
-		rt.stopUncertain = true
+		rt.setCleanup(cleanupWatch, true)
 		if rt.hub.cancel != nil {
 			rt.hub.cancel()
 		}

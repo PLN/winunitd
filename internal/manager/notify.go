@@ -290,12 +290,7 @@ func (m *Manager) closeNotify(name string) error {
 }
 
 func (m *Manager) closeNotifyContext(ctx context.Context, name string, timeout time.Duration) error {
-	m.mu.Lock()
-	var nrt *notifyRuntime
-	if rt := m.units[name]; rt != nil {
-		nrt = rt.notify
-	}
-	m.mu.Unlock()
+	nrt := m.acceptNotifyCleanup(name)
 	if nrt == nil {
 		return nil
 	}
@@ -472,8 +467,10 @@ func (m *Manager) onWatchdogTimeout(owner runtimeIdentity) {
 	if stopErr == nil && proc != nil && proc.Alive() {
 		stopErr = fmt.Errorf("process remains alive after watchdog cleanup")
 	}
-	stopErr = errors.Join(stopErr, notifyErr)
 	if !m.applyWatchdogCleanup(watchdogCleanup{effect: effect, err: stopErr}) {
+		return
+	}
+	if notifyErr != nil {
 		return
 	}
 	release()

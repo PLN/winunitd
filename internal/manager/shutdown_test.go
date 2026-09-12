@@ -664,7 +664,7 @@ func TestShutdownDeadlinePreservesPendingStop(t *testing.T) {
 	}
 	m.mu.Lock()
 	rt := m.units[name]
-	retained := rt.proc == p && rt.stopUncertain
+	retained := rt.proc == p && rt.cleanupPending()
 	m.mu.Unlock()
 	if !retained || !p.Alive() || p.calls.Load() != 1 {
 		t.Fatal("shutdown discarded pending termination")

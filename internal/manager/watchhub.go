@@ -173,7 +173,7 @@ func (m *Manager) startHubCompanion(name string, h *watchRuntime, companion func
 		return
 	}
 	rt := m.units[name]
-	if rt == nil || h == nil || rt.hub != h || rt.stopping || rt.stopUncertain || rt.unavailable || m.closed {
+	if rt == nil || h == nil || rt.hub != h || rt.stopping || rt.cleanupPending() || rt.unavailable || m.closed {
 		m.mu.Unlock()
 		return
 	}
@@ -196,5 +196,5 @@ func (*watchOrigin) countsStartLimit() bool { return true }
 
 func (o *watchOrigin) validLocked(m *Manager) bool {
 	rt := m.units[o.name]
-	return !m.closed && rt != nil && o.hub != nil && rt.hub == o.hub && rt.gen == o.hub.gen && !rt.stopping && !rt.unavailable && !rt.stopUncertain
+	return !m.closed && rt != nil && o.hub != nil && rt.hub == o.hub && rt.gen == o.hub.gen && !rt.stopping && !rt.unavailable && !rt.cleanupPending()
 }
