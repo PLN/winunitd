@@ -1120,3 +1120,27 @@ an injected failure must preserve the error and return no usable token source.
 This fixes the observed acquisition panic; it does not qualify headless profile
 crash lifetime or close R4.5. The native API contract is documented by
 [Microsoft](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-allocatelocallyuniqueid).
+
+## September 12 Windows-owned headless profiles
+
+The headless launch path uses CreateProcessWithTokenW(LOGON_WITH_PROFILE) with
+profile-derived environment, no inherited broker handles, verified root-job
+inheritance and dedicated job assignment before resume. A SYSTEM helper in a
+separate process owns the private station/desktop, avoiding process-wide station
+changes inside the broker. CWF_CREATE_ONLY prevents adopting an existing station.
+All helper, readiness-read and failed-launch job resources remain owned until
+confirmed cleanup. Interactive profile pinning remains an ordinary registry handle;
+the manual LoadUserProfile/UnloadUserProfile path has been removed.
+
+An isolated SYSTEM S4U research probe at `38ce79e` passed target identity/environment,
+root-job inheritance, termination/profile release, and abrupt-parent-death/profile
+release. That probe used a temporary test overlay; it does not substitute for the
+production daemon qualification. Local tests cover bounded readiness, malformed
+responses, stop/read cleanup retention and independent failed-job cleanup, plus
+helper identity/name rejection. Native test helpers now keep a live timer instead
+of an empty select, which could terminate an ordinary non-race test process through
+Go's deadlock detector. The affected ordinary and race tests both pass repeatedly.
+
+API contracts: [automatic profile launch](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createprocesswithtokenw)
+and [exclusive station creation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-createwindowstationw).
+Complete production/session/security/servicing qualification remains required.
