@@ -104,3 +104,46 @@ func TestEnabledEnumerationAggregateLimit(t *testing.T) {
 		t.Fatal("aggregate enabled entries exceeded budget")
 	}
 }
+
+func TestDisableRejectsOversizedNamespaceBeforeMutation(t *testing.T) {
+	m := testManager(t, map[string]string{"foo.target": "[Unit]\n"})
+	if _, err := m.Enable("foo.target"); err != nil {
+		t.Fatal(err)
+	}
+	link := m.cfg.EnabledPath(DefaultTarget, "foo.target")
+	for i := 0; i < maxConfigurationEntries; i++ {
+		writeUnit(t, filepath.Dir(link), fmt.Sprintf("ignored%04d", i), "")
+	}
+	if _, err := m.Disable("foo.target"); err == nil {
+		t.Fatal("oversized namespace accepted")
+	}
+	if _, err := os.Stat(link); err != nil {
+		t.Fatalf("disable mutated before validating complete namespace: %v", err)
+	}
+	st, err := m.Status("foo.target")
+	if err != nil || !st.Unit.Enabled {
+		t.Fatalf("accepted enablement changed: %+v, %v", st, err)
+	}
+}
+
+func TestDisableOnlyRemovesRecognizedEnableRecords(t *testing.T) {
+	m := testManager(t, map[string]string{"foo.target": "[Unit]\n"})
+	if _, err := m.Enable("foo.target"); err != nil {
+		t.Fatal(err)
+	}
+	link := m.cfg.EnabledPath(DefaultTarget, "foo.target")
+	nested := filepath.Join(filepath.Dir(link), "ignored", "foo.target")
+	if err := os.MkdirAll(filepath.Dir(nested), 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeUnit(t, filepath.Dir(nested), filepath.Base(nested), "private nested file")
+	if result, err := m.Disable("foo.target"); err != nil || result.Enabled {
+		t.Fatalf("disable: %+v, %v", result, err)
+	}
+	if _, err := os.Stat(link); !os.IsNotExist(err) {
+		t.Fatalf("enable record remains: %v", err)
+	}
+	if data, err := os.ReadFile(nested); err != nil || string(data) != "private nested file" {
+		t.Fatalf("ignored subtree was modified: %q, %v", data, err)
+	}
+}

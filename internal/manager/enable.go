@@ -79,25 +79,18 @@ func (m *Manager) Disable(name string) (*protocol.EnableResult, error) {
 	name = core.NormalizeName(rt.unit.Name)
 	m.mu.Unlock()
 
-	walkErr := filepath.WalkDir(m.cfg.EnabledDir(), func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if core.NormalizeName(d.Name()) == name {
+	// Enumerate the same bounded namespace as reload before removing anything.
+	// Nested directories are not enable records and must not be traversed.
+	files, err := m.readEnabledFiles()
+	if err != nil {
+		return nil, protocol.ErrFailed(err.Error())
+	}
+	for _, path := range files {
+		if core.NormalizeName(filepath.Base(path)) == name {
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				return err
+				return nil, protocol.ErrFailed(err.Error())
 			}
 		}
-		return nil
-	})
-	if walkErr != nil {
-		return nil, protocol.ErrFailed(walkErr.Error())
 	}
 	links, err := m.readEnabledLinks()
 	if err != nil {
@@ -151,18 +144,39 @@ func enabledTargetsFrom(links map[string][]string, name string) []string {
 // readEnabledLinks maps target name -> enabled unit names from
 // <base-dir>/enabled/<target>/<unit> files (not NTFS symlinks).
 func (m *Manager) readEnabledLinks() (map[string][]string, error) {
+	files, err := m.readEnabledFiles()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string][]string)
+	for _, path := range files {
+		name := core.NormalizeName(filepath.Base(path))
+		if _, err := unit.KindFromName(name); err != nil {
+			continue
+		}
+		target := core.NormalizeName(filepath.Base(filepath.Dir(path)))
+		out[target] = append(out[target], name)
+	}
+	for target := range out {
+		sort.Strings(out[target])
+	}
+	return out, nil
+}
+
+// The root and immediate target entries share one budget. Return no partial
+// candidate when enumeration fails, including before Disable mutates links.
+func (m *Manager) readEnabledFiles() ([]string, error) {
 	dir := m.cfg.EnabledDir()
 	ents, err := readOptionalDirectory(dir)
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string][]string)
+	var out []string
 	remaining := maxConfigurationEntries - len(ents)
 	for _, e := range ents {
 		if !e.IsDir() {
 			continue
 		}
-		target := core.NormalizeName(e.Name())
 		files, err := readConfigurationDirectory(filepath.Join(dir, e.Name()), remaining)
 		if err != nil {
 			return nil, err
@@ -172,15 +186,8 @@ func (m *Manager) readEnabledLinks() (map[string][]string, error) {
 			if f.IsDir() {
 				continue
 			}
-			name := core.NormalizeName(f.Name())
-			if _, kerr := unit.KindFromName(name); kerr != nil {
-				continue
-			}
-			out[target] = append(out[target], name)
+			out = append(out, filepath.Join(dir, e.Name(), f.Name()))
 		}
-	}
-	for target := range out {
-		sort.Strings(out[target])
 	}
 	return out, nil
 }
