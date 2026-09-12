@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -65,30 +66,8 @@ func failedUserManagerStart(p *userMgrProc, cause error) (UserManagerProc, error
 }
 
 func createUserManager(tok windows.Token, spec UserManagerSpec, job *DaemonJob) (*userMgrProc, error) {
-	stdin, err := openNUL()
-	if err != nil {
-		return nil, fmt.Errorf("open NUL: %w", err)
-	}
-	stdout, err := openNUL()
-	if err != nil {
-		_ = windows.CloseHandle(stdin)
-		return nil, fmt.Errorf("open NUL: %w", err)
-	}
-	stderr, err := openNUL()
-	if err != nil {
-		_ = windows.CloseHandle(stdin)
-		_ = windows.CloseHandle(stdout)
-		return nil, fmt.Errorf("open NUL: %w", err)
-	}
-	cleanup := func() {
-		_ = windows.CloseHandle(stdin)
-		_ = windows.CloseHandle(stdout)
-		_ = windows.CloseHandle(stderr)
-	}
-
 	app, err := windows.UTF16PtrFromString(spec.Exe)
 	if err != nil {
-		cleanup()
 		return nil, err
 	}
 	argv := spec.cmdArgv
@@ -97,7 +76,6 @@ func createUserManager(tok windows.Token, spec UserManagerSpec, job *DaemonJob) 
 	}
 	cmdLine, err := windows.UTF16PtrFromString(windows.ComposeCommandLine(argv))
 	if err != nil {
-		cleanup()
 		return nil, err
 	}
 	dir := ""
@@ -108,13 +86,15 @@ func createUserManager(tok windows.Token, spec UserManagerSpec, job *DaemonJob) 
 	if dir != "" {
 		dirp, err = windows.UTF16PtrFromString(dir)
 		if err != nil {
-			cleanup()
 			return nil, err
 		}
 	}
-	block, err := envBlock(userManagerEnv(spec))
+	env, err := nativeUserManagerEnv(tok, spec)
 	if err != nil {
-		cleanup()
+		return nil, fmt.Errorf("user manager environment: %w", err)
+	}
+	block, err := envBlock(env)
+	if err != nil {
 		return nil, err
 	}
 	var envp *uint16
@@ -122,73 +102,28 @@ func createUserManager(tok windows.Token, spec UserManagerSpec, job *DaemonJob) 
 		envp = &block[0]
 	}
 
-	// Same inherit list as the unit launcher / Go StartProcess: inheritable
-	// duplicates of stdin/stdout/stderr only. Blanket bInheritHandles=true
-	// would leak the system manager's control-pipe listener, IOCPs, and
-	// other units' pipes into a lower-privileged user process.
-	dupIn, err := duplicateInheritable(stdin)
-	if err != nil {
-		cleanup()
-		return nil, fmt.Errorf("duplicate stdin: %w", err)
-	}
-	dupOut, err := duplicateInheritable(stdout)
-	if err != nil {
-		_ = windows.CloseHandle(dupIn)
-		cleanup()
-		return nil, fmt.Errorf("duplicate stdout: %w", err)
-	}
-	dupErr, err := duplicateInheritable(stderr)
-	if err != nil {
-		_ = windows.CloseHandle(dupIn)
-		_ = windows.CloseHandle(dupOut)
-		cleanup()
-		return nil, fmt.Errorf("duplicate stderr: %w", err)
-	}
-	closeDups := func() {
-		_ = windows.CloseHandle(dupIn)
-		_ = windows.CloseHandle(dupOut)
-		_ = windows.CloseHandle(dupErr)
-	}
-
-	attrList, inherit, err := inheritHandleList(dupIn, dupOut, dupErr)
-	if err != nil {
-		closeDups()
-		cleanup()
-		return nil, err
-	}
-	defer attrList.Delete()
-
-	// Heap StartupInfoEx so the attribute-list pointer stays valid across
-	// the CreateProcessAsUser syscall (same as Go's StartProcess).
-	si := &windows.StartupInfoEx{}
+	// Handle inheritance is prohibited across Windows sessions. The child
+	// receives default standard streams from Windows; no broker handles cross
+	// this boundary. Do not set STARTF_USESTDHANDLES or an inherited handle list.
+	si := &windows.StartupInfo{}
 	si.Cb = uint32(unsafe.Sizeof(*si))
-	si.Flags = windows.STARTF_USESTDHANDLES
-	si.StdInput = dupIn
-	si.StdOutput = dupOut
-	si.StdErr = dupErr
-	si.ProcThreadAttributeList = attrList.List()
-
 	var pi windows.ProcessInformation
-	flags := uint32(windows.CREATE_SUSPENDED | windows.CREATE_UNICODE_ENVIRONMENT | windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW | windows.EXTENDED_STARTUPINFO_PRESENT)
+	flags := uint32(windows.CREATE_SUSPENDED | windows.CREATE_UNICODE_ENVIRONMENT | windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW)
 	err = windows.CreateProcessAsUser(
 		tok,
 		app,
 		cmdLine,
 		nil,
 		nil,
-		len(inherit) > 0,
+		false,
 		flags,
 		envp,
 		dirp,
-		&si.StartupInfo,
+		si,
 		&pi,
 	)
 	goruntime.KeepAlive(block)
-	goruntime.KeepAlive(inherit)
-	goruntime.KeepAlive(attrList)
 	goruntime.KeepAlive(si)
-	closeDups()
-	cleanup()
 	if err != nil {
 		return nil, fmt.Errorf("CreateProcessAsUser %s: %w", spec.Exe, err)
 	}
@@ -214,6 +149,38 @@ func createUserManager(tok windows.Token, spec UserManagerSpec, job *DaemonJob) 
 	}
 	p.thread = 0
 	return p, nil
+}
+
+func nativeUserManagerEnv(tok windows.Token, spec UserManagerSpec) ([]string, error) {
+	if spec.Env != nil {
+		return spec.Env, nil // explicit caller environment (native test fixtures)
+	}
+	identity, err := tok.GetTokenUser()
+	if err != nil {
+		return nil, err
+	}
+	if identity.User.Sid.String() != spec.SID {
+		return nil, fmt.Errorf("target token SID mismatch")
+	}
+	env, err := tok.Environ(false)
+	if err != nil {
+		return nil, err
+	}
+	// CreateEnvironmentBlock can succeed with only machine variables when the
+	// user profile is unavailable. Do not disguise that as a user environment
+	// by synthesizing USERPROFILE afterwards. Profile loading remains explicit.
+	hasProfile := false
+	for _, entry := range env {
+		name, value, ok := strings.Cut(entry, "=")
+		if ok && strings.EqualFold(name, "USERPROFILE") && value != "" {
+			hasProfile = true
+			break
+		}
+	}
+	if !hasProfile {
+		return nil, fmt.Errorf("target user profile environment is unavailable")
+	}
+	return MergeDeterministicUserEnv(env, spec.Token.Info), nil
 }
 
 func (p *userMgrProc) PID() int    { return p.pid }

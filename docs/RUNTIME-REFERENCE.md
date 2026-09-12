@@ -196,6 +196,12 @@ For an admitted interactive user the system manager launches `winunitd --user-ma
 
 User units load from `%LOCALAPPDATA%\winunitd\units\`. User processes get a deterministic environment (`USERPROFILE`, `LOCALAPPDATA`, `APPDATA`, `TEMP`, `TMP`, `USERNAME`, `USERDOMAIN`).
 
+The system manager's native user launch obtains its default environment from the
+target token, excluding the broker process environment. AppData paths use Windows
+known-folder resolution. It does not inherit broker handles; Windows supplies
+default standard streams. Cross-session and profile-lifetime qualification remain
+under R4; these implementation details do not qualify headless linger.
+
 Each user manager watches WTS for its SID and starts builtin `graphical-session.target` while that SID has a suitable interactive session (Inactive when none, including linger-without-session). `RequiresInteractiveSession=yes` skips that unit when no suitable interactive session exists (SessionMode is not implemented).
 
 Administrators can `winctl enable-linger <user>` on the system pipe (not `--user`). Linger state is a tiny record at `<base-dir>\linger\<SID>` (not an NTFS symlink). At boot, lingering user managers start with no session. Last logoff does not kill a lingering manager; `disable-linger` kills it if no session remains. Non-admin enable-linger fails closed.

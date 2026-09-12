@@ -43,6 +43,18 @@ func TestUserEnvVars(t *testing.T) {
 	}
 }
 
+func TestUserEnvVarsPreservesResolvedFolders(t *testing.T) {
+	info := UserInfo{Profile: "profile", LocalAppData: "redirected-local", RoamingAppData: "redirected-roaming"}
+	vars := map[string]string{}
+	for _, entry := range UserEnvVars(info) {
+		key, value, _ := strings.Cut(entry, "=")
+		vars[key] = value
+	}
+	if vars["LOCALAPPDATA"] != info.LocalAppData || vars["APPDATA"] != info.RoamingAppData || vars["TEMP"] != filepath.Join(info.LocalAppData, "Temp") {
+		t.Fatal("resolved known folders replaced with synthesized profile paths")
+	}
+}
+
 func TestMergeDeterministicUserEnvDropsInteractiveDump(t *testing.T) {
 	t.Parallel()
 	info := UserInfo{

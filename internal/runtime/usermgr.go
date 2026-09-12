@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/PLN/winunitd/internal/protocol"
 )
@@ -16,7 +15,7 @@ type UserManagerSpec struct {
 	Token     *UserToken
 	Exe       string
 	ExtraArgs []string
-	Env       []string
+	Env       []string // nil resolves the target token's environment without broker inheritance
 	Daemon    *DaemonJob
 	// cmdArgv, if set, is the full CreateProcessAsUser command (exe +
 	// args) and skips UserManagerArgs. Tests use it to launch ping the
@@ -52,16 +51,6 @@ func validateUserManagerSpec(spec UserManagerSpec) error {
 	}
 	if spec.Exe == "" {
 		return fmt.Errorf("user manager executable path required")
-	}
-	return nil
-}
-
-func userManagerEnv(spec UserManagerSpec) []string {
-	if spec.Env != nil {
-		return spec.Env
-	}
-	if spec.Token != nil {
-		return MergeDeterministicUserEnv(os.Environ(), spec.Token.Info)
 	}
 	return nil
 }

@@ -54,6 +54,27 @@ Do not silently preserve all-user alpha behavior by populating an allowlist or s
 
 ## Implementation evidence and limits
 
+The native user-manager launcher uses `CreateProcessAsUser` with handle
+inheritance disabled and no parent standard-handle list. Windows supplies the
+child's default streams for the windowless launch. Suspended creation and job
+assignment still precede execution; failed cleanup retains ownership.
+The default environment comes from `CreateEnvironmentBlock` for the target token
+with broker inheritance disabled. AppData paths are resolved through the target
+token's known-folder APIs, including when the child applies its user environment.
+Native regressions check Win32/Go stream writes, absence of broker-only environment
+variables, default startup handles, known-folder values, and fail-closed lookup.
+The default path verifies token identity and requires a nonempty user-profile
+environment before creation; it does not fall back to the broker's environment.
+The API constraints are documented by Microsoft for
+[CreateProcessAsUser](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessasuserw)
+and [CreateEnvironmentBlock](https://learn.microsoft.com/en-us/windows/win32/api/userenv/nf-userenv-createenvironmentblock).
+
+This removes the inherited-handle obstacle to cross-session launch, but current
+native fixtures still use the test account's session. Real SYSTEM-to-standard-user
+launch, redirected/unloaded profiles, and explicit profile load/unload ownership
+remain R4 qualification/implementation work. Headless linger is not qualified by
+these changes.
+
 Admission snapshots are copied and revisioned. Delayed file probes and launches recheck their session request and policy revision. Explicit revocation respects an independent linger grant; disabling that last grant cannot keep a manager through a revoked interactive session.
 
 Session reconciliation applies successful enumerations as authoritative snapshots:

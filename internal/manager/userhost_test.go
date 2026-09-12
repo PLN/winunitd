@@ -129,20 +129,8 @@ func testUserHost(t *testing.T, sidBySession map[uint32]string, fail map[uint32]
 			mu.Lock()
 			procs[spec.SID] = p
 			mu.Unlock()
-			if spec.Env == nil {
-				t.Error("user manager spec must include deterministic env")
-			}
-			hasProfile := false
-			for _, e := range spec.Env {
-				if len(e) >= 12 && e[:12] == "USERPROFILE=" {
-					hasProfile = true
-				}
-				if e == "SESSIONNAME=Console" {
-					t.Error("SESSIONNAME leaked into user manager env")
-				}
-			}
-			if !hasProfile {
-				t.Error("USERPROFILE missing from user manager env")
+			if spec.Env != nil {
+				t.Error("user host must leave environment resolution to the target-token launcher")
 			}
 			return p, nil
 		},

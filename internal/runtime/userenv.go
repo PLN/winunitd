@@ -10,10 +10,12 @@ import (
 // UserInfo is the identity used to build a deterministic user environment
 // (DESIGN.md §58). It is not an Explorer interactive dump.
 type UserInfo struct {
-	SID      string
-	Username string
-	Domain   string
-	Profile  string
+	SID            string
+	Username       string
+	Domain         string
+	Profile        string
+	LocalAppData   string
+	RoamingAppData string
 }
 
 // UserEnvKeys are the user-specific variables set for user managers and
@@ -43,6 +45,12 @@ var interactiveDumpKeys = []string{
 func UserEnvVars(info UserInfo) []string {
 	localApp := filepath.Join(info.Profile, "AppData", "Local")
 	roaming := filepath.Join(info.Profile, "AppData", "Roaming")
+	if info.LocalAppData != "" {
+		localApp = info.LocalAppData
+	}
+	if info.RoamingAppData != "" {
+		roaming = info.RoamingAppData
+	}
 	temp := filepath.Join(localApp, "Temp")
 	return []string{
 		"USERPROFILE=" + info.Profile,

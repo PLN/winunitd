@@ -56,11 +56,21 @@ func userInfoFromToken(tok windows.Token) (UserInfo, error) {
 	if err != nil {
 		return UserInfo{}, err
 	}
+	localAppData, err := tok.KnownFolderPath(windows.FOLDERID_LocalAppData, windows.KF_FLAG_DONT_VERIFY)
+	if err != nil {
+		return UserInfo{}, err
+	}
+	roamingAppData, err := tok.KnownFolderPath(windows.FOLDERID_RoamingAppData, windows.KF_FLAG_DONT_VERIFY)
+	if err != nil {
+		return UserInfo{}, err
+	}
 	return UserInfo{
-		SID:      sid,
-		Username: account,
-		Domain:   domain,
-		Profile:  profile,
+		SID:            sid,
+		Username:       account,
+		Domain:         domain,
+		Profile:        profile,
+		LocalAppData:   localAppData,
+		RoamingAppData: roamingAppData,
 	}, nil
 }
 

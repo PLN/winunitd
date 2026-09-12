@@ -103,7 +103,26 @@ func TestStartUserManagerFailsClosedWithoutNativeToken(t *testing.T) {
 	}
 }
 
+func TestStartUserManagerFailsClosedOnEnvironmentLookup(t *testing.T) {
+	info, err := CurrentUserInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	proc, err := StartUserManager(UserManagerSpec{
+		SID: info.SID, Exe: testAbs(t),
+		Token: &UserToken{Info: info, native: winToken(windows.InvalidHandle)},
+	})
+	if proc != nil {
+		defer proc.Kill()
+		t.Fatal("environment lookup failure created a process")
+	}
+	if err == nil || !strings.Contains(err.Error(), "user manager environment") {
+		t.Fatalf("expected environment lookup failure, got %v", err)
+	}
+}
+
 func TestUserManagerStdioWriteAccess(t *testing.T) {
+	t.Setenv("WINUNITD_BROKER_ONLY", "must-not-reach-child")
 	userTok := testUserToken(t)
 	pipeName := `\\.\pipe\winunitd-um-stdio-` + strconv.Itoa(os.Getpid()) + `-` + strconv.FormatInt(time.Now().UnixNano(), 10)
 	ln, err := winio.ListenPipe(pipeName, &winio.PipeConfig{
@@ -137,16 +156,11 @@ func TestUserManagerStdioWriteAccess(t *testing.T) {
 		ch <- result{line: strings.TrimSpace(string(b))}
 	}()
 
-	env := MergeDeterministicUserEnv(helperEnv(
-		"WINUNITD_JOB_HELPER=stdio-write",
-		"WINUNITD_STDIO_REPORT_PIPE="+pipeName,
-	), userTok.Info)
 	proc, err := StartUserManager(UserManagerSpec{
 		SID:       userTok.Info.SID,
 		Token:     userTok,
 		Exe:       testAbs(t),
-		Env:       env,
-		ExtraArgs: []string{winunitdHelperArgPrefix + "stdio-write"},
+		ExtraArgs: []string{winunitdHelperArgPrefix + "stdio-write", "--stdio-report-pipe=" + pipeName},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -158,8 +172,8 @@ func TestUserManagerStdioWriteAccess(t *testing.T) {
 		if r.err != nil {
 			t.Fatal(r.err)
 		}
-		if r.line != "stdout=ok stderr=ok" {
-			t.Fatalf("stdio report = %q, want stdout=ok stderr=ok", r.line)
+		if r.line != "stdout=ok stderr=ok go-stdio=true default-stdio=true broker-env=false folders=true" {
+			t.Fatalf("unexpected child startup report: %q", r.line)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("timeout waiting for stdio WriteFile report")
