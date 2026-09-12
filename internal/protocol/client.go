@@ -103,6 +103,14 @@ func (c *Client) ListUnits(ctx context.Context) (*ListUnitsResult, error) {
 	return &out, nil
 }
 
+func (c *Client) Snapshot(ctx context.Context) (*SnapshotResult, error) {
+	var out SnapshotResult
+	if err := c.Call(ctx, MethodSnapshot, struct{}{}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 func (c *Client) ListTimers(ctx context.Context) (*ListTimersResult, error) {
 	var out ListTimersResult
 	if err := c.Call(ctx, MethodListTimers, ListTimersParams{}, &out); err != nil {

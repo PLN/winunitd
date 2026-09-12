@@ -14,7 +14,7 @@ import (
 func TestMethodsCoverCLIVerbs(t *testing.T) {
 	t.Parallel()
 	want := []string{
-		"start", "stop", "restart", "status", "enable", "disable",
+		"start", "stop", "restart", "status", "snapshot", "enable", "disable",
 		"list-units", "list-timers", "logs", "daemon-reload", "verify",
 		"enable-linger", "disable-linger",
 		"operation", "cancel-operation", "maintenance",
@@ -162,6 +162,8 @@ func TestAllMethodsRoundTrip(t *testing.T) {
 			return ListTimersResult{Timers: []TimerStatus{{Name: "a.timer", LoadState: "loaded", ActiveState: "inactive"}}}, nil
 		case MethodStatus:
 			return StatusResult{Machine: &MachineStatus{State: "running"}}, nil
+		case MethodSnapshot:
+			return SnapshotResult{Machine: MachineStatus{State: "running"}}, nil
 		case MethodStart, MethodStop, MethodRestart:
 			var p UnitParams
 			if err := DecodeParams(params, &p); err != nil {
@@ -226,6 +228,9 @@ func TestAllMethodsRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := client.Status(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Snapshot(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.Start(ctx, "foo"); err != nil {

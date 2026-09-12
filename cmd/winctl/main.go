@@ -32,6 +32,7 @@ Commands:
   enable <unit>       Enable a unit
   disable <unit>      Disable a unit
   list-units          List loaded units
+  snapshot            Print one manager-local lifecycle/operation snapshot as JSON
   list-timers         List timers
   logs <unit> [--follow] [--since <when>]
                       Show unit logs (poll --follow; --since RFC3339 / 1d / "1 hour ago")
@@ -223,6 +224,8 @@ func (c *cli) run(args []string) int {
 		return c.unitCmd(rest, protocol.MethodDisable, c.printEnable)
 	case "list-units":
 		return c.noArg(rest, c.listUnits)
+	case "snapshot":
+		return c.noArg(rest, c.snapshot)
 	case "list-timers":
 		return c.noArg(rest, c.listTimers)
 	case "logs":
