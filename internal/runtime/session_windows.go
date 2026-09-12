@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"time"
 	"unsafe"
 
@@ -23,8 +24,14 @@ func InteractiveSessions() ([]uint32, error) {
 		return nil, err
 	}
 	defer windows.WTSFreeMemory(uintptr(unsafe.Pointer(info)))
-	if count == 0 || info == nil {
+	if count > MaxInteractiveSessions {
+		return nil, fmt.Errorf("session enumeration exceeds limit %d", MaxInteractiveSessions)
+	}
+	if count == 0 {
 		return nil, nil
+	}
+	if info == nil {
+		return nil, fmt.Errorf("session enumeration returned no data for %d sessions", count)
 	}
 	sessions := unsafe.Slice(info, int(count))
 	var ids []uint32
