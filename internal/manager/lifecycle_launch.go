@@ -203,13 +203,14 @@ func (m *Manager) adoptLaunchNotify(effect *launchEffect, notify *notifyRuntime)
 	return true
 }
 
-func (m *Manager) retainLaunchFailure(effect *launchEffect, proc runtime.Process, err error) {
+func (m *Manager) retainLaunchFailure(effect *launchEffect, proc runtime.Process, pid int, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// The retained record and unit gate exclude removal/replacement. Adopt
 	// partial creations even when stop/close has superseded their activation.
 	rt := effect.owner.record
 	rt.proc = proc
+	rt.mainPID = pid
 	rt.setCleanup(cleanupWorkload, true)
 	rt.err = err.Error()
 }
@@ -217,6 +218,7 @@ func (m *Manager) retainLaunchFailure(effect *launchEffect, proc runtime.Process
 type processAdoption struct {
 	effect      *launchEffect
 	process     runtime.Process
+	pid         int
 	autoRestart bool
 	alive       bool
 }
@@ -228,6 +230,7 @@ func (m *Manager) adoptProcess(event processAdoption) bool {
 	// Retention and the unit gate protect the record. Late creations must be
 	// adopted before cleanup so failure remains reachable through Stop.
 	rt.proc = event.process
+	rt.mainPID = event.pid
 	if m.closed || rt.stopping || !event.effect.owner.currentLocked(m) {
 		rt.setCleanup(cleanupWorkload, true)
 		return false

@@ -9,7 +9,7 @@ import (
 	"github.com/PLN/winunitd/internal/protocol"
 )
 
-func TestStatusObservationDoesNotBlockIndependentStop(t *testing.T) {
+func TestStatusCopiesProcessIdentityWithoutQueryingLiveness(t *testing.T) {
 	for _, list := range []bool{false, true} {
 		t.Run(map[bool]string{false: "status", true: "list"}[list], func(t *testing.T) {
 			l := &delayedAliveLauncher{}
@@ -43,9 +43,14 @@ func TestStatusObservationDoesNotBlockIndependentStop(t *testing.T) {
 				}
 			}()
 			select {
+			case st := <-done:
+				if st.MainPID != p.PID() || st.InvocationID == "" || st.ActiveState != "active" {
+					t.Fatalf("captured status: %+v", st)
+				}
 			case <-p.entered:
-			case <-time.After(5 * time.Second):
-				t.Fatal("observation did not enter")
+				t.Fatal("status queried native process liveness")
+			case <-time.After(time.Second):
+				t.Fatal("status did not return its accepted process snapshot")
 			}
 			stopped := make(chan error, 1)
 			go func() { _, err := m.Stop("other.target"); stopped <- err }()
@@ -56,15 +61,6 @@ func TestStatusObservationDoesNotBlockIndependentStop(t *testing.T) {
 				}
 			case <-time.After(5 * time.Second):
 				t.Fatal("status observation blocked independent stop")
-			}
-			release()
-			select {
-			case st := <-done:
-				if st.MainPID != p.PID() || st.InvocationID == "" || st.ActiveState != "active" {
-					t.Fatalf("captured status: %+v", st)
-				}
-			case <-time.After(5 * time.Second):
-				t.Fatal("status did not finish")
 			}
 		})
 	}

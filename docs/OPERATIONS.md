@@ -94,6 +94,13 @@ even if notification close fails; that listener remains owned and blocks restart
 until cleanup succeeds. Successful watch close cannot erase notification failure.
 Explicit stop retries the remaining owned resources.
 
+For process-backed units, `mainPid` is captured at adoption and copied together
+with lifecycle/invocation state. It clears when the process reference is released.
+Status and list-units do not query process liveness; a PID retained during failed
+cleanup identifies the owned invocation and does not establish that its main
+process is still running. Native proxy, timer and journal observations remain
+separate from that manager decision snapshot.
+
 Accepted stop and restart invalidate pending activation and suppress recovery for
 their complete captured stop scope before dispatching ordered teardown workers.
 Plan validation and capacity rejection happen before this change in eligibility. Manager shutdown/close also cancels accepted starts and

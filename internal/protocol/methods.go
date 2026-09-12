@@ -174,8 +174,10 @@ type UserRecoveryStatus struct {
 	Error         string `json:"error,omitempty"`
 }
 
-// UnitStatus is one loaded unit (DESIGN.md §24, §45). MainPID is set when
-// the unit has a live process. InvocationID is the last unit-start UUID.
+// UnitStatus is one loaded unit (DESIGN.md §24, §45). MainPID identifies the
+// accepted owned process until cleanup releases it; it is not a fresh liveness
+// query. Native proxies report their separate query result. InvocationID is the
+// last unit-start UUID.
 // Resource metrics are not reported. CPUWeight/CPUQuota/IoPriority are the
 // configured unit-file values when set (cheap; not a live Job Object query).
 type UnitStatus struct {

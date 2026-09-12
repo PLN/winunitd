@@ -354,24 +354,20 @@ func (m *Manager) ListUnits() (*protocol.ListUnitsResult, error) {
 	m.mu.Lock()
 	names := m.names()
 	out := make([]protocol.UnitStatus, 0, len(names))
-	procs := make([]runtime.Process, 0, len(names))
 	scmNames := make([]string, 0, len(names))
 	taskNames := make([]string, 0, len(names))
 	for _, name := range names {
 		out = append(out, m.unitStatusLocked(name))
 		var u *unit.Unit
-		var proc runtime.Process
 		if rt := m.units[name]; rt != nil {
 			u = rt.ownedUnit()
-			proc = rt.proc
 		}
-		procs = append(procs, proc)
 		scmNames = append(scmNames, scmServiceName(u))
 		taskNames = append(taskNames, scheduledTaskName(u))
 	}
 	m.mu.Unlock()
 	for i := range out {
-		m.overlayProcessAndJournal(&out[i], procs[i])
+		m.overlayJournal(&out[i])
 		m.overlaySCM(&out[i], scmNames[i])
 		m.overlayTask(&out[i], taskNames[i])
 		m.overlayTimer(&out[i])
@@ -436,11 +432,10 @@ func (m *Manager) Status(name string) (*protocol.StatusResult, error) {
 		return nil, err
 	}
 	st := m.unitStatusLocked(rt.unit.Name)
-	proc := rt.proc
 	svcName := scmServiceName(rt.ownedUnit())
 	taskName := scheduledTaskName(rt.ownedUnit())
 	m.mu.Unlock()
-	m.overlayProcessAndJournal(&st, proc)
+	m.overlayJournal(&st)
 	m.overlaySCM(&st, svcName)
 	m.overlayTask(&st, taskName)
 	m.overlayTimer(&st)
@@ -464,18 +459,14 @@ func (m *Manager) machineLocked() *protocol.MachineStatus {
 	return ms
 }
 
-// overlayProcessAndJournal observes only the captured process, never a later
-// invocation. Native and journal locks must not run under the manager mutex.
-// These observations are best-effort overlays, not an atomic aggregate snapshot.
-func (m *Manager) overlayProcessAndJournal(st *protocol.UnitStatus, proc runtime.Process) {
+// Journal counters are independent observations outside the manager mutex.
+// Process identity and lifecycle fields are copied together by unitStatusLocked.
+func (m *Manager) overlayJournal(st *protocol.UnitStatus) {
 	stats := m.journal.CaptureStats(st.Name)
 	st.LogDroppedRecords = stats.DroppedRecords
 	st.LogDroppedBytes = stats.DroppedBytes
 	st.LogStorageErrors = stats.StorageErrors
 	st.LogLastStorageError = stats.LastStorageError
-	if proc != nil && proc.Alive() {
-		st.MainPID = proc.PID()
-	}
 }
 
 func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
@@ -486,6 +477,9 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 		ActiveState: m.stateOfLocked(name).String(),
 	}
 	if rt != nil {
+		if rt.proc != nil {
+			st.MainPID = rt.mainPID
+		}
 		st.SubState = rt.sub.String()
 		st.TerminationUncertain = rt.cleanupPending()
 		st.PendingCleanup = rt.pendingCleanupNames()

@@ -29,6 +29,7 @@ type unitRuntime struct {
 	gen               uint64
 	stopEpoch         uint64          // invalidates starts admitted before a stop request
 	proc              runtime.Process // whoever clears this owns job.Kill+Close (#25)
+	mainPID           int             // captured on process adoption; no status-time kernel query
 	notify            *notifyRuntime
 	watchdog          context.CancelFunc
 	startCancel       context.CancelFunc
