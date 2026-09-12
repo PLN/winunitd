@@ -40,7 +40,7 @@ Commands:
   cancel ID           Cancel unfinished start/restart work
   maintenance [--timeout DURATION]
                       Quiesce system and user workloads until manager restart
-                      (Administrators, system pipe; default/max 180s)
+                      (Administrators, reserved maintenance pipe; default/max 180s)
   verify <path|unit>  Verify a unit file path (no daemon) or a loaded unit
   enable-linger <user>
                       Persist a user manager across logoff and at boot
@@ -52,7 +52,9 @@ Commands other than verify-on-a-file-path talk to winunitd over
 \\.\pipe\winunitd\control. --user talks to
 \\.\pipe\winunitd\user\<SID>\control for the current user.
 --user is accepted before or after the verb. enable-linger /
-disable-linger always use the system pipe.
+disable-linger always use the system pipe. Maintenance uses the separate
+\\.\pipe\winunitd\maintenance endpoint so ordinary connections cannot consume
+its capacity; the broker and client must both support this endpoint.
 
 Flags:
   --user          Talk to the per-user manager (current user SID)
@@ -137,7 +139,13 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	return runCLI(args, stdout, stderr, defaultDial)
+	return runCLI(args, stdout, stderr, nil)
+}
+
+func defaultMaintenanceDial(ctx context.Context) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	return protocol.DialMaintenance(ctx)
 }
 
 func defaultDial(ctx context.Context) (net.Conn, error) {
@@ -320,7 +328,7 @@ func (c *cli) maintenance(args []string) int {
 	defer cancel()
 	dial := c.dial
 	if dial == nil {
-		dial = defaultDial
+		dial = defaultMaintenanceDial
 	}
 	conn, err := dial(ctx)
 	if err != nil {

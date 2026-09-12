@@ -171,7 +171,19 @@ zero selecting the default. It closes system/user admission together, cancels
 activation/restart work, stops owned workloads, and drains tracked token,
 configuration, native-control and journal cleanup. Status and other diagnostics
 remain available. `--user` is rejected; owning a user pipe does not authorize
-global maintenance. Older servers return method-not-found, which is a failure.
+global maintenance. Older servers without the required endpoint or RPC fail;
+missing support is never treated as successful quiescence.
+
+The CLI uses the dedicated `\\.\pipe\winunitd\maintenance` endpoint with the
+same protected administrator/SYSTEM DACL and server-identity verification as
+system control. Its eight connection slots are independent of ordinary control;
+it permits only maintenance, with four concurrent request slots and five-second
+idle-read/write timeouts. Both listeners must open before SCM readiness. Failure
+of either listener cancels both serving loops. Saturating ordinary connections
+cannot consume maintenance capacity. Saturating the maintenance endpoint itself
+can still cause transport failure or busy responses; its limits are not a denial
+of service guarantee against an administrator. Status and unit commands continue
+to use ordinary control. The CLI does not fall back to its saturated transport.
 
 The accepted attempt owns its deadline independently of the requesting
 connection. Disconnecting does not cancel it. Concurrent requests join the same
