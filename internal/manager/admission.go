@@ -74,7 +74,8 @@ func (h *UserHost) SetUserAdmission(p UserAdmission) error {
 }
 
 // WatchUserAdmission reconciles file-based opt-in and administrator edits.
-// One loop owns reads/reconciliation, so slow probes cannot spawn more loops.
+// Each class reserves one owned worker before spawning. A blocked policy read
+// and a blocked session pass cannot prevent scheduling the other class.
 func (h *UserHost) WatchUserAdmission(ctx context.Context, path string) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
@@ -84,12 +85,22 @@ func (h *UserHost) WatchUserAdmission(ctx context.Context, path string) {
 			return
 		case <-ticker.C:
 		}
-		work, err := h.acceptNativeUserWork()
-		if err != nil {
-			continue
+		if ctx.Err() != nil {
+			return
 		}
+		h.scheduleAdmissionRefresh(path)
+		h.scheduleReconcile()
+	}
+}
+
+func (h *UserHost) scheduleAdmissionRefresh(path string) {
+	work, err := h.acceptUserWorkClass(userWorkPolicy)
+	if err != nil {
+		return
+	}
+	go func() {
+		defer h.finishNativeUserWork(work, nil)
 		p, err := LoadUserAdmission(path)
-		_ = h.finishNativeUserWork(work, nil)
 		if err != nil {
 			h.cfg.Logf("user admission policy: %v", err)
 			h.mu.Lock()
@@ -99,11 +110,7 @@ func (h *UserHost) WatchUserAdmission(ctx context.Context, path string) {
 		if err := h.SetUserAdmission(p); err != nil {
 			h.cfg.Logf("user admission reconciliation: %v", err)
 		}
-		if ctx.Err() != nil {
-			return
-		}
-		h.Reconcile()
-	}
+	}()
 }
 
 func (p UserAdmission) validated() (UserAdmission, error) {

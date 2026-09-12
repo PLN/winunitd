@@ -14,8 +14,18 @@ import (
 // logon/linger operations than this limit, including work before the SID is known.
 const maxNativeUserWork = 4
 
+type userWorkClass uint8
+
+const (
+	userWorkAdmission userWorkClass = iota
+	userWorkReconcile
+	userWorkPolicy
+	userWorkLingerScan
+)
+
 type userNativeWork struct {
-	done chan struct{}
+	done  chan struct{}
+	class userWorkClass
 	// token is set under h.mu only after the worker's first close fails.
 	token *runtime.UserToken
 }
@@ -27,16 +37,36 @@ func (h *UserHost) acceptNativeUserWork() (*userNativeWork, error) {
 }
 
 func (h *UserHost) acceptNativeUserWorkLocked() (*userNativeWork, error) {
+	return h.acceptUserWorkClassLocked(userWorkAdmission)
+}
+
+func (h *UserHost) acceptUserWorkClass(class userWorkClass) (*userNativeWork, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.acceptUserWorkClassLocked(class)
+}
+
+func (h *UserHost) acceptUserWorkClassLocked(class userWorkClass) (*userNativeWork, error) {
 	if h.closed {
 		return nil, fmt.Errorf("user host is shutting down or closed")
 	}
-	if len(h.nativeWork) >= maxNativeUserWork {
+	limit := 1
+	if class == userWorkAdmission {
+		limit = maxNativeUserWork
+	}
+	count := 0
+	for w := range h.nativeWork {
+		if w.class == class {
+			count++
+		}
+	}
+	if count >= limit {
 		return nil, protocol.ErrBusy()
 	}
 	if h.nativeWork == nil {
 		h.nativeWork = make(map[*userNativeWork]struct{})
 	}
-	w := &userNativeWork{done: make(chan struct{})}
+	w := &userNativeWork{done: make(chan struct{}), class: class}
 	h.nativeWork[w] = struct{}{}
 	return w, nil
 }
