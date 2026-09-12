@@ -40,11 +40,21 @@ func TestAggregateCapturePressureBoundsAndRecovers(t *testing.T) {
 		}
 	}
 	quiet := &captureGroup{}
+	lossBefore := uint64(0)
+	for i := range groups {
+		lossBefore += s.CaptureStats(fmt.Sprintf("noisy-%d.service", i)).DroppedBytes
+	}
 	s.enqueue(Entry{Unit: "quiet.service", Message: "during pressure"}, quiet)
-	// The current drop-new policy has no per-unit reservation. This records
-	// its aggregate saturation limit; it is not a fairness guarantee.
-	if stats := s.CaptureStats("quiet.service"); stats.DroppedRecords != 1 || stats.DroppedBytes != uint64(len("during pressure")) {
-		t.Fatalf("aggregate pressure loss not reported: %+v", stats)
+	// A quiet invocation may displace a newer record from a larger queue.
+	if stats := s.CaptureStats("quiet.service"); stats.DroppedRecords != 0 || quiet.records.Load() != 1 {
+		t.Fatalf("aggregate pressure crowded out quiet output: %+v", stats)
+	}
+	lossAfter := uint64(0)
+	for i := range groups {
+		lossAfter += s.CaptureStats(fmt.Sprintf("noisy-%d.service", i)).DroppedBytes
+	}
+	if lossAfter-lossBefore != uint64(len(message)) {
+		t.Fatal("displaced record loss was not charged to its producer")
 	}
 	unblock()
 	for _, group := range groups {
@@ -56,7 +66,7 @@ func TestAggregateCapturePressureBoundsAndRecovers(t *testing.T) {
 		t.Fatal(err)
 	}
 	entries, err := s.Read("quiet.service")
-	if err != nil || len(entries) != 1 || entries[0].Message != "after pressure" {
+	if err != nil || len(entries) != 2 || entries[0].Message != "during pressure" || entries[1].Message != "after pressure" {
 		t.Fatalf("post-pressure recovery: entries=%d error=%v", len(entries), err)
 	}
 	s.queueMu.Lock()

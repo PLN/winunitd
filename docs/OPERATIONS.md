@@ -88,11 +88,22 @@ described below.
 
 Unit status derives `terminationUncertain` from separate pending resource classes.
 `pendingCleanup` identifies `workload` (process/job or native proxy),
-`notification`, `watch`, and `stop-helper`. Each exact-owner completion releases only its own
+`notification`, `watch`, `stop-helper`, and `journal`. Each exact-owner completion releases only its own
 class. For example, confirmed process termination releases the process reference
 even if notification close fails; that listener remains owned and blocks restart
 until cleanup succeeds. Successful watch close cannot erase notification failure.
 Explicit stop retries the remaining owned resources.
+
+Output buffering admits at most 16 MiB of message bytes and 16,384 records across
+the store, including its in-flight write. Each invocation is limited to 4 MiB and
+12,288 records. At most 2048 invocation queues can wait behind the writer. The
+writer takes one record per invocation in rotation, preserving each invocation's
+order. At aggregate saturation a smaller queue may displace newest pending
+records from a larger queue; the victim's dropped-byte/record counters include
+that loss. At least one pending record per victim is preserved. If no eligible
+victim exists, or an invocation/group limit is reached, new output is discarded
+and counted. This provides progress after storage recovers, not lossless capture
+or a bound on filesystem latency. Journal files and retention have separate limits.
 
 For process-backed units, `mainPid` is captured at adoption and copied together
 with lifecycle/invocation state. It clears when the process reference is released.

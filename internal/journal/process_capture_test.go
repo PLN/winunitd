@@ -2,6 +2,7 @@ package journal
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -14,8 +15,15 @@ import (
 const captureChildEnv = "WINUNITD_JOURNAL_TEST_CHILD"
 
 func TestJournalCaptureChild(t *testing.T) {
-	if os.Getenv(captureChildEnv) != "1" {
+	mode := os.Getenv(captureChildEnv)
+	if mode != "1" && mode != "quiet" {
 		t.Skip("subprocess helper")
+	}
+	if mode == "quiet" {
+		if _, err := io.WriteString(os.Stdout, "quiet during saturation\n"); err != nil {
+			os.Exit(2)
+		}
+		os.Exit(0)
 	}
 	chunk := strings.Repeat("x", MaxCaptureFragment)
 	for i := 0; i < invocationQueueBytes/MaxCaptureFragment+4; i++ {
@@ -27,6 +35,112 @@ func TestJournalCaptureChild(t *testing.T) {
 		}
 	}
 	os.Exit(0)
+}
+
+func TestConcurrentChildrenPreserveQuietOutputDuringStorageStall(t *testing.T) {
+	s := testStore(t)
+	blocked, release := make(chan struct{}), make(chan struct{})
+	var once, released sync.Once
+	unblock := func() { released.Do(func() { close(release) }) }
+	defer unblock()
+	s.onOpen = func() { once.Do(func() { close(blocked); <-release }) }
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var captures []*Capture
+	launch := func(name, mode string) <-chan error {
+		out, outWrite, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { out.Close(); outWrite.Close() })
+		stderr, errWrite, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { stderr.Close(); errWrite.Close() })
+		cmd := exec.CommandContext(ctx, exe, "-test.run=^TestJournalCaptureChild$")
+		cmd.Env = append(os.Environ(), captureChildEnv+"="+mode)
+		cmd.Stdout, cmd.Stderr = outWrite, errWrite
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		outWrite.Close()
+		errWrite.Close()
+		captures = append(captures, s.Attach(name, cmd.Process.Pid, name, out, stderr))
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		return done
+	}
+	var children []<-chan error
+	for i := 0; i < 5; i++ {
+		children = append(children, launch(fmt.Sprintf("producer-%d.service", i), "1"))
+	}
+	for _, done := range children {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-ctx.Done():
+			t.Fatal("storage stall blocked child exit")
+		}
+	}
+	select {
+	case <-blocked:
+	default:
+		t.Fatal("storage was not exercised")
+	}
+	quiet := launch("quiet.service", "quiet")
+	select {
+	case err := <-quiet:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("quiet child did not exit")
+	}
+	for {
+		s.queueMu.Lock()
+		quietQueued := false
+		for _, q := range s.captureQueues {
+			if q.items.Front().Value.(captureWrite).entry.Unit == "quiet.service" {
+				quietQueued = true
+			}
+			if q.group.bytes.Load() > invocationQueueBytes {
+				t.Error("invocation escaped byte budget")
+			}
+		}
+		bounded := s.queuedBytes <= captureQueueBytes && s.queuedRecords <= captureQueueRecords
+		s.queueMu.Unlock()
+		if !bounded {
+			t.Fatal("aggregate capture escaped budget")
+		}
+		if quietQueued {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("quiet output was crowded out")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if s.CaptureStats("quiet.service").DroppedRecords != 0 {
+		t.Fatal("quiet output was discarded")
+	}
+	unblock()
+	for _, capture := range captures {
+		if !capture.WaitContext(ctx) {
+			t.Fatal("capture completion did not recover")
+		}
+	}
+	entries, err := s.Read("quiet.service")
+	if err != nil || len(entries) != 1 || entries[0].Message != "quiet during saturation" {
+		t.Fatalf("quiet journal: %+v, %v", entries, err)
+	}
 }
 
 // Exercise actual OS pipes and child exit with storage stalled. Parent-owned

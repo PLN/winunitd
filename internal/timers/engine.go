@@ -156,15 +156,26 @@ func (e *Engine) ClockChanged() {
 		return
 	}
 	e.mu.Lock()
+	defer e.mu.Unlock()
 	if !e.running {
-		e.mu.Unlock()
 		return
 	}
 	e.clockGen++
-	e.mu.Unlock()
-	e.fireDue()
-	e.recalcWall()
-	e.kick()
+	e.fireDueLocked(e.clk.now())
+	// Capacity-limited or newly due occurrences retain their accepted deadline.
+	// A fresh calendar search from the new wall time would silently skip them.
+	now := e.clk.now()
+	for _, a := range e.armed {
+		if !wallSensitive(a.spec) {
+			continue
+		}
+		if a.item != nil && e.itemDueLocked(a, a.item, now) {
+			a.schedGen = e.clockGen
+			continue
+		}
+		e.rescheduleLocked(a)
+	}
+	e.kickLocked()
 }
 
 func (e *Engine) loop() {
@@ -240,28 +251,25 @@ func (e *Engine) waitDuration() (time.Duration, bool) {
 }
 
 func (e *Engine) fireDue() {
-	now := e.clk.now()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.fireDueLocked(e.clk.now())
+}
+
+// Dequeue and acceptance are one decision. Rescheduling cannot invalidate a
+// popped occurrence before its activation is recorded. Workers run after unlock.
+func (e *Engine) fireDueLocked(now time.Time) {
 	for {
-		due, ok := e.popDue(now)
+		due, ok := e.popDueLocked(now)
 		if !ok {
 			return
 		}
-		e.consume(due, now)
-	}
-}
-
-func (e *Engine) recalcWall() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	for _, a := range e.armed {
-		if wallSensitive(a.spec) {
-			e.rescheduleLocked(a)
-		}
+		e.consumeLocked(due, now)
 	}
 }
 
 // dueTimer retains both the armed instance and its schedule generation across
-// the unlocked gap between dequeue and consumption.
+// explicit delayed-result tests. Production dequeue/consumption is atomic.
 type dueTimer struct {
 	instance   *armed
 	generation uint64
@@ -271,6 +279,10 @@ type dueTimer struct {
 func (e *Engine) popDue(now time.Time) (due dueTimer, ok bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	return e.popDueLocked(now)
+}
+
+func (e *Engine) popDueLocked(now time.Time) (due dueTimer, ok bool) {
 	e.dropStaleLocked()
 	best := -1
 	for i, it := range e.pq {
@@ -297,19 +309,21 @@ func (e *Engine) popDue(now time.Time) (due dueTimer, ok bool) {
 
 func (e *Engine) consume(due dueTimer, actual time.Time) {
 	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.consumeLocked(due, actual)
+}
+
+func (e *Engine) consumeLocked(due dueTimer, actual time.Time) {
 	if !e.running {
-		e.mu.Unlock()
 		return
 	}
 	a := due.instance
 	if a == nil || e.armed[a.spec.Name] != a || a.gen != due.generation {
-		e.mu.Unlock()
 		return
 	}
 	if a.firing || e.activeFires >= maxTimerCallbacks {
 		// Preserve the popped occurrence, even for non-persistent calendars.
 		e.installDeadlineLocked(a, due.scheduled, due.generation)
-		e.mu.Unlock()
 		return
 	}
 	name := a.spec.Name
@@ -334,7 +348,6 @@ func (e *Engine) consume(due dueTimer, actual time.Time) {
 	e.fires.Add(1)
 	e.activeFires++
 	a.firing = true
-	e.mu.Unlock()
 
 	go func() {
 		defer e.fires.Done()
@@ -356,12 +369,10 @@ func (e *Engine) consume(due dueTimer, actual time.Time) {
 		e.kick()
 	}()
 
-	e.mu.Lock()
 	if a2 := e.armed[name]; a2 == a && a.token == event.Token {
 		e.rescheduleLocked(a)
 	}
-	e.mu.Unlock()
-	e.kick()
+	e.kickLocked()
 }
 
 func (e *Engine) dropStaleLocked() {
