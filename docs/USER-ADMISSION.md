@@ -85,6 +85,8 @@ not add a `LoadUserProfile` reference: disposable guest testing found that such 
 reference survived broker death and prevented profile release after logoff,
 although ordinary shutdown released it correctly. Missing or not-yet-loaded
 interactive profiles fail closed and can be retried by session reconciliation.
+The `8a61393` replacement passed the same disposable SYSTEM/user launch and crash
+sequence, with profile release and no manager resurrection at final logoff.
 
 The headless path still uses an explicit `LoadUserProfile` reference and duplicated
 token with retryable unload after process-tree cleanup. Its abrupt-death profile

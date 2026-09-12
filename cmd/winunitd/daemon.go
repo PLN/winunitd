@@ -20,6 +20,10 @@ import (
 var daemonJob *runtime.DaemonJob
 
 func serve(ctx context.Context, baseDir string, stderr io.Writer, sessions chan runtime.SessionChange, clock <-chan struct{}) (serveErr error) {
+	return serveReady(ctx, baseDir, stderr, sessions, clock, nil)
+}
+
+func serveReady(ctx context.Context, baseDir string, stderr io.Writer, sessions chan runtime.SessionChange, clock <-chan struct{}, ready func()) (serveErr error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	job, err := runtime.OpenBrokerJob()
@@ -66,9 +70,12 @@ func serve(ctx context.Context, baseDir string, stderr io.Writer, sessions chan 
 	})
 	defer func() { cancel(); serveErr = errors.Join(serveErr, finish(m, job, host, stderr)) }()
 
-	rel, err := m.Reload()
-	if err != nil {
-		return fmt.Errorf("load units: %w", err)
+	rel, loadErr := m.Reload()
+	if loadErr != nil {
+		logf("load units: %v; control remains available for repair", loadErr)
+	}
+	if rel == nil {
+		rel = &protocol.DaemonReloadResult{}
 	}
 	for _, e := range rel.Errors {
 		fmt.Fprintf(stderr, "winunitd: %s\n", e)
@@ -76,13 +83,6 @@ func serve(ctx context.Context, baseDir string, stderr io.Writer, sessions chan 
 	if rel.Cycle != "" {
 		fmt.Fprintf(stderr, "winunitd: ordering cycle: %s\n", rel.Cycle)
 	}
-
-	if _, err := m.Boot(ctx); err != nil {
-		fmt.Fprintf(stderr, "winunitd: start %s: %v\n", manager.DefaultTarget, err)
-	}
-
-	host.Reconcile()
-	host.StartLingering()
 
 	if sessions == nil {
 		sessions = make(chan runtime.SessionChange, 32)
@@ -97,10 +97,36 @@ func serve(ctx context.Context, baseDir string, stderr io.Writer, sessions chan 
 		return fmt.Errorf("listen: %w", err)
 	}
 	defer lis.Close()
-	fmt.Fprintf(stderr, "winunitd: loaded %d units, listening on %s\n", rel.Loaded, protocol.DefaultPipeName)
+	if loadErr == nil {
+		logf("loaded %d units, listening on %s", rel.Loaded, protocol.DefaultPipeName)
+	} else {
+		logf("configuration rejected, listening on %s", protocol.DefaultPipeName)
+	}
 
 	ctrl := &manager.Control{Units: m, Users: host}
-	return protocol.Serve(ctx, lis, ctrl, protocol.DefaultAuthorizer())
+	serverErr := make(chan error, 1)
+	go func() {
+		if ready != nil {
+			ready()
+		}
+		err := protocol.Serve(ctx, lis, ctrl, protocol.DefaultAuthorizer())
+		cancel() // listener failure also cancels unfinished boot work
+		serverErr <- err
+	}()
+	// Control and SCM readiness precede workload activation. A waiting notify
+	// unit must not hide status/stop, and invalid configuration remains repairable.
+	if loadErr == nil {
+		if _, err := m.Boot(ctx); err != nil {
+			logf("start %s: %v", manager.DefaultTarget, err)
+		}
+	}
+	if ctx.Err() == nil {
+		host.Reconcile()
+	}
+	if ctx.Err() == nil {
+		host.StartLingering()
+	}
+	return <-serverErr
 }
 
 func finish(m *manager.Manager, job *runtime.DaemonJob, host *manager.UserHost, stderr io.Writer) error {

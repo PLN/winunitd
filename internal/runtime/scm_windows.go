@@ -5,6 +5,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -182,27 +183,55 @@ func isStopCmd(cmd svc.Cmd) bool {
 
 type host struct {
 	run       func(ctx context.Context) error
+	runReady  func(ctx context.Context, ready func()) error
 	onSession func(SessionChange)
 	onClock   func()
 }
 
 func (h *host) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
-	changes <- svc.Status{State: svc.StartPending}
+	current := svc.Status{State: svc.StartPending, WaitHint: 30000, CheckPoint: 1}
+	changes <- current
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	errc := make(chan error, 1)
+	ready := make(chan struct{})
+	var readyOnce sync.Once
+	markReady := func() { readyOnce.Do(func() { close(ready) }) }
 	go func() {
-		errc <- h.run(ctx)
+		if h.runReady != nil {
+			errc <- h.runReady(ctx, markReady)
+		} else {
+			markReady()
+			errc <- h.run(ctx)
+		}
 	}()
-
-	changes <- svc.Status{State: svc.Running, Accepts: acceptedControls}
-	go overlayTimeChangeAccept(svc.Status{State: svc.Running, Accepts: acceptedControls})
+	readyEvent := (<-chan struct{})(ready)
+	startupTick := time.NewTicker(startPendingTick)
+	defer startupTick.Stop()
+	startupEvent := startupTick.C
 
 	for {
 		select {
+		case <-readyEvent:
+			readyEvent = nil
+			startupTick.Stop()
+			startupEvent = nil
+			current = svc.Status{State: svc.Running, Accepts: acceptedControls}
+			changes <- current
+			overlayTimeChangeAccept(current)
+		case <-startupEvent:
+			current.CheckPoint++
+			changes <- current
 		case err := <-errc:
+			if h.runReady != nil {
+				select {
+				case <-ready:
+				default:
+					return true, 1 // initialization ended without becoming ready
+				}
+			}
 			if err != nil && !IsCancellation(err) {
 				return true, 1
 			}
@@ -210,8 +239,10 @@ func (h *host) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<-
 		case c := <-r:
 			switch c.Cmd {
 			case svc.Interrogate:
-				changes <- c.CurrentStatus
-				go overlayTimeChangeAccept(c.CurrentStatus)
+				changes <- current
+				if current.State == svc.Running {
+					overlayTimeChangeAccept(current)
+				}
 			case svc.SessionChange:
 				// Convert the SCM EVENTDATA uintptr here, in the
 				// handler, not later. unsafe.Add is the same-expression
@@ -272,6 +303,15 @@ func RunHostNotify(run func(ctx context.Context) error, onSession func(SessionCh
 		return fmt.Errorf("nil service run function")
 	}
 	return svc.Run(ServiceName, &host{run: run, onSession: onSession, onClock: onClock})
+}
+
+// RunHostReady reports Running only after run signals listener/coordinator
+// initialization. Workload activation need not finish before that signal.
+func RunHostReady(run func(context.Context, func()) error, onSession func(SessionChange), onClock func()) error {
+	if run == nil {
+		return fmt.Errorf("nil service run function")
+	}
+	return svc.Run(ServiceName, &host{runReady: run, onSession: onSession, onClock: onClock})
 }
 
 func overlayTimeChangeAccept(st svc.Status) {
