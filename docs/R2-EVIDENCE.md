@@ -950,6 +950,22 @@ closure, administrative authorization, reserved request capacity, CLI result
 handling and old-server rejection. Raw connection saturation, full SCM/identity
 qualification and MSI servicing remain open.
 
+## September 12 bounded logon notification dispatch
+
+The session listener reserves a native-work slot and request identity before
+spawning logon work. A blocked token lookup no longer prevents processing a later
+logoff or an independent user's logon. Saturation rejects work without creating
+another goroutine and invalidates the rejected session's older pending request;
+authoritative reconciliation can repair admission after capacity returns. Stale
+requests are checked again before token lookup. Accepted workers remain visible
+to host shutdown through token cleanup.
+
+Twenty focused race repetitions cover logoff and independent logon while a lookup
+is blocked, a hundred-event flood with exactly four accepted native workers, and
+deadline/cleanup retention. Idle-user cleanup dispatch, reserved enumeration and
+policy progress, and recovery backoff remain open. This slice does not close R2
+or claim new guest qualification beyond the earlier maintenance candidate.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

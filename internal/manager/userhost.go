@@ -124,7 +124,7 @@ func (h *UserHost) Listen(ctx context.Context, ch <-chan runtime.SessionChange) 
 				return
 			}
 			if sc.Logon {
-				h.Logon(sc.SessionID)
+				h.dispatchLogon(sc.SessionID, true)
 			} else {
 				h.Logoff(sc.SessionID)
 			}
@@ -203,6 +203,12 @@ func (h *UserHost) StartLingering() {
 
 // Logon starts a user manager for the session's SID if none is running.
 func (h *UserHost) Logon(sessionID uint32) {
+	h.dispatchLogon(sessionID, false)
+}
+
+// Reserve native work before spawning. Notification storms cannot accumulate
+// unadmitted goroutines, and a blocked token lookup cannot hide later logoff.
+func (h *UserHost) dispatchLogon(sessionID uint32, asynchronous bool) {
 	if h == nil {
 		return
 	}
@@ -215,24 +221,44 @@ func (h *UserHost) Logon(sessionID uint32) {
 	}
 	h.nextSessionRequest++
 	request := h.nextSessionRequest
-	h.sessionRequests[sessionID] = request
+	work, err := h.acceptNativeUserWorkLocked()
+	if err == nil {
+		h.sessionRequests[sessionID] = request
+	} else {
+		delete(h.sessionRequests, sessionID)
+	}
 	h.mu.Unlock()
-	h.queryUserLogon(sessionID, request)
-}
-
-func (h *UserHost) queryUserLogon(sessionID uint32, request uint64) {
-	defer func() {
-		h.mu.Lock()
-		if h.sessionRequests[sessionID] == request {
-			delete(h.sessionRequests, sessionID)
-		}
-		h.mu.Unlock()
-	}()
-	work, err := h.acceptNativeUserWork()
 	if err != nil {
 		h.cfg.Logf("session %d admission: %v", sessionID, err)
 		return
 	}
+	if asynchronous {
+		go h.queryAcceptedUserLogon(sessionID, request, work)
+	} else {
+		h.queryAcceptedUserLogon(sessionID, request, work)
+	}
+}
+
+func (h *UserHost) finishSessionRequest(sessionID uint32, request uint64) {
+	h.mu.Lock()
+	if h.sessionRequests[sessionID] == request {
+		delete(h.sessionRequests, sessionID)
+	}
+	h.mu.Unlock()
+}
+
+func (h *UserHost) queryUserLogon(sessionID uint32, request uint64) {
+	work, err := h.acceptNativeUserWork()
+	if err != nil {
+		h.finishSessionRequest(sessionID, request)
+		h.cfg.Logf("session %d admission: %v", sessionID, err)
+		return
+	}
+	h.queryAcceptedUserLogon(sessionID, request, work)
+}
+
+func (h *UserHost) queryAcceptedUserLogon(sessionID uint32, request uint64, work *userNativeWork) {
+	defer h.finishSessionRequest(sessionID, request)
 	var tok *runtime.UserToken
 	defer func() {
 		if err := h.finishNativeUserWork(work, tok); err != nil {
@@ -240,10 +266,15 @@ func (h *UserHost) queryUserLogon(sessionID uint32, request uint64) {
 		}
 	}()
 	h.mu.Lock()
+	if h.closed || h.sessionRequests[sessionID] != request {
+		h.mu.Unlock()
+		return
+	}
 	revision := h.admissionRevision
 	policy := h.admission
 	h.mu.Unlock()
 	current := func() bool { return h.sessionRequests[sessionID] == request && h.admissionRevision == revision }
+	var err error
 	tok, err = h.cfg.QueryToken(sessionID)
 	if err != nil {
 		h.cfg.Logf("session %d: %v", sessionID, err)
