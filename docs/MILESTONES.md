@@ -63,7 +63,7 @@ Status: planned. Dependencies: R2. Outcome: an explicit v2 behavior contract and
 
 - [ ] **R3.1 Reference/migration:** publish `docs/UNIT-REFERENCE.md` with format marker, exact directive names/defaults, accepted/rejected features, argv grammar, and a compatibility table. Add a dry-run converter for legacy PathExists and CPU policy; never silently rewrite unit files. The accepted oneshot default changes directly to `RemainAfterExit=no`, with `yes` available explicitly; no oneshot migration layer is required.
 - [ ] **R3.2 Dependencies:** implement/test BindsTo on unexpected disappearance and PartOf stop/restart participation, including reverse members absent from the root's Wants. Document Requires versus ordering and partial transaction results.
-- [ ] **R3.3a Repeatable oneshots (priority slice):** implement completed/inactive oneshots by default and explicit RemainAfterExit. Deliver separately from graceful stop; [scope and acceptance](POST-BETA-TRACKING.md#priority-repeatable-oneshots) cover repeat invocation, overlap, ordering, failure and cleanup. Local implementation is present; merge/CI acceptance remains pending.
+- [x] **R3.3a Repeatable oneshots:** completed/inactive oneshots by default and explicit RemainAfterExit merged in PR #116 after exact-head Windows/Linux CI at `c1a87e3`. Delivered separately from graceful stop; [scope and evidence](POST-BETA-TRACKING.md#priority-repeatable-oneshots) cover repeat invocation, overlap, ordering, failure and cleanup.
 - [ ] **R3.3b Services/stop:** add ExecStop under the workload identity with tracked helper ownership, graceful deadline, forced fallback, and termination confirmation. Console/GUI signals remain deferred.
 - [ ] **R3.4 Readiness/liveness:** separate startup readiness from health/recovery; provide explicit probe/grace/threshold policies and bounded restart backoff. Tag results with invocation identity; preserve rate limits for timer/watch activations.
 - [ ] **R3.5 Native features:** expose proxy ownership/capabilities, define Windows CPU names/scales, and test retained path/registry/eventlog features against the reference. Unqualified behavior remains rejected or marked experimental.
@@ -81,6 +81,12 @@ Status: planned. Dependencies: R2, R3. Outcome: real Windows identities and sess
 - [ ] **R4.5 Linger modes:** qualify explicit headless S4U behavior and its credential limitations. Any unqualified optional credential-store mode remains disabled/experimental and is excluded from supported release claims.
 
 Initial R4.2 admission implementation reads protected machine policy, defaults to explicit admission, probes unit-file presence under a duplicated user token with bounded workers, and rejects stale admission results. Existing sessions and policy are reconciled every ten seconds. Portable/native regressions cover revocation, independent linger grants, directory presence, junction rejection, token identity, and deadline ownership. Administrative CLI/installer controls, complete recovery coordination, and real SYSTEM/session evidence remain pending; this does not close R4 or its dependencies.
+
+The next R2/R4 session slice repairs missed logoffs through authoritative session
+enumeration, rejects stale snapshots, preserves replacement sessions and linger,
+and retries retained idle cleanup. Public UserHost regressions cover those
+interleavings and fresh-token recovery after an interactive manager exits.
+Bounded recovery workers/backoff and real SYSTEM/session qualification remain open.
 
 An [external maintenance helper](../tools/maintenance/README.md) now covers the existing interactive Hermes pilot. Native testing includes injected pre-update failure/recovery, offline updater planning, a real application update with retained backups, disabled legacy-task restoration, listener ancestry, and an unchanged Windows Task Scheduler process. This is operator tooling for the pilot; it does not implement the system daemon's R4.3 maintenance barrier or qualify MSI upgrades.
 

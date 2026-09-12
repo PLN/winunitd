@@ -6,6 +6,44 @@ import (
 	"github.com/PLN/winunitd/internal/runtime"
 )
 
+// acceptUserSessions publishes one authoritative enumeration. Reserving logon
+// requests in the same decision prevents a later logoff from being overwritten
+// when the enumeration worker eventually reaches that session's token lookup.
+func (h *UserHost) acceptUserSessions(ids []uint32, epoch, revision uint64) (map[uint32]uint64, []string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed || h.nextSessionRequest != epoch || h.admissionRevision != revision {
+		return nil, nil
+	}
+	h.nextSessionRequest++ // even an empty snapshot supersedes older enumerations
+	requests := make(map[uint32]uint64, len(ids))
+	for _, id := range ids {
+		if _, duplicate := requests[id]; duplicate {
+			continue
+		}
+		h.nextSessionRequest++
+		requests[id] = h.nextSessionRequest
+		h.sessionRequests[id] = h.nextSessionRequest
+	}
+	for id := range h.sessions {
+		if _, present := requests[id]; !present {
+			delete(h.sessions, id)
+		}
+	}
+	for id := range h.sessionRequests {
+		if _, present := requests[id]; !present {
+			delete(h.sessionRequests, id)
+		}
+	}
+	// Include retained failed cleanup so a later pass retries it even though
+	// the original session mapping was already removed.
+	sids := make([]string, 0, len(h.bySID))
+	for sid := range h.bySID {
+		sids = append(sids, sid)
+	}
+	return requests, sids
+}
+
 // User-host instance decisions use h.mu and retained instance identity. The SID
 // gate serializes workers; token lookup, liveness, launch and kill stay outside
 // these decisions. Session/admission policy remains a separate migration row.

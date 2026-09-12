@@ -56,6 +56,17 @@ Do not silently preserve all-user alpha behavior by populating an allowlist or s
 
 Admission snapshots are copied and revisioned. Delayed file probes and launches recheck their session request and policy revision. Explicit revocation respects an independent linger grant; disabling that last grant cannot keep a manager through a revoked interactive session.
 
+Session reconciliation applies successful enumerations as authoritative snapshots:
+missing sessions invalidate pending token requests and release interactive ownership.
+Remaining sessions are queried before idle-manager cleanup, preserving a manager
+when another session for the same SID replaces the old one. Failed enumeration
+preserves current ownership. Snapshots overlapping newer logon/logoff, policy,
+shutdown or reconciliation decisions are discarded; later passes retry.
+Exited interactive managers obtain fresh tokens before recovery, and failed idle
+cleanup remains tracked for retry. Independent linger grants remain effective.
+This does not yet qualify native SYSTEM/session transitions or provide bounded
+concurrent recovery workers and restart backoff.
+
 The Windows probe duplicates the supplied token, impersonates it on a dedicated OS thread, resolves LocalAppData through the Windows known-folder API, and pins directory ancestors against replacement while rejecting reparse points. Four probe workers and a five-second caller deadline bound stalled probes; each pending worker retains its token, handles, and slot until cleanup succeeds. Enumeration is capped at 4,096 entries. Delegation currently rejects UNC and reparse-point paths; redirected-profile support still needs R4 qualification. No user file contents are parsed by the broker.
 
 Portable tests cover default/explicit admission, override precedence, immutable snapshots, stale probes, revocation, file-removal ownership, and separate linger grants. Windows tests cover policy ACLs, missing/empty/unrelated directories, invalid unit contents, junction rejection, impersonation identity, and timed-out workers retaining duplicated tokens and capacity. Junction tests run without a symbolic-link-privilege skip. These tests do not substitute for a real SYSTEM-to-standard-user session run or complete profile/environment qualification.
