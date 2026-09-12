@@ -446,9 +446,6 @@ func (h *UserHost) ensureRunning(sid string, tok *runtime.UserToken, stillWanted
 		SID: sid, Token: tok, Exe: h.cfg.Exe,
 		ExtraArgs: append([]string(nil), h.cfg.ExtraArgs...), Daemon: h.cfg.Daemon,
 	}
-	if tok != nil {
-		spec.Env = runtime.MergeDeterministicUserEnv(os.Environ(), tok.Info)
-	}
 	proc, err := h.cfg.Start(spec)
 	superseded := h.applyUserLaunch(sid, inst, proc, err, stillWanted)
 	if err != nil {

@@ -82,6 +82,12 @@ Status: planned. Dependencies: R2, R3. Outcome: real Windows identities and sess
 
 Initial R4.2 admission implementation reads protected machine policy, defaults to explicit admission, probes unit-file presence under a duplicated user token with bounded workers, and rejects stale admission results. Existing sessions and policy are reconciled every ten seconds. Portable/native regressions cover revocation, independent linger grants, directory presence, junction rejection, token identity, and deadline ownership. Administrative CLI/installer controls, complete recovery coordination, and real SYSTEM/session evidence remain pending; this does not close R4 or its dependencies.
 
+R4.1 launch groundwork now disables handle inheritance, obtains the default
+environment from the target token without broker variables, and resolves target
+AppData known folders. Native stream/environment and retained-cleanup regressions
+pass in the test account's session. Genuine SYSTEM-to-user launch and explicit
+profile lifetime handling remain open; this is not R4.1 acceptance.
+
 The next R2/R4 session slice repairs missed logoffs through authoritative session
 enumeration, rejects stale snapshots, preserves replacement sessions and linger,
 and retries retained idle cleanup. Public UserHost regressions cover those

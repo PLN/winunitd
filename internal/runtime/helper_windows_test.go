@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,9 +100,18 @@ func runAllocUntilKilled() {
 }
 
 func runStdioWriteHelper() {
+	var startup windows.StartupInfo
+	startupOK := windows.GetStartupInfo(&startup) == nil && startup.Flags&windows.STARTF_USESTDHANDLES == 0
 	stdoutOK := writeStdHandle(windows.STD_OUTPUT_HANDLE, []byte("um-stdout\n")) == nil
 	stderrOK := writeStdHandle(windows.STD_ERROR_HANDLE, []byte("um-stderr\n")) == nil
+	_, goOutErr := os.Stdout.WriteString("go-stdout\n")
+	_, goErrErr := os.Stderr.WriteString("go-stderr\n")
 	pipeName := os.Getenv("WINUNITD_STDIO_REPORT_PIPE")
+	for _, arg := range os.Args {
+		if value, ok := strings.CutPrefix(arg, "--stdio-report-pipe="); ok {
+			pipeName = value
+		}
+	}
 	if pipeName == "" {
 		if stdoutOK && stderrOK {
 			os.Exit(0)
@@ -123,7 +133,12 @@ func runStdioWriteHelper() {
 	if stderrOK {
 		stderr = "ok"
 	}
-	_, _ = fmt.Fprintf(c, "stdout=%s stderr=%s\n", stdout, stderr)
+	_, brokerVar := os.LookupEnv("WINUNITD_BROKER_ONLY")
+	info, infoErr := CurrentUserInfo()
+	foldersOK := infoErr == nil && info.LocalAppData != "" && info.RoamingAppData != "" &&
+		os.Getenv("LOCALAPPDATA") == info.LocalAppData && os.Getenv("APPDATA") == info.RoamingAppData
+	_, _ = fmt.Fprintf(c, "stdout=%s stderr=%s go-stdio=%t default-stdio=%t broker-env=%t folders=%t\n",
+		stdout, stderr, goOutErr == nil && goErrErr == nil, startupOK, brokerVar, foldersOK)
 }
 
 func writeStdHandle(std uint32, data []byte) error {
