@@ -174,8 +174,10 @@ before the stalled writer is released. Assertions enforce 4 MiB per invocation,
 16 MiB aggregate queued message bytes and 16,384 aggregate records, including
 the in-flight write. Separate deterministic tests cover 2,048 queued invocation
 groups, exact victim loss accounting and quiet-writer progress before noisy
-queues drain. This completes R1.4's queue/capture gate; it does not measure total
-process RSS or close R2.3/R5.3.
+queues drain. This qualifies the queue policy, but does not complete R1.4's
+combined memory/worker and status/stop responsiveness measurements under load.
+It does not measure total process RSS or close R2.3/R5.3. The milestone remains
+open until the broader acceptance criteria in issue #95 are demonstrated.
 
 The same immutable Windows artifact also passed recovery and eight stop cases
 as genuine SYSTEM and headless user on the disposable Enterprise LTSC baseline.
