@@ -85,8 +85,11 @@ Initial R4.2 admission implementation reads protected machine policy, defaults t
 R4.1 launch groundwork now disables handle inheritance, obtains the default
 environment from the target token without broker variables, and resolves target
 AppData known folders. Native stream/environment and retained-cleanup regressions
-pass in the test account's session. Genuine SYSTEM-to-user launch and explicit
-profile lifetime handling remain open; this is not R4.1 acceptance.
+pass in the test account's session. The system host now retains an explicit
+profile load and duplicated token until process-tree cleanup and unload succeed,
+including retryable cleanup after failed creation. The managed-profile path is
+limited to local machine accounts. Genuine SYSTEM-to-user launch and native
+profile-lifetime qualification remain open; this is not R4.1 acceptance.
 
 The next R2/R4 session slice repairs missed logoffs through authoritative session
 enumeration, rejects stale snapshots, preserves replacement sessions and linger,

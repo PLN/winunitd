@@ -132,6 +132,9 @@ func testUserHost(t *testing.T, sidBySession map[uint32]string, fail map[uint32]
 			if spec.Env != nil {
 				t.Error("user host must leave environment resolution to the target-token launcher")
 			}
+			if !spec.LoadProfile {
+				t.Error("system host must retain the user profile through manager cleanup")
+			}
 			return p, nil
 		},
 		Sessions: func() ([]uint32, error) { return nil, nil },

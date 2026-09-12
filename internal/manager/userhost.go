@@ -445,6 +445,7 @@ func (h *UserHost) ensureRunning(sid string, tok *runtime.UserToken, stillWanted
 	spec := runtime.UserManagerSpec{
 		SID: sid, Token: tok, Exe: h.cfg.Exe,
 		ExtraArgs: append([]string(nil), h.cfg.ExtraArgs...), Daemon: h.cfg.Daemon,
+		LoadProfile: true,
 	}
 	proc, err := h.cfg.Start(spec)
 	superseded := h.applyUserLaunch(sid, inst, proc, err, stillWanted)
