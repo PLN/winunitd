@@ -9,6 +9,9 @@ import (
 // DefaultPipeName is the system manager control pipe (DESIGN.md §30).
 const DefaultPipeName = `\\.\pipe\winunitd\control`
 
+// MaintenancePipeName reserves administrative quiescence transport capacity.
+const MaintenancePipeName = `\\.\pipe\winunitd\maintenance`
+
 // Windows ListenPipe / ListenPipeSDDL (system control, user control, and
 // notify — any pipe created the same way) set PIPE_REJECT_REMOTE_CLIENTS
 // and create the first instance only (FILE_FLAG_FIRST_PIPE_INSTANCE /

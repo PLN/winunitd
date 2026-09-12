@@ -1077,6 +1077,23 @@ identity failures, and existing real named-pipe administrator/owner checks.
 Complete SYSTEM/cross-user security and raw connection saturation qualification
 remain open; this slice does not close R4.
 
+## September 12 reserved maintenance transport
+
+The broker opens a protected maintenance-only pipe before reporting SCM
+readiness. It has independent connection/request admission and the same
+administrator/SYSTEM authorization and verified server identity as ordinary
+system control. Either listener failing cancels both serving loops. The CLI
+selects the reserved endpoint and fails on missing support rather than silently
+falling back to ordinary transport.
+
+Twenty focused race repetitions fill all 128 ordinary connections without
+sending request bytes, then perform actual manager maintenance through the
+reserved endpoint and verify closed reload admission. Endpoint tests reject
+ordinary methods and owner-only authorization. Saturation of the reserved
+endpoint itself can still reject work; ordinary stop/status requests retain
+their existing transport limits. Genuine guest qualification of this endpoint
+and the preceding authentication change remains pending.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

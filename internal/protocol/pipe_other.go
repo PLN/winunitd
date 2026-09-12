@@ -44,6 +44,10 @@ func DialDefault(ctx context.Context) (net.Conn, error) {
 	return DialPipe(ctx, DefaultPipeName)
 }
 
+func DialMaintenance(ctx context.Context) (net.Conn, error) {
+	return DialPipe(ctx, MaintenancePipeName)
+}
+
 // DialUser is only available on Windows.
 func DialUser(ctx context.Context, sid string) (net.Conn, error) {
 	return DialPipe(ctx, UserPipeName(sid))

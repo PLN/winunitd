@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 
@@ -97,6 +98,11 @@ func serveReady(ctx context.Context, baseDir string, stderr io.Writer, sessions 
 		return fmt.Errorf("listen: %w", err)
 	}
 	defer lis.Close()
+	maintenanceLis, err := protocol.ListenPipe(protocol.MaintenancePipeName)
+	if err != nil {
+		return fmt.Errorf("listen maintenance: %w", err)
+	}
+	defer maintenanceLis.Close()
 	if loadErr == nil {
 		logf("loaded %d units, listening on %s", rel.Loaded, protocol.DefaultPipeName)
 	} else {
@@ -106,10 +112,7 @@ func serveReady(ctx context.Context, baseDir string, stderr io.Writer, sessions 
 	ctrl := &manager.Control{Units: m, Users: host}
 	serverErr := make(chan error, 1)
 	go func() {
-		if ready != nil {
-			ready()
-		}
-		err := protocol.Serve(ctx, lis, ctrl, protocol.DefaultAuthorizer())
+		err := serveControlEndpoints(ctx, lis, maintenanceLis, ctrl, protocol.DefaultAuthorizer(), ready)
 		cancel() // listener failure also cancels unfinished boot work
 		serverErr <- err
 	}()
@@ -122,6 +125,20 @@ func serveReady(ctx context.Context, baseDir string, stderr io.Writer, sessions 
 	}
 	startUserReconciliation(ctx, host)
 	return <-serverErr
+}
+
+func serveControlEndpoints(ctx context.Context, control, maintenance net.Listener, handler protocol.Handler, auth protocol.Authorizer, ready func()) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make(chan error, 2)
+	go func() { results <- protocol.Serve(ctx, control, handler, auth) }()
+	go func() { results <- protocol.ServeMaintenance(ctx, maintenance, handler, auth) }()
+	if ready != nil {
+		ready()
+	}
+	first := <-results
+	cancel()
+	return errors.Join(first, <-results)
 }
 
 // The main serve path must reach finish even when initial token/account I/O is

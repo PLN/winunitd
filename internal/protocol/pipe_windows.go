@@ -93,6 +93,11 @@ func DialDefault(ctx context.Context) (net.Conn, error) {
 	return dialVerified(ctx, DefaultPipeName, verifyControlServerOwner)
 }
 
+// DialMaintenance applies the same server identity checks as system control.
+func DialMaintenance(ctx context.Context) (net.Conn, error) {
+	return dialVerified(ctx, MaintenancePipeName, verifyControlServerOwner)
+}
+
 // DialUser connects to the per-user control pipe for sid and refuses
 // unless the server process token user SID is that user-manager identity.
 func DialUser(ctx context.Context, sid string) (net.Conn, error) {
