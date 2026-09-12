@@ -37,7 +37,7 @@ Status: in progress alongside remaining supervised R0 qualification. Dependencie
 - [ ] **R1.1 Reload:** Remaining to close: consolidate the required real-process/native ownership matrix and obtain maintainer acceptance of retained status/log/stop and suppressed restart after removal. [Evidence](R1-EVIDENCE.md), [revision/trigger coverage](R2-EVIDENCE.md).
 - [ ] **R1.2 Activation:** Remaining to close: finish the post-creation failure/exit-before-attach qualification matrix jointly with R1.3; retain passing large-output/stop-during-start regressions. Completed-oneshot beta semantics remain unchanged until R3. [Evidence](R1-EVIDENCE.md).
 - [ ] **R1.3 Stop results:** Remaining to close: finish the exact-identity termination/handle-failure matrix and confirm every failed cleanup remains owned, observable and retryable. SYSTEM-to-user session qualification belongs to R4; graceful stop belongs to R3. [Evidence](R1-EVIDENCE.md).
-- [ ] **R1.4 Capture bounds:** Remaining to close: qualify fairness and bounded aggregate capture under simultaneous noisy producers and storage stalls. Overall lifecycle admission bounds belong to R2.3. [Capture, NTFS-full and query-bound evidence](R1-EVIDENCE.md).
+- [x] **R1.4 Capture bounds:** bounded aggregate queues and overload fairness qualified at `f5f4e37` by exact-source Windows/Linux race CI, focused pressure/accounting tests and simultaneous real-child producers under a storage stall. Quiet output survives noisy backlog without exceeding queue budgets. Overall lifecycle admission remains R2.3; journal file/retention bounds remain R5.3. [Evidence and limits](R1-EVIDENCE.md#september-13-aggregate-capture-fairness).
 
 Implementation history and exact qualification identities are in [R1 evidence](R1-EVIDENCE.md).
 
