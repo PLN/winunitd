@@ -102,6 +102,14 @@ For a valid changed definition, the running invocation keeps its captured config
 
 The launcher creates a suspended process, assigns its Job Object and resource policy, installs output handling, and resumes it. It returns an owned process handle promptly. The manager, not the launcher, implements readiness and oneshot completion. Main-process exit triggers teardown of remaining owned descendants before replacement. Unowned external services are handled only by their adapters.
 
+The SYSTEM broker's root job permits explicit breakaway for cross-session user
+launches. Windows jobs cannot span sessions. Such a launch atomically joins a
+separate kill-on-close job using `PROC_THREAD_ATTRIBUTE_JOB_LIST`; the broker
+retains its sole noninherited handle. A broker crash therefore also tears down
+that user tree, including a child whose launch has not returned. Same-session
+managers retain outer-job membership. Unit and user-manager jobs prohibit
+breakaway, so the broker exception does not relax workload containment.
+
 Lifecycle states remain inactive, activating, active, deactivating, and failed, with explicit substates and termination uncertainty.
 The existing beta manager uses `step` for process lifecycle events and a separate,
 identity-checked `publishStartOutcome` for explicit member results, including

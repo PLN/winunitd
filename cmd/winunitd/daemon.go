@@ -22,7 +22,7 @@ var daemonJob *runtime.DaemonJob
 func serve(ctx context.Context, baseDir string, stderr io.Writer, sessions chan runtime.SessionChange, clock <-chan struct{}) (serveErr error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	job, err := runtime.OpenDaemonJob()
+	job, err := runtime.OpenBrokerJob()
 	if err != nil {
 		return err
 	}
