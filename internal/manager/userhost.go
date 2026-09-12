@@ -52,6 +52,7 @@ type UserHost struct {
 	sessionRequests    map[uint32]uint64
 	nextSessionRequest uint64
 	nativeWork         map[*userNativeWork]struct{}
+	idleDispatch       *userIdleDispatch
 }
 
 type userInstance struct {
@@ -126,7 +127,7 @@ func (h *UserHost) Listen(ctx context.Context, ch <-chan runtime.SessionChange) 
 			if sc.Logon {
 				h.dispatchLogon(sc.SessionID, true)
 			} else {
-				h.Logoff(sc.SessionID)
+				h.queueIdleCleanup(h.recordLogoff(sc.SessionID))
 			}
 		}
 	}
@@ -332,18 +333,23 @@ func (h *UserHost) Logoff(sessionID uint32) {
 	if h == nil {
 		return
 	}
-	h.mu.Lock()
-	h.nextSessionRequest++ // invalidate any enumeration started before logoff
-	sid := h.sessions[sessionID]
-	delete(h.sessionRequests, sessionID)
-	delete(h.sessions, sessionID)
-	h.mu.Unlock()
+	sid := h.recordLogoff(sessionID)
 	if sid == "" {
 		return
 	}
 	if err := h.stopUser(context.Background(), sid, true); err != nil {
 		h.cfg.Logf("kill user manager %s: %v", sid, err)
 	}
+}
+
+func (h *UserHost) recordLogoff(sessionID uint32) string {
+	h.mu.Lock()
+	h.nextSessionRequest++ // invalidate any enumeration started before logoff
+	sid := h.sessions[sessionID]
+	delete(h.sessionRequests, sessionID)
+	delete(h.sessions, sessionID)
+	h.mu.Unlock()
+	return sid
 }
 
 func (h *UserHost) lingeringLocked(sid string) bool {
@@ -552,8 +558,16 @@ func (h *UserHost) stopUser(ctx context.Context, sid string, onlyIdle bool) erro
 		return err
 	}
 	defer unlock()
+	return h.stopUserLocked(ctx, sid, onlyIdle)
+}
+
+// Caller owns the SID gate.
+func (h *UserHost) stopUserLocked(ctx context.Context, sid string, onlyIdle bool) error {
 	h.mu.Lock()
-	if onlyIdle && !h.closed {
+	inst := h.bySID[sid]
+	// A later logon cannot cancel cleanup that already started. Finish the
+	// retained obligation before reconciliation may create its replacement.
+	if onlyIdle && !h.closed && (inst == nil || !inst.uncertain) {
 		allow, probe := h.admission.decision(sid)
 		for _, mapped := range h.sessions {
 			if mapped == sid && (allow || probe) {
@@ -566,7 +580,6 @@ func (h *UserHost) stopUser(ctx context.Context, sid string, onlyIdle bool) erro
 			return nil
 		}
 	}
-	inst := h.bySID[sid]
 	h.mu.Unlock()
 	return h.killUserInstance(ctx, sid, inst)
 }
@@ -577,10 +590,15 @@ func (h *UserHost) killUserInstance(ctx context.Context, sid string, inst *userI
 		return nil
 	}
 	proc := h.acceptUserCleanup(inst)
-	err := h.stops.wait(ctx, timers.DefaultClock(), stopKey{user: proc}, defaultStopTimeout, proc.Kill)
-	if err == nil && proc.Alive() {
-		err = fmt.Errorf("user manager remains alive after termination")
-	}
+	err := h.stops.wait(ctx, timers.DefaultClock(), stopKey{user: proc}, defaultStopTimeout, func() error {
+		if err := proc.Kill(); err != nil {
+			return err
+		}
+		if proc.Alive() {
+			return fmt.Errorf("user manager remains alive after termination")
+		}
+		return nil
+	})
 	h.applyUserCleanup(sid, inst, err)
 	return err
 }

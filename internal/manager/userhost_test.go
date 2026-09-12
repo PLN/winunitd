@@ -333,9 +333,7 @@ func TestUserHostListenLogonLogoff(t *testing.T) {
 	if starts.Load() != 1 {
 		t.Fatalf("starts = %d", starts.Load())
 	}
-	if h.Alive(testSIDA) {
-		t.Fatal("logoff should have killed the manager")
-	}
+	waitCond(t, func() bool { return !h.Alive(testSIDA) })
 }
 
 func TestFailClosedErrorIsNotPassword(t *testing.T) {

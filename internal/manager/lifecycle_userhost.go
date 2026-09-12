@@ -121,6 +121,13 @@ func (h *UserHost) acceptUserShutdown() []string {
 // Caller holds h.mu. No token, profile, filesystem or process work occurs here.
 func (h *UserHost) sealShutdownLocked() {
 	h.closed = true
+	if d := h.idleDispatch; d != nil {
+		d.cancel()
+		select {
+		case d.wake <- struct{}{}:
+		default:
+		}
+	}
 	h.sessions = make(map[uint32]string)
 	h.sessionRequests = make(map[uint32]uint64)
 }
