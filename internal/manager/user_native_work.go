@@ -23,6 +23,10 @@ type userNativeWork struct {
 func (h *UserHost) acceptNativeUserWork() (*userNativeWork, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return h.acceptNativeUserWorkLocked()
+}
+
+func (h *UserHost) acceptNativeUserWorkLocked() (*userNativeWork, error) {
 	if h.closed {
 		return nil, fmt.Errorf("user host is shutting down or closed")
 	}
