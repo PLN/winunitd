@@ -39,6 +39,14 @@ Reload keeps that captured ID; a fresh arm adopts the accepted revision.
 
 ## Control API
 
+For `Type=oneshot`, successful completion now returns the unit to inactive by
+default (`RemainAfterExit=no`), after owned process cleanup. Start again to run
+another invocation. `RemainAfterExit=yes` retains active state until stop/restart.
+Inspect the operation result to distinguish successful completion from a unit
+that has not run. See [oneshot semantics](UNIT-REFERENCE.md) for concurrency,
+reload and restart-policy details. This source behavior is newer than the
+published 0.2.1-beta default.
+
 Versioned JSON-RPC on `\\.\pipe\winunitd\control` (LocalSystem and Administrators). Production `Peer` comes from the named-pipe client token. Pipes use `PIPE_REJECT_REMOTE_CLIENTS` and first-instance-only; `winctl` verifies the server process owner after connect and refuses a squat.
 
 `winctl --user …` and `winctl <command> --user` both use `\\.\pipe\winunitd\user\<SID>\control`. Bare `winctl` stays on the system pipe. Linger admin verbs do not use `--user`.

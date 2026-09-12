@@ -36,15 +36,16 @@ func (m *Manager) launchUnitOp(ctx context.Context, name string, autoRestart boo
 }
 
 type plannedStart struct {
-	origin    activationOrigin
-	unit      *unit.Unit
-	revision  string
-	record    *unitRuntime
-	stopEpoch uint64
-	launched  bool   // adapter work was admitted before source invalidation
-	completed bool   // completion already published while holding the unit gate
-	gen       uint64 // generation at plan acceptance, for members never launched
-	launchGen uint64 // exact generation captured when this worker acquires an invocation
+	origin         activationOrigin
+	unit           *unit.Unit
+	revision       string
+	record         *unitRuntime
+	stopEpoch      uint64
+	launched       bool   // adapter work was admitted before source invalidation
+	completed      bool   // completion already published while holding the unit gate
+	gen            uint64 // generation at plan acceptance, for members never launched
+	launchGen      uint64 // exact generation captured when this worker acquires an invocation
+	joiningOneshot bool   // this plan observed an invocation already waiting for exit
 }
 
 // A transaction passes its captured definition; recovery uses ownedUnit.
@@ -208,6 +209,9 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 			cancel()
 		}
 		err := proc.Wait(waitCtx)
+		if err == nil && jobLimitHit(proc) {
+			err = errors.New(core.ReasonResourceLimit)
+		}
 		if waitCtx.Err() != nil {
 			err = fmt.Errorf("TimeoutStartSec exceeded: %w", waitCtx.Err())
 		}
@@ -218,7 +222,7 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 			if stopErr == nil && proc.Alive() {
 				stopErr = fmt.Errorf("process remains alive after stop")
 			}
-			m.applyOneshotCleanup(effect, proc, stopErr, true)
+			m.applyOneshotCleanup(effect, proc, stopErr, err)
 			go m.watch(name, proc)
 			if stopErr == nil {
 				m.maybeRestart(name, classifyWait(err), svc)
@@ -228,11 +232,25 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		// Drain the final bytes before watch closes the process's pipe handles.
 		if job := proc.Job(); job != nil {
 			if err := job.Kill(); err != nil {
-				m.applyOneshotCleanup(effect, proc, err, false)
+				m.applyOneshotCleanup(effect, proc, err, nil)
 				return err
 			}
 		}
 		m.waitJournal(name, stopTimeout(u))
+		cleanupErr := m.stopProcess(proc, stopTimeout(u))
+		if cleanupErr == nil && proc.Alive() {
+			cleanupErr = fmt.Errorf("process remains alive after oneshot cleanup")
+		}
+		cleanupErr = errors.Join(cleanupErr, m.closeNotify(name))
+		when, err := m.completeOneshot(ctx, effect, proc, cleanupErr)
+		if err != nil {
+			return err
+		}
+		if m.engine != nil {
+			m.engine.UnitActive(name, when)
+		}
+		m.maybeRestart(name, core.ExitSuccess, svc)
+		return nil
 	}
 
 	if svc.Type == unit.TypeNotify {

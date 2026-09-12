@@ -595,6 +595,7 @@ func (m *Manager) startOperation(ctx context.Context, name string, origin activa
 	for _, member := range tx.Units() {
 		if rt := m.units[member]; rt != nil {
 			definitions[member] = &plannedStart{unit: rt.unit, revision: rt.configRevision, record: rt, stopEpoch: rt.stopEpoch, gen: rt.gen, origin: origin}
+			definitions[member].joiningOneshot = !restart && rt.state == core.Activating && rt.sub == core.SubStart && rt.unit.Service != nil && rt.unit.Service.Type == unit.TypeOneshot
 			if intent, ok := origin.(*restartOrigin); ok {
 				if stopped, ok := intent.members[member]; ok {
 					definitions[member].stopEpoch = stopped.stopEpoch

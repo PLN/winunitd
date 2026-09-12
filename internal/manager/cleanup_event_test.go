@@ -51,7 +51,7 @@ func TestStaleCleanupEventCannotChangeReplacement(t *testing.T) {
 						case "readiness":
 							m.applyReadinessCleanup(effect, proc, err)
 						case "oneshot":
-							m.applyOneshotCleanup(effect, proc, err, true)
+							m.applyOneshotCleanup(effect, proc, err, errors.New("old wait failed"))
 						case "late-launch":
 							m.applyLateLaunchCleanup(effect, proc, err)
 						case "activation":

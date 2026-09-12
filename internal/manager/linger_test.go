@@ -326,7 +326,7 @@ WorkingDirectory=C:\Tools
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.ActiveState != core.Active.String() {
+	if res.ActiveState != core.Inactive.String() {
 		t.Fatalf("state = %s", res.ActiveState)
 	}
 	if len(launch.specs()) != 1 {

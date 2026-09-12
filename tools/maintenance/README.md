@@ -1,4 +1,57 @@
-# Hermes user-pilot maintenance
+# Hermes maintenance runners
+
+## Unit-hosted maintenance
+
+`hermes-unit.ps1` runs as an on-demand, unelevated user unit with
+`Type=oneshot`, `RemainAfterExit=no`, `Restart=no`, `TimeoutStartSec=7200`,
+and a suitable cleanup timeout. Its absolute `ExecStart` invokes PowerShell
+with `-NoProfile -NonInteractive -File <script> -Config <private-config> -Worker`.
+Keep the companion `hermes-pilot.ps1` beside it for shared backup, native-process
+and updater helpers. The manager must implement repeatable oneshots.
+
+The maintenance unit must have no dependency or enablement directives. Place it
+beside, outside the workload target. All three workload services must be enabled
+only under that target. Configure the existing pilot fields described below,
+plus `TargetUnit` and `MaintenanceUnit`; use a separate `StateDir` outside Hermes
+home. The legacy task-name fields remain configuration compatibility inputs,
+not a requirement to keep those registrations. Only the old runner uses them.
+
+Before switching, export and remove the three legacy Hermes tasks and the old
+maintenance task. This one-time operation can need elevation under their task
+permissions. Remove any Hermes Startup-folder entries as well. The stock updater
+can cold-start a gateway when an autostart entry exists, even if its task is
+disabled. Routine unit maintenance rejects such entries and runs without admin
+rights; the updater itself is never elevated.
+
+Use `-Action Plan`/`Status` for inspection. `Rehearse`, `FailAfterStop`, `Update`
+and `Recover` queue a durable request, then start the maintenance unit through
+the user `winctl`. The client confirms that the worker accepted the request and
+may exit. The worker lock and pending request prevent overlapping transactions.
+`Rehearse` stops/restarts workloads but invokes only stock `update --plan`.
+`Update` invokes stock `update --yes --backup`; it does not update winunitd.
+
+The worker records source/binary/manager identity and unit definitions, disables
+the workload target's boot enablement, then explicitly stops that target.
+winunitd and its recovery mechanism remain running. After backup/update and
+listener/ownership checks, it restores the target's original enablement. If the
+manager dies mid-update, the disabled target remains a persistent boot hold;
+the maintenance unit is not enabled at boot and will not replay the updater.
+This does not prevent an operator from explicitly starting the target: do not
+bypass a pending maintenance hold.
+
+Pre-mutation failures attempt workload recovery. Post-mutation failures keep the
+target disabled and stop any partially recovered workloads. Inspect the durable
+result, backups and installed state before manual recovery; `Recover` refuses
+when mutation started. Explicit pre-mutation recovery can use a replacement
+manager after a restart. Configuration/code rollback remains an operator action.
+
+Tests: run `hermes-unit-tests.ps1` for transaction ordering, persistent hold and
+failure outcomes, plus the legacy tests for shared helpers. Local native
+rehearsal evidence belongs in the private operator workspace. These tests do not
+qualify a Hermes version upgrade, reboot recovery, SCM migration or a global
+manager maintenance barrier.
+
+## Legacy scheduled-task maintenance
 
 `hermes-pilot.ps1` coordinates maintenance of an existing, directly launched
 interactive-user pilot. This is operator tooling, not the future system-daemon

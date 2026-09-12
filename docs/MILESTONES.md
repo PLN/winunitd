@@ -61,9 +61,10 @@ Exit gate: each invariant in Design v2 §3 has a test/evidence mapping. Start/st
 
 Status: planned. Dependencies: R2. Outcome: an explicit v2 behavior contract and controlled migration from alpha semantics.
 
-- [ ] **R3.1 Reference/migration:** publish `docs/UNIT-REFERENCE.md` with format marker, exact directive names/defaults, accepted/rejected features, argv grammar, and a compatibility table. Add a dry-run converter for legacy PathExists, CPU policy, and oneshot behavior; never silently rewrite unit files.
+- [ ] **R3.1 Reference/migration:** publish `docs/UNIT-REFERENCE.md` with format marker, exact directive names/defaults, accepted/rejected features, argv grammar, and a compatibility table. Add a dry-run converter for legacy PathExists and CPU policy; never silently rewrite unit files. The accepted oneshot default changes directly to `RemainAfterExit=no`, with `yes` available explicitly; no oneshot migration layer is required.
 - [ ] **R3.2 Dependencies:** implement/test BindsTo on unexpected disappearance and PartOf stop/restart participation, including reverse members absent from the root's Wants. Document Requires versus ordering and partial transaction results.
-- [ ] **R3.3 Services/stop:** implement default completed/inactive oneshots and explicit RemainAfterExit; add ExecStop under the workload identity with tracked helper ownership, graceful deadline, forced fallback, and termination confirmation. Console/GUI signals remain deferred.
+- [ ] **R3.3a Repeatable oneshots (priority slice):** implement completed/inactive oneshots by default and explicit RemainAfterExit. Deliver separately from graceful stop; [scope and acceptance](POST-BETA-TRACKING.md#priority-repeatable-oneshots) cover repeat invocation, overlap, ordering, failure and cleanup. Local implementation is present; merge/CI acceptance remains pending.
+- [ ] **R3.3b Services/stop:** add ExecStop under the workload identity with tracked helper ownership, graceful deadline, forced fallback, and termination confirmation. Console/GUI signals remain deferred.
 - [ ] **R3.4 Readiness/liveness:** separate startup readiness from health/recovery; provide explicit probe/grace/threshold policies and bounded restart backoff. Tag results with invocation identity; preserve rate limits for timer/watch activations.
 - [ ] **R3.5 Native features:** expose proxy ownership/capabilities, define Windows CPU names/scales, and test retained path/registry/eventlog features against the reference. Unqualified behavior remains rejected or marked experimental.
 

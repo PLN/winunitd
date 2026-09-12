@@ -49,7 +49,9 @@ jobs:
 
       - name: Maintenance transaction tests
         shell: powershell
-        run: ./tools/maintenance/hermes-pilot-tests.ps1
+        run: |
+          ./tools/maintenance/hermes-pilot-tests.ps1
+          ./tools/maintenance/hermes-unit-tests.ps1
 
       - name: Build
         run: go run ./tools/build

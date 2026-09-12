@@ -100,6 +100,7 @@ and `%NAME%` are not substituted.
 | Unit: `PartOf` | Reverse stop/restart participation; restart restores active/activating members, leaving otherwise unselected idle members inactive |
 | Unit: `StartLimitIntervalSec`, `StartLimitBurst` | Defaults 10s / 5; burst 0 disables the limit; explicit start resets the budget |
 | Service: `Type` | Default simple; simple launches a process; notify waits for readiness; oneshot waits for exit; proxies described below |
+| Service: `RemainAfterExit` | oneshot only; no (default) finishes inactive after success; yes retains active state |
 | Service: `ExecStart`, `ExecStartArg`, `WorkingDirectory`, `Environment` | Arguments/environment rules above |
 | Service: `Restart` | no (default), on-failure, always, on-watchdog |
 | Service: `RestartSec` | Recovery delay; default 100ms; setting 2s is a practical application default |
@@ -114,10 +115,19 @@ dependent must wait for required startup. A failed transaction does not roll bac
 every member that already started.
 
 Stop currently terminates the owned process job. No `ExecStop` or graceful signal
-is implemented. A successful oneshot currently remains logically active after
-its process exits; stop/restart resets it. `RemainAfterExit` is not accepted.
-These existing behaviors are preserved for this beta, not silently changed to
-the proposed v2 defaults.
+is implemented. A successful oneshot finishes inactive by default, after output
+drain and owned process cleanup. Its start operation succeeds even though the
+unit is inactive, so ordered dependents can proceed. A subsequent start runs it
+again; concurrent compatible explicit starts share one operation rather than
+queueing another run. `RemainAfterExit=yes` keeps the completed unit active;
+start is then a no-op, and stop followed by start (or restart) runs it again.
+Reload does not change the completion policy of an existing invocation.
+
+This changes the pre-feature beta default directly: omitted `RemainAfterExit`
+now means `no`. Use `yes` when completed work should remain active. There is no
+format-version switch or automatic unit rewrite. Other service types reject this
+directive. Existing `Restart=always` behavior for oneshots remains supported;
+use `Restart=no` for on-demand maintenance that must not retry automatically.
 
 ## Additional accepted directives and experimental capabilities
 
@@ -161,7 +171,7 @@ details are in [the notify documentation](../README.md#notify-and-watchdog).
 
 ## Unsupported syntax and updates
 
-`ExecStop`, `RemainAfterExit`, `User`, `Group`, `EnvironmentFile`, `SessionMode`,
+`ExecStop`, `User`, `Group`, `EnvironmentFile`, `SessionMode`,
 `SessionPolicy`, `RestartMaxDelaySec`, `RestartBackoff`, and unknown directives
 are rejected. Do not copy a Linux systemd unit without checking this reference.
 

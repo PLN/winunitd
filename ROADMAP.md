@@ -27,7 +27,14 @@ Keep Go, the portable core and Windows adapters, one SCM system manager, per-use
 5. Bound logs, triggers, and restart activity; make persistence failures observable.
 6. Prove installation, servicing, and the Hermes migration before a public installation release.
 
-Feature expansion is paused through the stabilization milestones. Existing triggers, proxies, and resource controls are retained, tested, and corrected; their presence does not establish release qualification. New language implementations, remote control, and generic plugin infrastructure are outside this iteration.
+The prioritized semantic slice is repeatable `Type=oneshot` execution with
+`RemainAfterExit=no` by default, split from R3.3 graceful-stop work. This enables
+on-demand maintenance units that return inactive after successful completion.
+See [scope and acceptance](docs/POST-BETA-TRACKING.md#priority-repeatable-oneshots).
+Existing ownership/cancellation invariants still apply. The default changes
+directly, without a versioned migration; `RemainAfterExit=yes` retains active state.
+
+Other feature expansion is paused through the stabilization milestones. Existing triggers, proxies, and resource controls are retained, tested, and corrected; their presence does not establish release qualification. New language implementations, remote control, and generic plugin infrastructure are outside this iteration.
 
 ## Milestone sequence
 
