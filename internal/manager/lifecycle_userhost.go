@@ -78,7 +78,7 @@ func (h *UserHost) inspectUserLaunch(sid string, wanted func() bool) (*userInsta
 	return inst, nil
 }
 
-func (h *UserHost) acceptUserLaunch(sid string, wanted func() bool) (*userInstance, error) {
+func (h *UserHost) acceptUserLaunch(sid, mode string, session uint32, wanted func() bool) (*userInstance, error) {
 	now := h.cfg.Now()
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -95,16 +95,21 @@ func (h *UserHost) acceptUserLaunch(sid string, wanted func() bool) (*userInstan
 		}
 	}
 	delay := userRecoveryDelay(previous, now)
-	inst := &userInstance{sid: sid, restartDelay: delay, nextStart: now.Add(delay)}
+	inst := &userInstance{sid: sid, mode: mode, session: session, restartDelay: delay, nextStart: now.Add(delay)}
 	h.bySID[sid] = inst // shutdown retains accepted work even before process creation
 	return inst, nil
 }
 
 func (h *UserHost) applyUserLaunch(sid string, inst *userInstance, proc runtime.UserManagerProc, err error, wanted func() bool) bool {
+	pid := 0
+	if proc != nil {
+		pid = proc.PID()
+	}
 	now := h.cfg.Now()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	inst.proc = proc // even a failed or superseded creation remains owned
+	inst.pid = pid
 	superseded := h.closed || h.bySID[sid] != inst || !wanted()
 	inst.nextStart = now.Add(inst.restartDelay)
 	if err != nil {
@@ -141,6 +146,7 @@ func (h *UserHost) applyUserCleanup(sid string, inst *userInstance, err error, r
 	if err == nil {
 		if retainRecovery && !h.closed {
 			inst.proc = nil
+			inst.pid = 0
 			inst.uncertain = false
 			inst.err = "user manager exited; awaiting recovery"
 		} else {

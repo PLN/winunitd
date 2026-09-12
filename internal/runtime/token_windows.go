@@ -26,7 +26,7 @@ func QueryUserToken(sessionID uint32) (*UserToken, error) {
 		return nil, failClosed(sessionID, err)
 	}
 	info, err := userInfoFromToken(tok)
-	owner := &UserToken{Info: info, native: winToken(tok)}
+	owner := &UserToken{Info: info, SessionID: sessionID, native: winToken(tok)}
 	if err != nil {
 		if closeErr := owner.Close(); closeErr != nil {
 			return owner, errors.Join(failClosed(sessionID, err), fmt.Errorf("token lookup cleanup: %w", closeErr))

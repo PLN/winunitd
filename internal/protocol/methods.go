@@ -138,7 +138,19 @@ type MachineStatus struct {
 	Lingering      int                  `json:"lingering,omitempty"`
 	UserNativeWork int                  `json:"userNativeWork,omitempty"`
 	UserRecovery   []UserRecoveryStatus `json:"userRecovery,omitempty"`
+	UserInstances  []UserManagerStatus  `json:"userInstances,omitempty"`
 	Maintenance    *MaintenanceResult   `json:"maintenance,omitempty"`
+}
+
+// UserManagerStatus is a copied user-host decision, not a fresh kernel query.
+// Mode/session identify the selected token and do not follow later logons.
+type UserManagerStatus struct {
+	SID                 string `json:"sid"`
+	Mode                string `json:"mode,omitempty"`
+	SessionID           uint32 `json:"sessionId"`
+	PID                 int    `json:"pid,omitempty"`
+	State               string `json:"state"`
+	InteractiveSessions int    `json:"interactiveSessions"`
 }
 
 type UserRecoveryStatus struct {

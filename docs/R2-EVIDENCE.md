@@ -1144,3 +1144,18 @@ Go's deadlock detector. The affected ordinary and race tests both pass repeatedl
 API contracts: [automatic profile launch](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createprocesswithtokenw)
 and [exclusive station creation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-createwindowstationw).
 Complete production/session/security/servicing qualification remains required.
+
+## September 12 selected user-manager mode diagnostics
+
+User launch decisions retain mode, selected session and the returned process PID.
+System status copies bounded user instances, running/recovery counts and pending
+native-work count together under the user-host mutex. It does not call process
+liveness or PID methods while producing that snapshot. RecoveryStatus uses the
+same decision projection. Disk linger-grant counting remains a separate operation.
+
+Tests cover a headless manager surviving later logon/logoff without a mode change,
+a fresh interactive launch after cleanup, linger toggles preserving that mode,
+snapshot independence, and a real Control status request while the injected
+process liveness method blocks. CLI output includes the selected mode/session and
+current session count. These are recorded decisions, not new process identities
+or fresh native liveness evidence; the complete R2/R4 matrices remain open.

@@ -229,3 +229,15 @@ Headless launch requires a session-zero SYSTEM broker in its verified root job.
 The suspended user process must inherit that job and join its dedicated job
 before resuming. Interactive managers continue to use WTS tokens and Windows'
 interactive profile ownership. Managed profiles currently require local accounts.
+
+System status includes `userInstances`: the user-host's last accepted per-SID
+state, selected launch mode (`interactive`, `headless-s4u`, or experimental
+`headless-store-uri`), selected session ID, manager PID, and current interactive
+session count. These copied decisions are updated by reconciliation; they are
+not a fresh kernel liveness query. PID/session observations do not authorize
+process termination. Recovery entries retain their retry/error diagnostics.
+
+A later logon or linger toggle does not replace a running manager's chosen mode.
+An explicit manager restart selects a fresh suitable token. An interactive
+manager may still report its original selected session after that session leaves;
+this is distinct from the current session count. Cleanup removes its record.
