@@ -14,7 +14,7 @@ func (h *UserHost) RecoveryStatus() []protocol.UserRecoveryStatus {
 
 // Linger has a known SID before native token acquisition. Retain failures in
 // the same bounded record budget, without overwriting a concurrent launch.
-func (h *UserHost) recordLingerTokenFailure(sid string, err error) {
+func (h *UserHost) recordLingerTokenFailure(sid string, revision uint64, err error) {
 	unlock, ok := h.ops.tryLock(sid)
 	if !ok {
 		return
@@ -23,7 +23,7 @@ func (h *UserHost) recordLingerTokenFailure(sid string, err error) {
 	now := h.cfg.Now()
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.closed || !h.lingeringLocked(sid) {
+	if h.closed || h.lingerRevision != revision || !h.lingeringLocked(sid) {
 		return
 	}
 	previous := h.bySID[sid]

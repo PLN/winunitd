@@ -53,7 +53,9 @@ func (c *Control) Handle(ctx context.Context, method string, params json.RawMess
 		if ok && sr != nil && sr.Machine != nil && c.Users != nil {
 			users := c.Users.decisionSnapshot()
 			sr.Machine.UserManagers = users.running
-			sr.Machine.Lingering = c.Users.LingerCount()
+			sr.Machine.Lingering = users.lingering
+			sr.Machine.LingerState = users.lingerState
+			sr.Machine.LingerError = users.lingerError
 			sr.Machine.UserNativeWork = users.native
 			sr.Machine.UserRecovery = users.recovery
 			sr.Machine.UserInstances = users.instances

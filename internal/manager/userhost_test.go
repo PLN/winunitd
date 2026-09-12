@@ -617,6 +617,9 @@ func TestUserHostRejectsLingerTokenAfterDisable(t *testing.T) {
 	if err := store.Put(rec); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := h.refreshLingerRecords(); err != nil {
+		t.Fatal(err)
+	}
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	unblock := func() { once.Do(func() { close(release) }) }

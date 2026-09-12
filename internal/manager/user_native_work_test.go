@@ -171,6 +171,7 @@ func TestUserHostLingerErrorRetainsTokenCleanup(t *testing.T) {
 			return nil
 		},
 	})
+	h.lingerRecords[testSIDA] = runtime.LingerRecord{SID: testSIDA}
 	err := h.startLinger(runtime.LingerRecord{SID: testSIDA})
 	if !errors.Is(err, lookupErr) || !errors.Is(err, closeErr) || h.NativeWorkCount() != 1 {
 		t.Fatalf("cleanup obligation lost: %v", err)
