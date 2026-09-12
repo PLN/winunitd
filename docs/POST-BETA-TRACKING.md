@@ -42,10 +42,15 @@ The following issues make the next work visible without replacing the full gates
 | R5 | [R5.1: Make persistent timer state atomic and failures observable](https://github.com/PLN/winunitd/issues/99) |
 
 The R2.4 operation-lifetime slice is implemented; see [behavior and limits](OPERATIONS.md).
-Repeatable oneshots are merged (below). The next focused slice repairs user-session reconciliation toward R4; remaining
-R2.1-R2.2 state-writer/coordinator work continues in #96. Graceful stop, semantic migration,
-SYSTEM/user qualification, full MSI servicing and signing keep their separate
-gates. Successful beta installation and maintenance tests do not close them.
+Repeatable oneshots are merged (below). As of September 13, tracked ExecStop,
+user-session reconciliation/recovery, SCM readiness and global maintenance are
+also implemented. Native SYSTEM/interactive and headless-user results have
+expanded; see [R2 evidence](R2-EVIDENCE.md), [stop evidence](R3-EVIDENCE.md) and
+the [maintenance contract](OPERATIONS.md#global-maintenance). Remaining
+R2.1-R2.2 state-writer/coordinator work continues in #96. Semantic migration,
+the full session/security matrix, MSI servicing and signing retain their
+separate gates. The live pilot handoff and seven-day soak have not begun;
+successful beta installation and selected runtime tests do not close them.
 
 ## Priority: repeatable oneshots
 

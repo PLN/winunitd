@@ -112,7 +112,7 @@ passes alongside these injected rearm tests.
 Five aggregate-pressure repetitions filled the 16 MiB shared queue using five independent capture groups while storage was stalled. Each group stayed within 4 MiB, quiet-unit loss was counted, all queued bytes drained after recovery, and subsequent quiet output persisted. These historical checks exposed the former drop-new policy's limit: several noisy invocations can crowd out a quiet one at total saturation. The single-invocation cap is not a per-unit fairness guarantee.
 
 - Windows identity/session scenarios and broader installer qualification remain open.
-- Journal qualification still needs aggregate overload fairness and lifecycle admission bounds; actual volume exhaustion passed on Server Core and injected read stalls preserve bounded worker admission.
+- Aggregate overload fairness is qualified below. Lifecycle admission and journal file/retention bounds remain open; actual volume exhaustion passed on Server Core and injected read stalls preserve bounded worker admission.
 - Immutable configuration revisions and stale-event handling remain R2 work; service stop semantics remain R3 work.
 
 ## Delivered implementation detail
@@ -165,3 +165,27 @@ quiet output survives, queue limits hold, and owned captures complete afterward.
 The full Windows race suite also passes, including previous storage-fault and
 process-capture regressions. These checks qualify the queue policy; complete
 journal file/retention and native failure matrices remain open.
+
+Exact-source [Windows/Linux CI](https://github.com/PLN/winunitd/actions/runs/34723049847)
+passed at `f5f4e37ccd40079d6ceb69c9d07d8e52bcbf433c`, merged in PR #154.
+The real-child fixture produces 8.5 MiB across stdout/stderr per noisy child
+(42.5 MiB total), with five children and a subsequent quiet child all exiting
+before the stalled writer is released. Assertions enforce 4 MiB per invocation,
+16 MiB aggregate queued message bytes and 16,384 aggregate records, including
+the in-flight write. Separate deterministic tests cover 2,048 queued invocation
+groups, exact victim loss accounting and quiet-writer progress before noisy
+queues drain. This completes R1.4's queue/capture gate; it does not measure total
+process RSS or close R2.3/R5.3.
+
+The same immutable Windows artifact also passed recovery and eight stop cases
+as genuine SYSTEM and headless user on the disposable Enterprise LTSC baseline.
+Cooperative stops took 1.176/1.202 seconds; forced helper/main/descendant cleanup
+took 8.035/8.039 seconds within a 10-second budget. Repeatable/retained oneshots,
+captured output/context, explicit retry ownership and no helper replay remained
+covered by the automated suite; the native cases verified successful cleanup
+and journal metadata. Pending timer intent survived broker crash with the same
+activation ID in 2.359 seconds, and a second restart did not replay completion.
+The activating user oneshot queried its own accepted PID/operation snapshot.
+Final disable-linger released the user manager/helper/profile with no
+resurrection. Raw scripts, results, CI identity, manifest and hashes are retained
+privately. This selected native matrix does not qualify MSI servicing or R7.
