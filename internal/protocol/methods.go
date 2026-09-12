@@ -109,13 +109,14 @@ type StatusResult struct {
 type MachineStatus struct {
 	ConfigRevision string `json:"configRevision,omitempty"`
 
-	State        string `json:"state"`
-	UnitsLoaded  int    `json:"unitsLoaded"`
-	UnitsActive  int    `json:"unitsActive"`
-	UnitsFailed  int    `json:"unitsFailed"`
-	TimersLoaded int    `json:"timersLoaded"`
-	UserManagers int    `json:"userManagers,omitempty"`
-	Lingering    int    `json:"lingering,omitempty"`
+	State          string `json:"state"`
+	UnitsLoaded    int    `json:"unitsLoaded"`
+	UnitsActive    int    `json:"unitsActive"`
+	UnitsFailed    int    `json:"unitsFailed"`
+	TimersLoaded   int    `json:"timersLoaded"`
+	UserManagers   int    `json:"userManagers,omitempty"`
+	Lingering      int    `json:"lingering,omitempty"`
+	UserNativeWork int    `json:"userNativeWork,omitempty"`
 }
 
 // UnitStatus is one loaded unit (DESIGN.md §24, §45). MainPID is set when

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
@@ -24,6 +25,7 @@ type UserHostConfig struct {
 	ExtraArgs      []string
 	Daemon         *runtime.DaemonJob
 	QueryToken     runtime.TokenSource
+	CloseToken     func(*runtime.UserToken) error
 	Start          runtime.UserManagerLauncher
 	Sessions       runtime.SessionEnumerator
 	LingerDir      string
@@ -48,6 +50,7 @@ type UserHost struct {
 	sessions           map[uint32]string // session ID -> SID
 	sessionRequests    map[uint32]uint64
 	nextSessionRequest uint64
+	nativeWork         map[*userNativeWork]struct{}
 }
 
 type userInstance struct {
@@ -61,6 +64,9 @@ type userInstance struct {
 func NewUserHost(cfg UserHostConfig) *UserHost {
 	if cfg.QueryToken == nil {
 		cfg.QueryToken = runtime.QueryUserToken
+	}
+	if cfg.CloseToken == nil {
+		cfg.CloseToken = (*runtime.UserToken).Close
 	}
 	if cfg.Start == nil {
 		cfg.Start = runtime.StartUserManager
@@ -131,14 +137,25 @@ func (h *UserHost) Reconcile() {
 	if h == nil || h.cfg.Sessions == nil {
 		return
 	}
+	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), time.Second)
+	if err := h.cleanupNativeUserWork(cleanupCtx, false); err != nil {
+		h.cfg.Logf("retry user token cleanup: %v", err)
+	}
+	cancelCleanup()
+	work, err := h.acceptNativeUserWork()
+	if err != nil {
+		return
+	}
 	h.mu.Lock()
 	if h.closed {
 		h.mu.Unlock()
+		_ = h.finishNativeUserWork(work, nil)
 		return
 	}
 	epoch, revision := h.nextSessionRequest, h.admissionRevision
 	h.mu.Unlock()
 	ids, err := h.cfg.Sessions()
+	_ = h.finishNativeUserWork(work, nil)
 	if err != nil {
 		h.cfg.Logf("enumerate sessions: %v", err)
 		return
@@ -205,12 +222,23 @@ func (h *UserHost) queryUserLogon(sessionID uint32, request uint64) {
 		}
 		h.mu.Unlock()
 	}()
+	work, err := h.acceptNativeUserWork()
+	if err != nil {
+		h.cfg.Logf("session %d admission: %v", sessionID, err)
+		return
+	}
+	var tok *runtime.UserToken
+	defer func() {
+		if err := h.finishNativeUserWork(work, tok); err != nil {
+			h.cfg.Logf("session %d token cleanup: %v", sessionID, err)
+		}
+	}()
 	h.mu.Lock()
 	revision := h.admissionRevision
 	policy := h.admission
 	h.mu.Unlock()
 	current := func() bool { return h.sessionRequests[sessionID] == request && h.admissionRevision == revision }
-	tok, err := h.cfg.QueryToken(sessionID)
+	tok, err = h.cfg.QueryToken(sessionID)
 	if err != nil {
 		h.cfg.Logf("session %d: %v", sessionID, err)
 		return
@@ -219,7 +247,6 @@ func (h *UserHost) queryUserLogon(sessionID uint32, request uint64) {
 		h.cfg.Logf("session %d: missing user token", sessionID)
 		return
 	}
-	defer tok.Close()
 	sid := tok.Info.SID
 	if sid == "" {
 		sid = h.sidFromToken(tok)
@@ -404,16 +431,21 @@ func (h *UserHost) resolve(user string) (runtime.LingerRecord, error) {
 	return rec, nil
 }
 
-func (h *UserHost) startLinger(rec runtime.LingerRecord) error {
+func (h *UserHost) startLinger(rec runtime.LingerRecord) (startErr error) {
 	if h.cfg.LingerToken == nil {
 		return runtime.ErrNoLingerToken
 	}
-	tok, err := h.cfg.LingerToken(rec)
+	work, err := h.acceptNativeUserWork()
+	if err != nil {
+		return err
+	}
+	var tok *runtime.UserToken
+	defer func() { startErr = errors.Join(startErr, h.finishNativeUserWork(work, tok)) }()
+	tok, err = h.cfg.LingerToken(rec)
 	if err != nil {
 		return err
 	}
 	if tok != nil {
-		defer tok.Close()
 		if tok.Source != "" {
 			h.cfg.Logf("linger token for %s via %s", rec.SID, tok.Source)
 		}
@@ -567,6 +599,7 @@ func (h *UserHost) Shutdown(ctx context.Context) error {
 			result = errors.Join(result, err)
 		}
 	}
+	result = errors.Join(result, h.drainNativeUserWork(ctx))
 	return errors.Join(result, ctx.Err())
 }
 

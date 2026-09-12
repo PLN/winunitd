@@ -26,18 +26,21 @@ type UserToken struct {
 	native io.Closer
 }
 
-// Close releases the native token handle.
+// Close releases the native token handle. Failure retains ownership for retry.
 func (t *UserToken) Close() error {
 	if t == nil || t.native == nil {
 		return nil
 	}
-	err := t.native.Close()
+	if err := t.native.Close(); err != nil {
+		return err
+	}
 	t.native = nil
-	return err
+	return nil
 }
 
 // TokenSource returns a user token for a session. The production
-// implementation is WTSQueryUserToken only.
+// implementation is WTSQueryUserToken only. A non-nil token returned with an
+// error transfers unfinished cleanup ownership; callers must close it too.
 type TokenSource func(sessionID uint32) (*UserToken, error)
 
 func failClosed(sessionID uint32, err error) error {

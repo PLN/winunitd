@@ -148,8 +148,11 @@ func TestUserHostReconcileRejectsStaleEnumeration(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "shutdown":
-				if err := h.Shutdown(context.Background()); err != nil {
-					t.Fatal(err)
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+				err := h.Shutdown(ctx)
+				cancel()
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Errorf("shutdown must retain the blocked enumeration: %v", err)
 				}
 			case "reconcile":
 				h.Reconcile()

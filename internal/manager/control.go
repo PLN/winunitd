@@ -43,6 +43,7 @@ func (c *Control) Handle(ctx context.Context, method string, params json.RawMess
 		if ok && sr != nil && sr.Machine != nil && c.Users != nil {
 			sr.Machine.UserManagers = len(c.Users.Running())
 			sr.Machine.Lingering = c.Users.LingerCount()
+			sr.Machine.UserNativeWork = c.Users.NativeWorkCount()
 		}
 		return res, nil
 	default:
