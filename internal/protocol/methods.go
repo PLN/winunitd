@@ -6,6 +6,7 @@ const (
 	MethodStop            = "stop"
 	MethodRestart         = "restart"
 	MethodStatus          = "status"
+	MethodSnapshot        = "snapshot"
 	MethodEnable          = "enable"
 	MethodDisable         = "disable"
 	MethodListUnits       = "list-units"
@@ -26,6 +27,7 @@ var Methods = []string{
 	MethodStop,
 	MethodRestart,
 	MethodStatus,
+	MethodSnapshot,
 	MethodEnable,
 	MethodDisable,
 	MethodListUnits,

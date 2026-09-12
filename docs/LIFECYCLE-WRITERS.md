@@ -49,7 +49,10 @@ writes as well as state/substate assignment when migrating each row.
 Status assembly in manager.go copies lifecycle records and the PID accepted at
 process adoption together under m.mu. It never queries process liveness while
 building status or list-units. Journal/timer/native-proxy observations are still
-overlaid outside m.mu; immutable aggregate coordinator snapshots remain open.
+overlaid outside m.mu. The separate `snapshot` method publishes a bounded,
+immutable manager-local aggregate of units and active operations under that same
+decision lock, with no observation overlays. User-host decisions remain a separate
+snapshot domain; coordinator-wide identity/event coverage remains open.
 Native query results can describe a different observation time from the copied
 manager fields; retaining the existing response format does not close R2.1.
 

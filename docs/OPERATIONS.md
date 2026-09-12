@@ -101,6 +101,23 @@ cleanup identifies the owned invocation and does not establish that its main
 process is still running. Native proxy, timer and journal observations remain
 separate from that manager decision snapshot.
 
+`winctl snapshot` (also `--user`) prints a JSON copy of one manager's accepted
+unit states and active operations, captured together under its decision lock.
+It includes manager identity, capture sequence/time, machine counts, configuration
+and invocation identities, owned PIDs, cleanup classes and operation IDs. Sequence
+orders captures within that manager lifetime; it is not a lifecycle revision.
+Later completions and reloads cannot alter a published result, and editing the
+returned data cannot mutate manager state.
+
+Snapshot performs no native queries or worker dispatch. It excludes journal,
+timer-engine, native-proxy and separate user-host observations; ordinary status
+commands provide those independent views. Its armed revision covers watches held
+in the manager record, not a later timer-engine observation. Completed operation
+history remains available through `operation ID`. A snapshot exceeding 1024 units,
+128 active operations or 512 KiB fails explicitly; it never truncates a complete
+view into apparent success. Use individual status/operation queries above those
+bounds. Snapshot captures do not retain additional history in the manager.
+
 Accepted stop and restart invalidate pending activation and suppress recovery for
 their complete captured stop scope before dispatching ordered teardown workers.
 Plan validation and capacity rejection happen before this change in eligibility. Manager shutdown/close also cancels accepted starts and

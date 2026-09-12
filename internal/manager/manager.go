@@ -60,6 +60,7 @@ type Manager struct {
 	stops                stopSet
 	closePending         []unitTeardown
 	stopHelpers          map[*stopHelperWork]struct{}
+	snapshotSequence     uint64
 }
 
 // New creates a manager. Reload must be called to load units.
@@ -264,6 +265,12 @@ func (m *Manager) Handle(ctx context.Context, method string, params json.RawMess
 			return nil, err
 		}
 		return m.ListUnits()
+	case protocol.MethodSnapshot:
+		var p struct{}
+		if err := protocol.DecodeParams(params, &p); err != nil {
+			return nil, err
+		}
+		return m.Snapshot()
 	case protocol.MethodListTimers:
 		var p protocol.ListTimersParams
 		if err := protocol.DecodeParams(params, &p); err != nil {
