@@ -110,12 +110,17 @@ func (h *UserHost) applyUserCleanup(sid string, inst *userInstance, err error) {
 func (h *UserHost) acceptUserShutdown() []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.closed = true
+	h.sealShutdownLocked()
 	sids := make([]string, 0, len(h.bySID))
 	for sid := range h.bySID {
 		sids = append(sids, sid)
 	}
+	return sids
+}
+
+// Caller holds h.mu. No token, profile, filesystem or process work occurs here.
+func (h *UserHost) sealShutdownLocked() {
+	h.closed = true
 	h.sessions = make(map[uint32]string)
 	h.sessionRequests = make(map[uint32]uint64)
-	return sids
 }

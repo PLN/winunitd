@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/PLN/winunitd/internal/protocol"
@@ -592,15 +593,20 @@ func (h *UserHost) Shutdown(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	sids := h.acceptUserShutdown()
-	var result error
-	for _, sid := range sids {
-		if err := h.stopUser(ctx, sid, false); err != nil {
-			result = errors.Join(result, err)
+	h.mu.Lock()
+	h.sealShutdownLocked()
+	h.mu.Unlock()
+	for {
+		var ownsPass atomic.Bool
+		err := h.stops.wait(ctx, timers.DefaultClock(), stopKey{userShutdown: h}, 0, func() error {
+			ownsPass.Store(true)
+			return h.shutdownPass(ctx)
+		})
+		if ctx.Err() == nil && !ownsPass.Load() && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
+			continue
 		}
+		return errors.Join(err, ctx.Err())
 	}
-	result = errors.Join(result, h.drainNativeUserWork(ctx))
-	return errors.Join(result, ctx.Err())
 }
 
 // ManagerCount is the number of tracked user managers (live or not yet reaped).
