@@ -109,7 +109,7 @@ resources receive cleanup, failed cleanup remains retryable, and successful
 closes are not repeated. The protected-native-handle partial-open regression
 passes alongside these injected rearm tests.
 
-Five aggregate-pressure repetitions filled the 16 MiB shared queue using five independent capture groups while storage was stalled. Each group stayed within 4 MiB, quiet-unit loss was counted, all queued bytes drained after recovery, and subsequent quiet output persisted. This confirms the current drop-new policy's limit: several noisy invocations can crowd out a quiet one at total saturation. The single-invocation cap is not a per-unit fairness guarantee.
+Five aggregate-pressure repetitions filled the 16 MiB shared queue using five independent capture groups while storage was stalled. Each group stayed within 4 MiB, quiet-unit loss was counted, all queued bytes drained after recovery, and subsequent quiet output persisted. These historical checks exposed the former drop-new policy's limit: several noisy invocations can crowd out a quiet one at total saturation. The single-invocation cap is not a per-unit fairness guarantee.
 
 - Windows identity/session scenarios and broader installer qualification remain open.
 - Journal qualification still needs aggregate overload fairness and lifecycle admission bounds; actual volume exhaustion passed on Server Core and injected read stalls preserve bounded worker admission.
@@ -146,3 +146,22 @@ Regressions cover repeated canceled waits, explicit and automatic replacement
 attempts after self-exit, stop retry after EOF, removed-record retention, close
 retry, stale completion and preservation of user journal metadata. Older hung
 capture tests now require explicit cleanup instead of successful abandonment.
+
+## September 13 aggregate capture fairness
+
+The shared FIFO now uses bounded per-invocation queues with round-robin writing.
+Under byte/record pressure, a less represented invocation can displace newest
+pending records from a larger queue while preserving the victim's first pending
+record and its remaining order. Every displaced byte/record is counted against
+its producer. Queue bytes, records and invocation queues remain bounded; the
+in-flight write participates in byte/record accounting.
+
+Twenty focused race repetitions cover full aggregate pressure, exact displaced
+loss accounting, quiet output before noisy queues drain, invocation ordering,
+group admission and final accounting release. Three additional repetitions run
+five actual child processes producing large stdout/stderr streams against a
+stalled writer, then a quiet child. All children exit before storage recovery;
+quiet output survives, queue limits hold, and owned captures complete afterward.
+The full Windows race suite also passes, including previous storage-fault and
+process-capture regressions. These checks qualify the queue policy; complete
+journal file/retention and native failure matrices remain open.

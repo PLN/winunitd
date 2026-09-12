@@ -3,6 +3,7 @@ package journal
 import (
 	"bufio"
 	"bytes"
+	"container/list"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -38,21 +39,24 @@ type Store struct {
 	keep       int
 	flushEvery time.Duration
 
-	mu           sync.Mutex
-	closed       bool
-	files        map[string]*unitFile
-	mainCaptures map[string]*Capture
-	origin       Origin
-	queueMu      sync.Mutex
-	writeQueue   chan captureWrite
-	writerDone   chan struct{}
-	writerErr    error
-	queueClosed  bool
-	queuedBytes  int64
-	dropped      map[string]CaptureStats
-	syncPending  map[string]*journalSync
-	syncSlots    chan struct{}
-	querySlots   chan struct{}
+	mu            sync.Mutex
+	closed        bool
+	files         map[string]*unitFile
+	mainCaptures  map[string]*Capture
+	origin        Origin
+	queueMu       sync.Mutex
+	captureWake   chan struct{}
+	captureQueues map[*captureGroup]*capturePending
+	captureOrder  list.List
+	queuedRecords int
+	writerDone    chan struct{}
+	writerErr     error
+	queueClosed   bool
+	queuedBytes   int64
+	dropped       map[string]CaptureStats
+	syncPending   map[string]*journalSync
+	syncSlots     chan struct{}
+	querySlots    chan struct{}
 
 	// onOpen / onSync / onScan / onEntryID are test hooks (nil in production).
 	// onOpen fires after a successful OpenFile; onSync fires immediately
@@ -121,18 +125,19 @@ func Open(dir string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{
-		dir:          dir,
-		maxSize:      DefaultMaxSize,
-		keep:         DefaultKeep,
-		flushEvery:   DefaultFlushEvery,
-		files:        make(map[string]*unitFile),
-		mainCaptures: make(map[string]*Capture),
-		writeQueue:   make(chan captureWrite, captureQueueRecords),
-		writerDone:   make(chan struct{}),
-		dropped:      make(map[string]CaptureStats),
-		syncPending:  make(map[string]*journalSync),
-		syncSlots:    make(chan struct{}, 4),
-		querySlots:   make(chan struct{}, queryWorkers),
+		dir:           dir,
+		maxSize:       DefaultMaxSize,
+		keep:          DefaultKeep,
+		flushEvery:    DefaultFlushEvery,
+		files:         make(map[string]*unitFile),
+		mainCaptures:  make(map[string]*Capture),
+		captureWake:   make(chan struct{}, 1),
+		captureQueues: make(map[*captureGroup]*capturePending),
+		writerDone:    make(chan struct{}),
+		dropped:       make(map[string]CaptureStats),
+		syncPending:   make(map[string]*journalSync),
+		syncSlots:     make(chan struct{}, 4),
+		querySlots:    make(chan struct{}, queryWorkers),
 	}
 	go s.writeCaptures()
 	return s, nil
@@ -186,7 +191,7 @@ func (s *Store) CloseContext(ctx context.Context) error {
 	s.queueMu.Lock()
 	if !s.queueClosed {
 		s.queueClosed = true
-		close(s.writeQueue)
+		s.wakeCaptureWriterLocked()
 	}
 	s.queueMu.Unlock()
 	select {
