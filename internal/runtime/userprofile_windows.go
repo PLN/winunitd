@@ -12,6 +12,7 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 var profileDLL = windows.NewLazySystemDLL("userenv.dll")
@@ -25,14 +26,21 @@ type userProfileInfo struct {
 }
 
 type userProfileLease struct {
-	mu      sync.Mutex
-	token   windows.Token
-	profile windows.Handle
+	mu          sync.Mutex
+	token       windows.Token
+	profile     windows.Handle
+	interactive registry.Key
 }
 
 func (p *userProfileLease) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.interactive != 0 {
+		if err := p.interactive.Close(); err != nil {
+			return fmt.Errorf("close interactive profile key: %w", err)
+		}
+		p.interactive = 0
+	}
 	if p.profile != 0 {
 		ok, _, err := unloadProfileProc.Call(uintptr(p.token), uintptr(p.profile))
 		if ok == 0 {
@@ -67,6 +75,23 @@ func loadUserManagerProfile(tok windows.Token, sid string) (io.Closer, error) {
 	}
 	if !strings.EqualFold(domain, computer) {
 		return nil, fmt.Errorf("managed profile loading currently requires a local machine account")
+	}
+	var session, returned uint32
+	if err := windows.GetTokenInformation(tok, windows.TokenSessionId, (*byte)(unsafe.Pointer(&session)), uint32(unsafe.Sizeof(session)), &returned); err != nil {
+		return nil, fmt.Errorf("query profile session: %w", err)
+	}
+	if session != 0 {
+		// Windows owns an interactive logon's profile lifetime. An additional
+		// LoadUserProfile reference survives abrupt broker death and can prevent
+		// unload at logoff. Require the real hive to exist and retain only an
+		// ordinary registry handle, which Windows also closes on broker death.
+		// Missing/not-yet-loaded profiles fail closed; session reconciliation
+		// can retry once logon has completed.
+		key, err := registry.OpenKey(registry.USERS, sid, registry.READ)
+		if err != nil {
+			return nil, fmt.Errorf("interactive user profile is unavailable: %w", err)
+		}
+		return &userProfileLease{interactive: key}, nil
 	}
 	name, err := windows.UTF16PtrFromString(username)
 	if err != nil {

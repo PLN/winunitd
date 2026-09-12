@@ -85,11 +85,15 @@ Initial R4.2 admission implementation reads protected machine policy, defaults t
 R4.1 launch groundwork now disables handle inheritance, obtains the default
 environment from the target token without broker variables, and resolves target
 AppData known folders. Native stream/environment and retained-cleanup regressions
-pass in the test account's session. The system host now retains an explicit
-profile load and duplicated token until process-tree cleanup and unload succeed,
-including retryable cleanup after failed creation. The managed-profile path is
-limited to local machine accounts. Genuine SYSTEM-to-user launch and native
-profile-lifetime qualification remain open; this is not R4.1 acceptance.
+pass in the test account's session. The broker uses Windows-owned interactive
+profiles with a retained registry handle; headless loading still requires
+abrupt-death lifetime qualification. Managed profiles remain limited to local
+machine accounts. The `68d3397` disposable guest candidate passed genuine
+SYSTEM-to-standard-user launch, user-token control, workload identity/environment,
+manager and broker crash recovery. Its manually loaded interactive profile leaked
+after broker death; ordinary logoff after a fresh boot passed. The registry-handle
+replacement requires a repeat of that crash/logoff sequence. This is not R4.1
+acceptance, and the remaining session/security/linger matrix stays open.
 
 The next R2/R4 session slice repairs missed logoffs through authoritative session
 enumeration, rejects stale snapshots, preserves replacement sessions and linger,

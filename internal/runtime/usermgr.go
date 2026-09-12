@@ -17,7 +17,7 @@ type UserManagerSpec struct {
 	ExtraArgs   []string
 	Env         []string // nil resolves the target token's environment without broker inheritance
 	Daemon      *DaemonJob
-	LoadProfile bool // system host owns a LoadUserProfile reference until cleanup
+	LoadProfile bool // verify/pin the profile; interactive logons retain Windows ownership
 	// cmdArgv, if set, is the full CreateProcessAsUser command (exe +
 	// args) and skips UserManagerArgs. Tests use it to launch ping the
 	// same way the unit-path listener regression does. Production is nil.
