@@ -257,7 +257,9 @@ this is distinct from the current session count. Cleanup removes its record.
 
 Timer arms load persisted state asynchronously. Status and `list-timers` report
 storage as `loading`, `ready`, or `failed`; a timer cannot dispatch until its
-state is loaded. One reserved loader serves at most 1024 armed timers. The 32
+state is loaded. One reserved loader serves at most 1024 armed timers, with at
+most one indexed heap deadline per arm. Reschedule/disarm removes the previous
+entry immediately, so repeated activity cannot accumulate stale deadlines. The 32
 callback slots include pre-dispatch persistence and completion writes. Storage
 calls are serialized outside the scheduler and manager decision locks, and all
 shutdown callers join accepted storage work.
@@ -286,4 +288,4 @@ arm; a later explicit arm can recover its pending intent.
 
 Older version 1 readers reject version 2 state. Preserve state backups for any
 downgrade to an older reader; installer rollback qualification remains R6 work.
-Calendar work, heap bounds and aggregate decision snapshots remain separate R2/R5 work.
+Calendar work and aggregate decision snapshots remain separate R2/R5 work.

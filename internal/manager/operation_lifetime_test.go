@@ -435,15 +435,22 @@ type secondOperationLauncher struct {
 	calls   atomic.Int32
 	entered chan struct{}
 	release chan struct{}
+	first   *blockedStopProcess
 }
 
 func (l *secondOperationLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
-	if l.calls.Add(1) == 2 {
+	call := l.calls.Add(1)
+	if call == 2 {
 		close(l.entered)
 		<-l.release
 		ctx = context.Background()
 	}
-	return l.fakeLauncher.Start(ctx, spec)
+	p, err := l.fakeLauncher.Start(ctx, spec)
+	if err == nil && call == 1 {
+		l.first = &blockedStopProcess{Process: p, release: make(chan struct{})}
+		return l.first, nil
+	}
+	return p, err
 }
 
 func TestOperationDeadlineUsesLaunchGenerationAfterQueuedStop(t *testing.T) {
@@ -456,16 +463,17 @@ func TestOperationDeadlineUsesLaunchGenerationAfterQueuedStop(t *testing.T) {
 	if _, err := m.Start(context.Background(), "work"); err != nil {
 		t.Fatal(err)
 	}
-	unlock := m.ops.lock("work.service")
 	var gate sync.Once
-	openGate := func() { gate.Do(unlock) }
+	openGate := func() { gate.Do(func() { close(launch.first.release) }) }
 	defer openGate()
 	stopped := make(chan error, 1)
 	go func() { _, err := m.Stop("work"); stopped <- err }()
-	waitCond(t, func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.units["work.service"].stopping })
+	// Admission marks stopping before its worker acquires the unit gate.
+	// Wait for the actual stop call so the new start cannot overtake it.
+	waitCond(t, func() bool { return launch.first.calls.Load() == 1 })
 	started := make(chan error, 1)
 	go func() { _, err := m.Start(context.Background(), "work"); started <- err }()
-	waitCond(t, func() bool { m.ops.mu.Lock(); defer m.ops.mu.Unlock(); return m.ops.by["work.service"].refs == 3 })
+	waitCond(t, func() bool { m.ops.mu.Lock(); defer m.ops.mu.Unlock(); return m.ops.by["work.service"].refs == 2 })
 	openGate()
 	if err := waitErr(t, stopped); err != nil {
 		t.Fatal(err)
