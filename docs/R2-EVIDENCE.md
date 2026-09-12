@@ -883,6 +883,29 @@ This establishes the shutdown primitive; the maintenance API, complete native
 acquisition ownership, aggregate worker limits and servicing qualification remain
 open.
 
+## September 12 token acquisition resource ownership
+
+Token ownership now includes auxiliary acquisition resources. Trusted-LSA
+connections, privilege and raw logon tokens, LSA result buffers, and credential
+replacement tokens remain owned until release succeeds. Authentication-package
+retry stops when cleanup is unresolved. Acquisition cleanup failure prevents
+launch; the user host receives a token-plus-error cleanup obligation. A timed-out
+admission probe is joined by token cleanup, keeping its duplicated token and
+directory handles within host shutdown accounting.
+
+Portable failure tests cover partial cleanup, successful primary transfer,
+failed authentication attempts, and credential replacement. Windows tests use a
+protected token handle to prove failure retention/retry and verify that timed-out
+probe workers finish before token cleanup returns. Twenty focused race repetitions
+passed. Current-process identity queries use the query-only pseudo-token, avoiding
+an unnecessary owned handle; privilege adjustment still uses an explicitly owned
+real token. The actual S4U token SID is checked before profile metadata fallback.
+These resource tests do not qualify headless profile lifetime or the complete
+SYSTEM/credential-store matrix.
+
+Native contracts: [LSA connection release](https://learn.microsoft.com/en-us/windows/win32/api/ntsecapi/nf-ntsecapi-lsaderegisterlogonprocess),
+[query-only current-process token](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getcurrentprocesstoken).
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

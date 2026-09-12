@@ -21,6 +21,7 @@ type LingerRecord struct {
 // Production uses a trusted LSA S4U first, then a named CredMan/LSA URI
 // only if the URI is present and S4U is insufficient for outbound
 // network credentials (LOGON32_LOGON_BATCH on that fallback).
+// A non-nil token returned with an error carries unfinished cleanup ownership.
 type LingerTokenFunc func(rec LingerRecord) (*UserToken, error)
 
 func failLinger(sid string, err error) error {

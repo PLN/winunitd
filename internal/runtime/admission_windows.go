@@ -51,11 +51,19 @@ func userUnitFilesPresent(user *UserToken, resolve func(windows.Token) (string, 
 	}
 	var duplicate windows.Token
 	if err := windows.DuplicateTokenEx(tok, windows.TOKEN_QUERY|windows.TOKEN_IMPERSONATE|windows.TOKEN_DUPLICATE, nil, windows.SecurityImpersonation, windows.TokenImpersonation, &duplicate); err != nil {
+		if duplicate != 0 {
+			user.cleanup = append(user.cleanup, winToken(duplicate))
+		}
 		<-admissionProbeSlots
 		return false, err
 	}
+	done := make(chan struct{})
+	// A deadline only ends the probe's caller wait. Token cleanup also joins
+	// the owned worker, so user-host shutdown cannot overlook its file handles.
+	user.cleanup = append(user.cleanup, tokenCleanupFunc(func() error { <-done; return nil }))
 	result := make(chan admissionProbeResult, 1)
 	go func() {
+		defer close(done)
 		defer func() { <-admissionProbeSlots }()
 		goruntime.LockOSThread()
 		unlock := true

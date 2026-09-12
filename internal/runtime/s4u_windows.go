@@ -3,6 +3,7 @@
 package runtime
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"syscall"
@@ -133,22 +134,31 @@ var (
 // LogonUserW with LOGON32_LOGON_BATCH so the token can carry outbound
 // network creds. Passwords are never read from unit files, linger
 // records, environment, or path references.
-func ObtainLingerToken(rec LingerRecord) (*UserToken, error) {
+func ObtainLingerToken(rec LingerRecord) (result *UserToken, resultErr error) {
 	if !validAccountSID(rec.SID) && strings.TrimSpace(rec.Name) == "" {
 		return nil, failLinger(rec.SID, fmt.Errorf("SID or account name required"))
 	}
 	tok, err := s4uLogon(rec)
 	if err != nil {
-		return nil, failLinger(rec.SID, err)
+		return tok, failLinger(rec.SID, err)
 	}
+	defer func() {
+		result, resultErr = finishTokenAcquisition(result, resultErr)
+		if resultErr != nil {
+			resultErr = errors.Join(failLinger(rec.SID, resultErr), resultErr)
+		}
+	}()
 	tok.Source = LingerTokenPathS4U
 	if useStoreURIFallback(rec.CredentialURI, tokenHasOutboundNetworkCreds(tok)) {
 		netTok, netErr := tokenFromCredentialURI(rec.CredentialURI)
 		if netErr == nil && netTok != nil {
-			_ = tok.Close()
+			netTok.cleanup = append(netTok.cleanup, tok)
 			netTok.Source = LingerTokenPathStoreURI
 			logLinger("linger token %s via store-uri (S4U insufficient for outbound network creds)", rec.SID)
 			return netTok, nil
+		}
+		if netTok != nil {
+			tok.cleanup = append(tok.cleanup, netTok)
 		}
 		logLinger("linger token %s via s4u (store URI failed: %v)", rec.SID, netErr)
 		return tok, nil
@@ -157,17 +167,19 @@ func ObtainLingerToken(rec LingerRecord) (*UserToken, error) {
 	return tok, nil
 }
 
-func s4uLogon(rec LingerRecord) (*UserToken, error) {
+func s4uLogon(rec LingerRecord) (result *UserToken, resultErr error) {
+	owner := &UserToken{}
+	defer func() { result, resultErr = finishTokenAcquisition(owner, resultErr) }()
 	upn, realm := s4uNames(rec)
 	if upn == "" {
 		return nil, fmt.Errorf("no account name for S4U")
 	}
 
-	lsaHandle, err := connectTrustedLSA()
+	lsaHandle, err := connectTrustedLSA(owner)
 	if err != nil {
 		return nil, err
 	}
-	defer procLsaDeregisterLogonProcess.Call(uintptr(lsaHandle))
+	keepResources := len(owner.cleanup)
 
 	type attempt struct {
 		pkg      string
@@ -218,33 +230,55 @@ func s4uLogon(rec LingerRecord) (*UserToken, error) {
 			uintptr(unsafe.Pointer(&subStatus)),
 		)
 		if profile != 0 {
-			procLsaFreeReturnBuffer.Call(profile)
+			owner.cleanup = append(owner.cleanup, lsaBufferCleanup(profile))
+		}
+		if token != 0 {
+			owner.cleanup = append(owner.cleanup, winToken(token))
 		}
 		if err := lsaStatus(st); err != nil {
 			last = fmt.Errorf("%s S4U: %w", t.pkg, err)
+			// Do not retry another authentication package while an earlier
+			// attempt's native outputs remain unresolved.
+			if err := closeTokenAttempt(owner, keepResources); err != nil {
+				return nil, errors.Join(last, err)
+			}
 			continue
 		}
 		primary, err := duplicatePrimary(windows.Token(token))
-		_ = windows.CloseHandle(token)
+		if primary != 0 {
+			owner.native = winToken(primary)
+		}
 		if err != nil {
 			last = err
+			if err := closeTokenAttempt(owner, keepResources); err != nil {
+				return nil, errors.Join(last, err)
+			}
 			continue
+		}
+		identity, err := primary.GetTokenUser()
+		if err != nil {
+			return nil, fmt.Errorf("S4U token identity: %w", err)
+		}
+		actualSID := identity.User.Sid.String()
+		if rec.SID != "" && !strings.EqualFold(actualSID, rec.SID) {
+			return nil, fmt.Errorf("S4U token identity does not match linger record")
 		}
 		info, err := userInfoFromToken(primary)
 		if err != nil {
 			info, err = fillInfo(rec)
 			if err != nil {
-				_ = primary.Close()
 				last = err
+				if err := closeTokenAttempt(owner, keepResources); err != nil {
+					return nil, errors.Join(last, err)
+				}
 				continue
 			}
 		}
-		if rec.SID != "" && info.SID != "" && !strings.EqualFold(info.SID, rec.SID) {
-			_ = primary.Close()
-			last = fmt.Errorf("S4U SID %s does not match linger record %s", info.SID, rec.SID)
-			continue
+		if !strings.EqualFold(info.SID, actualSID) {
+			return nil, fmt.Errorf("resolved identity does not match S4U token")
 		}
-		return &UserToken{Info: info, native: winToken(primary)}, nil
+		owner.Info = info
+		return owner, nil
 	}
 	if last == nil {
 		last = fmt.Errorf("S4U logon failed")
@@ -255,8 +289,8 @@ func s4uLogon(rec LingerRecord) (*UserToken, error) {
 // connectTrustedLSA registers as a logon process. LocalSystem has
 // SeTcbPrivilege; LsaConnectUntrusted is not used (identification-level
 // tokens fail duplicatePrimary with ERROR_BAD_IMPERSONATION_LEVEL).
-func connectTrustedLSA() (windows.Handle, error) {
-	if err := enableSeTcbPrivilege(); err != nil {
+func connectTrustedLSA(owner *UserToken) (windows.Handle, error) {
+	if err := enableSeTcbPrivilege(owner); err != nil {
 		// Privilege may already be enabled; LsaRegisterLogonProcess
 		// is the authority on whether we are trusted.
 		_ = err
@@ -271,18 +305,27 @@ func connectTrustedLSA() (windows.Handle, error) {
 		uintptr(unsafe.Pointer(&handle)),
 		uintptr(unsafe.Pointer(&mode)),
 	)
+	if handle != 0 {
+		owner.cleanup = append(owner.cleanup, tokenCleanupFunc(func() error {
+			st, _, _ := procLsaDeregisterLogonProcess.Call(uintptr(handle))
+			return lsaStatus(st)
+		}))
+	}
 	if err := lsaStatus(st); err != nil {
 		return 0, fmt.Errorf("LsaRegisterLogonProcess: %w", err)
 	}
 	return handle, nil
 }
 
-func enableSeTcbPrivilege() error {
+func enableSeTcbPrivilege(owner *UserToken) error {
 	var tok windows.Token
-	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY, &tok); err != nil {
+	err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY, &tok)
+	if tok != 0 {
+		owner.cleanup = append(owner.cleanup, winToken(tok))
+	}
+	if err != nil {
 		return err
 	}
-	defer tok.Close()
 	var luid windows.LUID
 	name, err := windows.UTF16PtrFromString("SeTcbPrivilege")
 	if err != nil {
@@ -422,6 +465,13 @@ func lsaStatus(nt uintptr) error {
 	return windows.Errno(r)
 }
 
+func lsaBufferCleanup(buffer uintptr) tokenCleanupFunc {
+	return func() error {
+		st, _, _ := procLsaFreeReturnBuffer.Call(buffer)
+		return lsaStatus(st)
+	}
+}
+
 func duplicatePrimary(tok windows.Token) (windows.Token, error) {
 	var primary windows.Token
 	err := windows.DuplicateTokenEx(
@@ -433,7 +483,7 @@ func duplicatePrimary(tok windows.Token) (windows.Token, error) {
 		&primary,
 	)
 	if err != nil {
-		return 0, fmt.Errorf("DuplicateTokenEx: %w", err)
+		return primary, fmt.Errorf("DuplicateTokenEx: %w", err)
 	}
 	return primary, nil
 }
@@ -463,10 +513,12 @@ func tokenHasOutboundNetworkCreds(tok *UserToken) bool {
 		uintptr(unsafe.Pointer(&stats.AuthenticationId)),
 		uintptr(unsafe.Pointer(&data)),
 	)
+	if data != nil {
+		tok.cleanup = append(tok.cleanup, lsaBufferCleanup(uintptr(unsafe.Pointer(data))))
+	}
 	if err := lsaStatus(st); err != nil || data == nil {
 		return false
 	}
-	defer procLsaFreeReturnBuffer.Call(uintptr(unsafe.Pointer(data)))
 	return logonTypeCachesOutboundCreds(data.LogonType)
 }
 
@@ -496,8 +548,8 @@ func tokenFromCredMan(target string) (*UserToken, error) {
 	var last error
 	for _, credType := range []uint32{credTypeGeneric, credTypeDomainPassword} {
 		tok, err := readCredAndLogon(targetp, credType, target)
-		if err == nil {
-			return tok, nil
+		if err == nil || tok != nil {
+			return tok, err
 		}
 		last = err
 	}
@@ -539,7 +591,9 @@ func tokenFromLSASecret(name string) (*UserToken, error) {
 	return nil, fmt.Errorf("LSA secret %q is not available", name)
 }
 
-func logonWithSecret(user, domain string, pass []uint16) (*UserToken, error) {
+func logonWithSecret(user, domain string, pass []uint16) (result *UserToken, resultErr error) {
+	owner := &UserToken{}
+	defer func() { result, resultErr = finishTokenAcquisition(owner, resultErr) }()
 	userp, err := windows.UTF16PtrFromString(user)
 	if err != nil {
 		return nil, err
@@ -562,6 +616,9 @@ func logonWithSecret(user, domain string, pass []uint16) (*UserToken, error) {
 		uintptr(logon32ProviderDefault),
 		uintptr(unsafe.Pointer(&tok)),
 	)
+	if tok != 0 {
+		owner.cleanup = append(owner.cleanup, winToken(tok))
+	}
 	if r1 == 0 {
 		if e1 != syscall.Errno(0) {
 			return nil, fmt.Errorf("named credential logon: %w", e1)
@@ -569,16 +626,18 @@ func logonWithSecret(user, domain string, pass []uint16) (*UserToken, error) {
 		return nil, fmt.Errorf("named credential logon failed")
 	}
 	primary, err := duplicatePrimary(windows.Token(tok))
-	_ = windows.CloseHandle(tok)
+	if primary != 0 {
+		owner.native = winToken(primary)
+	}
 	if err != nil {
 		return nil, err
 	}
 	info, err := userInfoFromToken(primary)
 	if err != nil {
-		_ = primary.Close()
 		return nil, err
 	}
-	return &UserToken{Info: info, native: winToken(primary)}, nil
+	owner.Info = info
+	return owner, nil
 }
 
 func runningAsLocalSystem() bool {
