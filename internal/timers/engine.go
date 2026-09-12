@@ -68,6 +68,7 @@ type pendingRetry struct {
 }
 
 type armed struct {
+	item         *pqItem
 	loading      bool
 	storageError string
 	firing       bool
@@ -286,6 +287,9 @@ func (e *Engine) popDue(now time.Time) (due dueTimer, ok bool) {
 		return dueTimer{}, false
 	}
 	it := heap.Remove(&e.pq, best).(*pqItem)
+	if a := e.armed[it.name]; a != nil && a.item == it {
+		a.item = nil
+	}
 	return dueTimer{instance: e.armed[it.name], generation: it.gen, scheduled: it.when}, true
 }
 
@@ -302,7 +306,7 @@ func (e *Engine) consume(due dueTimer, actual time.Time) {
 	}
 	if a.firing || e.activeFires >= maxTimerCallbacks {
 		// Preserve the popped occurrence, even for non-persistent calendars.
-		heap.Push(&e.pq, &pqItem{name: a.spec.Name, when: due.scheduled, gen: due.generation})
+		e.installDeadlineLocked(a, due.scheduled, due.generation)
 		e.mu.Unlock()
 		return
 	}
@@ -428,6 +432,7 @@ func (e *Engine) monotonicWaitLocked(spec Spec, rt Runtime) time.Duration {
 }
 
 func (e *Engine) rescheduleLocked(a *armed) {
+	e.removeDeadlineLocked(a)
 	if a.loading || a.storageError != "" {
 		a.ok = false
 		a.next = time.Time{}
@@ -448,8 +453,24 @@ func (e *Engine) rescheduleLocked(a *armed) {
 	e.nextGen++
 	a.gen = e.nextGen
 	if ok {
-		heap.Push(&e.pq, &pqItem{name: a.spec.Name, when: next, gen: a.gen})
+		e.installDeadlineLocked(a, next, a.gen)
 	}
+}
+
+func (e *Engine) removeDeadlineLocked(a *armed) {
+	if it := a.item; it != nil {
+		if it.index >= 0 && it.index < len(e.pq) && e.pq[it.index] == it {
+			heap.Remove(&e.pq, it.index)
+		}
+		a.item = nil
+	}
+}
+
+func (e *Engine) installDeadlineLocked(a *armed, when time.Time, gen uint64) {
+	e.removeDeadlineLocked(a)
+	it := &pqItem{name: a.spec.Name, when: when, gen: gen, index: -1}
+	a.item = it
+	heap.Push(&e.pq, it)
 }
 
 // Arm starts or refreshes a timer. Existing FiredBoot/FiredStartup and last
@@ -509,6 +530,7 @@ func (e *Engine) Disarm(name string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if a, ok := e.armed[name]; ok {
+		e.removeDeadlineLocked(a)
 		a.gen++
 		delete(e.armed, name)
 	}
@@ -526,6 +548,7 @@ func (e *Engine) Retain(keep map[string]bool) {
 		if keep[name] {
 			continue
 		}
+		e.removeDeadlineLocked(a)
 		a.gen++
 		delete(e.armed, name)
 	}
@@ -694,9 +717,10 @@ func (e *Engine) kickLocked() {
 }
 
 type pqItem struct {
-	name string
-	when time.Time
-	gen  uint64
+	index int
+	name  string
+	when  time.Time
+	gen   uint64
 }
 
 type deadlineHeap []*pqItem
@@ -710,16 +734,23 @@ func (h deadlineHeap) Less(i, j int) bool {
 	return h[i].when.Before(h[j].when)
 }
 
-func (h deadlineHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+func (h deadlineHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+	h[i].index = i
+	h[j].index = j
+}
 
 func (h *deadlineHeap) Push(x any) {
-	*h = append(*h, x.(*pqItem))
+	it := x.(*pqItem)
+	it.index = len(*h)
+	*h = append(*h, it)
 }
 
 func (h *deadlineHeap) Pop() any {
 	old := *h
 	n := len(old)
 	it := old[n-1]
+	it.index = -1
 	old[n-1] = nil
 	*h = old[:n-1]
 	return it
