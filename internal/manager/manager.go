@@ -395,6 +395,7 @@ func (m *Manager) ListTimers() (*protocol.ListTimersResult, error) {
 		out[i].Next, out[i].Last = formatTimerStamp(snapshot.Next), formatTimerStamp(snapshot.Last)
 		out[i].ArmedConfigRevision = snapshot.ConfigRevision
 		out[i].StorageState, out[i].StorageError = snapshot.StorageState, snapshot.StorageError
+		out[i].Activation = timerActivationStatus(snapshot.Activation)
 		if snapshot.Unit != "" {
 			out[i].Unit = snapshot.Unit
 		}

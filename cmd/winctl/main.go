@@ -896,6 +896,9 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 			}
 			fmt.Fprintln(c.stdout)
 		}
+		if a := u.TimerActivation; a != nil {
+			fmt.Fprintf(c.stdout, "TimerActivation=%s; result=%s; target=%s; scheduled=%s; actual=%s\n", a.ID, a.Result, a.Unit, a.Scheduled, a.Actual)
+		}
 		if u.Error != "" {
 			fmt.Fprintf(c.stdout, "      Error: %s\n", u.Error)
 		}
@@ -957,6 +960,9 @@ func (c *cli) printListTimers(got *protocol.ListTimersResult) int {
 				fmt.Fprintf(c.stdout, "; %s", u.StorageError)
 			}
 			fmt.Fprintln(c.stdout)
+		}
+		if a := u.Activation; a != nil {
+			fmt.Fprintf(c.stdout, "  activation: %s; %s\n", a.ID, a.Result)
 		}
 	}
 	return 0

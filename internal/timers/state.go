@@ -20,10 +20,11 @@ type Store struct {
 }
 
 type persisted struct {
-	Version       int    `json:"version,omitempty"`
-	LastScheduled string `json:"lastScheduled,omitempty"`
-	LastActual    string `json:"lastActual,omitempty"`
-	LastSuccess   string `json:"lastSuccess,omitempty"`
+	Activation    *Activation `json:"activation,omitempty"`
+	Version       int         `json:"version,omitempty"`
+	LastScheduled string      `json:"lastScheduled,omitempty"`
+	LastActual    string      `json:"lastActual,omitempty"`
+	LastSuccess   string      `json:"lastSuccess,omitempty"`
 }
 
 // OpenStore creates dir if needed. An empty dir disables persistence.
@@ -86,10 +87,19 @@ func (s *Store) LoadChecked(name string) (Runtime, error) {
 	if err := json.Unmarshal(data, &p); err != nil {
 		return Runtime{}, err
 	}
-	if p.Version != 0 && p.Version != 1 {
+	if p.Version != 0 && p.Version != 1 && p.Version != 2 {
 		return Runtime{}, fmt.Errorf("unsupported timer state version %d", p.Version)
 	}
 	var rt Runtime
+	if p.Activation != nil {
+		if p.Version != 2 {
+			return Runtime{}, errors.New("activation intent requires timer state version 2")
+		}
+		if err := validateActivation(*p.Activation); err != nil {
+			return Runtime{}, err
+		}
+		rt.Activation = *p.Activation
+	}
 	for _, field := range []struct {
 		raw string
 		dst *time.Time
@@ -118,10 +128,17 @@ func (s *Store) Save(name string, rt Runtime) error {
 		return nil
 	}
 	p := persisted{
-		Version:       1,
+		Version:       2,
 		LastScheduled: formatStamp(rt.LastScheduled),
 		LastActual:    formatStamp(rt.LastActual),
 		LastSuccess:   formatStamp(rt.LastSuccess),
+	}
+	if rt.Activation != (Activation{}) {
+		if err := validateActivation(rt.Activation); err != nil {
+			return err
+		}
+		activation := rt.Activation
+		p.Activation = &activation
 	}
 	data, err := json.Marshal(p)
 	if err != nil {
@@ -149,4 +166,14 @@ func formatStamp(t time.Time) string {
 		return ""
 	}
 	return t.UTC().Format(time.RFC3339Nano)
+}
+
+func validateActivation(a Activation) error {
+	if a.ID == "" || len(a.ID) > 128 || len(a.Unit) > 255 || strings.ContainsAny(a.Unit, "\\/:\x00\r\n") || a.Scheduled.IsZero() || a.Actual.IsZero() {
+		return errors.New("invalid timer activation intent")
+	}
+	if a.Result != "pending" && a.Result != "success" && a.Result != "failed" {
+		return errors.New("invalid timer activation result")
+	}
+	return nil
 }

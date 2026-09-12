@@ -178,7 +178,7 @@ func TestTimerStoreRejectsCorruptionAndPreservesReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, body := range []string{"{", "null", `{"version":2}`, `{"lastActual":"invalid"}`, strings.Repeat("x", 16385)} {
+	for _, body := range []string{"{", "null", `{"version":3}`, `{"lastActual":"invalid"}`, strings.Repeat("x", 16385)} {
 		if err := os.WriteFile(filepath.Join(store.dir, "work.timer.json"), []byte(body), 0600); err != nil {
 			t.Fatal(err)
 		}
