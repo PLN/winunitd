@@ -155,7 +155,7 @@ outside the core beta guarantee; passing `verify` is not a qualification claim.
 
 | Section / directives | Current behavior / limitation |
 | --- | --- |
-| Unit: `BindsTo` | Dependency/stop-plan participation exists; unexpected-disappearance propagation is not a supported beta guarantee |
+| Unit: `BindsTo` | Managed peer exit/failure stops bound dependents using captured invocation policy; with `After`, activation requires an active peer. External SCM/task disappearance observation remains outside this guarantee |
 | Unit: `RequiresInteractiveSession` | Default no; skip without a suitable session; user/session modes remain experimental until focused qualification |
 | Service: `NotifyAccess` | main only; default main |
 | Service: `WatchdogSec`, `WatchdogMode` | Positive duration enables watchdog; mode notify (default), tcp, or http |

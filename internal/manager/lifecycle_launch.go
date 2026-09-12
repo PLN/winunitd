@@ -92,6 +92,13 @@ func (m *Manager) acceptLaunch(ctx context.Context, name string, autoRestart boo
 		definition = planned.unit
 		revision = planned.revision
 	}
+	boundDefinition := definition
+	if autoRestart {
+		boundDefinition = owned
+	}
+	if !m.boundPeersActiveLocked(boundDefinition) {
+		return nil, core.ErrSkipped
+	}
 	if !autoRestart && rt.invocationUnit != nil &&
 		(scmServiceName(owned) != "" || scheduledTaskName(owned) != "") &&
 		(scmServiceName(owned) != scmServiceName(definition) || scheduledTaskName(owned) != scheduledTaskName(definition)) {
@@ -306,6 +313,9 @@ func (m *Manager) completeOneshot(ctx context.Context, effect *launchEffect, pro
 	if !effect.owner.currentLocked(m) || rt.proc != proc {
 		return time.Time{}, fmt.Errorf("oneshot completion superseded")
 	}
+	if !rt.stopping && (!effect.unit.Service.RemainAfterExit || cleanupErr != nil || completionErr != nil) {
+		m.queueBoundStopsLocked(effect.owner.name)
+	}
 	if cleanupErr != nil {
 		rt.setCleanup(cleanupWorkload, true)
 		rt.step(core.EventStartFailed)
@@ -349,6 +359,7 @@ func (m *Manager) acceptReadinessFailure(effect *launchEffect, proc runtime.Proc
 	rt.setCleanup(cleanupWorkload, true)
 	if !rt.stopping && rt.step(core.EventStartFailed) {
 		rt.err = err.Error()
+		m.queueBoundStopsLocked(effect.owner.name)
 	}
 	return rt.stopping
 }

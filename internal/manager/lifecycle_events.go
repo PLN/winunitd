@@ -70,6 +70,9 @@ func (m *Manager) applyStartOutcomeLocked(name string, state core.State, err err
 		}
 	}
 	rt.publishStartOutcome(state)
+	if (state == core.Inactive || state == core.Failed) && !rt.stopping {
+		m.queueBoundStopsLocked(name)
+	}
 	if err != nil && rt.state != core.Active {
 		rt.err = waitFailMessage(err)
 	}
@@ -222,6 +225,7 @@ func (m *Manager) acceptWatchdogFailure(owner runtimeIdentity) *watchdogEffect {
 	if !rt.step(core.EventWatchdogFailed) {
 		return nil
 	}
+	m.queueBoundStopsLocked(owner.name)
 	rt.err = "watchdog timed out"
 	rt.terminated = true
 	effect := &watchdogEffect{owner: owner, unit: rt.ownedUnit(), process: rt.proc, cancel: rt.watchdog, stopEligible: stopEligible}
@@ -270,7 +274,13 @@ func (m *Manager) acceptProcessExitCleanup(name string, proc runtime.Process) *p
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rt := m.units[name]
-	if rt == nil || rt.proc != proc || rt.cleanupPending() {
+	if rt == nil || rt.proc != proc {
+		return nil
+	}
+	if !rt.stopping && !rt.terminated {
+		m.queueBoundStopsLocked(name)
+	}
+	if rt.cleanupPending() {
 		// A stale watcher must not repeat completed cleanup. An uncertain stop
 		// keeps its resource owner even when the main process has exited.
 		return nil

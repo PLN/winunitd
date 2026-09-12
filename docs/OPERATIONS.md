@@ -220,6 +220,28 @@ and 4 unknown/evicted ID. During the short completion-publication boundary,
 cancel can return busy; query or retry. Older servers return method-not-found.
 Cancellation uses the reserved stop handler budget and allocates no worker.
 
+## Bound dependency stops
+
+An accepted managed-process exit, watchdog/readiness failure, or inactive/failed
+start outcome stops active/activating `BindsTo` dependents. The stop scope also
+includes their reverse Requires/BindsTo/PartOf members, with reverse ordering.
+Requires or PartOf alone do not propagate an unexpected peer exit. Existing
+invocations retain their dependency policy across reload/removal.
+
+The complete captured scope suppresses recovery before native teardown. One
+owned worker and at most one pending intent per managed name reserve progress
+independently of client stop slots. Each batch uses an accepted stop-operation
+deadline and reports `origin=dependency`; record/generation/stop-epoch checks
+discard superseded work. Close joins the worker. Failed cleanup remains visible
+and retryable through stop. This does not interrupt a blocked native operation.
+
+The peer's own restart policy remains effective unless a dependency cycle puts
+it in the captured stop scope. Restarting a peer does not automatically restart
+its stopped dependents. Combined `BindsTo` and `After` require the peer to be
+active before launching: a successful repeatable oneshot that is already inactive
+does not satisfy that condition. External SCM/task liveness remains an observation
+domain; continuous disappearance propagation for those proxies is not implemented.
+
 ## Global maintenance
 
 Development builds provide an administrator-only system-manager command:

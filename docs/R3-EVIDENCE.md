@@ -44,3 +44,20 @@ console/GUI signals and stop helpers for external proxies remain unsupported.
 Raw scripts, process observations and artifact evidence remain in the private
 qualification store; private identities and paths are intentionally not copied
 into this repository.
+
+## Managed bound-dependent cleanup
+
+September 13: managed peer exit/failure now admits captured BindsTo cleanup,
+including reverse stop ordering and recovery suppression before teardown.
+One coalescing worker reserves progress outside client stop admission and retains
+accepted work across caller/close deadlines. Delayed record/generation/epoch
+checks preserve replacement processes and their operation metadata. BindsTo plus
+After requires an active peer, including the explicit retained-oneshot case.
+
+Twenty focused race repetitions cover peer recovery without dependent restart,
+Requires/PartOf distinction, removed-definition policy, ordered scope suppression,
+client stop saturation, stale peer/watchdog/member events, delayed batch metadata,
+and close both before worker dispatch and during blocked cleanup. The full
+uncached Windows race suite and vet pass. These are manager regression results;
+native artifact qualification and external SCM/task disappearance observation
+remain separate. This does not close the full R3.2/R3 milestone.
