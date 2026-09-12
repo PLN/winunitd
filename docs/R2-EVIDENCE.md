@@ -1038,6 +1038,23 @@ The pass retains its cleanup ordering until all accepted identities are resolved
 one blocked accepted operation still keeps that pass owned. Recovery backoff and
 the complete R4 qualification matrix remain open.
 
+## September 12 user-manager recovery backoff
+
+Failed launch and reaped crash records retain per-SID restart delay and timing
+within the existing instance cap. Delays double from one second to one minute,
+and stable runtime resets them. Known waiting sessions and linger records avoid
+token acquisition before the next attempt. Known-SID linger token failures retain
+the same bounded recovery state. The periodic reconciliation worker now follows
+interactive processing with enabled linger recovery.
+
+Successful reaping for recovery retains the empty record; explicit cleanup
+removes it. Status copies waiting/starting/cleanup decisions without observing
+native handles. Twenty focused race repetitions cover the exponential cap,
+notification floods, stable reset, fresh-token crash recovery, logoff,
+revocation, shutdown, periodic linger recovery and failed linger token acquisition.
+Genuine guest qualification of this combined candidate remains pending; these
+tests do not qualify headless profile lifetime or close the remaining R4 matrix.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2
