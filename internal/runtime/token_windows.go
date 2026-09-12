@@ -40,12 +40,7 @@ func QueryUserToken(sessionID uint32) (*UserToken, error) {
 // Used by the user-manager process (already running as the user) and
 // tests. The system manager's production path uses QueryUserToken.
 func CurrentUserInfo() (UserInfo, error) {
-	var tok windows.Token
-	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY, &tok); err != nil {
-		return UserInfo{}, err
-	}
-	defer tok.Close()
-	return userInfoFromToken(tok)
+	return userInfoFromToken(windows.GetCurrentProcessToken())
 }
 
 func userInfoFromToken(tok windows.Token) (UserInfo, error) {

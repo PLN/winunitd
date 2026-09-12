@@ -113,14 +113,26 @@ func TestAdmissionNativeProbeIdentityAndDeadlineOwnership(t *testing.T) {
 	if present, err := userUnitFilesPresent(user, resolve, time.Second); present || err == nil {
 		t.Fatal("probe cap admitted a fifth worker")
 	}
-	if err := user.Close(); err != nil {
-		t.Fatal(err)
+	closed := make(chan error, 1)
+	go func() { closed <- user.Close() }()
+	select {
+	case err := <-closed:
+		t.Fatalf("token cleanup escaped pending probes: %v", err)
+	case <-time.After(30 * time.Millisecond):
 	}
 	unblock()
 	for i := 0; i < 4; i++ {
 		if err := <-verified; err != nil {
 			t.Fatal("timed-out worker lost its duplicated token", err)
 		}
+	}
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("token cleanup did not join finished probes")
 	}
 	deadline := time.Now().Add(time.Second)
 	for len(admissionProbeSlots) != 0 {
