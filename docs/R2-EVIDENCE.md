@@ -1006,6 +1006,21 @@ A blocked lookup within the active reconciliation pass still delays that pass's
 later sessions. Fair token/recovery dispatch, aggregate user limits and recovery
 backoff remain open; these capacity reservations alone do not close R2 or R4.
 
+## September 12 aggregate user tracking limits
+
+Admission caps retained user-manager instances at 128, including failed launches
+and uncertain stops. Both launch inspection and final publication enforce the
+cap under the lifecycle mutex. Successful cleanup releases capacity; failures
+cannot open another slot. Session mappings and pending request identities are
+each capped at 4096. Native and injected oversized enumerations fail without
+publishing a truncated authoritative snapshot or losing existing ownership.
+
+Twenty focused race repetitions exercise admission through the cap, failed
+cleanup, capacity recovery, an oversized snapshot preserving a live manager,
+and session mapping saturation/recovery. The instance cap bounds per-process
+retained native stop attempts in addition to the existing worker limits.
+Fair recovery dispatch and backoff remain open.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

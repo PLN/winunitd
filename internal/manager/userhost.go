@@ -169,6 +169,9 @@ func (h *UserHost) reconcileAccepted(work *userNativeWork) {
 	epoch, revision := h.nextSessionRequest, h.admissionRevision
 	h.mu.Unlock()
 	ids, err := h.cfg.Sessions()
+	if err == nil && len(ids) > runtime.MaxInteractiveSessions {
+		err = fmt.Errorf("session enumeration exceeds limit %d", runtime.MaxInteractiveSessions)
+	}
 	if err != nil {
 		h.cfg.Logf("enumerate sessions: %v", err)
 		return
@@ -229,6 +232,16 @@ func (h *UserHost) dispatchLogon(sessionID uint32, asynchronous bool) {
 	h.mu.Lock()
 	if h.closed {
 		h.mu.Unlock()
+		return
+	}
+	if _, known := h.sessions[sessionID]; !known && len(h.sessions) >= runtime.MaxInteractiveSessions {
+		h.mu.Unlock()
+		h.cfg.Logf("session admission exceeds limit %d", runtime.MaxInteractiveSessions)
+		return
+	}
+	if _, known := h.sessionRequests[sessionID]; !known && len(h.sessionRequests) >= runtime.MaxInteractiveSessions {
+		h.mu.Unlock()
+		h.cfg.Logf("pending session admission exceeds limit %d", runtime.MaxInteractiveSessions)
 		return
 	}
 	h.nextSessionRequest++
@@ -319,6 +332,11 @@ func (h *UserHost) queryAcceptedUserLogon(sessionID uint32, request uint64, work
 	h.mu.Lock()
 	if h.closed || !current() {
 		h.mu.Unlock()
+		return
+	}
+	if _, known := h.sessions[sessionID]; !known && len(h.sessions) >= runtime.MaxInteractiveSessions {
+		h.mu.Unlock()
+		h.cfg.Logf("session admission exceeds limit %d", runtime.MaxInteractiveSessions)
 		return
 	}
 	h.sessions[sessionID] = sid

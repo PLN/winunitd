@@ -1,5 +1,9 @@
 package runtime
 
+// MaxInteractiveSessions bounds retained session snapshots and host mappings.
+// Oversized snapshots are errors, never truncated authoritative logoff lists.
+const MaxInteractiveSessions = 4096
+
 // SessionChange is a logon or logoff for one interactive session.
 // User managers are SID-keyed; the host maps session IDs to SIDs.
 type SessionChange struct {

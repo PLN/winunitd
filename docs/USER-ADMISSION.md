@@ -52,6 +52,23 @@ Headless linger remains a separate explicit administrator-controlled grant. Neit
 
 Do not silently preserve all-user alpha behavior by populating an allowlist or selecting delegation during migration. The operator must explicitly choose the intended accounts or opt into the file-based rule before updating a deployment that needs interactive user managers. Existing deployments are not changed merely by updating this repository.
 
+## Admission capacity
+
+The broker retains at most 128 user-manager instances, including failed launches
+and uncertain cleanup. New users are rejected as busy at capacity; successful
+cleanup releases the slot. Existing users can still be stopped and reconciled.
+Interactive mappings and pending session requests are each capped at 4096.
+The native WTS enumerator also rejects snapshots above 4096 entries. Oversized
+snapshots are errors and preserve previous ownership; they are never truncated
+and interpreted as logoffs.
+
+Four native admission workers are shared by logon and linger requests. Session
+reconciliation, policy refresh and linger scanning each have one reserved owned
+slot. The session listener queues cleanup using four wait workers with one entry
+per retained SID. A timed-out native stop remains owned per process, so the
+128-instance cap also bounds retained user-process stop attempts. These fixed
+limits are implementation bounds; configurable quotas remain future work.
+
 ## Implementation evidence and limits
 
 The native user-manager launcher uses `CreateProcessAsUser` with handle

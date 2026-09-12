@@ -3,13 +3,21 @@ package manager
 import (
 	"fmt"
 
+	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
 )
+
+// Includes failed launch/stop ownership, so uncertainty cannot open capacity for
+// another process while the previous native resources remain retained.
+const maxTrackedUserManagers = 128
 
 // acceptUserSessions publishes one authoritative enumeration. Reserving logon
 // requests in the same decision prevents a later logoff from being overwritten
 // when the enumeration worker eventually reaches that session's token lookup.
 func (h *UserHost) acceptUserSessions(ids []uint32, epoch, revision uint64) (map[uint32]uint64, []string) {
+	if len(ids) > runtime.MaxInteractiveSessions {
+		return nil, nil
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed || h.nextSessionRequest != epoch || h.admissionRevision != revision {
@@ -54,6 +62,9 @@ func (h *UserHost) inspectUserLaunch(sid string, wanted func() bool) (*userInsta
 		return nil, fmt.Errorf("user manager launch is no longer requested")
 	}
 	inst := h.bySID[sid]
+	if inst == nil && len(h.bySID) >= maxTrackedUserManagers {
+		return nil, fmt.Errorf("tracked user manager limit %d: %w", maxTrackedUserManagers, protocol.ErrBusy())
+	}
 	if inst != nil && inst.uncertain {
 		return nil, fmt.Errorf("user manager termination is unconfirmed; retry cleanup")
 	}
@@ -65,6 +76,9 @@ func (h *UserHost) acceptUserLaunch(sid string, wanted func() bool) (*userInstan
 	defer h.mu.Unlock()
 	if h.closed || !wanted() {
 		return nil, fmt.Errorf("user manager launch is no longer requested")
+	}
+	if h.bySID[sid] == nil && len(h.bySID) >= maxTrackedUserManagers {
+		return nil, fmt.Errorf("tracked user manager limit %d: %w", maxTrackedUserManagers, protocol.ErrBusy())
 	}
 	inst := &userInstance{sid: sid}
 	h.bySID[sid] = inst // shutdown retains accepted work even before process creation
