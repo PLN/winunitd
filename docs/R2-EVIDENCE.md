@@ -1192,3 +1192,18 @@ still runs, stop it and successfully reload at the boundary, then reject an extr
 unit including builtins. Additional checks cover byte boundaries, sorted bounded
 enumeration, aggregate enabled links and diagnostic overflow. These input bounds
 do not complete the remaining command/worker and capture fairness audit.
+
+## September 13 atomic clock-change dispatch
+
+Timer dequeue and activation acceptance now execute under one engine decision
+lock. Concurrent clock notifications cannot reschedule an arm in between and
+silently invalidate its popped occurrence. Clock reconciliation also preserves
+already-due deadlines when callback capacity is full, rather than searching from
+the new wall time and skipping a nonpersistent occurrence. Persistence and
+callbacks remain bounded asynchronous effects outside the lock.
+
+A deterministic capacity regression fails against the preceding engine. One
+hundred race repetitions cover that case, concurrent clock notifications, stale
+popped identities and the manager calendar-jump/watchdog scenarios. The full
+uncached Windows race suite passes with the combined capture changes. This
+closes these lost-dispatch paths, not the complete timer/clock qualification gate.
