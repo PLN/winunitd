@@ -334,6 +334,18 @@ OnStartupSec=1s
 		st, err := m.Status("wd.timer")
 		return err == nil && st.Unit != nil && st.Unit.Last != ""
 	})
+	// Last records dispatch, before the callback's start transaction finishes.
+	// Let that redundant start complete while the watchdog endpoint is healthy;
+	// otherwise a delayed timer callback can legitimately start the service
+	// again after the watchdog failure tested below.
+	waitCond(t, func() bool {
+		st, err := m.Status("wd.service")
+		if err != nil || st.Unit == nil {
+			return false
+		}
+		op, err := m.Operation(st.Unit.LastOperationID)
+		return err == nil && op.Origin == "timer" && op.State == "succeeded"
+	})
 	if got := genOf(t, m, "wd.service"); got != gen {
 		t.Fatalf("gen = %d after timer elapse Start, want %d", got, gen)
 	}

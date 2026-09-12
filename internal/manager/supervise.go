@@ -126,6 +126,12 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 	}
 	m.stopWatchdog(name)
 
+	// Resolve prior output before creating a replacement process. A timed-out
+	// stream remains owned and requires an explicit cleanup retry.
+	if err := m.waitJournalContext(ctx, name, stopTimeout(u)); err != nil {
+		return err
+	}
+
 	inv := journal.NewInvocationID()
 	m.recordInvocation(effect, inv)
 
@@ -172,8 +178,7 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 			// This operation retains the record, and the unit lock excludes a
 			// replacement. Preserve ownership even if stop/close overtook it.
 			m.retainLaunchFailure(effect, proc, pid, err)
-			m.journal.SetOrigin(m.journalOrigin())
-			m.journal.Attach(name, proc.PID(), inv, proc.Stdout(), proc.Stderr())
+			m.attachMainCapture(effect, proc, inv)
 		}
 		err = errors.Join(err, m.closeNotify(name))
 		var st *runtime.ExitStatus
@@ -185,12 +190,7 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 	if nrt != nil {
 		nrt.SetMain(proc.PID(), proc.Job())
 	}
-	// Bound the previous capture wait by TimeoutStopSec so a self-exited
-	// unit with a lingering journal cannot hang the next Start or
-	// Restart= relaunch (issue #83). Same wait/abandon as stopUnit (#68).
-	m.waitJournal(name, stopTimeout(u))
-	m.journal.SetOrigin(m.journalOrigin())
-	m.journal.Attach(name, proc.PID(), inv, proc.Stdout(), proc.Stderr())
+	m.attachMainCapture(effect, proc, inv)
 
 	alive := false
 	if autoRestart && svc.Type != unit.TypeNotify {

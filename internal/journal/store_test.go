@@ -828,7 +828,7 @@ func waitEntries(t *testing.T, s *Store, unit string, n int) []Entry {
 	return nil
 }
 
-func TestWaitContextAbandonsHungCapture(t *testing.T) {
+func TestWaitContextRetainsHungCapture(t *testing.T) {
 	t.Parallel()
 	s := testStore(t)
 	pr, pw := io.Pipe()
@@ -843,10 +843,20 @@ func TestWaitContextAbandonsHungCapture(t *testing.T) {
 		s.Wait("hang.service")
 		close(done)
 	}()
+	for i := 0; i < 100; i++ {
+		if s.WaitContext(ctx, "hang.service") {
+			t.Fatal("retry forgot unfinished capture")
+		}
+	}
+	select {
+	case <-done:
+		t.Fatal("unbounded wait forgot unfinished capture")
+	default:
+	}
+	_ = pw.Close()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("Wait still blocked after WaitContext abandoned the capture")
+		t.Fatal("retained completion did not finish")
 	}
-	_ = pw.Close()
 }

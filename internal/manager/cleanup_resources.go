@@ -9,6 +9,7 @@ const (
 	cleanupNotify
 	cleanupWatch
 	cleanupHelper
+	cleanupJournal
 )
 
 // Called only by serialized lifecycle decisions, after exact-owner validation.
@@ -29,7 +30,7 @@ func (rt *unitRuntime) pendingCleanupNames() []string {
 		name string
 	}{
 		{cleanupWorkload, "workload"}, {cleanupNotify, "notification"}, {cleanupWatch, "watch"},
-		{cleanupHelper, "stop-helper"},
+		{cleanupHelper, "stop-helper"}, {cleanupJournal, "journal"},
 	} {
 		if rt.cleanup&resource.bit != 0 {
 			names = append(names, resource.name)

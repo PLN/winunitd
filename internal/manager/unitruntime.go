@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/journal"
 	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/unit"
 )
@@ -14,6 +15,7 @@ import (
 // unitRuntime is all per-unit manager state. Removing a name from
 // Manager.units tears this down in one place (issue #26).
 type unitRuntime struct {
+	capture            *journal.Capture
 	unit               *unit.Unit
 	invocationUnit     *unit.Unit // captured service definition; reload only replaces unit
 	configRevision     string

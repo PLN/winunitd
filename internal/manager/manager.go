@@ -243,6 +243,22 @@ func (m *Manager) closePass() error {
 		m.engine.Stop()
 	}
 	if m.journal != nil {
+		// Close cannot report quiescence while accepted main streams remain
+		// open. One aggregate wait budget covers all retained captures; retries
+		// join the same completions and retain failed journal cleanup records.
+		m.mu.Lock()
+		var captures []string
+		for name, rt := range m.units {
+			if rt.capture != nil || rt.cleanup&cleanupJournal != 0 {
+				captures = append(captures, name)
+			}
+		}
+		m.mu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), defaultStopTimeout)
+		for _, name := range captures {
+			result = errors.Join(result, m.waitJournalContext(ctx, name, defaultStopTimeout))
+		}
+		cancel()
 		result = errors.Join(result, m.journal.Close())
 	}
 	return result

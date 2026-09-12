@@ -417,10 +417,10 @@ func TestShutdownDeadlineJoinsBlockedNotificationClose(t *testing.T) {
 		}
 	}
 	m.mu.Lock()
-	retained := m.units[name].proc == nil && m.units[name].cleanup == cleanupNotify
+	retained := m.units[name].proc == nil && m.units[name].cleanup&cleanupNotify != 0 && m.units[name].cleanup&cleanupWorkload == 0
 	m.mu.Unlock()
 	if !retained {
-		t.Fatal("pending control close did not retain only notification ownership")
+		t.Fatal("pending control close lost notification ownership or retained the terminated workload")
 	}
 	if proc.Alive() {
 		t.Fatal("blocked notification close delayed workload termination")
