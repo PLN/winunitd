@@ -31,7 +31,8 @@ type Manager struct {
 	journal              *journal.Store
 	engine               *timers.Engine
 	mu                   sync.Mutex
-	configMu             sync.Mutex // serializes reload/enable/disable I/O and acceptance
+	configMu             sync.Mutex    // serializes reload/enable/disable I/O and acceptance
+	configWork           chan struct{} // accepted I/O/cleanup; guarded by mu
 	configNamespace      string
 	configSequence       uint64
 	configRevision       string
@@ -189,6 +190,14 @@ func (m *Manager) CloseContext(ctx context.Context) error {
 }
 
 func (m *Manager) closePass() error {
+	// Configuration I/O accepted before the barrier can still own files or
+	// detached native controls. Join it before capturing final cleanup state.
+	m.mu.Lock()
+	configWork := m.configWork
+	m.mu.Unlock()
+	if configWork != nil {
+		<-configWork
+	}
 	m.mu.Lock()
 	tds := m.closePending
 	m.closePending = nil

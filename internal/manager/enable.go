@@ -16,6 +16,11 @@ import (
 func (m *Manager) Enable(name string) (*protocol.EnableResult, error) {
 	m.configMu.Lock()
 	defer m.configMu.Unlock()
+	finish, err := m.beginConfigWork()
+	if err != nil {
+		return nil, err
+	}
+	defer finish()
 	m.mu.Lock()
 	rt, err := m.lookup(name)
 	if err != nil {
@@ -60,6 +65,11 @@ func (m *Manager) Enable(name string) (*protocol.EnableResult, error) {
 func (m *Manager) Disable(name string) (*protocol.EnableResult, error) {
 	m.configMu.Lock()
 	defer m.configMu.Unlock()
+	finish, err := m.beginConfigWork()
+	if err != nil {
+		return nil, err
+	}
+	defer finish()
 	m.mu.Lock()
 	rt, err := m.lookup(name)
 	if err != nil {
@@ -226,6 +236,9 @@ func (m *Manager) rebuildGraphWithLinks(links map[string][]string, build func([]
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.closed {
+		return protocol.ErrFailed("manager is shutting down or closed")
+	}
 	m.acceptEnabledGraphLocked(g, links)
 	return nil
 }

@@ -84,7 +84,12 @@ func (h *UserHost) WatchUserAdmission(ctx context.Context, path string) {
 			return
 		case <-ticker.C:
 		}
+		work, err := h.acceptNativeUserWork()
+		if err != nil {
+			continue
+		}
 		p, err := LoadUserAdmission(path)
+		_ = h.finishNativeUserWork(work, nil)
 		if err != nil {
 			h.cfg.Logf("user admission policy: %v", err)
 			h.mu.Lock()
