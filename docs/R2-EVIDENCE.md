@@ -966,6 +966,26 @@ deadline/cleanup retention. Idle-user cleanup dispatch, reserved enumeration and
 policy progress, and recovery backoff remain open. This slice does not close R2
 or claim new guest qualification beyond the earlier maintenance candidate.
 
+## September 12 bounded idle-user cleanup dispatch
+
+The session listener records logoff immediately and queues cleanup independently
+of later notifications. One owned dispatcher coalesces requests per retained SID,
+reserves at most four wait workers before spawning, skips busy SID gates, and
+retries failed or timed-out cleanup after a delay. Shutdown closes admission,
+cancels dispatcher waits and joins its completion. Native stops remain retained
+per process after a wait expires; this is a worker bound, not yet an aggregate
+bound on native stops across all tracked users.
+
+Post-kill liveness observation now belongs to the retained stop attempt, so a
+blocked observation cannot escape the caller's deadline. A new session cannot
+cancel uncertain cleanup already accepted for its previous manager; reconciliation
+can admit a replacement after that obligation completes.
+
+Twenty focused race repetitions cover blocked cleanup with independent logon,
+busy SID gates, repeated requests, four-worker admission, uncertain cleanup after
+a new session, and shutdown during blocked liveness. Reserved enumeration/policy
+capacity, aggregate tracked-user limits and recovery backoff remain open.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

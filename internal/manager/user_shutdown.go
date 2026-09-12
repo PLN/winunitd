@@ -12,6 +12,9 @@ const userShutdownWorkers = 4
 // delay every other user's stop, and retries join rather than duplicate workers.
 func (h *UserHost) shutdownPass(ctx context.Context) error {
 	sids := h.acceptUserShutdown()
+	h.mu.Lock()
+	dispatch := h.idleDispatch
+	h.mu.Unlock()
 	var mu sync.Mutex
 	var result error
 	record := func(err error) {
@@ -41,5 +44,12 @@ func (h *UserHost) shutdownPass(ctx context.Context) error {
 	// Unknown-SID token work and close retries get their own progress path.
 	record(h.drainNativeUserWork(ctx))
 	workers.Wait()
+	if dispatch != nil {
+		select {
+		case <-dispatch.done:
+		case <-ctx.Done():
+			record(ctx.Err())
+		}
+	}
 	return errors.Join(result, ctx.Err())
 }
