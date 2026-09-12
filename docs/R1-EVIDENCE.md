@@ -189,3 +189,28 @@ The activating user oneshot queried its own accepted PID/operation snapshot.
 Final disable-linger released the user manager/helper/profile with no
 resurrection. Raw scripts, results, CI identity, manifest and hashes are retained
 privately. This selected native matrix does not qualify MSI servicing or R7.
+
+## Combined manager pressure measurements
+
+`TestManagerAggregateCapturePressure` runs a production manager in a fresh test
+process, with five native noisy services producing 42.5 MiB across stdout/stderr
+(both short lines and unterminated fragments) and a sixth quiet service. A test
+store stalls the storage writer. The fixture samples Go heap, private committed
+bytes, resident working set, goroutines, Windows threads and handles alongside
+status latency. These are sampled maxima, not continuous peak measurements.
+
+All six concurrent stops must return within five seconds under a one-second
+per-unit stop budget, report unfinished journal cleanup, and confirm the main
+process has exited. Releasing storage and retrying stop must complete cleanup
+and retain the exact quiet record. Queue/drop accounting is checked while the
+writer remains stalled. Three complete cycles in the isolated process check
+resource stability after Go's initial Windows thread/handle cache expansion.
+
+The explicit cold-run growth limits are 128 MiB Go heap, 128 MiB private commit
+without race instrumentation (768 MiB with it), 256 handles/goroutines and 64
+threads. Final-cycle handles/threads must remain within 32/four of the first
+completed cycle, and cleanup must release worker goroutines. Status calls must
+take less than one second. These fixture budgets do not establish resource
+bounds for arbitrary service counts, historical journal names or all storage
+failures. Exact-source CI and native lab measurements for this combined fixture
+must be retained before closing its qualification gate.
