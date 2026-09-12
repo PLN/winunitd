@@ -157,15 +157,17 @@ func (m *Manager) readEnabledLinks() (map[string][]string, error) {
 		return nil, err
 	}
 	out := make(map[string][]string)
+	remaining := maxConfigurationEntries - len(ents)
 	for _, e := range ents {
 		if !e.IsDir() {
 			continue
 		}
 		target := core.NormalizeName(e.Name())
-		files, err := os.ReadDir(filepath.Join(dir, e.Name()))
+		files, err := readConfigurationDirectory(filepath.Join(dir, e.Name()), remaining)
 		if err != nil {
 			return nil, err
 		}
+		remaining -= len(files)
 		for _, f := range files {
 			if f.IsDir() {
 				continue

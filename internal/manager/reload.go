@@ -3,12 +3,21 @@ package manager
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/unit"
+)
+
+const (
+	maxManagedUnits         = 1024 // includes builtins and retained removed definitions
+	maxConfigurationEntries = 4096
+	maxReloadErrors         = 128
+	maxReloadErrorBytes     = 128 << 10
 )
 
 // Reload reparses unit files and rebuilds the graph. Live processes and
@@ -43,6 +52,9 @@ func (m *Manager) reloadWithBuilder(build func([]*unit.Unit) (*core.Graph, error
 	}
 
 	loaded = mergeBuiltins(loaded, m.cfg.UserScope)
+	if len(loaded) > maxManagedUnits {
+		return nil, protocol.ErrFailed("configuration exceeds 1024 units including builtins")
+	}
 	links, err := m.readEnabledLinks()
 	if err != nil {
 		return nil, protocol.ErrFailed(err.Error())
@@ -57,6 +69,9 @@ func (m *Manager) reloadWithBuilder(build func([]*unit.Unit) (*core.Graph, error
 		m.mu.Lock()
 		snapshot := m.captureReloadOwnershipLocked(accepted)
 		m.mu.Unlock()
+		if len(loaded)+len(snapshot.retained) > maxManagedUnits {
+			return nil, protocol.ErrFailed("configuration exceeds 1024 units including retained ownership")
+		}
 		graphUnits := append([]*unit.Unit(nil), loaded...)
 		for _, u := range snapshot.retained {
 			graphUnits = append(graphUnits, u)
@@ -117,6 +132,21 @@ func (m *Manager) parseUnitDir() ([]*unit.Unit, *protocol.DaemonReloadResult, er
 	}
 
 	var loaded []*unit.Unit
+	fileCount := 0
+	errorBytes := 0
+	diagnosticsTruncated := false
+	addError := func(message string) {
+		if diagnosticsTruncated {
+			return
+		}
+		if len(result.Errors) >= maxReloadErrors || errorBytes+len(message) > maxReloadErrorBytes {
+			result.Errors = append(result.Errors, "additional configuration errors omitted; correct these errors and retry")
+			diagnosticsTruncated = true
+			return
+		}
+		result.Errors = append(result.Errors, message)
+		errorBytes += len(message)
+	}
 	seen := make(map[string]string, len(entries))
 	for _, e := range entries {
 		if e.IsDir() {
@@ -126,39 +156,43 @@ func (m *Manager) parseUnitDir() ([]*unit.Unit, *protocol.DaemonReloadResult, er
 		if _, kerr := unit.KindFromName(name); kerr != nil {
 			continue
 		}
+		fileCount++
+		if fileCount > maxManagedUnits {
+			return nil, nil, protocol.ErrFailed("configuration exceeds 1024 unit files")
+		}
 		path := filepath.Join(unitsPath, name)
 		rep := unit.VerifyPath(path)
 		norm := core.NormalizeName(name)
 		if prev, ok := seen[norm]; ok {
-			result.Errors = append(result.Errors, fmt.Sprintf("duplicate unit %q (%s and %s)", norm, prev, path))
+			addError(fmt.Sprintf("duplicate unit %q (%s and %s)", norm, prev, path))
 			continue
 		}
 		seen[norm] = path
 		if rep.HasError() {
 			for _, iss := range rep.Errors() {
-				result.Errors = append(result.Errors, iss.String())
+				addError(iss.String())
 			}
 			continue
 		}
 		if rep.Unit == nil {
-			result.Errors = append(result.Errors, path+": parse produced no unit")
+			addError(path + ": parse produced no unit")
 			continue
 		}
 		if m.cfg.UserScope && scmServiceName(rep.Unit) != "" {
-			result.Errors = append(result.Errors, path+": Type=scm is only supported in the system manager")
+			addError(path + ": Type=scm is only supported in the system manager")
 			continue
 		}
 		if m.cfg.UserScope && scheduledTaskName(rep.Unit) != "" {
-			result.Errors = append(result.Errors, path+": Type=scheduled-task is only supported in the system manager")
+			addError(path + ": Type=scheduled-task is only supported in the system manager")
 			continue
 		}
 		scopeFail := false
 		for _, iss := range unit.RegistryScopeIssues(rep.Unit, m.cfg.UserScope) {
-			result.Errors = append(result.Errors, iss.String())
+			addError(iss.String())
 			scopeFail = true
 		}
 		for _, iss := range unit.EventLogScopeIssues(rep.Unit, m.cfg.UserScope) {
-			result.Errors = append(result.Errors, iss.String())
+			addError(iss.String())
 			scopeFail = true
 		}
 		if scopeFail {
@@ -173,12 +207,28 @@ func (m *Manager) parseUnitDir() ([]*unit.Unit, *protocol.DaemonReloadResult, er
 // an existing regular file can also report a not-found error; do not mistake
 // that unreadable configuration source for a valid removal of every entry.
 func readOptionalDirectory(path string) ([]os.DirEntry, error) {
-	entries, err := os.ReadDir(path)
+	return readConfigurationDirectory(path, maxConfigurationEntries)
+}
+
+func readConfigurationDirectory(path string, limit int) ([]os.DirEntry, error) {
+	f, err := os.Open(path)
 	if os.IsNotExist(err) {
 		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
 			return nil, nil
 		}
 	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	entries, err := f.ReadDir(limit + 1)
+	if err == io.EOF {
+		err = nil
+	}
+	if len(entries) > limit {
+		return nil, fmt.Errorf("configuration directory exceeds remaining allowance of %d entries", limit)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	return entries, err
 }
 

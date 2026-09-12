@@ -1097,9 +1097,9 @@ and the preceding authentication change remains pending.
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2
-coordinator. They do not add immutable status snapshots,
-admission bounds for every operation class, or a fully migrated typed-event
-coordinator.
+coordinator. The manager-local immutable snapshot described in the operator
+contract is implemented; admission bounds for every operation class and a fully
+migrated typed-event coordinator remain open.
 Existing generation
 checks and lifecycle writers remain in place; the full interleaving matrix and
 source audit are still required. The isolated adapter tests and LTSC daemon checks
@@ -1159,3 +1159,36 @@ snapshot independence, and a real Control status request while the injected
 process liveness method blocks. CLI output includes the selected mode/session and
 current session count. These are recorded decisions, not new process identities
 or fresh native liveness evidence; the complete R2/R4 matrices remain open.
+
+## September 12 coordinator native qualification
+
+Exact source `99e89680c78b98891519c62a1a7081d1f2cf3bdb` passed
+[hosted CI](https://github.com/PLN/winunitd/actions/runs/34720088259) and a real
+SCM/SYSTEM and headless standard-user qualification on the retained LTSC guest.
+A pending calendar activation survived broker termination with the same activation
+ID and completed after SCM recovery in 2.652 seconds. A second restart did not
+replay it. Snapshots matched accepted unit PIDs, timer arm revisions and counts;
+a headless user's own activating unit queried its manager and observed its own
+PID and active operation without waiting on its unit gate.
+
+All eight cooperative/hung-helper/repeatable-oneshot/retained-oneshot stop cases
+passed across SYSTEM and user managers. Hung helper descendants were confirmed
+terminated in 8.143 and 8.032 seconds with a ten-second stop budget. Final linger
+revocation stopped the user manager and helper, released the profile and showed
+no resurrection during the observation interval. Raw scripts, results, artifact
+manifest and hashes are retained privately. This qualifies these regressions;
+R2-wide admission/interleavings, the complete R4 matrix and R7 remain open.
+
+## Configuration input and retained-record bounds
+
+Reload now bounds directory enumeration, disk-backed file size and the union of
+new definitions with retained runtime owners before graph construction. Enabled
+link discovery shares one aggregate entry allowance across target directories.
+Rejection preserves the accepted configuration. Diagnostic truncation is explicit
+and cannot turn an invalid candidate into a successful partial publication.
+
+Regressions load the record boundary, reject a replacement while a removed service
+still runs, stop it and successfully reload at the boundary, then reject an extra
+unit including builtins. Additional checks cover byte boundaries, sorted bounded
+enumeration, aggregate enabled links and diagnostic overflow. These input bounds
+do not complete the remaining command/worker and capture fairness audit.

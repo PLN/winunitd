@@ -7,6 +7,21 @@ import (
 	"testing"
 )
 
+func TestVerifyPathFileSizeLimit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bounded.target")
+	for _, size := range []int{MaxFileBytes, MaxFileBytes + 1} {
+		data := "[Unit]\n" + strings.Repeat("#\n", (size-7)/2)
+		data += strings.Repeat("#", size-len(data))
+		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+		r := VerifyPath(path)
+		if r.HasError() != (size > MaxFileBytes) {
+			t.Fatalf("size %d: %+v", size, r.Issues)
+		}
+	}
+}
+
 func TestVerifyPath(t *testing.T) {
 	t.Parallel()
 

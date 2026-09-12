@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	maxSnapshotUnits      = 1024
+	maxSnapshotUnits      = maxManagedUnits
 	maxSnapshotOperations = 128
 	maxSnapshotBytes      = 512 << 10
 )

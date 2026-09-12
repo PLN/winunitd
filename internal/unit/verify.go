@@ -2,15 +2,30 @@ package unit
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
+
+// MaxFileBytes bounds disk-backed unit parsing for both verification and reload.
+const MaxFileBytes = 64 << 10
 
 // VerifyPath reads a unit file from disk, parses it, and verifies it.
 // It does not require a running daemon. A .registry, .eventlog, or .path
 // unit also requires the companion basename .service next to the file.
 func VerifyPath(path string) Report {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
+	var data []byte
+	if err == nil {
+		data, err = io.ReadAll(io.LimitReader(f, MaxFileBytes+1))
+		closeErr := f.Close()
+		if err == nil {
+			err = closeErr
+		}
+		if len(data) > MaxFileBytes {
+			err = fmt.Errorf("unit file exceeds %d bytes", MaxFileBytes)
+		}
+	}
 	if err != nil {
 		return Report{Issues: []Issue{{
 			Path:     path,
