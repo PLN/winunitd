@@ -23,6 +23,14 @@ func NewClient(rw io.ReadWriter) *Client {
 	return &Client{rw: rw, br: bufio.NewReader(rw)}
 }
 
+func (c *Client) Maintenance(ctx context.Context, params MaintenanceParams) (*MaintenanceResult, error) {
+	var out MaintenanceResult
+	if err := c.Call(ctx, MethodMaintenance, params, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 func (c *Client) Operation(ctx context.Context, id string) (*OperationResult, error) {
 	var out OperationResult
 	if err := c.Call(ctx, MethodOperation, OperationParams{ID: id}, &out); err != nil {

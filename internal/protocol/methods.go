@@ -17,6 +17,7 @@ const (
 	MethodDisableLinger   = "disable-linger"
 	MethodOperation       = "operation"
 	MethodCancelOperation = "cancel-operation"
+	MethodMaintenance     = "maintenance"
 )
 
 // Methods is the full set of control verbs.
@@ -36,6 +37,7 @@ var Methods = []string{
 	MethodDisableLinger,
 	MethodOperation,
 	MethodCancelOperation,
+	MethodMaintenance,
 }
 
 var knownMethods = func() map[string]bool {
@@ -55,6 +57,24 @@ func KnownMethod(name string) bool {
 // on the system pipe only (not winctl --user).
 func LingerMethod(name string) bool {
 	return name == MethodEnableLinger || name == MethodDisableLinger
+}
+
+// AdministrativeMethod requires an administrator or LocalSystem peer.
+func AdministrativeMethod(name string) bool {
+	return LingerMethod(name) || name == MethodMaintenance
+}
+
+const MaxMaintenanceTimeoutMS int64 = 180000
+
+// Zero selects the default aggregate 180-second maintenance deadline.
+type MaintenanceParams struct {
+	TimeoutMS int64 `json:"timeoutMS,omitempty"`
+}
+type MaintenanceResult struct {
+	State     string `json:"state"`
+	StartedAt string `json:"startedAt"`
+	Deadline  string `json:"deadline"`
+	Error     string `json:"error,omitempty"`
 }
 
 // UnitParams is the body for verbs that take a unit name.
@@ -109,14 +129,15 @@ type StatusResult struct {
 type MachineStatus struct {
 	ConfigRevision string `json:"configRevision,omitempty"`
 
-	State          string `json:"state"`
-	UnitsLoaded    int    `json:"unitsLoaded"`
-	UnitsActive    int    `json:"unitsActive"`
-	UnitsFailed    int    `json:"unitsFailed"`
-	TimersLoaded   int    `json:"timersLoaded"`
-	UserManagers   int    `json:"userManagers,omitempty"`
-	Lingering      int    `json:"lingering,omitempty"`
-	UserNativeWork int    `json:"userNativeWork,omitempty"`
+	State          string             `json:"state"`
+	UnitsLoaded    int                `json:"unitsLoaded"`
+	UnitsActive    int                `json:"unitsActive"`
+	UnitsFailed    int                `json:"unitsFailed"`
+	TimersLoaded   int                `json:"timersLoaded"`
+	UserManagers   int                `json:"userManagers,omitempty"`
+	Lingering      int                `json:"lingering,omitempty"`
+	UserNativeWork int                `json:"userNativeWork,omitempty"`
+	Maintenance    *MaintenanceResult `json:"maintenance,omitempty"`
 }
 
 // UnitStatus is one loaded unit (DESIGN.md §24, §45). MainPID is set when
