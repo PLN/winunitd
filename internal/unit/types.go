@@ -195,6 +195,7 @@ type Unit struct {
 // ServiceSpec is the [Service] section.
 type ServiceSpec struct {
 	Type                   ServiceType
+	RemainAfterExit        bool     // oneshot: retain active state after successful completion
 	ServiceName            string   // Type=scm: existing SCM service (DESIGN.md §51)
 	TaskName               string   // Type=scheduled-task: existing task path (DESIGN.md §52)
 	ExecStart              []string // argv: executable then arguments

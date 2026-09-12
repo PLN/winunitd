@@ -42,10 +42,47 @@ The following issues make the next work visible without replacing the full gates
 | R5 | [R5.1: Make persistent timer state atomic and failures observable](https://github.com/PLN/winunitd/issues/99) |
 
 The R2.4 operation-lifetime slice is implemented; see [behavior and limits](OPERATIONS.md).
-The next lifecycle work is the R2.1-R2.2 state-writer inventory and coordinator
-migration in #96. Graceful stop, semantic migration,
+Repeatable oneshots are the prioritized semantic slice (below); remaining
+R2.1-R2.2 state-writer/coordinator work continues in #96. Graceful stop, semantic migration,
 SYSTEM/user qualification, full MSI servicing and signing keep their separate
 gates. Successful beta installation and maintenance tests do not close them.
+
+## Priority: repeatable oneshots
+
+September 12, 2026: prioritize the oneshot portion of R3.3 as the next feature
+slice, independently of ExecStop. Default to `RemainAfterExit=no` so successful
+oneshots finish inactive and a subsequent start executes a fresh invocation;
+`RemainAfterExit=yes` retains the completed active state. No new `Type=task` is
+needed. The concrete use case is a maintenance unit outside its workload target
+that stops/updates/restarts those workloads while its own manager stays running.
+
+Acceptance: repeated starts after completion execute again; compatible starts during an
+existing invocation do not overlap or silently queue another run; failure,
+timeout, cancellation, output capture and process cleanup remain truthful;
+dependent ordered work proceeds after successful completion despite the oneshot
+becoming inactive; explicit retained-active behavior still works. Cover these
+through public lifecycle paths, including reload and stop/restart interleavings.
+The accepted default changes directly: omitted `RemainAfterExit` means `no`.
+No installed-base compatibility layer, format switch or converter is required
+for this change. `RemainAfterExit=yes` explicitly requests retained-active behavior.
+
+Local implementation and focused tests are present; merge/CI acceptance is still
+pending. This does not close R2/R3 or migrate the installed pilot.
+Elevation, external updater ownership, durable request/result
+handling and removal of legacy task dependencies remain separate maintenance
+integration work. A runner hosted by the daemon cannot update that daemon while
+it is stopped.
+
+Local Windows validation (September 12): `go test -race -parallel 1 ./...
+-count=1 -timeout 180s` and `go vet ./...` passed; full command 54.1 seconds,
+manager package 44.5 seconds. Focused oneshot/parser/native-repeat checks passed
+20 race-enabled repetitions; the final recovery-cleanup regression and related
+oneshot/cleanup tests passed ten repetitions before the final full suite.
+[Parser tests](../internal/unit/oneshot_test.go) and
+[lifecycle tests](../internal/manager/oneshot_test.go) cover defaults, retained
+state, repeat execution, shared prerequisites, failure, cancellation, timeout,
+restart, reload and cleanup failure. Existing native output/process-tree and
+timer tests also pass. Hosted CI, merge and deployment remain separate.
 
 ## Dependency and CI follow-up
 

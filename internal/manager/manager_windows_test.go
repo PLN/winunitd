@@ -657,8 +657,13 @@ RestartSec=100ms
 	m.mu.Lock()
 	st := m.stateOfLocked("init.service")
 	m.mu.Unlock()
-	if st != core.Active {
+	if st != core.Inactive {
 		t.Fatalf("oneshot state = %s", st)
+	}
+	// Completion releases the real process/job before a repeat invocation.
+	result, err := m.Start(context.Background(), "init")
+	if err != nil || result.ActiveState != "inactive" || helperCountLines(count) != 2 {
+		t.Fatalf("repeat oneshot = %+v, err=%v, starts=%d", result, err, helperCountLines(count))
 	}
 }
 
@@ -1143,13 +1148,8 @@ func TestWindowsTimerOneshotOnStartupSec(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitWindowsCount(t, count, 1, 5*time.Second)
-	// The helper writes the count file inside CreateProcess, before the
-	// timer fire goroutine (engine: go fire → onTimerElapsed → Start)
-	// has applyRunLocked Active. Checking state on the next line was a
-	// race (failing SHA 615fdb01 lasted 0.24s ≈ OnStartupSec). This test
-	// never Stop/Shutdown's; Boot only Starts default.target. Oneshot
-	// exit 0 still stays Active: TestWindowsOneshotRestartOnFailureIgnoresExit0
-	// passed on that same Windows run. Wait for the M9 assertion.
+	// The count file is written before exit and cleanup. Wait for a successful
+	// operation as well as inactive state so the initial state cannot pass.
 	deadline := time.Now().Add(5 * time.Second)
 	var st, timerSt core.State
 	var stopping bool
@@ -1158,10 +1158,12 @@ func TestWindowsTimerOneshotOnStartupSec(t *testing.T) {
 		st = m.stateOfLocked("job.service")
 		timerSt = m.stateOfLocked("job.timer")
 		stopping = m.stoppingOfLocked("job.service")
+		id := m.units["job.service"].lastOperationID
 		m.mu.Unlock()
-		if st == core.Active && timerSt == core.Active {
+		op, _ := m.Operation(id)
+		if st == core.Inactive && timerSt == core.Active && op != nil && op.State == "succeeded" {
 			if stopping {
-				t.Fatal("oneshot is Active but stopping; Stop leaked into timer activation")
+				t.Fatal("completed oneshot is stopping; Stop leaked into timer activation")
 			}
 			return
 		}
@@ -1170,12 +1172,7 @@ func TestWindowsTimerOneshotOnStartupSec(t *testing.T) {
 	if stopping {
 		t.Fatalf("oneshot was stopped (state=%s); not an applyRunLocked race", st)
 	}
-	if st != core.Active {
-		t.Fatalf("oneshot activated by timer state = %s", st)
-	}
-	if timerSt != core.Active {
-		t.Fatalf("timer state = %s", timerSt)
-	}
+	t.Fatalf("timer oneshot did not complete: service=%s timer=%s", st, timerSt)
 }
 
 func TestWindowsOnBootSecVsOnStartupSec(t *testing.T) {

@@ -27,6 +27,7 @@ var knownDirectives = map[string]map[string]bool{
 	},
 	"Service": {
 		"Type":                   true,
+		"RemainAfterExit":        true,
 		"ServiceName":            true,
 		"TaskName":               true,
 		"ExecStart":              true,
@@ -82,6 +83,9 @@ var sectionsByKind = map[Kind]map[string]bool{
 }
 
 type serviceBuilder struct {
+	remainAfterExit     string
+	remainAfterExitLine int
+
 	typ      string
 	typLine  int
 	execRaw  string
@@ -356,6 +360,9 @@ func (p *parser) applyService(e iniEntry) {
 	case "Type":
 		s.typ = e.value
 		s.typLine = e.line
+	case "RemainAfterExit":
+		s.remainAfterExit = e.value
+		s.remainAfterExitLine = e.line
 	case "ServiceName":
 		s.serviceName = e.value
 		s.serviceNameL = e.line
@@ -582,6 +589,18 @@ func (p *parser) finishService() {
 		spec.Type = ServiceType(typ)
 	default:
 		p.errorf(s.typLine, "invalid Type %q (supported: simple, oneshot, notify, scm, scheduled-task)", s.typ)
+	}
+
+	if s.remainAfterExitLine != 0 {
+		value, err := parseBool(s.remainAfterExit)
+		if err != nil {
+			p.errorf(s.remainAfterExitLine, "invalid RemainAfterExit: %s", err)
+		} else {
+			spec.RemainAfterExit = value
+		}
+		if spec.Type != TypeOneshot {
+			p.errorf(s.remainAfterExitLine, "RemainAfterExit is only supported for Type=oneshot")
+		}
 	}
 
 	if spec.Type == TypeSCM {

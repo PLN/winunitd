@@ -33,6 +33,12 @@ func (m *Manager) applyStartCompletionLocked(event startCompletion) {
 		return
 	}
 	state := core.Active
+	if event.err == nil && planned.record.ownedUnit() != nil {
+		svc := planned.record.ownedUnit().Service
+		if svc != nil && svc.Type == unit.TypeOneshot && !svc.RemainAfterExit {
+			state = core.Inactive
+		}
+	}
 	if errors.Is(event.err, core.ErrSkipped) {
 		state = core.Inactive
 	} else if event.err != nil {
@@ -434,6 +440,9 @@ func (m *Manager) acceptRecovery(request recoveryRequest) context.Context {
 	if m.startLimitHitLocked(rt) {
 		m.failStartLimitLocked(rt)
 		return nil
+	}
+	if rt.state == core.Activating && rt.sub == core.SubStart && rt.ownedUnit().Service != nil && rt.ownedUnit().Service.Type == unit.TypeOneshot {
+		rt.step(core.EventStartFailed)
 	}
 	if rt.step(core.EventAutoRestart) {
 		rt.err = ""

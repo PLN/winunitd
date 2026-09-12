@@ -273,12 +273,12 @@ RestartSec=5s
 	if _, err := m.Start(context.Background(), "init"); err != nil {
 		t.Fatal(err)
 	}
-	waitState(t, m, "init.service", core.Active)
+	waitState(t, m, "init.service", core.Inactive)
 	fk.Advance(5 * time.Second)
 	if got := launch.nstarts(); got != 1 {
 		t.Fatalf("starts = %d, want 1", got)
 	}
-	assertState(t, m, "init.service", core.Active)
+	assertState(t, m, "init.service", core.Inactive)
 }
 
 func TestOneshotRestartOnFailureRelaunchesAfterNonZero(t *testing.T) {

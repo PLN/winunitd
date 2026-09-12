@@ -58,7 +58,26 @@ func (m *Manager) acceptLaunch(ctx context.Context, name string, autoRestart boo
 	if rt != observation.record || rt.proc != observation.process {
 		return nil, fmt.Errorf("launch observation superseded")
 	}
+	// Different transaction roots can share a oneshot prerequisite. The unit
+	// gate waits for its completion; do not turn that wait into a queued rerun.
+	if planned != nil && planned.unit.Service != nil && planned.unit.Service.Type == unit.TypeOneshot && planned.revision == rt.invocationRevision && (planned.joiningOneshot || planned.gen != rt.gen) {
+		if _, restart := planned.origin.(*restartOrigin); !restart {
+			switch rt.state {
+			case core.Inactive, core.Active:
+				return nil, nil
+			case core.Failed:
+				return nil, fmt.Errorf("shared oneshot failed: %s", rt.err)
+			default:
+				return nil, fmt.Errorf("shared oneshot is recovering; retry start after completion")
+			}
+		}
+	}
 	if observation.alive {
+		return nil, nil
+	}
+	// A retained successful oneshot is already started even without a process.
+	// Reload changes the next invocation, not the completed one's policy.
+	if owned := rt.ownedUnit(); rt.state == core.Active && owned != nil && owned.Service != nil && owned.Service.Type == unit.TypeOneshot && owned.Service.RemainAfterExit {
 		return nil, nil
 	}
 	if rt.unavailable {
@@ -153,6 +172,9 @@ func (m *Manager) recordServiceLaunch(effect *launchEffect, native bool) {
 		return
 	}
 	rt := effect.owner.record
+	if effect.unit.Service.Type == unit.TypeOneshot {
+		rt.step(core.EventStartRequested)
+	}
 	if native {
 		rt.invocationUnit = effect.unit
 		rt.invocationRevision = effect.revision
@@ -213,7 +235,7 @@ func (m *Manager) adoptProcess(event processAdoption) bool {
 	rt.terminated = false
 	if event.effect.unit.Service.Type == unit.TypeNotify {
 		rt.step(core.EventStartRequested)
-	} else if event.autoRestart && event.alive {
+	} else if event.autoRestart && event.alive && event.effect.unit.Service.Type != unit.TypeOneshot {
 		if rt.step(core.EventStartSucceeded) {
 			rt.err = ""
 		}
@@ -255,17 +277,50 @@ func (m *Manager) clearStartWait(effect *launchEffect) {
 	}
 }
 
-func (m *Manager) applyOneshotCleanup(effect *launchEffect, proc runtime.Process, err error, terminated bool) {
+func (m *Manager) applyOneshotCleanup(effect *launchEffect, proc runtime.Process, cleanupErr, waitErr error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !effect.owner.currentLocked(m) || effect.owner.record.proc != proc {
 		return
 	}
 	rt := effect.owner.record
-	if terminated {
+	if waitErr != nil {
 		rt.terminated = true
 	}
-	rt.stopUncertain = err != nil
+	rt.stopUncertain = cleanupErr != nil
+	if err := errors.Join(waitErr, cleanupErr); err != nil && !rt.stopping {
+		rt.step(core.EventStartFailed)
+		rt.err = err.Error()
+	}
+}
+
+// Successful completion owns cleanup and final state before releasing the unit
+// gate. A later invocation cannot race the old process's exit watcher.
+func (m *Manager) completeOneshot(ctx context.Context, effect *launchEffect, proc runtime.Process, cleanupErr error) (time.Time, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rt := effect.owner.record
+	if !effect.owner.currentLocked(m) || rt.proc != proc {
+		return time.Time{}, fmt.Errorf("oneshot completion superseded")
+	}
+	if cleanupErr != nil {
+		rt.stopUncertain = true
+		rt.step(core.EventStartFailed)
+		rt.err = fmt.Sprintf("oneshot cleanup: %v", cleanupErr)
+		return time.Time{}, cleanupErr
+	}
+	rt.proc = nil
+	rt.stopUncertain = false
+	if ctx.Err() != nil || m.closed || rt.stopping {
+		return time.Time{}, fmt.Errorf("oneshot completion canceled: %w", context.Canceled)
+	}
+	state := core.Inactive
+	if effect.unit.Service.RemainAfterExit {
+		state = core.Active
+	}
+	rt.publishStartOutcome(state)
+	rt.err = ""
+	return m.now(), nil
 }
 
 func (m *Manager) acceptReadinessFailure(effect *launchEffect, proc runtime.Process, err error) bool {

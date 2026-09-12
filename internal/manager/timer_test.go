@@ -48,7 +48,14 @@ OnStartupSec=5s
 	assertState(t, m, "job.timer", core.Active)
 	advanceWait(t, fk, 5*time.Second)
 	waitLauncherUnit(t, launch, "job.service")
-	waitState(t, m, "job.service", core.Active)
+	waitCond(t, func() bool {
+		st, _ := m.Status("job.service")
+		if st.Unit.LastOperationID == "" {
+			return false
+		}
+		op, _ := m.Operation(st.Unit.LastOperationID)
+		return op.State == "succeeded" && st.Unit.ActiveState == "inactive"
+	})
 
 	st, err := m.Status("job.timer")
 	if err != nil || st.Unit == nil || st.Unit.Last == "" {
@@ -280,14 +287,8 @@ OnUnitActiveSec=7s
 	if _, err := m.Start(context.Background(), "foo.service"); err != nil {
 		t.Fatal(err)
 	}
-	// Advancing past TimeoutStopSec while the exit watcher is still cleaning
-	// the first invocation would inject a cleanup timeout into this timer test.
-	waitCond(t, func() bool {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		return m.units["foo.service"].proc == nil
-	})
-	// Wait for the activation timer, not an outstanding 5s cleanup deadline.
+	// Completion has already cleaned the process; the timer tracks that run.
+	assertState(t, m, "foo.service", core.Inactive)
 	waitCond(t, func() bool { return fk.WaitingAt(7 * time.Second) })
 	fk.Advance(7 * time.Second)
 	waitCond(t, func() bool { return launch.nstarts() >= 2 })
