@@ -78,18 +78,23 @@ The API constraints are documented by Microsoft for
 [CreateProcessAsUser](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessasuserw)
 and [CreateEnvironmentBlock](https://learn.microsoft.com/en-us/windows/win32/api/userenv/nf-userenv-createenvironmentblock).
 
-The system host now acquires a `LoadUserProfile` reference before resolving the
-launch environment and retains a duplicated token until confirmed process-tree
-cleanup and successful `UnloadUserProfile`. Failed creation or unload retains an
-owned cleanup record, including when no child was created. Cleanup retries do not
-repeat successful unloads. This managed-profile path currently accepts local
-machine accounts; domain/cloud/roaming-profile support remains outside its claims.
-Direct native test launches can exercise the already-loaded test profile without
-requiring administrative profile-loading privileges.
+For interactive sessions, Windows owns the logon's profile lifetime. The broker
+requires the user's hive to exist and retains an ordinary registry handle until
+process-tree cleanup; Windows also closes this handle on broker death. It does
+not add a `LoadUserProfile` reference: disposable guest testing found that such a
+reference survived broker death and prevented profile release after logoff,
+although ordinary shutdown released it correctly. Missing or not-yet-loaded
+interactive profiles fail closed and can be retried by session reconciliation.
+
+The headless path still uses an explicit `LoadUserProfile` reference and duplicated
+token with retryable unload after process-tree cleanup. Its abrupt-death profile
+ownership is not qualified and remains an R4.5 prerequisite; interactive evidence
+does not qualify it. Managed-profile paths currently accept local machine accounts;
+domain/cloud/roaming-profile support remains outside their claims.
 
 Portable fault tests cover termination-before-unload, failed unload retry, and
-failed creation retaining profile ownership. Native SYSTEM-to-standard-user
-launch and redirected/unloaded-profile qualification remain open. Headless linger
+failed creation retaining profile ownership. The remaining native session matrix
+and redirected/unloaded-profile qualification remain open. Headless linger
 is not qualified by these changes.
 
 Admission snapshots are copied and revisioned. Delayed file probes and launches recheck their session request and policy revision. Explicit revocation respects an independent linger grant; disabling that last grant cannot keep a manager through a revoked interactive session.
