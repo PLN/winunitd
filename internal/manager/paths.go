@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/eventlog"
+	"github.com/PLN/winunitd/internal/journal"
 	"github.com/PLN/winunitd/internal/notify"
 	"github.com/PLN/winunitd/internal/pathwatch"
 	"github.com/PLN/winunitd/internal/registry"
@@ -40,6 +41,10 @@ type Config struct {
 	BaseDir string
 	// Launch starts unit processes. Nil uses runtime.NewLauncher(Daemon).
 	Launch runtime.Launcher
+	// JournalOpen constructs the owned store; nil uses journal.Open. A returned
+	// store transfers to the manager, including cleanup if later setup fails.
+	// Qualification fixtures can inject storage faults through this factory.
+	JournalOpen func(string) (*journal.Store, error)
 	// Daemon is the M4 daemon Job Object. Unit processes nest under it.
 	Daemon *runtime.DaemonJob
 	// Clock drives the timer scheduler and manager waits for RestartSec,
