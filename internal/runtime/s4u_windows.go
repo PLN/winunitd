@@ -109,7 +109,6 @@ type credW struct {
 var (
 	modSecur32                     = windows.NewLazySystemDLL("secur32.dll")
 	modAdvapi32                    = windows.NewLazySystemDLL("advapi32.dll")
-	modKernel32                    = windows.NewLazySystemDLL("kernel32.dll")
 	procLsaRegisterLogonProcess    = modSecur32.NewProc("LsaRegisterLogonProcess")
 	procLsaLookupAuthenticationPkg = modSecur32.NewProc("LsaLookupAuthenticationPackage")
 	procLsaLogonUser               = modSecur32.NewProc("LsaLogonUser")
@@ -120,7 +119,7 @@ var (
 	procCredReadW                  = modAdvapi32.NewProc("CredReadW")
 	procCredFree                   = modAdvapi32.NewProc("CredFree")
 	procLogonUserW                 = modAdvapi32.NewProc("LogonUserW")
-	procAllocateLocallyUniqueId    = modKernel32.NewProc("AllocateLocallyUniqueId")
+	procAllocateLocallyUniqueId    = modAdvapi32.NewProc("AllocateLocallyUniqueId")
 )
 
 // ObtainLingerToken tries S4U first over a trusted LSA connection
@@ -206,7 +205,10 @@ func s4uLogon(rec LingerRecord) (result *UserToken, resultErr error) {
 			last = err
 			continue
 		}
-		source := newTokenSource()
+		source, err := newTokenSource()
+		if err != nil {
+			return nil, err
+		}
 		var profile uintptr
 		var profileLen uint32
 		var logonID windows.LUID
@@ -344,11 +346,26 @@ func enableSeTcbPrivilege(owner *UserToken) error {
 	return windows.AdjustTokenPrivileges(tok, false, &tp, 0, nil, nil)
 }
 
-func newTokenSource() tokenSource {
+func newTokenSource() (tokenSource, error) {
+	return newTokenSourceWithAllocator(func(id *windows.LUID) error {
+		if err := procAllocateLocallyUniqueId.Find(); err != nil {
+			return err
+		}
+		ok, _, err := procAllocateLocallyUniqueId.Call(uintptr(unsafe.Pointer(id)))
+		if ok == 0 {
+			return err
+		}
+		return nil
+	})
+}
+
+func newTokenSourceWithAllocator(allocate func(*windows.LUID) error) (tokenSource, error) {
 	var src tokenSource
 	copy(src.SourceName[:], []byte("winunitd"))
-	_, _, _ = procAllocateLocallyUniqueId.Call(uintptr(unsafe.Pointer(&src.SourceIdentifier)))
-	return src
+	if err := allocate(&src.SourceIdentifier); err != nil {
+		return tokenSource{}, fmt.Errorf("allocate S4U token source identifier: %w", err)
+	}
+	return src, nil
 }
 
 func fillInfo(rec LingerRecord) (UserInfo, error) {
