@@ -57,6 +57,9 @@ func (m *Manager) armTimer(u *unit.Unit, revision string) error {
 	}
 	spec := timerSpec(u)
 	spec.ConfigRevision = revision
+	if len(spec.OnCalendar) > timers.MaxCalendarExpressions {
+		return fmt.Errorf("timer exceeds %d OnCalendar expressions", timers.MaxCalendarExpressions)
+	}
 	if m.engine.Arm(spec) == 0 {
 		return fmt.Errorf("timer arm capacity %d exhausted or scheduler stopped", timers.MaxArmedTimers)
 	}
@@ -130,6 +133,7 @@ func (m *Manager) overlayTimer(st *protocol.UnitStatus) {
 	st.Next, st.Last = formatTimerStamp(snapshot.Next), formatTimerStamp(snapshot.Last)
 	st.ArmedConfigRevision = snapshot.ConfigRevision
 	st.TimerStorageState, st.TimerStorageError = snapshot.StorageState, snapshot.StorageError
+	st.TimerScheduleState = snapshot.ScheduleState
 	st.TimerActivation = timerActivationStatus(snapshot.Activation)
 }
 

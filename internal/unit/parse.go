@@ -882,6 +882,10 @@ func (p *parser) finishTimer() {
 
 	for i, expr := range t.calendars {
 		line := t.calendarLines[i]
+		if i >= timers.MaxCalendarExpressions {
+			p.errorf(line, "timer exceeds %d OnCalendar expressions", timers.MaxCalendarExpressions)
+			break
+		}
 		if strings.TrimSpace(expr) == "" {
 			p.errorf(line, "invalid OnCalendar: empty calendar expression")
 			continue

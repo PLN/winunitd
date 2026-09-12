@@ -50,8 +50,10 @@ func TestOldHeapEntryCannotFireReplacementSchedule(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.Arm(Spec{Name: "work.timer", OnCalendar: []Calendar{old}})
+	waitNext(t, e, "work.timer", clock.Now().Add(time.Hour))
 	e.Disarm("work.timer")
 	e.Arm(Spec{Name: "work.timer", OnCalendar: []Calendar{fresh}})
+	waitNext(t, e, "work.timer", clock.Now().Add(3*time.Hour))
 	clock.Advance(2 * time.Hour)
 	if _, ok := e.popDue(e.clk.now()); ok {
 		t.Fatal("old heap entry fired replacement schedule early")
@@ -207,6 +209,7 @@ func TestCapacityRaceDoesNotSkipPoppedCalendarDeadline(t *testing.T) {
 	}
 	e := &Engine{clk: clock.Clock(), store: store, armed: make(map[string]*armed), wakeup: make(chan struct{}, 1), running: true}
 	e.Arm(Spec{Name: "work.timer", OnCalendar: []Calendar{cal}})
+	waitNext(t, e, "work.timer", clock.Now().Add(time.Hour))
 	clock.Advance(2 * time.Hour)
 	due, ok := e.popDue(e.clk.now())
 	if !ok {

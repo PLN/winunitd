@@ -264,6 +264,15 @@ callback slots include pre-dispatch persistence and completion writes. Storage
 calls are serialized outside the scheduler and manager decision locks, and all
 shutdown callers join accepted storage work.
 
+One reserved calendar worker computes deadlines outside decision locks. Each arm
+coalesces pending changes; stale arm or clock generations cannot publish results.
+Timers accept at most 64 `OnCalendar` expressions. Schedule status is `planning`
+until a deadline is accepted, `ready` after calculation, `waiting` during storage
+load, or `failed` after a storage error. While planning, Next is absent; status
+reads copy accepted state without doing calendar searches. Relative-only timers
+and admission retries remain independent of the calendar worker. Shutdown joins
+accepted calculations.
+
 An occurrence is written before dispatch. A failed read or write suspends further
 dispatch for that arm and exposes the storage error. Repair the storage problem
 and stop/start the timer to reload its state. Complete files replace previous
@@ -288,4 +297,4 @@ arm; a later explicit arm can recover its pending intent.
 
 Older version 1 readers reject version 2 state. Preserve state backups for any
 downgrade to an older reader; installer rollback qualification remains R6 work.
-Calendar work and aggregate decision snapshots remain separate R2/R5 work.
+Aggregate decision snapshots remain separate R2/R5 work.

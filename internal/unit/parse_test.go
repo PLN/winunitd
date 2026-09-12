@@ -2177,6 +2177,24 @@ func TestTimerEmptyUnitReportsLine(t *testing.T) {
 	}
 }
 
+func TestTimerCalendarExpressionLimit(t *testing.T) {
+	for _, count := range []int{64, 65} {
+		rep := ParseUnit("work.timer", "[Timer]\n"+strings.Repeat("OnCalendar=daily\n", count))
+		if count == 64 && len(rep.Errors()) != 0 {
+			t.Fatalf("supported calendar count rejected: %v", rep.Errors())
+		}
+		if count == 65 {
+			found := false
+			for _, issue := range rep.Errors() {
+				found = found || strings.Contains(issue.Message, "exceeds 64 OnCalendar")
+			}
+			if !found {
+				t.Fatalf("calendar limit not diagnosed: %v", rep.Errors())
+			}
+		}
+	}
+}
+
 func TestParseCRLFUnitFile(t *testing.T) {
 	t.Parallel()
 	src := "[Service]\r\nExecStart=C:\\Tools\\foo.exe\r\nWorkingDirectory=C:\\Tools\r\n"
