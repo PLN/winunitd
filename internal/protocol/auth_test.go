@@ -3,6 +3,7 @@ package protocol
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -10,6 +11,22 @@ import (
 	"testing"
 	"time"
 )
+
+func TestImpersonatedIdentityFailureCannotUsePIDFallback(t *testing.T) {
+	cause := errors.New("token query or revert failed")
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	p, err := peerFromLookups(a, "", func(net.Conn, string) (Peer, error) {
+		return Peer{Administrator: true}, fmt.Errorf("wrapped: %w", &impersonatedIdentityError{err: cause})
+	}, func(net.Conn, string) (Peer, error) {
+		t.Error("PID fallback after successful impersonation")
+		return Peer{Administrator: true}, nil
+	})
+	if !errors.Is(err, cause) || p != (Peer{}) {
+		t.Fatalf("identity failure did not fail closed: %+v, %v", p, err)
+	}
+}
 
 func TestPipeDialImpLevelIsIdentification(t *testing.T) {
 	t.Parallel()

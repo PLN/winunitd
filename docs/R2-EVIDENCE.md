@@ -1055,6 +1055,28 @@ revocation, shutdown, periodic linger recovery and failed linger token acquisiti
 Genuine guest qualification of this combined candidate remains pending; these
 tests do not qualify headless profile lifetime or close the remaining R4 matrix.
 
+## September 12 pipe impersonation failure handling
+
+Pipe identity inspection runs in a dedicated locked goroutine owned by the
+bounded connection worker. Token-query failure after successful impersonation
+is terminal, so the opener process identity cannot override an unresolved client
+token. Revert failure clears the peer, rejects authorization and exits without
+unlocking that worker thread. Only failure to begin impersonation permits the
+existing logged PID fallback.
+
+[Microsoft's revert contract](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-reverttoself)
+warns against continuing under the client identity.
+[Go's locked-thread contract](https://pkg.go.dev/runtime#LockOSThread) prevents
+reuse when a locked goroutine exits. The pinned runtime parks its initial thread
+instead of destroying it; other retired worker threads terminate. The native
+test occupies the subprocess's initial thread and proves termination of an
+ordinary worker left impersonating by an injected revert failure.
+
+Twenty focused race repetitions cover native thread termination, terminal
+identity failures, and existing real named-pipe administrator/owner checks.
+Complete SYSTEM/cross-user security and raw connection saturation qualification
+remain open; this slice does not close R4.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

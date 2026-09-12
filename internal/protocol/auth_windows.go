@@ -3,6 +3,7 @@
 package protocol
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"runtime"
@@ -51,16 +52,45 @@ func peerFromClientProcess(h windows.Handle, ownerSID string) (Peer, error) {
 }
 
 func peerFromImpersonation(h windows.Handle, ownerSID string) (Peer, error) {
-	// Production A1 path: the connection token, not the opener PID.
-	// Lock the OS thread so RevertToSelf applies to the same thread
-	// that impersonated; dispatch runs after revert.
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	if err := impersonateNamedPipeClient(h); err != nil {
-		return Peer{}, err
-	}
-	defer windows.RevertToSelf()
+	return peerFromImpersonationWith(h, ownerSID, impersonateNamedPipeClient, peerFromThreadToken, windows.RevertToSelf)
+}
 
+func peerFromImpersonationWith(h windows.Handle, ownerSID string, impersonate func(windows.Handle) error, lookup func(string) (Peer, error), revert func() error) (Peer, error) {
+	type result struct {
+		peer Peer
+		err  error
+	}
+	done := make(chan result, 1)
+	// The bounded connection worker waits for this dedicated goroutine. The
+	// caller never impersonates, and a failed revert retires only this thread.
+	go func() {
+		runtime.LockOSThread()
+		unlock := true
+		defer func() {
+			if unlock {
+				runtime.UnlockOSThread()
+			}
+		}()
+		if err := impersonate(h); err != nil {
+			done <- result{err: err}
+			return
+		}
+		peer, err := lookup(ownerSID)
+		if revertErr := revert(); revertErr != nil {
+			unlock = false // retire the OS thread; it must never run another request
+			err = errors.Join(err, fmt.Errorf("revert pipe impersonation: %w", revertErr))
+		}
+		if err != nil {
+			done <- result{err: &impersonatedIdentityError{err: err}}
+			return
+		}
+		done <- result{peer: peer}
+	}()
+	r := <-done
+	return r.peer, r.err
+}
+
+func peerFromThreadToken(ownerSID string) (Peer, error) {
 	var tok windows.Token
 	if err := windows.OpenThreadToken(windows.CurrentThread(), windows.TOKEN_QUERY|windows.TOKEN_DUPLICATE, true, &tok); err != nil {
 		return Peer{}, err

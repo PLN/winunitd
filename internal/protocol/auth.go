@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -80,6 +81,13 @@ func UserAuthorizer(ownerSID string) Authorizer {
 
 type peerLookup func(conn net.Conn, ownerSID string) (Peer, error)
 
+// Once impersonation succeeded, a token-query or revert failure must not fall
+// back to the opener process identity, which can differ from its client token.
+type impersonatedIdentityError struct{ err error }
+
+func (e *impersonatedIdentityError) Error() string { return e.err.Error() }
+func (e *impersonatedIdentityError) Unwrap() error { return e.err }
+
 func pipeAuthorizer(ownerSID string) Authorizer {
 	return authorizerWithLookups(ownerSID, impersonatePeerPlatform, clientProcessPeerPlatform)
 }
@@ -106,6 +114,10 @@ func peerFromLookups(conn net.Conn, ownerSID string, impersonate, pid peerLookup
 	p, err := impersonate(conn, ownerSID)
 	if err == nil {
 		return p, nil
+	}
+	var identityErr *impersonatedIdentityError
+	if errors.As(err, &identityErr) {
+		return Peer{}, err
 	}
 	p, err2 := pid(conn, ownerSID)
 	if err2 == nil {
