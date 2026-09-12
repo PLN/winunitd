@@ -177,6 +177,11 @@ func (m *Manager) applyProcessExit(event processExitCompletion) {
 		m.mu.Unlock()
 		return
 	}
+	// A start without After may have completed while peer cleanup was blocked.
+	// Reconcile it before recovery or final exit publication as well.
+	if event.service == nil || event.service.Type != unit.TypeOneshot || kind != core.ExitSuccess || !event.service.RemainAfterExit {
+		m.queueBoundStopsLocked(event.owner.name)
+	}
 	if event.service != nil && core.ShouldRestart(event.service.Restart, kind) {
 		m.mu.Unlock()
 		m.beginRestart(recoveryRequest{owner: event.owner, delay: restartDelay(event.service)})
@@ -494,6 +499,10 @@ func (m *Manager) acceptRecovery(request recoveryRequest) context.Context {
 	}
 	if rt.step(core.EventAutoRestart) {
 		rt.err = ""
+		m.queueBoundStopsLocked(owner.name)
+		if rt.stopping {
+			return nil // a dependency cycle included the recovering peer
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	rt.cancelRestart()

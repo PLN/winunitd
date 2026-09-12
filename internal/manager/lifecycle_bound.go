@@ -98,7 +98,7 @@ func (m *Manager) boundPeersActiveLocked(u *unit.Unit) bool {
 			continue
 		}
 		rt := m.units[peer]
-		if rt == nil || rt.state != core.Active || rt.stopping {
+		if rt == nil || rt.state != core.Active || rt.stopping || rt.cleanupPending() {
 			return false
 		}
 	}

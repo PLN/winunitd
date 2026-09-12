@@ -364,3 +364,88 @@ func TestCloseDrainsBoundStopAcceptedBeforeWorkerStarts(t *testing.T) {
 	}
 	assertState(t, m, "bound.service", core.Inactive)
 }
+
+func TestBoundStartDuringPeerExitCleanup(t *testing.T) {
+	for _, ordered := range []bool{false, true} {
+		launch := &phasedOperationLauncher{entered: make(chan string, 8), release: map[string]chan struct{}{
+			"peer.service": make(chan struct{}), "bound.service": make(chan struct{}),
+		}}
+		close(launch.release["bound.service"])
+		after := ""
+		if ordered {
+			after = "After=peer.service\n"
+		}
+		m := managerWith(t, launch, map[string]string{
+			"peer.service":  boundWorker + "TimeoutStopSec=30s\n",
+			"bound.service": "[Unit]\nBindsTo=peer.service\n" + after + boundWorker,
+		})
+		var peerOnce, gateOnce sync.Once
+		releasePeer := func() { peerOnce.Do(func() { close(launch.release["peer.service"]) }) }
+		unlock := m.ops.lock("bound.service")
+		releaseGate := func() { gateOnce.Do(unlock) }
+		t.Cleanup(releasePeer)
+		t.Cleanup(releaseGate)
+		started := make(chan error, 1)
+		go func() { _, err := m.Start(context.Background(), "bound.service"); started <- err }()
+		waitCond(t, func() bool {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			return m.units["peer.service"].state == core.Active
+		})
+		m.mu.Lock()
+		peer := m.units["peer.service"].proc.(*phasedOperationProcess).Process.(*fakeProc)
+		m.mu.Unlock()
+		peer.die(1)
+		select {
+		case name := <-launch.entered:
+			if name != "peer.service" {
+				t.Fatalf("unexpected cleanup: %s", name)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("peer cleanup did not enter")
+		}
+		releaseGate()
+		if err := waitErr(t, started); err != nil {
+			t.Fatal(err)
+		}
+		if ordered {
+			assertState(t, m, "bound.service", core.Inactive)
+		} else {
+			assertState(t, m, "bound.service", core.Active)
+		}
+		releasePeer()
+		waitCond(t, func() bool {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			return m.units["bound.service"].state == core.Inactive && m.boundStopsDone == nil
+		})
+	}
+}
+
+func TestBoundRetainedPeerEnteringRecoveryStopsDependent(t *testing.T) {
+	m := testManager(t, map[string]string{
+		"peer.service":  oneshotBody + "RemainAfterExit=yes\n",
+		"bound.service": "[Unit]\nBindsTo=peer.service\nAfter=peer.service\n" + boundWorker,
+	})
+	if _, err := m.Start(context.Background(), "bound.service"); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	rt := m.units["peer.service"]
+	owner := runtimeIdentity{name: "peer.service", record: rt, gen: rt.gen}
+	svc := rt.ownedUnit().Service
+	m.mu.Unlock()
+	// Successful retained completion alone is not disappearance.
+	m.applyProcessExit(processExitCompletion{owner: owner, service: svc})
+	assertState(t, m, "bound.service", core.Active)
+	// Deliver an accepted recovery transition separately from process exit.
+	// A retained oneshot has no remaining process watcher to deliver it again.
+	if ctx := m.acceptRecovery(recoveryRequest{owner: owner}); ctx == nil {
+		t.Fatal("retained peer did not enter recovery")
+	}
+	waitCond(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.units["bound.service"].state == core.Inactive && m.boundStopsDone == nil
+	})
+}
