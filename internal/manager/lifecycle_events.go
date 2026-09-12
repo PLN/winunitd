@@ -315,6 +315,9 @@ func (m *Manager) applyProcessExitCleanup(event processExitCleanup) bool {
 			rt.step(core.EventStartFailed)
 		}
 		rt.err = fmt.Sprintf("exit cleanup: %v", event.err)
+		if !rt.stopping {
+			m.queueBoundStopsLocked(owner.name)
+		}
 		return false
 	}
 	rt.proc = nil
@@ -322,6 +325,9 @@ func (m *Manager) applyProcessExitCleanup(event processExitCleanup) bool {
 	if rt.cleanupPending() {
 		if rt.state != core.Failed {
 			rt.step(core.EventStartFailed)
+		}
+		if !rt.stopping {
+			m.queueBoundStopsLocked(owner.name)
 		}
 		return false
 	}

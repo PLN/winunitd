@@ -37,6 +37,7 @@ func (m *Manager) acceptHubFailure(event hubCleanup) bool {
 	if rt.state == core.Active || rt.state == core.Activating {
 		if rt.step(core.EventStartFailed) {
 			rt.err = event.err.Error()
+			m.queueBoundStopsLocked(event.name)
 		}
 	}
 	return true

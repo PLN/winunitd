@@ -413,4 +413,7 @@ func (m *Manager) failStartLimitLocked(rt *unitRuntime) {
 		_ = rt.step(core.EventMainExited)
 	}
 	rt.err = core.ReasonStartLimit
+	if !rt.stopping && rt.unit != nil {
+		m.queueBoundStopsLocked(rt.unit.Name)
+	}
 }

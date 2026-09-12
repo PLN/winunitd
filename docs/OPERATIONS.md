@@ -223,7 +223,8 @@ Cancellation uses the reserved stop handler budget and allocates no worker.
 ## Bound dependency stops
 
 An accepted managed-process exit, watchdog/readiness failure, or inactive/failed
-start outcome stops active/activating `BindsTo` dependents. The stop scope also
+start outcome stops active/activating `BindsTo` dependents. Recovery/start-limit
+transitions and watch/timer re-arm failures use the same path. The stop scope also
 includes their reverse Requires/BindsTo/PartOf members, with reverse ordering.
 Requires or PartOf alone do not propagate an unexpected peer exit. Existing
 invocations retain their dependency policy across reload/removal.

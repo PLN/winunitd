@@ -57,7 +57,7 @@ After requires an active peer, including the explicit retained-oneshot case.
 Twenty focused race repetitions cover peer recovery without dependent restart,
 Requires/PartOf distinction, removed-definition policy, ordered scope suppression,
 client stop saturation, stale peer/watchdog/member events, delayed batch metadata,
-dependent activation during blocked peer cleanup, retained-peer recovery,
+dependent activation during blocked peer cleanup, retained-peer recovery/start-limit,
 and close both before worker dispatch and during blocked cleanup. The full
 uncached Windows race suite and vet pass. These are manager regression results;
 native artifact qualification and external SCM/task disappearance observation

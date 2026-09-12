@@ -449,3 +449,21 @@ func TestBoundRetainedPeerEnteringRecoveryStopsDependent(t *testing.T) {
 		return m.units["bound.service"].state == core.Inactive && m.boundStopsDone == nil
 	})
 }
+
+func TestBoundPeerStartLimitStopsDependent(t *testing.T) {
+	m := testManager(t, map[string]string{
+		"peer.service":  oneshotBody + "RemainAfterExit=yes\n",
+		"bound.service": "[Unit]\nBindsTo=peer.service\nAfter=peer.service\n" + boundWorker,
+	})
+	if _, err := m.Start(context.Background(), "bound.service"); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	m.failStartLimitLocked(m.units["peer.service"])
+	m.mu.Unlock()
+	waitCond(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.units["bound.service"].state == core.Inactive && m.boundStopsDone == nil
+	})
+}

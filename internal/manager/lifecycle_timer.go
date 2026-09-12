@@ -88,6 +88,9 @@ func (m *Manager) syncTimersLocked() {
 		if err := m.acceptTimerArmLocked(u, rt.configRevision); err != nil {
 			rt.publishStartOutcome(core.Failed)
 			rt.err = err.Error()
+			if !rt.stopping {
+				m.queueBoundStopsLocked(u.Name)
+			}
 		}
 	}
 }
