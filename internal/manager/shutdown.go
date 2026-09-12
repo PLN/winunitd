@@ -247,13 +247,15 @@ func (m *Manager) stopUnitAfterLock(ctx context.Context, name string, release fu
 	name = effect.owner.name
 	proc, stopOwner, wdCancel := effect.process, effect.owner, effect.cancel
 	timeout := stopTimeout(effect.unit)
+	ctx, cancelBudget := m.clockTimeout(ctx, timeout)
+	defer cancelBudget()
 	kind := effect.unit.Kind
 	scmName, taskName := scmServiceName(effect.unit), scheduledTaskName(effect.unit)
 
 	if wdCancel != nil {
 		wdCancel()
 	}
-	notifyErr := m.closeNotifyContext(ctx, name, timeout)
+	helperErr := m.cooperativeStop(ctx, stopOwner, effect.unit, proc, effect.stopEligible)
 
 	if kind == unit.KindTimer && m.engine != nil {
 		m.engine.Disarm(name)
@@ -279,7 +281,8 @@ func (m *Manager) stopUnitAfterLock(ctx context.Context, name string, release fu
 	// Publish uncertainty before releasing the operation lock: a queued Start
 	// must not replace a process whose termination has not been confirmed.
 	m.applyStopCleanup(workloadCleanup{owner: stopOwner, process: proc, err: stopErr})
-	stopErr = errors.Join(stopErr, notifyErr, hubErr)
+	notifyErr := m.closeNotifyContext(ctx, name, timeout)
+	stopErr = errors.Join(stopErr, notifyErr, hubErr, helperErr)
 	// Release the per-unit op lock before journal.Wait so a hung
 	// capture cannot block later Start/Stop (issue #68).
 	release()

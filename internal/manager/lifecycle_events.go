@@ -198,10 +198,11 @@ func (m *Manager) applyProcessExit(event processExitCompletion) {
 // watchdogEffect is an accepted cleanup instruction. The worker only performs
 // I/O against these captured resources and reports the result back.
 type watchdogEffect struct {
-	owner   runtimeIdentity
-	unit    *unit.Unit
-	process runtime.Process
-	cancel  context.CancelFunc
+	owner        runtimeIdentity
+	unit         *unit.Unit
+	process      runtime.Process
+	cancel       context.CancelFunc
+	stopEligible bool
 }
 
 type watchdogCleanup struct {
@@ -217,12 +218,13 @@ func (m *Manager) acceptWatchdogFailure(owner runtimeIdentity) *watchdogEffect {
 	if !owner.currentLocked(m) || rt.stopping || m.closed || rt.cleanupPending() {
 		return nil
 	}
+	stopEligible := rt.state == core.Active
 	if !rt.step(core.EventWatchdogFailed) {
 		return nil
 	}
 	rt.err = "watchdog timed out"
 	rt.terminated = true
-	effect := &watchdogEffect{owner: owner, unit: rt.ownedUnit(), process: rt.proc, cancel: rt.watchdog}
+	effect := &watchdogEffect{owner: owner, unit: rt.ownedUnit(), process: rt.proc, cancel: rt.watchdog, stopEligible: stopEligible}
 	rt.setCleanup(cleanupWorkload, effect.process != nil)
 	rt.watchdog = nil
 	return effect
@@ -251,11 +253,12 @@ func (m *Manager) applyWatchdogCleanup(event watchdogCleanup) bool {
 // processExitEffect captures cleanup policy before the worker leaves the
 // lifecycle decision. Reload cannot retarget its resources or recovery policy.
 type processExitEffect struct {
-	owner      runtimeIdentity
-	unit       *unit.Unit
-	process    runtime.Process
-	cancel     context.CancelFunc
-	suppressed bool
+	owner        runtimeIdentity
+	unit         *unit.Unit
+	process      runtime.Process
+	cancel       context.CancelFunc
+	suppressed   bool
+	stopEligible bool
 }
 
 type processExitCleanup struct {
@@ -275,7 +278,8 @@ func (m *Manager) acceptProcessExitCleanup(name string, proc runtime.Process) *p
 	effect := &processExitEffect{
 		owner: runtimeIdentity{name: name, record: rt, gen: rt.gen},
 		unit:  rt.ownedUnit(), process: proc, cancel: rt.watchdog,
-		suppressed: rt.stopping || rt.terminated,
+		suppressed:   rt.stopping || rt.terminated,
+		stopEligible: rt.state == core.Active,
 	}
 	rt.setCleanup(cleanupWorkload, true)
 	rt.terminated = false
@@ -332,10 +336,11 @@ func (m *Manager) disarmStartLocked(name string) {
 // stopEffect retains the runtime record and captured invocation definition for
 // the entire native cleanup and journal wait. The worker does not choose policy.
 type stopEffect struct {
-	owner   runtimeIdentity
-	unit    *unit.Unit
-	process runtime.Process
-	cancel  context.CancelFunc
+	owner        runtimeIdentity
+	unit         *unit.Unit
+	process      runtime.Process
+	cancel       context.CancelFunc
+	stopEligible bool
 }
 
 func (m *Manager) acceptStopCleanup(name string) (*stopEffect, error) {
@@ -351,6 +356,7 @@ func (m *Manager) acceptStopCleanup(name string) (*stopEffect, error) {
 	effect := &stopEffect{
 		owner: runtimeIdentity{name: rt.unit.Name, record: rt, gen: rt.gen},
 		unit:  rt.ownedUnit(), process: rt.proc, cancel: rt.watchdog,
+		stopEligible: rt.state == core.Active,
 	}
 	rt.cancelRestart()
 	rt.watchdog = nil

@@ -52,11 +52,14 @@ Native query results can describe a different observation time from the copied
 manager fields; retaining the existing response format does not close R2.1.
 
 Cleanup uncertainty is now a per-record resource set, with independent workload,
-notification and watch entries. `cleanup_resources.go` supplies the nonblocking
+notification, watch and stop-helper entries. `cleanup_resources.go` supplies the nonblocking
 set/projection helpers; exact-owner lifecycle handlers are the writers. Workload
 results exclude notification/watch errors, and confirmed process termination
 releases its process reference while unrelated failed closes remain owned.
 Status derives the aggregate flag and copies resource names under m.mu.
+Stop-helper admission/process publication/completion in `stop_helper.go` retain
+the exact runtime and invocation, a bounded helper slot and output completion.
+Retries join the same helper; a late launch cannot delay forced workload cleanup.
 
 ## Invariants and regression evidence
 

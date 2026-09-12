@@ -126,10 +126,11 @@ Stop uses a deadline shared across the operation's phases:
 3. Wait for the workload to exit within the remaining graceful budget. If no cooperative stop is configured, use documented forced-stop behavior immediately.
 4. Force termination of the owned job, wait for confirmation within the overall budget, and bound capture finalization.
 
-Before implementing tracked `ExecStop` helper jobs, replace the aggregate cleanup
-uncertainty flag with per-resource obligations. Completion of one helper/process
-must not clear another resource's uncertainty. This belongs to R3.2 conformance;
-the current process-plus-notify or watch ownership model is unchanged.
+Cleanup obligations are tracked independently for workload, notification, watch
+and stop-helper resources. Completion of one helper/process cannot clear another
+resource's uncertainty. Stop-helper output finalization retains the same helper
+owner until joined. See the unit reference for implemented command restrictions;
+the broader R3.2 conformance and native qualification gates remain open.
 
 Reserve part of the total deadline for forced termination and confirmation; the cooperative phase cannot consume the entire budget. Do not discard kill/wait/close errors. If termination cannot be established, retain ownership and failed/stopping diagnostics, refuse a replacement invocation, and fail maintenance. Console CTRL_BREAK and GUI messages remain deferred until a compatible console/session arrangement is implemented and tested; `CREATE_NEW_PROCESS_GROUP` alone is insufficient.
 

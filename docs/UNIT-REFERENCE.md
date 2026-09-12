@@ -102,10 +102,11 @@ and `%NAME%` are not substituted.
 | Service: `Type` | Default simple; simple launches a process; notify waits for readiness; oneshot waits for exit; proxies described below |
 | Service: `RemainAfterExit` | oneshot only; no (default) finishes inactive after success; yes retains active state |
 | Service: `ExecStart`, `ExecStartArg`, `WorkingDirectory`, `Environment` | Arguments/environment rules above |
+| Service: `ExecStop`, `ExecStopArg` | Optional single cooperative stop command; same executable/argument grammar as ExecStart |
 | Service: `Restart` | no (default), on-failure, always, on-watchdog |
 | Service: `RestartSec` | Recovery delay; default 100ms; setting 2s is a practical application default |
 | Service: `TimeoutStartSec` | Startup/oneshot/readiness timeout; set explicitly when startup can wait |
-| Service: `TimeoutStopSec` | Cleanup wait; default 5s; does not make stop graceful |
+| Service: `TimeoutStopSec` | Shared cooperative and forced cleanup budget; default 5s; must be positive with ExecStop |
 | Install: `WantedBy` | Enable links for named targets; enable does not itself start a service |
 
 Dependency lists and `WantedBy` split on whitespace, append on repetition, and
@@ -114,14 +115,32 @@ group services. `Requires` and ordering are independent: specify `After` when a
 dependent must wait for required startup. A failed transaction does not roll back
 every member that already started.
 
-Stop currently terminates the owned process job. No `ExecStop` or graceful signal
-is implemented. A successful oneshot finishes inactive by default, after output
+Without `ExecStop`, stop terminates the owned process job immediately. A configured
+stop command runs once after successful startup, including explicit stop,
+restart, shutdown and natural exit. Failed startup does not run it. The helper
+uses the invocation's captured environment, directory and job limits under the
+same manager identity. `MAINPID` contains the workload PID while known alive;
+it is otherwise absent. No shell, argument substitution or automatic signal is
+implied. Use a script that synchronously requests and waits for termination.
+
+The helper owns a separate job and writes to the unit journal with the original
+invocation ID suffixed `-stop`. At most 32 helper attempts may remain owned.
+The cooperative phase reserves one fifth of the remaining stop budget for forced
+cleanup, with a one-second floor and a half-budget ceiling. Expiry or helper
+failure proceeds to forced workload cleanup and reports failure. Late helper
+creation and unfinished helper output remain owned; replacement is refused until
+cleanup is confirmed. A stop retry joins cleanup without rerunning the command.
+Proxy services reject `ExecStop`; multiple stop commands are unsupported.
+
+A successful oneshot finishes inactive by default, after output
 drain and owned process cleanup. Its start operation succeeds even though the
 unit is inactive, so ordered dependents can proceed. A subsequent start runs it
 again; concurrent compatible explicit starts share one operation rather than
 queueing another run. `RemainAfterExit=yes` keeps the completed unit active;
 start is then a no-op, and stop followed by start (or restart) runs it again.
 Reload does not change the completion policy of an existing invocation.
+For `RemainAfterExit=no`, its stop helper runs during successful completion;
+with `yes`, it runs when the retained active unit is stopped.
 
 This changes the pre-feature beta default directly: omitted `RemainAfterExit`
 now means `no`. Use `yes` when completed work should remain active. There is no
@@ -171,7 +190,7 @@ details are in [the notify documentation](../README.md#notify-and-watchdog).
 
 ## Unsupported syntax and updates
 
-`ExecStop`, `User`, `Group`, `EnvironmentFile`, `SessionMode`,
+`User`, `Group`, `EnvironmentFile`, `SessionMode`,
 `SessionPolicy`, `RestartMaxDelaySec`, `RestartBackoff`, and unknown directives
 are rejected. Do not copy a Linux systemd unit without checking this reference.
 

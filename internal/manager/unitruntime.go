@@ -24,22 +24,24 @@ type unitRuntime struct {
 	unavailable        bool // latest reload has no valid configuration for this record
 	operations         int  // in-flight lifecycle calls retain the record across reload
 
-	state         core.State
-	sub           core.Substate
-	gen           uint64
-	stopEpoch     uint64          // invalidates starts admitted before a stop request
-	proc          runtime.Process // whoever clears this owns job.Kill+Close (#25)
-	notify        *notifyRuntime
-	watchdog      context.CancelFunc
-	startCancel   context.CancelFunc
-	restartCancel context.CancelFunc
-	stopping      bool
-	terminated    bool
-	cleanup       cleanupResources
-	invocation    string
-	hub           *watchRuntime
-	err           string
-	startTimes    []time.Time
+	state             core.State
+	sub               core.Substate
+	gen               uint64
+	stopEpoch         uint64          // invalidates starts admitted before a stop request
+	proc              runtime.Process // whoever clears this owns job.Kill+Close (#25)
+	notify            *notifyRuntime
+	watchdog          context.CancelFunc
+	startCancel       context.CancelFunc
+	restartCancel     context.CancelFunc
+	stopping          bool
+	terminated        bool
+	cleanup           cleanupResources
+	stopHelper        *stopHelperWork
+	stopHelperAttempt string
+	invocation        string
+	hub               *watchRuntime
+	err               string
+	startTimes        []time.Time
 }
 
 // ownedUnit selects the definition that controls an existing invocation. Unit
