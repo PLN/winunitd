@@ -42,7 +42,7 @@ The following issues make the next work visible without replacing the full gates
 | R5 | [R5.1: Make persistent timer state atomic and failures observable](https://github.com/PLN/winunitd/issues/99) |
 
 The R2.4 operation-lifetime slice is implemented; see [behavior and limits](OPERATIONS.md).
-Repeatable oneshots are the prioritized semantic slice (below); remaining
+Repeatable oneshots are merged (below). The next focused slice repairs user-session reconciliation toward R4; remaining
 R2.1-R2.2 state-writer/coordinator work continues in #96. Graceful stop, semantic migration,
 SYSTEM/user qualification, full MSI servicing and signing keep their separate
 gates. Successful beta installation and maintenance tests do not close them.
@@ -66,10 +66,12 @@ The accepted default changes directly: omitted `RemainAfterExit` means `no`.
 No installed-base compatibility layer, format switch or converter is required
 for this change. `RemainAfterExit=yes` explicitly requests retained-active behavior.
 
-Local implementation and focused tests are present; merge/CI acceptance is still
-pending. This does not close R2/R3 or migrate the installed pilot.
-Elevation, external updater ownership, durable request/result
-handling and removal of legacy task dependencies remain separate maintenance
+Repeatable oneshots and unit-hosted maintenance merged in
+[PR #116](https://github.com/PLN/winunitd/pull/116) after
+[exact-head Windows/Linux CI](https://github.com/PLN/winunitd/actions/runs/34680935557)
+passed at `c1a87e3`. This does not close R2/R3 or qualify SCM pilot migration.
+External updater ownership, durable request/result
+handling and removal of legacy task dependencies are covered by the separate maintenance
 integration work. A runner hosted by the daemon cannot update that daemon while
 it is stopped.
 

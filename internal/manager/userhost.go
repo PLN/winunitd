@@ -125,18 +125,34 @@ func (h *UserHost) Listen(ctx context.Context, ch <-chan runtime.SessionChange) 
 	}
 }
 
-// Reconcile starts managers for sessions that are already logged on.
+// Reconcile repairs missed session notifications and recovers exited managers.
+// An enumeration that overlaps a newer session/policy decision is discarded.
 func (h *UserHost) Reconcile() {
 	if h == nil || h.cfg.Sessions == nil {
 		return
 	}
+	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		return
+	}
+	epoch, revision := h.nextSessionRequest, h.admissionRevision
+	h.mu.Unlock()
 	ids, err := h.cfg.Sessions()
 	if err != nil {
 		h.cfg.Logf("enumerate sessions: %v", err)
 		return
 	}
-	for _, id := range ids {
-		h.Logon(id)
+	requests, sids := h.acceptUserSessions(ids, epoch, revision)
+	for id, request := range requests {
+		h.queryUserLogon(id, request)
+	}
+	// Query current sessions first: a replacement session for the same SID
+	// must be recorded before deciding whether its existing manager is idle.
+	for _, sid := range sids {
+		if err := h.stopUser(context.Background(), sid, true); err != nil {
+			h.cfg.Logf("reconcile user manager %s: %v", sid, err)
+		}
 	}
 }
 
@@ -178,6 +194,10 @@ func (h *UserHost) Logon(sessionID uint32) {
 	request := h.nextSessionRequest
 	h.sessionRequests[sessionID] = request
 	h.mu.Unlock()
+	h.queryUserLogon(sessionID, request)
+}
+
+func (h *UserHost) queryUserLogon(sessionID uint32, request uint64) {
 	defer func() {
 		h.mu.Lock()
 		if h.sessionRequests[sessionID] == request {
@@ -249,6 +269,7 @@ func (h *UserHost) Logoff(sessionID uint32) {
 		return
 	}
 	h.mu.Lock()
+	h.nextSessionRequest++ // invalidate any enumeration started before logoff
 	sid := h.sessions[sessionID]
 	delete(h.sessionRequests, sessionID)
 	delete(h.sessions, sessionID)
