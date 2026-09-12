@@ -9,7 +9,36 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
+
+// This API requires no SYSTEM privilege. Exercise the real DLL binding in
+// ordinary Windows CI, before the SYSTEM-only logon path can hide a panic.
+func TestWindowsS4UTokenSourceIdentifier(t *testing.T) {
+	first, err := newTokenSource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := newTokenSource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first.SourceName[:]) != "winunitd" || first.SourceIdentifier == second.SourceIdentifier {
+		t.Fatalf("invalid token sources: %v, %v", first, second)
+	}
+}
+
+func TestWindowsS4UTokenSourceAllocationFailure(t *testing.T) {
+	failure := errors.New("allocation failed")
+	source, err := newTokenSourceWithAllocator(func(id *windows.LUID) error {
+		id.LowPart = 42 // A partially written native result grants no authority.
+		return failure
+	})
+	if !errors.Is(err, failure) || source != (tokenSource{}) {
+		t.Fatalf("source=%v error=%v", source, err)
+	}
+}
 
 func TestWindowsObtainLingerTokenNoPassword(t *testing.T) {
 	info, err := CurrentUserInfo()

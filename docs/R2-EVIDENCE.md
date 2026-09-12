@@ -1105,3 +1105,18 @@ checks and lifecycle writers remain in place; the full interleaving matrix and
 source audit are still required. The isolated adapter tests and LTSC daemon checks
 do not complete SCM/Task Scheduler proxy qualification, the supported Windows
 matrix, or MSI maintenance.
+
+## September 12 S4U token-source allocation
+
+An isolated SYSTEM-to-local-user S4U probe exposed a lazy DLL lookup panic before
+process creation: AllocateLocallyUniqueId was incorrectly bound to kernel32.dll.
+Bind it to advapi32.dll, check procedure resolution and the native result, and
+propagate allocation failure through the existing acquisition-resource cleanup.
+No logon attempt proceeds with a failed or partially written source identifier.
+
+The real allocation binding is now tested without SYSTEM privileges so ordinary
+Windows CI exercises it. Repeated allocations must return distinct identifiers;
+an injected failure must preserve the error and return no usable token source.
+This fixes the observed acquisition panic; it does not qualify headless profile
+crash lifetime or close R4.5. The native API contract is documented by
+[Microsoft](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-allocatelocallyuniqueid).
