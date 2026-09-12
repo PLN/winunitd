@@ -101,6 +101,18 @@ cleanup identifies the owned invocation and does not establish that its main
 process is still running. Native proxy, timer and journal observations remain
 separate from that manager decision snapshot.
 
+Disk-backed unit verification and reload limit each file to 64 KiB. A reload reads
+at most 1024 unit files and admits at most 1024 runtime records, including built-in
+targets and removed definitions still needed for cleanup. Stop retained workloads
+before retrying a replacement that would exceed this allowance. The unit directory
+is limited to 4096 entries; enabled-link discovery has a separate 4096-entry budget
+across its root and immediate target directories, including ignored entries.
+Oversized candidates leave the accepted graph, revisions and ownership unchanged.
+Reload reports at most 128 error messages totaling 128 KiB, plus an explicit
+omission notice. Correct the reported errors and reload to see remaining errors.
+These are input/record bounds, not a guarantee of bounded filesystem latency or
+aggregate process/output memory.
+
 `winctl snapshot` (also `--user`) prints a JSON copy of one manager's accepted
 unit states and active operations, captured together under its decision lock.
 It includes manager identity, capture sequence/time, machine counts, configuration
