@@ -39,20 +39,21 @@ type UserHostConfig struct {
 // First interactive logon starts the manager. Last logoff kills it
 // unless the user is lingering.
 type UserHost struct {
-	admission          UserAdmission
-	admissionRevision  uint64
-	closed             bool
-	ops                unitOps
-	stops              stopSet
-	cfg                UserHostConfig
-	store              *LingerStore
-	mu                 sync.Mutex
-	bySID              map[string]*userInstance
-	sessions           map[uint32]string // session ID -> SID
-	sessionRequests    map[uint32]uint64
-	nextSessionRequest uint64
-	nativeWork         map[*userNativeWork]struct{}
-	idleDispatch       *userIdleDispatch
+	admission            UserAdmission
+	admissionRevision    uint64
+	closed               bool
+	ops                  unitOps
+	stops                stopSet
+	cfg                  UserHostConfig
+	store                *LingerStore
+	mu                   sync.Mutex
+	bySID                map[string]*userInstance
+	sessions             map[uint32]string // session ID -> SID
+	sessionRequests      map[uint32]uint64
+	nextSessionRequest   uint64
+	lastReconcileSession uint32
+	nativeWork           map[*userNativeWork]struct{}
+	idleDispatch         *userIdleDispatch
 }
 
 type userInstance struct {
@@ -177,9 +178,7 @@ func (h *UserHost) reconcileAccepted(work *userNativeWork) {
 		return
 	}
 	requests, sids := h.acceptUserSessions(ids, epoch, revision)
-	for id, request := range requests {
-		h.queryUserLogon(id, request)
-	}
+	h.dispatchReconcileRequests(requests)
 	// Query current sessions first: a replacement session for the same SID
 	// must be recorded before deciding whether its existing manager is idle.
 	for _, sid := range sids {
@@ -270,16 +269,6 @@ func (h *UserHost) finishSessionRequest(sessionID uint32, request uint64) {
 		delete(h.sessionRequests, sessionID)
 	}
 	h.mu.Unlock()
-}
-
-func (h *UserHost) queryUserLogon(sessionID uint32, request uint64) {
-	work, err := h.acceptNativeUserWork()
-	if err != nil {
-		h.finishSessionRequest(sessionID, request)
-		h.cfg.Logf("session %d admission: %v", sessionID, err)
-		return
-	}
-	h.queryAcceptedUserLogon(sessionID, request, work)
 }
 
 func (h *UserHost) queryAcceptedUserLogon(sessionID uint32, request uint64, work *userNativeWork) {
@@ -541,7 +530,10 @@ func (h *UserHost) startLinger(rec runtime.LingerRecord) (startErr error) {
 
 // stillWanted is evaluated only while h.mu is held.
 func (h *UserHost) ensureRunning(sid string, tok *runtime.UserToken, stillWanted func() bool) error {
-	unlock := h.ops.lock(sid)
+	unlock, available := h.ops.tryLock(sid)
+	if !available {
+		return protocol.ErrBusy()
+	}
 	defer unlock()
 	inst, err := h.inspectUserLaunch(sid, stillWanted)
 	if err != nil {

@@ -1021,6 +1021,23 @@ and session mapping saturation/recovery. The instance cap bounds per-process
 retained native stop attempts in addition to the existing worker limits.
 Fair recovery dispatch and backoff remain open.
 
+## September 12 concurrent reconciliation admission
+
+An owned reconciliation pass dispatches requests concurrently through the four
+shared admission slots. It reserves capacity before spawning and joins every
+accepted completion. The ordered session list rotates after the last accepted
+session, so capacity-limited passes do not always begin with the same IDs.
+Admission skips busy per-SID launch gates rather than occupying every worker
+behind one blocked user. A later pass can retry with a fresh token.
+
+Twenty focused race repetitions verify that an early blocked token lookup does
+not prevent later sessions from being queried and that many sessions for a user
+whose launch is blocked do not prevent another user's launch. Existing
+replacement-session, fresh-token recovery and stale-event checks remain passing.
+The pass retains its cleanup ordering until all accepted identities are resolved;
+one blocked accepted operation still keeps that pass owned. Recovery backoff and
+the complete R4 qualification matrix remain open.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2
