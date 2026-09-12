@@ -181,7 +181,12 @@ func (h *UserHost) StartLingering() {
 	if h == nil || h.store == nil {
 		return
 	}
+	work, err := h.acceptNativeUserWork()
+	if err != nil {
+		return
+	}
 	recs, err := h.store.List()
+	_ = h.finishNativeUserWork(work, nil)
 	if err != nil {
 		h.cfg.Logf("list linger records: %v", err)
 		return
@@ -349,11 +354,8 @@ func (h *UserHost) EnableLinger(user string) (*protocol.LingerResult, error) {
 	if h.store == nil {
 		return nil, protocol.ErrFailed("linger store is not configured")
 	}
-	rec, err := h.resolve(user)
+	rec, err := h.mutateLingerRecord(user, true)
 	if err != nil {
-		return nil, protocol.ErrFailed(err.Error())
-	}
-	if err := h.store.Put(rec); err != nil {
 		return nil, protocol.ErrFailed(err.Error())
 	}
 	if !h.Alive(rec.SID) {
@@ -374,11 +376,8 @@ func (h *UserHost) DisableLinger(user string) (*protocol.LingerResult, error) {
 	if h.store == nil {
 		return nil, protocol.ErrFailed("linger store is not configured")
 	}
-	rec, err := h.resolve(user)
+	rec, err := h.mutateLingerRecord(user, false)
 	if err != nil {
-		return nil, protocol.ErrFailed(err.Error())
-	}
-	if err := h.store.Delete(rec.SID); err != nil {
 		return nil, protocol.ErrFailed(err.Error())
 	}
 
@@ -387,6 +386,26 @@ func (h *UserHost) DisableLinger(user string) (*protocol.LingerResult, error) {
 		return result, protocol.ErrFailed(err.Error())
 	}
 	return result, nil
+}
+
+// Accepted account lookup and record persistence stay visible to shutdown, even
+// before a SID is known. Subsequent launch admission separately rechecks closure.
+func (h *UserHost) mutateLingerRecord(user string, enable bool) (runtime.LingerRecord, error) {
+	work, err := h.acceptNativeUserWork()
+	if err != nil {
+		return runtime.LingerRecord{}, err
+	}
+	defer h.finishNativeUserWork(work, nil)
+	rec, err := h.resolve(user)
+	if err != nil {
+		return rec, err
+	}
+	if enable {
+		err = h.store.Put(rec)
+	} else {
+		err = h.store.Delete(rec.SID)
+	}
+	return rec, err
 }
 
 func (h *UserHost) resolve(user string) (runtime.LingerRecord, error) {

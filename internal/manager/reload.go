@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,6 +24,11 @@ func (m *Manager) Reload() (*protocol.DaemonReloadResult, error) {
 func (m *Manager) reloadWithBuilder(build func([]*unit.Unit) (*core.Graph, error)) (*protocol.DaemonReloadResult, error) {
 	m.configMu.Lock()
 	defer m.configMu.Unlock()
+	finish, err := m.beginConfigWork()
+	if err != nil {
+		return nil, err
+	}
+	defer finish()
 	loaded, result, err := m.parseUnitDir()
 	if err != nil {
 		return nil, err
@@ -63,6 +69,10 @@ func (m *Manager) reloadWithBuilder(build func([]*unit.Unit) (*core.Graph, error
 			}
 		}
 		m.mu.Lock()
+		if m.closed {
+			m.mu.Unlock()
+			return nil, protocol.ErrFailed("manager is shutting down or closed")
+		}
 		if !m.reloadOwnershipCurrentLocked(accepted, snapshot) {
 			m.mu.Unlock()
 			continue
@@ -79,10 +89,19 @@ func (m *Manager) reloadWithBuilder(build func([]*unit.Unit) (*core.Graph, error
 		dropped := m.replaceLocked(loaded, g, links)
 		result.ConfigRevision = m.configRevision
 		m.mu.Unlock()
+		var cleanupErr error
 		for _, td := range dropped {
-			td.closeBlocking()
+			if err := td.closeBlocking(); err != nil {
+				cleanupErr = errors.Join(cleanupErr, err)
+				m.mu.Lock()
+				m.closePending = append(m.closePending, td)
+				m.mu.Unlock()
+			}
 		}
 		result.Loaded = len(loaded)
+		if cleanupErr != nil {
+			return result, protocol.ErrFailed(cleanupErr.Error())
+		}
 		return result, nil
 	}
 	return nil, &protocol.Error{Code: protocol.CodeBusy, Message: "configuration ownership changed during reload; retry"}

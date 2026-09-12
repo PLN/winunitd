@@ -906,6 +906,21 @@ SYSTEM/credential-store matrix.
 Native contracts: [LSA connection release](https://learn.microsoft.com/en-us/windows/win32/api/ntsecapi/nf-ntsecapi-lsaderegisterlogonprocess),
 [query-only current-process token](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getcurrentprocesstoken).
 
+## September 12 configuration work during shutdown
+
+Reload/enable/disable register their accepted configuration work before file I/O.
+The final manager close joins that work before capturing detached controls, and
+new configuration operations are rejected after admission closes. A reload or
+enable graph built across shutdown cannot publish a late revision. Detached
+reload cleanup errors are returned and retained for final close retry.
+
+User-host tracking also covers linger account resolution/record mutation, boot
+linger enumeration, and admission-policy reads. Record mutations admitted before
+shutdown finish under retained ownership; they do not launch a manager after the
+barrier. Twenty focused race repetitions cover blocked reload planning across
+shutdown retries, unchanged configuration revision, closed-manager mutation
+rejection, and blocked enable-/disable-linger lookup with late completion.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2
