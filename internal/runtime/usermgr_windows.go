@@ -36,8 +36,8 @@ type userMgrProc struct {
 const procThreadAttributeJobList = 0x0002000d
 
 // StartUserManager launches winunitd --user-manager <SID> as the user
-// via CreateProcessAsUser. spec.Token is a WTS token (interactive) or
-// an S4U linger token. Missing token fails closed.
+// via CreateProcessAsUser for interactive sessions or CreateProcessWithTokenW
+// for Windows-owned headless profiles. Missing tokens fail closed.
 func StartUserManager(spec UserManagerSpec) (UserManagerProc, error) {
 	if err := validateUserManagerSpec(spec); err != nil {
 		return nil, err
@@ -48,6 +48,13 @@ func StartUserManager(spec UserManagerSpec) (UserManagerProc, error) {
 	}
 	var profile io.Closer
 	if spec.LoadProfile {
+		var session, returned uint32
+		if err := windows.GetTokenInformation(tok, windows.TokenSessionId, (*byte)(unsafe.Pointer(&session)), uint32(unsafe.Sizeof(session)), &returned); err != nil {
+			return nil, fmt.Errorf("query profile launch session: %w", err)
+		}
+		if session == 0 {
+			return startHeadlessUserManager(tok, spec)
+		}
 		var err error
 		profile, err = loadUserManagerProfile(tok, spec.SID)
 		if err != nil {

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	goruntime "runtime"
 	"strings"
 	"sync"
 	"unsafe"
@@ -15,20 +14,8 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-var profileDLL = windows.NewLazySystemDLL("userenv.dll")
-var loadProfileProc = profileDLL.NewProc("LoadUserProfileW")
-var unloadProfileProc = profileDLL.NewProc("UnloadUserProfile")
-
-type userProfileInfo struct {
-	size, flags                                 uint32
-	username, path, defaultPath, server, policy *uint16
-	profile                                     windows.Handle
-}
-
 type userProfileLease struct {
 	mu          sync.Mutex
-	token       windows.Token
-	profile     windows.Handle
 	interactive registry.Key
 }
 
@@ -41,19 +28,6 @@ func (p *userProfileLease) Close() error {
 		}
 		p.interactive = 0
 	}
-	if p.profile != 0 {
-		ok, _, err := unloadProfileProc.Call(uintptr(p.token), uintptr(p.profile))
-		if ok == 0 {
-			return fmt.Errorf("UnloadUserProfile: %w", err)
-		}
-		p.profile = 0 // UnloadUserProfile closes this key; never RegCloseKey it.
-	}
-	if p.token != 0 {
-		if err := p.token.Close(); err != nil {
-			return fmt.Errorf("close profile token: %w", err)
-		}
-		p.token = 0
-	}
 	return nil
 }
 
@@ -65,7 +39,7 @@ func loadUserManagerProfile(tok windows.Token, sid string) (io.Closer, error) {
 	if identity.User.Sid.String() != sid {
 		return nil, fmt.Errorf("profile token SID mismatch")
 	}
-	username, domain, _, err := identity.User.Sid.LookupAccount("")
+	_, domain, _, err := identity.User.Sid.LookupAccount("")
 	if err != nil {
 		return nil, err
 	}
@@ -80,59 +54,15 @@ func loadUserManagerProfile(tok windows.Token, sid string) (io.Closer, error) {
 	if err := windows.GetTokenInformation(tok, windows.TokenSessionId, (*byte)(unsafe.Pointer(&session)), uint32(unsafe.Sizeof(session)), &returned); err != nil {
 		return nil, fmt.Errorf("query profile session: %w", err)
 	}
-	if session != 0 {
-		// Windows owns an interactive logon's profile lifetime. An additional
-		// LoadUserProfile reference survives abrupt broker death and can prevent
-		// unload at logoff. Require the real hive to exist and retain only an
-		// ordinary registry handle, which Windows also closes on broker death.
-		// Missing/not-yet-loaded profiles fail closed; session reconciliation
-		// can retry once logon has completed.
-		key, err := registry.OpenKey(registry.USERS, sid, registry.READ)
-		if err != nil {
-			return nil, fmt.Errorf("interactive user profile is unavailable: %w", err)
-		}
-		return &userProfileLease{interactive: key}, nil
+	if session == 0 {
+		return nil, fmt.Errorf("headless profiles require Windows-owned process launch")
 	}
-	name, err := windows.UTF16PtrFromString(username)
+	// Windows owns interactive profile lifetime. Only retain an ordinary registry
+	// handle, which Windows closes on broker death. Never manually LoadUserProfile:
+	// that reference can survive abrupt death and prevent final logoff unloading.
+	key, err := registry.OpenKey(registry.USERS, sid, registry.READ)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("interactive user profile is unavailable: %w", err)
 	}
-	if err := enableProfilePrivileges(); err != nil {
-		return nil, err
-	}
-	lease := &userProfileLease{}
-	if err := windows.DuplicateTokenEx(tok, windows.TOKEN_QUERY|windows.TOKEN_DUPLICATE|windows.TOKEN_IMPERSONATE,
-		nil, windows.SecurityImpersonation, windows.TokenPrimary, &lease.token); err != nil {
-		return nil, err
-	}
-	info := userProfileInfo{flags: 1, username: name} // PI_NOUI: service work must never show dialogs
-	info.size = uint32(unsafe.Sizeof(info))
-	ok, _, callErr := loadProfileProc.Call(uintptr(lease.token), uintptr(unsafe.Pointer(&info)))
-	goruntime.KeepAlive(name)
-	goruntime.KeepAlive(info)
-	if ok == 0 {
-		return lease, fmt.Errorf("LoadUserProfile: %w", callErr)
-	}
-	lease.profile = info.profile
-	return lease, nil
-}
-
-func enableProfilePrivileges() error {
-	var token windows.Token
-	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY|windows.TOKEN_ADJUST_PRIVILEGES, &token); err != nil {
-		return err
-	}
-	defer token.Close()
-	for _, privilege := range []string{"SeBackupPrivilege", "SeRestorePrivilege"} {
-		name, _ := windows.UTF16PtrFromString(privilege)
-		var luid windows.LUID
-		if err := windows.LookupPrivilegeValue(nil, name, &luid); err != nil {
-			return err
-		}
-		state := windows.Tokenprivileges{PrivilegeCount: 1, Privileges: [1]windows.LUIDAndAttributes{{Luid: luid, Attributes: windows.SE_PRIVILEGE_ENABLED}}}
-		if err := windows.AdjustTokenPrivileges(token, false, &state, 0, nil, nil); err != nil {
-			return err
-		}
-	}
-	return nil
+	return &userProfileLease{interactive: key}, nil
 }

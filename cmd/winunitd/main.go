@@ -78,6 +78,17 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == runtime.UserDesktopHelperFlag {
+		if len(args) != 3 {
+			fmt.Fprintln(stderr, "winunitd: invalid desktop helper arguments")
+			return 2
+		}
+		if err := runtime.ServeUserDesktopHelper(args[1], args[2], stdout); err != nil {
+			fmt.Fprintf(stderr, "winunitd: desktop helper: %v\n", err)
+			return 1
+		}
+		return 0
+	}
 	for _, a := range args {
 		switch a {
 		case "-h", "-help", "--help":

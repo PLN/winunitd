@@ -205,6 +205,27 @@ SCM service and confirm its process has exited. A failed or missing maintenance
 confirmation must abort replacement. This command is the runtime primitive;
 MSI servicing and rollback qualification remain separate release gates.
 
-Maintenance shares reserved stop-handler capacity. Raw connection saturation can
-still prevent a new client connection; the remaining transport progress work is
-tracked in [R2.3](https://github.com/PLN/winunitd/issues/97).
+Maintenance uses its own protected endpoint and bounded connection/handler
+capacity. Ordinary control-pipe saturation cannot consume those slots; saturation
+or failure of the maintenance endpoint itself can still reject a new request.
+
+## Headless user managers
+
+Local-machine lingering users run in session zero. Their profile lifetime belongs
+to Windows through CreateProcessWithTokenW(LOGON_WITH_PROFILE), so abrupt broker
+death does not leave a manually loaded profile reference. The manager obtains its
+environment from that profile and selects the profile working directory after
+startup. S4U does not supply cached outbound credentials; optional credential-store
+modes remain outside the qualified release contract.
+
+A separate SYSTEM helper, using the same daemon executable, holds a private
+window station and desktop restricted to SYSTEM and the target SID. It is an
+owned process under the broker job, and never starts a user manager itself.
+The broker keeps helper cleanup and the bounded readiness read until they finish.
+The helper's internal command-line mode is not an operator startup interface.
+Existing station names are rejected instead of reusing their permissions.
+
+Headless launch requires a session-zero SYSTEM broker in its verified root job.
+The suspended user process must inherit that job and join its dedicated job
+before resuming. Interactive managers continue to use WTS tokens and Windows'
+interactive profile ownership. Managed profiles currently require local accounts.

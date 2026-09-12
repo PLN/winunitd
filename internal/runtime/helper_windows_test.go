@@ -22,7 +22,9 @@ func helperMode() string {
 func TestMain(m *testing.M) {
 	switch helperMode() {
 	case "sleep":
-		select {}
+		for {
+			time.Sleep(time.Hour)
+		}
 	case "oneshot":
 		os.Exit(0)
 	case "fail":
@@ -32,7 +34,9 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "hello-stderr")
 		_ = os.Stdout.Sync()
 		_ = os.Stderr.Sync()
-		select {}
+		for {
+			time.Sleep(time.Hour)
+		}
 	case "spawn":
 		pid, err := startHelperChild(false)
 		if err != nil {
@@ -41,7 +45,9 @@ func TestMain(m *testing.M) {
 		}
 		fmt.Printf("child %d\n", pid)
 		_ = os.Stdout.Sync()
-		select {}
+		for {
+			time.Sleep(time.Hour)
+		}
 	case "breakaway":
 		if _, err := startHelperChild(true); err != nil {
 			fmt.Println("breakaway-denied")
@@ -55,12 +61,16 @@ func TestMain(m *testing.M) {
 		}
 		fmt.Printf("child %d\n", pid)
 		_ = os.Stdout.Sync()
-		select {}
+		for {
+			time.Sleep(time.Hour)
+		}
 	case "alloc":
 		runAllocUntilKilled()
 	case "spawn-hold":
 		_, _ = startHelperChild(false)
-		select {}
+		for {
+			time.Sleep(time.Hour)
+		}
 	case "stdio-write":
 		runStdioWriteHelper()
 		os.Exit(0)

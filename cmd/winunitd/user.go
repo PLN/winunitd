@@ -34,6 +34,9 @@ func serveUser(ctx context.Context, sid, baseDir string, stderr io.Writer) (serv
 	if err := runtime.ApplyUserEnv(info); err != nil {
 		fmt.Fprintf(stderr, "winunitd: apply user env: %v\n", err)
 	}
+	if err := runtime.SetHeadlessUserWorkingDirectory(info.Profile); err != nil {
+		return fmt.Errorf("headless user working directory: %w", err)
+	}
 	if baseDir == "" {
 		baseDir = manager.DefaultUserBaseDir()
 	}
