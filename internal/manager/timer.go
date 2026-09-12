@@ -130,6 +130,14 @@ func (m *Manager) overlayTimer(st *protocol.UnitStatus) {
 	st.Next, st.Last = formatTimerStamp(snapshot.Next), formatTimerStamp(snapshot.Last)
 	st.ArmedConfigRevision = snapshot.ConfigRevision
 	st.TimerStorageState, st.TimerStorageError = snapshot.StorageState, snapshot.StorageError
+	st.TimerActivation = timerActivationStatus(snapshot.Activation)
+}
+
+func timerActivationStatus(a timers.Activation) *protocol.TimerActivationStatus {
+	if a.ID == "" {
+		return nil
+	}
+	return &protocol.TimerActivationStatus{ID: a.ID, Unit: a.Unit, Result: a.Result, Scheduled: formatTimerStamp(a.Scheduled), Actual: formatTimerStamp(a.Actual)}
 }
 
 // activationOrigin is checked under m.mu at plan and adapter admission.

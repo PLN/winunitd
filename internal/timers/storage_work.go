@@ -40,6 +40,13 @@ func (e *Engine) loadPending() {
 				rt.LastUnitActive = next.rt.LastUnitActive
 				next.rt = rt
 				next.storageError = ""
+				if rt.Activation.Result == "pending" {
+					if !next.spec.Persistent || len(next.spec.OnCalendar) == 0 || next.spec.Unit != rt.Activation.Unit {
+						next.storageError = "pending activation does not match the current persistent calendar target"
+					} else {
+						next.retry = &pendingRetry{event: Fire{Name: name, Unit: rt.Activation.Unit, Token: next.token, ActivationID: rt.Activation.ID}, after: e.clk.sinceStart()}
+					}
+				}
 			}
 			e.rescheduleLocked(next)
 			e.kickLocked()
@@ -58,6 +65,9 @@ func (e *Engine) persist(event Fire, rt Runtime) bool {
 	e.mu.Lock()
 	a := e.armed[event.Name]
 	current := e.running && a != nil && a.token == event.Token && a.storageError == ""
+	if current && event.ActivationID != "" {
+		current = a.rt.Activation.ID == event.ActivationID
+	}
 	e.mu.Unlock()
 	if !current {
 		return false

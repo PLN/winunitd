@@ -22,12 +22,23 @@ type Spec struct {
 
 // Runtime is per-activation and persistent timer state (DESIGN.md §17).
 type Runtime struct {
+	Activation     Activation
 	LastScheduled  time.Time
 	LastActual     time.Time
 	LastSuccess    time.Time
 	LastUnitActive time.Time
 	FiredBoot      bool
 	FiredStartup   bool
+}
+
+// Activation is a persistent calendar delivery attempt. A recovered pending
+// record retains its ID; success/failure describes activation, not workload exit.
+type Activation struct {
+	ID        string    `json:"id"`
+	Unit      string    `json:"unit"`
+	Result    string    `json:"result"`
+	Scheduled time.Time `json:"scheduled"`
+	Actual    time.Time `json:"actual"`
 }
 
 // NextDeadline is the earliest due time for spec given rt and clk.

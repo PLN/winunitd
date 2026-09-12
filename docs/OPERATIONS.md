@@ -266,10 +266,24 @@ An occurrence is written before dispatch. A failed read or write suspends furthe
 dispatch for that arm and exposes the storage error. Repair the storage problem
 and stop/start the timer to reload its state. Complete files replace previous
 state only after write, flush and close succeed. State is bounded to 16 KiB and
-uses version 1; legacy unversioned timestamps are read and upgraded on the next
+uses version 2; legacy unversioned and version 1 timestamps are read and upgraded on the next
 save. Unsupported versions, malformed JSON and invalid timestamps fail visibly.
 
-This does not yet provide durable pending/result activation intent. A crash
-between recording an occurrence and dispatch can still lose that occurrence;
-the R5 pending-activation recovery policy remains open. Scheduler calendar work,
-heap bounds and aggregate decision snapshots remain separate R2/R5 work.
+Persistent calendar timers write a pending activation ID, target and timestamps
+before dispatch, then record activation success or failure. An interrupted
+pending record is retried once on the next arm with the same ID. The retry
+coalesces calendar occurrences missed through its dispatch time. A completed
+result is not replayed; admission overload retains the same pending intent.
+Activation success means the start request completed, not that a long-running
+workload later exited successfully. Status and timer lists expose this record.
+
+A crash after execution but before its result becomes durable can cause duplicate
+execution. These workloads must be idempotent. A pending record whose target or
+persistent-calendar mode no longer matches configuration suspends dispatch;
+restore the matching configuration or explicitly remove the stopped timer's
+state to discard that intent. Stop/disarm prevents further dispatch in the current
+arm; a later explicit arm can recover its pending intent.
+
+Older version 1 readers reject version 2 state. Preserve state backups for any
+downgrade to an older reader; installer rollback qualification remains R6 work.
+Calendar work, heap bounds and aggregate decision snapshots remain separate R2/R5 work.

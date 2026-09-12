@@ -23,7 +23,9 @@ func TestPersistentMonthEndRecoveryAcrossEngineRestart(t *testing.T) {
 			t.Fatal(err)
 		}
 		fk := NewFake(now)
-		e := NewEngine(fk.Clock(), s, func(event Fire) {
+		var e *Engine
+		e = NewEngine(fk.Clock(), s, func(event Fire) {
+			e.RecordResult(event, true)
 			count.Add(1)
 			select {
 			case fired <- event.Name:

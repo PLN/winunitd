@@ -2,6 +2,8 @@ package timers
 
 import (
 	"container/heap"
+	"crypto/rand"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -17,9 +19,10 @@ const admissionRetryDelay = 250 * time.Millisecond
 
 // Fire captures the source arm and target when a deadline is consumed.
 type Fire struct {
-	Name  string
-	Unit  string
-	Token uint64 // identity of the arm that produced this event
+	ActivationID string
+	Name         string
+	Unit         string
+	Token        uint64 // identity of the arm that produced this event
 }
 
 // FireFunc runs asynchronously without the engine lock held.
@@ -31,21 +34,23 @@ type Engine struct {
 	store *Store
 	fire  FireFunc
 
-	mu          sync.Mutex
-	storageIO   sync.Mutex // persistence only; never held by a decision handler
-	storageWork sync.WaitGroup
-	loading     bool // one loader drains pending arms within the arm budget
-	armed       map[string]*armed
-	pq          deadlineHeap
-	wakeup      chan struct{}
-	stop        chan struct{}
-	stopped     chan struct{}
-	running     bool
-	fires       sync.WaitGroup
-	clockGen    uint64 // incremented on ClockChanged; armed.schedGen tracks it
-	activeFires int
-	nextArm     uint64 // unique callback identity across refresh/disarm/rearm
-	nextGen     uint64 // unique schedule identity across disarm/rearm of the same name
+	mu             sync.Mutex
+	storageIO      sync.Mutex // persistence only; never held by a decision handler
+	storageWork    sync.WaitGroup
+	loading        bool // one loader drains pending arms within the arm budget
+	namespace      string
+	nextActivation uint64
+	armed          map[string]*armed
+	pq             deadlineHeap
+	wakeup         chan struct{}
+	stop           chan struct{}
+	stopped        chan struct{}
+	running        bool
+	fires          sync.WaitGroup
+	clockGen       uint64 // incremented on ClockChanged; armed.schedGen tracks it
+	activeFires    int
+	nextArm        uint64 // unique callback identity across refresh/disarm/rearm
+	nextGen        uint64 // unique schedule identity across disarm/rearm of the same name
 
 	// onStatusDeadline is a test hook (nil in production). It fires after
 	// e.mu is released and before NextDeadline on the dirty-cache path.
@@ -94,13 +99,14 @@ func NewEngine(clk Clock, store *Store, fire FireFunc) *Engine {
 		store, _ = OpenStore("")
 	}
 	e := &Engine{
-		clk:     clk,
-		store:   store,
-		fire:    fire,
-		armed:   make(map[string]*armed),
-		wakeup:  make(chan struct{}, 1),
-		stop:    make(chan struct{}),
-		stopped: make(chan struct{}),
+		namespace: rand.Text(),
+		clk:       clk,
+		store:     store,
+		fire:      fire,
+		armed:     make(map[string]*armed),
+		wakeup:    make(chan struct{}, 1),
+		stop:      make(chan struct{}),
+		stopped:   make(chan struct{}),
 	}
 	heap.Init(&e.pq)
 	e.running = true
@@ -305,8 +311,17 @@ func (e *Engine) consume(due dueTimer, actual time.Time) {
 	if a.retry != nil {
 		event = a.retry.event
 		a.retry = nil
+		if event.ActivationID != "" {
+			a.rt.LastActual = actual
+			a.rt.Activation.Actual = actual
+		}
 	} else {
 		MarkFired(a.spec, &a.rt, e.clk, due.scheduled, actual)
+		if a.spec.Persistent && len(a.spec.OnCalendar) > 0 {
+			e.nextActivation++
+			event.ActivationID = fmt.Sprintf("%s-%d", e.namespace, e.nextActivation)
+			a.rt.Activation = Activation{ID: event.ActivationID, Unit: event.Unit, Result: "pending", Scheduled: due.scheduled, Actual: actual}
+		}
 	}
 	fire := e.fire
 	rt := a.rt
@@ -324,6 +339,9 @@ func (e *Engine) consume(due dueTimer, actual time.Time) {
 		e.activeFires--
 		if current := e.armed[name]; current == a && a.token == event.Token {
 			a.firing = false
+			if a.storageError == "" && a.rt.Activation.Result == "pending" && a.retry == nil {
+				a.storageError = "activation callback did not record an outcome; re-arm to recover pending intent"
+			}
 			if e.running {
 				e.rescheduleLocked(a)
 			}
@@ -455,7 +473,7 @@ func (e *Engine) Arm(spec Spec) uint64 {
 		a.firing = false
 		a.retry = nil
 		a.spec = spec
-		if a.storageError != "" {
+		if a.storageError != "" || a.rt.Activation.Result == "pending" {
 			a.storageError = ""
 			a.loading = true
 			if !e.loading {
@@ -543,7 +561,7 @@ func (e *Engine) UnitActive(unit string, when time.Time) {
 // start attempt.
 func (e *Engine) RecordResult(event Fire, success bool) {
 	name := event.Name
-	if e == nil || name == "" || !success {
+	if e == nil || name == "" {
 		return
 	}
 	e.mu.Lock()
@@ -552,16 +570,40 @@ func (e *Engine) RecordResult(event Fire, success bool) {
 		e.mu.Unlock()
 		return
 	}
-	a.rt.LastSuccess = e.clk.now()
 	rt := a.rt
+	if event.ActivationID != "" {
+		if a.rt.Activation.ID != event.ActivationID || a.rt.Activation.Result != "pending" {
+			e.mu.Unlock()
+			return
+		}
+		rt.Activation.Result = "failed"
+		if success {
+			rt.Activation.Result = "success"
+		}
+	} else if a.rt.Activation.Result == "pending" || !success {
+		e.mu.Unlock()
+		return
+	}
+	if success {
+		rt.LastSuccess = e.clk.now()
+	}
 	e.storageWork.Add(1)
 	e.mu.Unlock()
 	defer e.storageWork.Done()
-	e.persist(event, rt)
+	if e.persist(event, rt) {
+		e.mu.Lock()
+		if e.running && e.armed[name] == a && a.token == event.Token && (event.ActivationID == "" || a.rt.Activation.ID == event.ActivationID) {
+			a.rt.LastSuccess = rt.LastSuccess
+			a.rt.Activation = rt.Activation
+			a.retry = nil
+		}
+		e.mu.Unlock()
+	}
 }
 
 // Snapshot is next/last for status and list-timers.
 type Snapshot struct {
+	Activation     Activation
 	StorageState   string
 	StorageError   string
 	ConfigRevision string
@@ -593,17 +635,17 @@ func (e *Engine) Status(name string) Snapshot {
 		if a.storageError != "" {
 			state = "failed"
 		}
-		out := Snapshot{ConfigRevision: a.spec.ConfigRevision, Unit: a.spec.Unit, Last: last, StorageState: state, StorageError: a.storageError}
+		out := Snapshot{Activation: a.rt.Activation, ConfigRevision: a.spec.ConfigRevision, Unit: a.spec.Unit, Last: last, StorageState: state, StorageError: a.storageError}
 		e.mu.Unlock()
 		return out
 	}
 	if a.retry != nil {
-		out := Snapshot{StorageState: "ready", ConfigRevision: a.spec.ConfigRevision, Unit: a.spec.Unit, Last: last, Next: e.clk.now().Add(max(0, a.retry.after-e.clk.sinceStart()))}
+		out := Snapshot{Activation: a.rt.Activation, StorageState: "ready", ConfigRevision: a.spec.ConfigRevision, Unit: a.spec.Unit, Last: last, Next: e.clk.now().Add(max(0, a.retry.after-e.clk.sinceStart()))}
 		e.mu.Unlock()
 		return out
 	}
 	if a.schedGen == e.clockGen {
-		out := Snapshot{StorageState: "ready", ConfigRevision: a.spec.ConfigRevision, Unit: a.spec.Unit, Last: last}
+		out := Snapshot{Activation: a.rt.Activation, StorageState: "ready", ConfigRevision: a.spec.ConfigRevision, Unit: a.spec.Unit, Last: last}
 		if a.ok {
 			out.Next = a.next
 		}
@@ -620,7 +662,7 @@ func (e *Engine) Status(name string) Snapshot {
 	if e.onNextDeadline != nil {
 		e.onNextDeadline()
 	}
-	out := Snapshot{StorageState: "ready", ConfigRevision: spec.ConfigRevision, Unit: spec.Unit, Last: last}
+	out := Snapshot{Activation: rt.Activation, StorageState: "ready", ConfigRevision: spec.ConfigRevision, Unit: spec.Unit, Last: last}
 	if next, ok := NextDeadline(spec, rt, clk); ok {
 		out.Next = next
 	}
@@ -694,9 +736,9 @@ func (e *Engine) Current(name string, token uint64) bool {
 	return e.running && a != nil && !a.loading && a.storageError == "" && a.token == token
 }
 
-// Retry retains an activation rejected before manager admission. It does not
-// repeat MarkFired or update the successful-execution timestamp. R5 will make
-// pending intent durable; this retry is owned by the current in-memory arm.
+// Retry retains an activation rejected before manager admission. Persistent
+// calendar retries keep their durable intent identity; other retries retain
+// their in-memory arm identity. Neither records a successful execution.
 func (e *Engine) Retry(event Fire) {
 	if e == nil {
 		return

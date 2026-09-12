@@ -100,10 +100,11 @@ type ListTimersResult struct {
 
 // TimerStatus is one timer in list-timers.
 type TimerStatus struct {
-	StorageState        string `json:"storageState,omitempty"`
-	StorageError        string `json:"storageError,omitempty"`
-	ConfigRevision      string `json:"configRevision,omitempty"`
-	ArmedConfigRevision string `json:"armedConfigRevision,omitempty"`
+	Activation          *TimerActivationStatus `json:"activation,omitempty"`
+	StorageState        string                 `json:"storageState,omitempty"`
+	StorageError        string                 `json:"storageError,omitempty"`
+	ConfigRevision      string                 `json:"configRevision,omitempty"`
+	ArmedConfigRevision string                 `json:"armedConfigRevision,omitempty"`
 
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
@@ -114,6 +115,14 @@ type TimerStatus struct {
 	Unit        string `json:"unit,omitempty"` // activated service
 	Next        string `json:"next,omitempty"`
 	Last        string `json:"last,omitempty"`
+}
+
+type TimerActivationStatus struct {
+	ID        string `json:"id"`
+	Unit      string `json:"unit"`
+	Result    string `json:"result"`
+	Scheduled string `json:"scheduled"`
+	Actual    string `json:"actual"`
 }
 
 // StatusParams is the body for status. An empty Unit requests machine status.
@@ -174,11 +183,12 @@ type UnitStatus struct {
 	// invocation field identifies the last captured service definition, even
 	// after stop. ArmedConfigRevision identifies the installed native watch or
 	// armed timer separately; it clears when that ownership is released.
-	ConfigRevision           string `json:"configRevision,omitempty"`
-	InvocationConfigRevision string `json:"invocationConfigRevision,omitempty"`
-	ArmedConfigRevision      string `json:"armedConfigRevision,omitempty"`
-	TimerStorageState        string `json:"timerStorageState,omitempty"`
-	TimerStorageError        string `json:"timerStorageError,omitempty"`
+	ConfigRevision           string                 `json:"configRevision,omitempty"`
+	InvocationConfigRevision string                 `json:"invocationConfigRevision,omitempty"`
+	ArmedConfigRevision      string                 `json:"armedConfigRevision,omitempty"`
+	TimerStorageState        string                 `json:"timerStorageState,omitempty"`
+	TimerStorageError        string                 `json:"timerStorageError,omitempty"`
+	TimerActivation          *TimerActivationStatus `json:"timerActivation,omitempty"`
 
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
