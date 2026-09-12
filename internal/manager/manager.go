@@ -179,6 +179,7 @@ func (m *Manager) CloseContext(ctx context.Context) error {
 	}
 	m.mu.Lock()
 	m.closed = true
+	m.disarmAllTimersLocked()
 	m.cancelOperationsLocked()
 	m.signalStartCapacityLocked()
 	for h := range m.stopHelpers {
@@ -495,6 +496,9 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 		st.InvocationConfigRevision = rt.invocationRevision
 		if rt.hub != nil {
 			st.ArmedConfigRevision = rt.hub.revision
+		}
+		if rt.timer != nil {
+			st.ArmedConfigRevision = rt.timer.revision
 		}
 		if rt.unavailable {
 			st.LoadState = "unavailable"
