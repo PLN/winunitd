@@ -18,6 +18,13 @@ Install creates `C:\ProgramData\winunitd` (`units\`, `enabled\`, `journal\`, `ru
 
 On start (SCM or console) the daemon starts `builtin` `default.target`, which Wants=`timers.target`. Built-in targets: `default.target`, `timers.target`, `shutdown.target` (`network-online.target` is not shipped). A user manager also loads `graphical-session.target`.
 
+SCM reports `Running` after the system manager and control listener are initialized.
+This means control is available; workload readiness is reported separately by unit
+status. Boot activation runs with control available, so a waiting notify unit does
+not hide status or stop. An invalid initial unit configuration leaves the service
+and control endpoint available for `verify`, `daemon-reload`, and explicit starts
+after repair. Failure to initialize the manager or listener still fails startup.
+
 The daemon creates a Job Object with `KILL_ON_JOB_CLOSE`: if `winunitd.exe` is killed, assigned children die with it. Each started unit gets its own nested Job Object (no breakaway). On `sc stop`, preshutdown, or console SIGINT, units stop in reverse After=/Before= order (`shutdown.target` as the stop root), then the daemon Job Object closes.
 
 `winctl daemon-reload` reparses units and rebuilds the graph without dropping live jobs.

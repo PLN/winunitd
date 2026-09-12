@@ -42,6 +42,9 @@ const StopPendingWaitHint = PreshutdownTimeout
 // waiting for ordered stop. Tests on Windows shorten this.
 var stopPendingTick = 2 * time.Second
 
+// startPendingTick refreshes SCM progress while listener initialization runs.
+var startPendingTick = 2 * time.Second
+
 // DataDirNames are created under the install base directory (DESIGN.md §7, §48).
 // units, enabled, journal, runtime. PATH and Event Log provider are not touched.
 var DataDirNames = []string{"units", "enabled", "journal", "runtime", "linger"}

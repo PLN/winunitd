@@ -91,9 +91,17 @@ abrupt-death lifetime qualification. Managed profiles remain limited to local
 machine accounts. The `68d3397` disposable guest candidate passed genuine
 SYSTEM-to-standard-user launch, user-token control, workload identity/environment,
 manager and broker crash recovery. Its manually loaded interactive profile leaked
-after broker death; ordinary logoff after a fresh boot passed. The registry-handle
-replacement requires a repeat of that crash/logoff sequence. This is not R4.1
-acceptance, and the remaining session/security/linger matrix stays open.
+after broker death; ordinary logoff after a fresh boot passed. The `8a61393`
+registry-handle replacement passed the full repeated launch, user-manager crash,
+broker crash and logoff sequence, including profile release and no resurrection.
+This is not R4.1 acceptance; the remaining session/security/linger matrix stays open.
+
+SCM startup now awaits an explicit listener/coordinator readiness signal before
+reporting Running. Control starts before boot workload activation, and an initial
+configuration rejection leaves control available for repair. Native host tests
+cover delayed readiness, startup failure, progress checkpoints, stale interrogate
+snapshots and stop before a late readiness callback. Genuine SCM boot/repair
+qualification remains pending; this does not implement the maintenance barrier.
 
 The next R2/R4 session slice repairs missed logoffs through authoritative session
 enumeration, rejects stale snapshots, preserves replacement sessions and linger,

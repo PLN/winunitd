@@ -168,8 +168,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if asService {
 		ch := make(chan runtime.SessionChange, 32)
 		clockCh := make(chan struct{}, 1)
-		err := runtime.RunHostNotify(func(ctx context.Context) error {
-			return serve(ctx, *baseDir, stderr, ch, clockCh)
+		err := runtime.RunHostReady(func(ctx context.Context, ready func()) error {
+			return serveReady(ctx, *baseDir, stderr, ch, clockCh, ready)
 		}, func(sc runtime.SessionChange) {
 			select {
 			case ch <- sc:

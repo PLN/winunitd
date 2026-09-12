@@ -30,3 +30,8 @@ func RunHostNotify(run func(ctx context.Context) error, onSession func(SessionCh
 	_ = onClock
 	return errNotWindows
 }
+
+// RunHostReady is only available on Windows.
+func RunHostReady(run func(context.Context, func()) error, onSession func(SessionChange), onClock func()) error {
+	return errNotWindows
+}
