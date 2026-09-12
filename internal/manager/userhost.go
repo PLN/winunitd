@@ -33,6 +33,7 @@ type UserHostConfig struct {
 	Lookup         runtime.AccountLookup
 	LingerToken    runtime.LingerTokenFunc
 	Logf           func(string, ...any)
+	Now            func() time.Time
 }
 
 // UserHost is SID-keyed (one manager per user), not session-keyed.
@@ -57,14 +58,20 @@ type UserHost struct {
 }
 
 type userInstance struct {
-	uncertain bool
-	err       string
-	sid       string
-	proc      runtime.UserManagerProc
+	uncertain    bool
+	err          string
+	sid          string
+	proc         runtime.UserManagerProc
+	restartDelay time.Duration
+	nextStart    time.Time
+	startedAt    time.Time
 }
 
 // NewUserHost creates a host. Call Listen after the system manager is up.
 func NewUserHost(cfg UserHostConfig) *UserHost {
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
 	if cfg.QueryToken == nil {
 		cfg.QueryToken = runtime.QueryUserToken
 	}
@@ -152,7 +159,10 @@ func (h *UserHost) scheduleReconcile() {
 	if err != nil {
 		return
 	}
-	go h.reconcileAccepted(work)
+	go func() {
+		h.reconcileAccepted(work)
+		h.StartLingering()
+	}()
 }
 
 func (h *UserHost) reconcileAccepted(work *userNativeWork) {
@@ -279,8 +289,13 @@ func (h *UserHost) queryAcceptedUserLogon(sessionID uint32, request uint64, work
 			h.cfg.Logf("session %d token cleanup: %v", sessionID, err)
 		}
 	}()
+	now := h.cfg.Now()
 	h.mu.Lock()
 	if h.closed || h.sessionRequests[sessionID] != request {
+		h.mu.Unlock()
+		return
+	}
+	if inst := h.bySID[h.sessions[sessionID]]; inst != nil && inst.proc == nil && now.Before(inst.nextStart) {
 		h.mu.Unlock()
 		return
 	}
@@ -510,6 +525,14 @@ func (h *UserHost) startLinger(rec runtime.LingerRecord) (startErr error) {
 	if h.cfg.LingerToken == nil {
 		return runtime.ErrNoLingerToken
 	}
+	now := h.cfg.Now()
+	h.mu.Lock()
+	inst := h.bySID[rec.SID]
+	delayed := inst != nil && inst.proc == nil && now.Before(inst.nextStart)
+	h.mu.Unlock()
+	if delayed {
+		return fmt.Errorf("user manager recovery is delayed")
+	}
 	work, err := h.acceptNativeUserWork()
 	if err != nil {
 		return err
@@ -518,6 +541,7 @@ func (h *UserHost) startLinger(rec runtime.LingerRecord) (startErr error) {
 	defer func() { startErr = errors.Join(startErr, h.finishNativeUserWork(work, tok)) }()
 	tok, err = h.cfg.LingerToken(rec)
 	if err != nil {
+		h.recordLingerTokenFailure(rec.SID, err)
 		return err
 	}
 	if tok != nil {
@@ -544,7 +568,7 @@ func (h *UserHost) ensureRunning(sid string, tok *runtime.UserToken, stillWanted
 		return nil
 	}
 	if inst != nil && inst.proc != nil {
-		if err := h.killUserInstance(context.Background(), sid, inst); err != nil {
+		if err := h.cleanupUserInstance(context.Background(), sid, inst, true); err != nil {
 			return err
 		}
 	}
@@ -607,7 +631,15 @@ func (h *UserHost) stopUserLocked(ctx context.Context, sid string, onlyIdle bool
 
 // Caller owns the per-SID operation lock; failed or pending kills keep the record.
 func (h *UserHost) killUserInstance(ctx context.Context, sid string, inst *userInstance) error {
-	if inst == nil || inst.proc == nil {
+	return h.cleanupUserInstance(ctx, sid, inst, false)
+}
+
+func (h *UserHost) cleanupUserInstance(ctx context.Context, sid string, inst *userInstance, retainRecovery bool) error {
+	if inst == nil {
+		return nil
+	}
+	if inst.proc == nil {
+		h.applyUserCleanup(sid, inst, nil, retainRecovery)
 		return nil
 	}
 	proc := h.acceptUserCleanup(inst)
@@ -620,7 +652,7 @@ func (h *UserHost) killUserInstance(ctx context.Context, sid string, inst *userI
 		}
 		return nil
 	})
-	h.applyUserCleanup(sid, inst, err)
+	h.applyUserCleanup(sid, inst, err, retainRecovery)
 	return err
 }
 

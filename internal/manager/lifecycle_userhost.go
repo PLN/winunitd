@@ -2,6 +2,7 @@ package manager
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
@@ -10,6 +11,12 @@ import (
 // Includes failed launch/stop ownership, so uncertainty cannot open capacity for
 // another process while the previous native resources remain retained.
 const maxTrackedUserManagers = 128
+
+const (
+	userRecoveryMinDelay   = time.Second
+	userRecoveryMaxDelay   = time.Minute
+	userRecoveryStableTime = time.Minute
+)
 
 // acceptUserSessions publishes one authoritative enumeration. Reserving logon
 // requests in the same decision prevents a later logoff from being overwritten
@@ -72,6 +79,7 @@ func (h *UserHost) inspectUserLaunch(sid string, wanted func() bool) (*userInsta
 }
 
 func (h *UserHost) acceptUserLaunch(sid string, wanted func() bool) (*userInstance, error) {
+	now := h.cfg.Now()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed || !wanted() {
@@ -80,23 +88,39 @@ func (h *UserHost) acceptUserLaunch(sid string, wanted func() bool) (*userInstan
 	if h.bySID[sid] == nil && len(h.bySID) >= maxTrackedUserManagers {
 		return nil, fmt.Errorf("tracked user manager limit %d: %w", maxTrackedUserManagers, protocol.ErrBusy())
 	}
-	inst := &userInstance{sid: sid}
+	previous := h.bySID[sid]
+	if previous != nil {
+		if now.Before(previous.nextStart) {
+			return nil, fmt.Errorf("user manager recovery delayed until %s", previous.nextStart.Format(time.RFC3339Nano))
+		}
+	}
+	delay := userRecoveryDelay(previous, now)
+	inst := &userInstance{sid: sid, restartDelay: delay, nextStart: now.Add(delay)}
 	h.bySID[sid] = inst // shutdown retains accepted work even before process creation
 	return inst, nil
 }
 
 func (h *UserHost) applyUserLaunch(sid string, inst *userInstance, proc runtime.UserManagerProc, err error, wanted func() bool) bool {
+	now := h.cfg.Now()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	inst.proc = proc // even a failed or superseded creation remains owned
 	superseded := h.closed || h.bySID[sid] != inst || !wanted()
+	inst.nextStart = now.Add(inst.restartDelay)
+	if err != nil {
+		inst.err = err.Error()
+	}
 	if proc == nil {
-		if h.bySID[sid] == inst {
+		if h.bySID[sid] == inst && superseded {
 			delete(h.bySID, sid)
+		}
+		if err == nil {
+			inst.err = "user manager launcher returned no process"
 		}
 	} else if err != nil {
 		inst.uncertain = true
-		inst.err = err.Error()
+	} else {
+		inst.startedAt = now
 	}
 	return superseded
 }
@@ -108,14 +132,20 @@ func (h *UserHost) acceptUserCleanup(inst *userInstance) runtime.UserManagerProc
 	return inst.proc
 }
 
-func (h *UserHost) applyUserCleanup(sid string, inst *userInstance, err error) {
+func (h *UserHost) applyUserCleanup(sid string, inst *userInstance, err error, retainRecovery bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.bySID[sid] != inst {
 		return
 	}
 	if err == nil {
-		delete(h.bySID, sid)
+		if retainRecovery && !h.closed {
+			inst.proc = nil
+			inst.uncertain = false
+			inst.err = "user manager exited; awaiting recovery"
+		} else {
+			delete(h.bySID, sid)
+		}
 	} else {
 		inst.err = err.Error()
 	}

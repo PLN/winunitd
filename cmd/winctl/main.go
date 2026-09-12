@@ -810,10 +810,20 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		fmt.Fprintf(c.stdout, "         %d active\n", m.UnitsActive)
 		fmt.Fprintf(c.stdout, "         %d failed\n", m.UnitsFailed)
 		fmt.Fprintf(c.stdout, "  Timers: %d loaded\n", m.TimersLoaded)
-		if m.UserManagers > 0 || m.Lingering > 0 || m.UserNativeWork > 0 {
+		if m.UserManagers > 0 || m.Lingering > 0 || m.UserNativeWork > 0 || len(m.UserRecovery) > 0 {
 			fmt.Fprintf(c.stdout, "  Users:  %d managers\n", m.UserManagers)
 			fmt.Fprintf(c.stdout, "          %d lingering\n", m.Lingering)
 			fmt.Fprintf(c.stdout, "          %d native operations pending\n", m.UserNativeWork)
+			for _, r := range m.UserRecovery {
+				fmt.Fprintf(c.stdout, "          %s: %s", r.SID, r.State)
+				if r.NextAttemptAt != "" {
+					fmt.Fprintf(c.stdout, "; retry after %s", r.NextAttemptAt)
+				}
+				if r.Error != "" {
+					fmt.Fprintf(c.stdout, "; %s", r.Error)
+				}
+				fmt.Fprintln(c.stdout)
+			}
 		}
 		return 0
 	}

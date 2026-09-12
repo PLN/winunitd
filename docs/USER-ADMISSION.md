@@ -69,6 +69,24 @@ per retained SID. A timed-out native stop remains owned per process, so the
 128-instance cap also bounds retained user-process stop attempts. These fixed
 limits are implementation bounds; configurable quotas remain future work.
 
+## User-manager recovery
+
+Launch failures and rapid manager exits use per-SID exponential delays of 1, 2,
+4, 8, 16, 32 and at most 60 seconds. A minute of successful runtime resets the
+delay. Reconciliation checks due recovery on its ten-second cadence; the delay
+is an earliest retry time, not a promise of an exact launch time. Known waiting
+sessions avoid another token acquisition before that time. Linger token failures
+also retain a delayed record, and periodic reconciliation retries enabled linger
+records after processing interactive sessions.
+
+Recovery records share the 128-instance limit. Logoff, explicit revocation,
+disable-linger when no admitted session remains, and shutdown cancel their
+applicable recovery. Failed or pending native cleanup must still complete before
+replacement. Each admitted retry obtains a fresh token. Status exposes bounded
+per-SID `userRecovery` entries with starting/waiting/cleanup state, the last error
+and the earliest retry time when waiting. No separate per-user timer goroutine is
+created. Native headless profile/crash qualification remains a separate gate.
+
 ## Implementation evidence and limits
 
 The native user-manager launcher uses `CreateProcessAsUser` with handle

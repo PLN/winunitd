@@ -54,6 +54,7 @@ func (c *Control) Handle(ctx context.Context, method string, params json.RawMess
 			sr.Machine.UserManagers = len(c.Users.Running())
 			sr.Machine.Lingering = c.Users.LingerCount()
 			sr.Machine.UserNativeWork = c.Users.NativeWorkCount()
+			sr.Machine.UserRecovery = c.Users.RecoveryStatus()
 		}
 		return res, nil
 	default:

@@ -129,15 +129,23 @@ type StatusResult struct {
 type MachineStatus struct {
 	ConfigRevision string `json:"configRevision,omitempty"`
 
-	State          string             `json:"state"`
-	UnitsLoaded    int                `json:"unitsLoaded"`
-	UnitsActive    int                `json:"unitsActive"`
-	UnitsFailed    int                `json:"unitsFailed"`
-	TimersLoaded   int                `json:"timersLoaded"`
-	UserManagers   int                `json:"userManagers,omitempty"`
-	Lingering      int                `json:"lingering,omitempty"`
-	UserNativeWork int                `json:"userNativeWork,omitempty"`
-	Maintenance    *MaintenanceResult `json:"maintenance,omitempty"`
+	State          string               `json:"state"`
+	UnitsLoaded    int                  `json:"unitsLoaded"`
+	UnitsActive    int                  `json:"unitsActive"`
+	UnitsFailed    int                  `json:"unitsFailed"`
+	TimersLoaded   int                  `json:"timersLoaded"`
+	UserManagers   int                  `json:"userManagers,omitempty"`
+	Lingering      int                  `json:"lingering,omitempty"`
+	UserNativeWork int                  `json:"userNativeWork,omitempty"`
+	UserRecovery   []UserRecoveryStatus `json:"userRecovery,omitempty"`
+	Maintenance    *MaintenanceResult   `json:"maintenance,omitempty"`
+}
+
+type UserRecoveryStatus struct {
+	SID           string `json:"sid"`
+	State         string `json:"state"`
+	NextAttemptAt string `json:"nextAttemptAt,omitempty"`
+	Error         string `json:"error,omitempty"`
 }
 
 // UnitStatus is one loaded unit (DESIGN.md §24, §45). MainPID is set when

@@ -100,6 +100,8 @@ func TestUserHostReconcileSessionReplacement(t *testing.T) {
 
 func TestUserHostReconcileCrashUsesFreshToken(t *testing.T) {
 	h, starts, procs := testUserHost(t, map[uint32]string{1: testSIDA}, nil)
+	now := time.Now()
+	h.cfg.Now = func() time.Time { return now }
 	query := h.cfg.QueryToken
 	var tokens []*runtime.UserToken
 	h.cfg.QueryToken = func(id uint32) (*runtime.UserToken, error) {
@@ -110,6 +112,7 @@ func TestUserHostReconcileCrashUsesFreshToken(t *testing.T) {
 	h.Logon(1)
 	old := procs[testSIDA]
 	old.alive.Store(false)
+	now = now.Add(userRecoveryMinDelay)
 	h.cfg.Sessions = func() ([]uint32, error) { return []uint32{1}, nil }
 	h.Reconcile()
 	if starts.Load() != 2 || !h.Alive(testSIDA) || len(tokens) != 2 || tokens[0] == tokens[1] || old.kills.Load() != 1 {
