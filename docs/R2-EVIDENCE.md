@@ -866,6 +866,23 @@ does not qualify internal S4U acquisition cleanup, asynchronous session dispatch
 per-user recovery backoff, reserved enumeration/cleanup progress, or global
 maintenance. Those remain separate ownership and fairness obligations.
 
+## September 12 coordinated daemon shutdown
+
+The daemon now seals system-unit and user-host admission in one combined decision
+before either begins teardown. The lock order is manager then user host; native
+cleanup occurs after both are released. System and user cleanup run independently
+under one caller deadline, including system controls/journal closure. The caller
+retains responsibility for the control listener and broker job.
+
+One retained user-host shutdown pass owns up to four stop workers plus the native
+token-work drain. Retries join an existing pass and can start a fresh pass after
+its expired caller context has completed. Tests cover both domains sealed before
+user termination, system stop during a blocked unknown-SID lookup, independent
+user/token cleanup during a blocked SID gate, and repeated deadline retries.
+This establishes the shutdown primitive; the maintenance API, complete native
+acquisition ownership, aggregate worker limits and servicing qualification remain
+open.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

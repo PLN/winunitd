@@ -146,11 +146,7 @@ func finishContext(ctx context.Context, m *manager.Manager, job *runtime.DaemonJ
 			result = errors.Join(result, wrapped)
 		}
 	}
-	if host != nil {
-		record("user host shutdown", host.Shutdown(ctx))
-	}
-	record("shutdown", m.Shutdown(ctx))
-	record("close manager", m.CloseContext(ctx))
+	record("shutdown", manager.ShutdownAll(ctx, m, host))
 	if job != nil {
 		err := job.CloseContext(ctx)
 		record("close daemon job", err)

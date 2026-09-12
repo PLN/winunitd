@@ -31,21 +31,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	// inside the OS with no process reference/state yet; its operation keeps it
 	// in the stop plan, which waits for adoption and confirmed cleanup.
 	m.mu.Lock()
-	m.closed = true
-	m.cancelOperationsLocked()
-	m.signalStartCapacityLocked()
-	for _, rt := range m.units {
-		rt.stopping = true
-		// Publish uncertainty before an outer deadline can return while the
-		// stop pass is still blocked in a control/resource close.
-		if rt.proc != nil || (rt.unit != nil && rt.state != core.Inactive && (scmServiceName(rt.ownedUnit()) != "" || scheduledTaskName(rt.ownedUnit()) != "")) {
-			rt.stopUncertain = true
-		}
-		if rt.startCancel != nil {
-			rt.startCancel()
-		}
-		rt.cancelRestart()
-	}
+	m.sealShutdownLocked()
 	m.mu.Unlock()
 	for {
 		var ownsPass atomic.Bool
@@ -60,6 +46,25 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 			continue
 		}
 		return err
+	}
+}
+
+// Caller holds m.mu. This decision performs no blocking native work.
+func (m *Manager) sealShutdownLocked() {
+	m.closed = true
+	m.cancelOperationsLocked()
+	m.signalStartCapacityLocked()
+	for _, rt := range m.units {
+		rt.stopping = true
+		// Publish uncertainty before an outer deadline can return while the
+		// stop pass is still blocked in a control/resource close.
+		if rt.proc != nil || (rt.unit != nil && rt.state != core.Inactive && (scmServiceName(rt.ownedUnit()) != "" || scheduledTaskName(rt.ownedUnit()) != "")) {
+			rt.stopUncertain = true
+		}
+		if rt.startCancel != nil {
+			rt.startCancel()
+		}
+		rt.cancelRestart()
 	}
 }
 
