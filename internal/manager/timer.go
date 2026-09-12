@@ -3,7 +3,6 @@ package manager
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
@@ -28,7 +27,7 @@ func (m *Manager) onTimerElapsed(event timers.Fire) {
 	}
 	ld := m.units[name]
 	activated := ""
-	if ld != nil && !ld.unavailable && !m.closed && ld.unit != nil && ld.unit.Timer != nil {
+	if ld != nil && ld.timer != nil && ld.timer.token == event.Token && !ld.unavailable && !m.closed && ld.unit != nil && ld.unit.Timer != nil {
 		activated = event.Unit
 	}
 	m.mu.Unlock()
@@ -51,19 +50,7 @@ func (m *Manager) armTimer(u *unit.Unit, revision string) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	rt := m.units[u.Name]
-	if rt == nil || rt.unavailable || m.closed {
-		return fmt.Errorf("timer %q is unavailable or manager is closed", u.Name)
-	}
-	spec := timerSpec(u)
-	spec.ConfigRevision = revision
-	if len(spec.OnCalendar) > timers.MaxCalendarExpressions {
-		return fmt.Errorf("timer exceeds %d OnCalendar expressions", timers.MaxCalendarExpressions)
-	}
-	if m.engine.Arm(spec) == 0 {
-		return fmt.Errorf("timer arm capacity %d exhausted or scheduler stopped", timers.MaxArmedTimers)
-	}
-	return nil
+	return m.acceptTimerArmLocked(u, revision)
 }
 
 func timerSpec(u *unit.Unit) timers.Spec {
@@ -82,35 +69,6 @@ func timerSpec(u *unit.Unit) timers.Spec {
 	spec.OnCalendar = t.OnCalendar
 	spec.Persistent = t.Persistent
 	return spec
-}
-
-func (m *Manager) syncTimersLocked() {
-	if m.engine == nil {
-		return
-	}
-	keep := make(map[string]bool)
-	var toArm []*unit.Unit
-	for name, ld := range m.units {
-		if ld == nil || ld.unavailable || ld.unit == nil || ld.unit.Kind != unit.KindTimer {
-			continue
-		}
-		armed := m.engine.Armed(name)
-		if m.stateOfLocked(name) != core.Active && !(armed && ld.operations > 0) {
-			continue
-		}
-		keep[name] = true
-		// Keep the captured schedule and callback identity until a fresh arm.
-		if !armed {
-			toArm = append(toArm, ld.unit)
-		}
-	}
-	m.engine.Retain(keep)
-	// Arm after Retain, still without calling fire synchronously.
-	for _, u := range toArm {
-		spec := timerSpec(u)
-		spec.ConfigRevision = m.units[u.Name].configRevision
-		m.engine.Arm(spec)
-	}
 }
 
 func formatTimerStamp(t time.Time) string {
@@ -159,5 +117,5 @@ func (*timerOrigin) countsStartLimit() bool { return true }
 
 func (o *timerOrigin) validLocked(m *Manager) bool {
 	rt := m.units[o.name]
-	return !m.closed && rt != nil && !rt.stopping && !rt.unavailable && !rt.cleanupPending() && m.engine.Current(o.name, o.token)
+	return !m.closed && rt != nil && rt.timer != nil && rt.timer.token == o.token && !rt.stopping && !rt.unavailable && !rt.cleanupPending() && m.engine.Current(o.name, o.token)
 }

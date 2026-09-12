@@ -52,6 +52,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 // Caller holds m.mu. This decision performs no blocking native work.
 func (m *Manager) sealShutdownLocked() {
 	m.closed = true
+	m.disarmAllTimersLocked()
 	m.cancelOperationsLocked()
 	m.signalStartCapacityLocked()
 	for _, rt := range m.units {
@@ -76,7 +77,6 @@ func (m *Manager) shutdownPass(ctx context.Context) error {
 	roots := m.shutdownRootsLocked()
 	m.mu.Unlock()
 	if m.engine != nil {
-		m.engine.Retain(nil)
 		m.engine.Stop()
 	}
 	if g == nil || len(roots) == 0 {
@@ -258,7 +258,7 @@ func (m *Manager) stopUnitAfterLock(ctx context.Context, name string, release fu
 	helperErr := m.cooperativeStop(ctx, stopOwner, effect.unit, proc, effect.stopEligible)
 
 	if kind == unit.KindTimer && m.engine != nil {
-		m.engine.Disarm(name)
+		m.disarmTimer(stopOwner)
 	}
 	var stopErr, hubErr error
 	if kind == unit.KindRegistry || kind == unit.KindEventLog || kind == unit.KindPath {

@@ -111,8 +111,8 @@ returned data cannot mutate manager state.
 
 Snapshot performs no native queries or worker dispatch. It excludes journal,
 timer-engine, native-proxy and separate user-host observations; ordinary status
-commands provide those independent views. Its armed revision covers watches held
-in the manager record, not a later timer-engine observation. Completed operation
+commands provide those independent views. Its armed revision covers the timer or
+watch arm accepted in the manager record. Completed operation
 history remains available through `operation ID`. A snapshot exceeding 1024 units,
 128 active operations or 512 KiB fails explicitly; it never truncates a complete
 view into apparent success. Use individual status/operation queries above those

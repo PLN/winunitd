@@ -41,6 +41,7 @@ type unitRuntime struct {
 	stopHelperAttempt string
 	invocation        string
 	hub               *watchRuntime
+	timer             *timerArm
 	err               string
 	startTimes        []time.Time
 }
