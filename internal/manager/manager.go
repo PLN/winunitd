@@ -61,6 +61,8 @@ type Manager struct {
 	closePending         []unitTeardown
 	stopHelpers          map[*stopHelperWork]struct{}
 	snapshotSequence     uint64
+	boundStops           map[string]boundStopMember
+	boundStopsDone       chan struct{}
 }
 
 // New creates a manager. Reload must be called to load units.
@@ -196,6 +198,12 @@ func (m *Manager) CloseContext(ctx context.Context) error {
 }
 
 func (m *Manager) closePass() error {
+	m.mu.Lock()
+	boundStopsDone := m.boundStopsDone
+	m.mu.Unlock()
+	if boundStopsDone != nil {
+		<-boundStopsDone
+	}
 	// Configuration I/O accepted before the barrier can still own files or
 	// detached native controls. Join it before capturing final cleanup state.
 	m.mu.Lock()

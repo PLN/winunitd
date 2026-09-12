@@ -70,6 +70,9 @@ func (m *Manager) applyStartOutcomeLocked(name string, state core.State, err err
 		}
 	}
 	rt.publishStartOutcome(state)
+	if (state == core.Inactive || state == core.Failed) && !rt.stopping {
+		m.queueBoundStopsLocked(name)
+	}
 	if err != nil && rt.state != core.Active {
 		rt.err = waitFailMessage(err)
 	}
@@ -174,6 +177,11 @@ func (m *Manager) applyProcessExit(event processExitCompletion) {
 		m.mu.Unlock()
 		return
 	}
+	// A start without After may have completed while peer cleanup was blocked.
+	// Reconcile it before recovery or final exit publication as well.
+	if event.service == nil || event.service.Type != unit.TypeOneshot || kind != core.ExitSuccess || !event.service.RemainAfterExit {
+		m.queueBoundStopsLocked(event.owner.name)
+	}
 	if event.service != nil && core.ShouldRestart(event.service.Restart, kind) {
 		m.mu.Unlock()
 		m.beginRestart(recoveryRequest{owner: event.owner, delay: restartDelay(event.service)})
@@ -222,6 +230,7 @@ func (m *Manager) acceptWatchdogFailure(owner runtimeIdentity) *watchdogEffect {
 	if !rt.step(core.EventWatchdogFailed) {
 		return nil
 	}
+	m.queueBoundStopsLocked(owner.name)
 	rt.err = "watchdog timed out"
 	rt.terminated = true
 	effect := &watchdogEffect{owner: owner, unit: rt.ownedUnit(), process: rt.proc, cancel: rt.watchdog, stopEligible: stopEligible}
@@ -270,7 +279,13 @@ func (m *Manager) acceptProcessExitCleanup(name string, proc runtime.Process) *p
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rt := m.units[name]
-	if rt == nil || rt.proc != proc || rt.cleanupPending() {
+	if rt == nil || rt.proc != proc {
+		return nil
+	}
+	if !rt.stopping && !rt.terminated {
+		m.queueBoundStopsLocked(name)
+	}
+	if rt.cleanupPending() {
 		// A stale watcher must not repeat completed cleanup. An uncertain stop
 		// keeps its resource owner even when the main process has exited.
 		return nil
@@ -300,6 +315,9 @@ func (m *Manager) applyProcessExitCleanup(event processExitCleanup) bool {
 			rt.step(core.EventStartFailed)
 		}
 		rt.err = fmt.Sprintf("exit cleanup: %v", event.err)
+		if !rt.stopping {
+			m.queueBoundStopsLocked(owner.name)
+		}
 		return false
 	}
 	rt.proc = nil
@@ -307,6 +325,9 @@ func (m *Manager) applyProcessExitCleanup(event processExitCleanup) bool {
 	if rt.cleanupPending() {
 		if rt.state != core.Failed {
 			rt.step(core.EventStartFailed)
+		}
+		if !rt.stopping {
+			m.queueBoundStopsLocked(owner.name)
 		}
 		return false
 	}
@@ -484,6 +505,10 @@ func (m *Manager) acceptRecovery(request recoveryRequest) context.Context {
 	}
 	if rt.step(core.EventAutoRestart) {
 		rt.err = ""
+		m.queueBoundStopsLocked(owner.name)
+		if rt.stopping {
+			return nil // a dependency cycle included the recovering peer
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	rt.cancelRestart()
