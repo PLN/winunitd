@@ -162,12 +162,16 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 	}
 
 	proc, err := m.launch.Start(ctx, spec)
+	pid := 0
+	if proc != nil {
+		pid = proc.PID()
+	}
 	if err != nil {
 		if proc != nil {
 			// The launcher could not finish cleanup after process creation.
 			// This operation retains the record, and the unit lock excludes a
 			// replacement. Preserve ownership even if stop/close overtook it.
-			m.retainLaunchFailure(effect, proc, err)
+			m.retainLaunchFailure(effect, proc, pid, err)
 			m.journal.SetOrigin(m.journalOrigin())
 			m.journal.Attach(name, proc.PID(), inv, proc.Stdout(), proc.Stderr())
 		}
@@ -192,7 +196,7 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 	if autoRestart && svc.Type != unit.TypeNotify {
 		alive = proc.Alive()
 	}
-	if !m.adoptProcess(processAdoption{effect: effect, process: proc, autoRestart: autoRestart, alive: alive}) {
+	if !m.adoptProcess(processAdoption{effect: effect, process: proc, pid: pid, autoRestart: autoRestart, alive: alive}) {
 		stopErr := m.stopProcess(proc, stopTimeout(u))
 		if stopErr == nil && proc.Alive() {
 			stopErr = fmt.Errorf("process remains alive after late launch cleanup")
@@ -242,14 +246,13 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 				return err
 			}
 		}
-		m.waitJournalContext(stopCtx, name, stopTimeout(u))
+		journalErr := m.waitJournalContext(stopCtx, name, stopTimeout(u))
 		cleanupErr := m.stopProcessContext(stopCtx, proc, stopTimeout(u))
 		if cleanupErr == nil && proc.Alive() {
 			cleanupErr = fmt.Errorf("process remains alive after oneshot cleanup")
 		}
 		notifyErr := m.closeNotifyContext(stopCtx, name, stopTimeout(u))
-		when, err := m.completeOneshot(ctx, effect, proc, cleanupErr)
-		err = errors.Join(err, helperErr)
+		when, err := m.completeOneshot(ctx, effect, proc, cleanupErr, errors.Join(helperErr, journalErr))
 		if err != nil || notifyErr != nil {
 			return errors.Join(err, notifyErr)
 		}

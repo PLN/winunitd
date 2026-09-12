@@ -46,8 +46,10 @@ writes as well as state/substate assignment when migrating each row.
 | unitruntime.go: step, publishStartOutcome, cancelRestart, detachAsync, error helpers | Event transitions and explicit-member publication, cancellation and handle transfer | Restrict calls to coordinator decision handlers; helpers are not separate authorities |
 | userhost.go; admission.go; linger.go | Separate UserHost mutex, session/admission/linger policy, bySID instances, launch placeholders, uncertainty and cleanup | Instance launch/cleanup/shutdown and authoritative session snapshot acceptance use lifecycle_userhost.go handlers. Stale enumerations cannot overwrite newer session/policy decisions; missing sessions cancel pending token requests and trigger retryable idle cleanup. Startup liveness is outside h.mu. Alive/Running capture process references under h.mu and observe liveness outside it. Remaining session/admission/linger policy and system-manager admission integration remain open |
 
-Status assembly in manager.go copies records and process references, then overlays
-process/journal/timer/native observations outside m.mu. It does not publish immutable aggregate coordinator snapshots yet.
+Status assembly in manager.go copies lifecycle records and the PID accepted at
+process adoption together under m.mu. It never queries process liveness while
+building status or list-units. Journal/timer/native-proxy observations are still
+overlaid outside m.mu; immutable aggregate coordinator snapshots remain open.
 Native query results can describe a different observation time from the copied
 manager fields; retaining the existing response format does not close R2.1.
 

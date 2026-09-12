@@ -286,8 +286,8 @@ func (m *Manager) stopUnitAfterLock(ctx context.Context, name string, release fu
 	// Release the per-unit op lock before journal.Wait so a hung
 	// capture cannot block later Start/Stop (issue #68).
 	release()
-	m.waitJournalContext(ctx, name, timeout)
-	stopErr = errors.Join(stopErr, ctx.Err())
+	journalErr := m.waitJournalContext(ctx, name, timeout)
+	stopErr = errors.Join(stopErr, journalErr, ctx.Err())
 
 	return m.applyStopCompletion(stopCompletion{owner: stopOwner, process: proc, err: stopErr})
 }
@@ -296,13 +296,19 @@ func (m *Manager) waitJournal(name string, timeout time.Duration) {
 	m.waitJournalContext(context.Background(), name, timeout)
 }
 
-func (m *Manager) waitJournalContext(ctx context.Context, name string, timeout time.Duration) {
+func (m *Manager) waitJournalContext(ctx context.Context, name string, timeout time.Duration) error {
 	if m == nil || m.journal == nil {
-		return
+		return nil
 	}
 	ctx, cancel := m.clockTimeout(ctx, timeout)
 	defer cancel()
 	if !m.journal.WaitContext(ctx, name) {
 		log.Printf("winunitd: %s: journal wait exceeded TimeoutStopSec", name)
+		err := ctx.Err()
+		if err == nil {
+			err = context.DeadlineExceeded
+		}
+		return fmt.Errorf("journal finalization did not complete: %w", err)
 	}
+	return nil
 }
