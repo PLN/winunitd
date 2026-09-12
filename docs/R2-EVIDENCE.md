@@ -921,6 +921,18 @@ barrier. Twenty focused race repetitions cover blocked reload planning across
 shutdown retries, unchanged configuration revision, closed-manager mutation
 rejection, and blocked enable-/disable-linger lookup with late completion.
 
+## September 12 startup and combined shutdown progress
+
+Initial user reconciliation runs in one owned background task, allowing the
+daemon's main serve path to enter shutdown when initial session/token I/O is
+blocked. UserHost retains that native work and rejects late launch after closure.
+Combined shutdown itself now has one retained pass per system/user pair. Caller
+deadlines do not discard workers waiting on a decision lock, and retries join
+the same pass before retrying with a fresh context. Twenty focused race
+repetitions cover blocked startup enumeration, combined decision deadlines,
+independent cleanup and retry completion. No new SCM guest qualification is
+claimed by these isolated regressions.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

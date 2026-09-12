@@ -16,6 +16,40 @@ type barrierUserProc struct {
 	check func()
 }
 
+func TestShutdownAllDeadlineJoinsBlockedDecision(t *testing.T) {
+	h := NewUserHost(UserHostConfig{})
+	h.mu.Lock()
+	var once sync.Once
+	release := func() { once.Do(h.mu.Unlock) }
+	defer release()
+	var first *stopAttempt
+	for i := 0; i < 3; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+		err := ShutdownAll(ctx, nil, h)
+		cancel()
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("blocked decision ignored caller deadline: %v", err)
+		}
+		h.stops.mu.Lock()
+		pending := h.stops.pending[stopKey{allUsers: h}]
+		h.stops.mu.Unlock()
+		if pending == nil {
+			t.Fatal("blocked combined pass lost ownership")
+		}
+		if first == nil {
+			first = pending
+		} else if first != pending {
+			t.Fatal("retry duplicated blocked combined pass")
+		}
+	}
+	release()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := ShutdownAll(ctx, nil, h); err != nil {
+		t.Fatal("fresh retry inherited old deadline", err)
+	}
+}
+
 func (p *barrierUserProc) Kill() error {
 	p.check()
 	return p.fakeUserMgr.Kill()

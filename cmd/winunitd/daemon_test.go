@@ -15,6 +15,47 @@ import (
 
 const shutdownTestSID = "S-1-5-21-1-2-3-1001"
 
+func TestStartupReconciliationCannotPreventShutdownEntry(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	var queries atomic.Int32
+	h := manager.NewUserHost(manager.UserHostConfig{
+		Sessions:   func() ([]uint32, error) { close(entered); <-release; return []uint32{1}, nil },
+		QueryToken: func(uint32) (*runtime.UserToken, error) { queries.Add(1); return nil, runtime.ErrNoUserToken },
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := startUserReconciliation(ctx, h)
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("startup reconciliation did not enter")
+	}
+	cancel()
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer stopCancel()
+	if err := finishContext(stopCtx, nil, nil, h, io.Discard); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("shutdown did not retain blocked startup work: %v", err)
+	}
+	if h.NativeWorkCount() != 1 {
+		t.Error("startup work lost ownership")
+	}
+	unblock()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("startup worker did not finish")
+	}
+	if err := finishContext(context.Background(), nil, nil, h, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if queries.Load() != 0 || h.NativeWorkCount() != 0 {
+		t.Fatal("late startup reconciliation launched new work")
+	}
+}
+
 type finishUserProc struct {
 	alive   atomic.Bool
 	fail    atomic.Bool

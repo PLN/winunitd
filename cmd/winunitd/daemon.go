@@ -120,13 +120,25 @@ func serveReady(ctx context.Context, baseDir string, stderr io.Writer, sessions 
 			logf("start %s: %v", manager.DefaultTarget, err)
 		}
 	}
-	if ctx.Err() == nil {
-		host.Reconcile()
-	}
-	if ctx.Err() == nil {
-		host.StartLingering()
-	}
+	startUserReconciliation(ctx, host)
 	return <-serverErr
+}
+
+// The main serve path must reach finish even when initial token/account I/O is
+// blocked. UserHost tracks accepted native work and rejects late launches after
+// shutdown seals admission; this single startup worker needs no replacement.
+func startUserReconciliation(ctx context.Context, host *manager.UserHost) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if ctx.Err() == nil {
+			host.Reconcile()
+		}
+		if ctx.Err() == nil {
+			host.StartLingering()
+		}
+	}()
+	return done
 }
 
 func finish(m *manager.Manager, job *runtime.DaemonJob, host *manager.UserHost, stderr io.Writer) error {
