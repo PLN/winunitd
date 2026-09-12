@@ -2,6 +2,9 @@ package timers
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,10 +14,13 @@ import (
 // Store persists last scheduled/actual/successful execution under
 // <dir>/<name>.json (DESIGN.md §17, §32).
 type Store struct {
-	dir string
+	dir  string
+	load func(string) (Runtime, error) // fault injection, configured before use
+	save func(string, Runtime) error
 }
 
 type persisted struct {
+	Version       int    `json:"version,omitempty"`
 	LastScheduled string `json:"lastScheduled,omitempty"`
 	LastActual    string `json:"lastActual,omitempty"`
 	LastSuccess   string `json:"lastSuccess,omitempty"`
@@ -44,33 +50,75 @@ func (s *Store) path(name string) string {
 
 // Load returns stored last-run times. Missing files yield a zero Runtime.
 func (s *Store) Load(name string) Runtime {
+	rt, _ := s.LoadChecked(name)
+	return rt
+}
+
+// LoadChecked distinguishes missing state from corrupt or unreadable state.
+// Legacy unversioned timestamps are accepted and upgraded by the next save.
+func (s *Store) LoadChecked(name string) (Runtime, error) {
+	if s != nil && s.load != nil {
+		return s.load(name)
+	}
 	path := s.path(name)
 	if path == "" {
-		return Runtime{}
+		return Runtime{}, nil
 	}
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return Runtime{}, nil
+	}
 	if err != nil {
-		return Runtime{}
+		return Runtime{}, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, 16385))
+	if err != nil {
+		return Runtime{}, err
+	}
+	if len(data) > 16384 {
+		return Runtime{}, errors.New("timer state exceeds 16 KiB")
 	}
 	var p persisted
-	if json.Unmarshal(data, &p) != nil {
-		return Runtime{}
+	if strings.TrimSpace(string(data)) == "null" {
+		return Runtime{}, errors.New("timer state must be an object")
 	}
-	return Runtime{
-		LastScheduled: parseStamp(p.LastScheduled),
-		LastActual:    parseStamp(p.LastActual),
-		LastSuccess:   parseStamp(p.LastSuccess),
+	if err := json.Unmarshal(data, &p); err != nil {
+		return Runtime{}, err
 	}
+	if p.Version != 0 && p.Version != 1 {
+		return Runtime{}, fmt.Errorf("unsupported timer state version %d", p.Version)
+	}
+	var rt Runtime
+	for _, field := range []struct {
+		raw string
+		dst *time.Time
+	}{{p.LastScheduled, &rt.LastScheduled}, {p.LastActual, &rt.LastActual}, {p.LastSuccess, &rt.LastSuccess}} {
+		raw, dst := field.raw, field.dst
+		if raw == "" {
+			continue
+		}
+		stamp, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return Runtime{}, errors.New("invalid timer state timestamp")
+		}
+		*dst = stamp
+	}
+	return rt, nil
 }
 
 // Save writes last-run times. In-memory FiredBoot/FiredStartup are not stored:
 // OnStartupSec is per winunitd instance; OnBootSec is recomputed from boot.
 func (s *Store) Save(name string, rt Runtime) error {
+	if s != nil && s.save != nil {
+		return s.save(name, rt)
+	}
 	path := s.path(name)
 	if path == "" {
 		return nil
 	}
 	p := persisted{
+		Version:       1,
 		LastScheduled: formatStamp(rt.LastScheduled),
 		LastActual:    formatStamp(rt.LastActual),
 		LastSuccess:   formatStamp(rt.LastSuccess),
@@ -80,18 +128,20 @@ func (s *Store) Save(name string, rt Runtime) error {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o644)
-}
-
-func parseStamp(s string) time.Time {
-	if s == "" {
-		return time.Time{}
+	f, err := os.CreateTemp(s.dir, ".timer-*")
+	if err != nil {
+		return err
 	}
-	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
-		return t
+	temporary := f.Name()
+	defer os.Remove(temporary)
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
 	}
-	t, _ := time.Parse(time.RFC3339, s)
-	return t
+	if err = errors.Join(err, f.Close()); err != nil {
+		return err
+	}
+	return os.Rename(temporary, path)
 }
 
 func formatStamp(t time.Time) string {

@@ -27,6 +27,7 @@ func TestStoppedTimerCannotLaunchQueuedCompanion(t *testing.T) {
 	u := m.units["input.timer"].unit
 	source := timers.Fire{Name: u.Name, Unit: u.Timer.Unit, Token: m.engine.Arm(timerSpec(u))}
 	m.mu.Unlock()
+	waitCond(t, func() bool { return m.engine.Current(source.Name, source.Token) })
 	unlock := m.ops.lock("input.service")
 	var once sync.Once
 	release := func() { once.Do(unlock) }
@@ -65,6 +66,7 @@ func TestStoppedTimerPreservesAlreadyLaunchedCompanion(t *testing.T) {
 	u := m.units["input.timer"].unit
 	source := timers.Fire{Name: u.Name, Unit: u.Timer.Unit, Token: m.engine.Arm(timerSpec(u))}
 	m.mu.Unlock()
+	waitCond(t, func() bool { return m.engine.Current(source.Name, source.Token) })
 	done := make(chan struct{})
 	go func() { m.onTimerElapsed(source); close(done) }()
 	select {

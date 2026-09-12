@@ -12,6 +12,7 @@ const maxWait = 30 * time.Second
 
 // Callback work is bounded separately from the number of armed timers.
 const maxTimerCallbacks = 32
+const MaxArmedTimers = 1024
 const admissionRetryDelay = 250 * time.Millisecond
 
 // Fire captures the source arm and target when a deadline is consumed.
@@ -31,6 +32,9 @@ type Engine struct {
 	fire  FireFunc
 
 	mu          sync.Mutex
+	storageIO   sync.Mutex // persistence only; never held by a decision handler
+	storageWork sync.WaitGroup
+	loading     bool // one loader drains pending arms within the arm budget
 	armed       map[string]*armed
 	pq          deadlineHeap
 	wakeup      chan struct{}
@@ -59,15 +63,17 @@ type pendingRetry struct {
 }
 
 type armed struct {
-	firing   bool
-	retry    *pendingRetry
-	token    uint64
-	spec     Spec
-	rt       Runtime
-	next     time.Time
-	ok       bool
-	gen      uint64
-	schedGen uint64 // e.clockGen at last rescheduleLocked
+	loading      bool
+	storageError string
+	firing       bool
+	retry        *pendingRetry
+	token        uint64
+	spec         Spec
+	rt           Runtime
+	next         time.Time
+	ok           bool
+	gen          uint64
+	schedGen     uint64 // e.clockGen at last rescheduleLocked
 }
 
 // NewEngine starts a scheduler goroutine. Stop it with Stop.
@@ -119,6 +125,9 @@ func (e *Engine) Stop() {
 	e.mu.Lock()
 	if !e.running {
 		e.mu.Unlock()
+		<-e.stopped
+		e.fires.Wait()
+		e.storageWork.Wait()
 		return
 	}
 	e.running = false
@@ -126,6 +135,7 @@ func (e *Engine) Stop() {
 	close(e.stop)
 	<-e.stopped
 	e.fires.Wait()
+	e.storageWork.Wait()
 }
 
 // ClockChanged recomputes wall-clock (OnCalendar / OnUnitActiveSec)
@@ -297,35 +307,33 @@ func (e *Engine) consume(due dueTimer, actual time.Time) {
 		a.retry = nil
 	} else {
 		MarkFired(a.spec, &a.rt, e.clk, due.scheduled, actual)
-		_ = e.store.Save(name, a.rt)
 	}
 	fire := e.fire
-	if fire != nil {
-		e.fires.Add(1)
-		e.activeFires++
-		a.firing = true
-	}
+	rt := a.rt
+	e.fires.Add(1)
+	e.activeFires++
+	a.firing = true
 	e.mu.Unlock()
 
-	if fire != nil {
-		go func() {
-			defer e.fires.Done()
+	go func() {
+		defer e.fires.Done()
+		if e.persist(event, rt) && fire != nil && e.Current(event.Name, event.Token) {
 			fire(event)
-			e.mu.Lock()
-			e.activeFires--
-			if current := e.armed[name]; current == a && a.token == event.Token {
-				a.firing = false
-				if e.running {
-					e.rescheduleLocked(a)
-				}
+		}
+		e.mu.Lock()
+		e.activeFires--
+		if current := e.armed[name]; current == a && a.token == event.Token {
+			a.firing = false
+			if e.running {
+				e.rescheduleLocked(a)
 			}
-			e.mu.Unlock()
-			e.kick()
-		}()
-	}
+		}
+		e.mu.Unlock()
+		e.kick()
+	}()
 
 	e.mu.Lock()
-	if a2 := e.armed[name]; a2 == a {
+	if a2 := e.armed[name]; a2 == a && a.token == event.Token {
 		e.rescheduleLocked(a)
 	}
 	e.mu.Unlock()
@@ -402,6 +410,13 @@ func (e *Engine) monotonicWaitLocked(spec Spec, rt Runtime) time.Duration {
 }
 
 func (e *Engine) rescheduleLocked(a *armed) {
+	if a.loading || a.storageError != "" {
+		a.ok = false
+		a.next = time.Time{}
+		e.nextGen++
+		a.gen = e.nextGen
+		return
+	}
 	if e.onNextDeadline != nil {
 		e.onNextDeadline()
 	}
@@ -428,19 +443,41 @@ func (e *Engine) Arm(spec Spec) uint64 {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if !e.running {
+		return 0
+	}
+	if e.armed[spec.Name] == nil && len(e.armed) >= MaxArmedTimers {
+		return 0
+	}
 	e.nextArm++
 	if a, ok := e.armed[spec.Name]; ok {
 		a.token = e.nextArm
 		a.firing = false
 		a.retry = nil
 		a.spec = spec
+		if a.storageError != "" {
+			a.storageError = ""
+			a.loading = true
+			if !e.loading {
+				e.loading = true
+				e.storageWork.Add(1)
+				go e.loadPending()
+			}
+		}
 		e.rescheduleLocked(a)
 		e.kickLocked()
 		return a.token
 	}
-	rt := e.store.Load(spec.Name)
-	a := &armed{spec: spec, rt: rt, token: e.nextArm}
+	a := &armed{spec: spec, token: e.nextArm}
 	e.armed[spec.Name] = a
+	if e.store != nil && (e.store.dir != "" || e.store.load != nil) {
+		a.loading = true
+		if !e.loading {
+			e.loading = true
+			e.storageWork.Add(1)
+			go e.loadPending()
+		}
+	}
 	e.rescheduleLocked(a)
 	e.kickLocked()
 	return a.token
@@ -510,17 +547,23 @@ func (e *Engine) RecordResult(event Fire, success bool) {
 		return
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	a := e.armed[name]
-	if a == nil || a.token != event.Token {
+	if !e.running || a == nil || a.loading || a.storageError != "" || a.token != event.Token {
+		e.mu.Unlock()
 		return
 	}
 	a.rt.LastSuccess = e.clk.now()
-	_ = e.store.Save(name, a.rt)
+	rt := a.rt
+	e.storageWork.Add(1)
+	e.mu.Unlock()
+	defer e.storageWork.Done()
+	e.persist(event, rt)
 }
 
 // Snapshot is next/last for status and list-timers.
 type Snapshot struct {
+	StorageState   string
+	StorageError   string
 	ConfigRevision string
 	Unit           string
 
@@ -545,13 +588,22 @@ func (e *Engine) Status(name string) Snapshot {
 		return Snapshot{}
 	}
 	last := a.rt.LastActual
+	if a.loading || a.storageError != "" {
+		state := "loading"
+		if a.storageError != "" {
+			state = "failed"
+		}
+		out := Snapshot{ConfigRevision: a.spec.ConfigRevision, Unit: a.spec.Unit, Last: last, StorageState: state, StorageError: a.storageError}
+		e.mu.Unlock()
+		return out
+	}
 	if a.retry != nil {
-		out := Snapshot{ConfigRevision: a.spec.ConfigRevision, Unit: a.spec.Unit, Last: last, Next: e.clk.now().Add(max(0, a.retry.after-e.clk.sinceStart()))}
+		out := Snapshot{StorageState: "ready", ConfigRevision: a.spec.ConfigRevision, Unit: a.spec.Unit, Last: last, Next: e.clk.now().Add(max(0, a.retry.after-e.clk.sinceStart()))}
 		e.mu.Unlock()
 		return out
 	}
 	if a.schedGen == e.clockGen {
-		out := Snapshot{ConfigRevision: a.spec.ConfigRevision, Unit: a.spec.Unit, Last: last}
+		out := Snapshot{StorageState: "ready", ConfigRevision: a.spec.ConfigRevision, Unit: a.spec.Unit, Last: last}
 		if a.ok {
 			out.Next = a.next
 		}
@@ -568,7 +620,7 @@ func (e *Engine) Status(name string) Snapshot {
 	if e.onNextDeadline != nil {
 		e.onNextDeadline()
 	}
-	out := Snapshot{ConfigRevision: spec.ConfigRevision, Unit: spec.Unit, Last: last}
+	out := Snapshot{StorageState: "ready", ConfigRevision: spec.ConfigRevision, Unit: spec.Unit, Last: last}
 	if next, ok := NextDeadline(spec, rt, clk); ok {
 		out.Next = next
 	}
@@ -639,7 +691,7 @@ func (e *Engine) Current(name string, token uint64) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	a := e.armed[name]
-	return e.running && a != nil && a.token == token
+	return e.running && a != nil && !a.loading && a.storageError == "" && a.token == token
 }
 
 // Retry retains an activation rejected before manager admission. It does not

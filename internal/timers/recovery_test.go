@@ -40,6 +40,7 @@ func TestPersistentMonthEndRecoveryAcrossEngineRestart(t *testing.T) {
 	e, fk, s := open(date(time.July, 30))
 	waitNext(t, e, spec.Name, date(time.July, 31))
 	fk.Advance(24 * time.Hour)
+	e.ClockChanged()
 	waitFired(t, fired)
 	e.Stop() // Join callbacks before inspecting persisted state or simulating reboot.
 	if got := s.Load(spec.Name).LastActual; !got.Equal(date(time.July, 31)) {
@@ -62,6 +63,7 @@ func TestPersistentMonthEndRecoveryAcrossEngineRestart(t *testing.T) {
 	e, fk, _ = open(date(time.September, 1))
 	waitNext(t, e, spec.Name, date(time.October, 31))
 	fk.Advance(date(time.October, 31).Sub(fk.Now()))
+	e.ClockChanged()
 	waitFired(t, fired)
 	waitNext(t, e, spec.Name, date(time.December, 31))
 	e.Stop()

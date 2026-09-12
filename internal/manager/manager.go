@@ -394,6 +394,7 @@ func (m *Manager) ListTimers() (*protocol.ListTimersResult, error) {
 		snapshot := m.engine.Status(out[i].Name)
 		out[i].Next, out[i].Last = formatTimerStamp(snapshot.Next), formatTimerStamp(snapshot.Last)
 		out[i].ArmedConfigRevision = snapshot.ConfigRevision
+		out[i].StorageState, out[i].StorageError = snapshot.StorageState, snapshot.StorageError
 		if snapshot.Unit != "" {
 			out[i].Unit = snapshot.Unit
 		}

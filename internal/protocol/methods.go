@@ -100,6 +100,8 @@ type ListTimersResult struct {
 
 // TimerStatus is one timer in list-timers.
 type TimerStatus struct {
+	StorageState        string `json:"storageState,omitempty"`
+	StorageError        string `json:"storageError,omitempty"`
 	ConfigRevision      string `json:"configRevision,omitempty"`
 	ArmedConfigRevision string `json:"armedConfigRevision,omitempty"`
 
@@ -175,6 +177,8 @@ type UnitStatus struct {
 	ConfigRevision           string `json:"configRevision,omitempty"`
 	InvocationConfigRevision string `json:"invocationConfigRevision,omitempty"`
 	ArmedConfigRevision      string `json:"armedConfigRevision,omitempty"`
+	TimerStorageState        string `json:"timerStorageState,omitempty"`
+	TimerStorageError        string `json:"timerStorageError,omitempty"`
 
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
