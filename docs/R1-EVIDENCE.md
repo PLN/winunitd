@@ -126,3 +126,23 @@ process creation returns before oneshot completion; output capture attaches befo
 retain process, job, and watcher ownership until cleanup succeeds; preserve status/stop retry and block replacement while cleanup is unresolved. Process/native/watch stop retries join pending adapter calls. Shutdown rejects new starts, accounts for accepted launches, and shares its deadline across user-host, unit, manager, and daemon-job cleanup. Partial launches/opens and failed native close calls remain owned. Implemented behavior and failure-injection evidence are recorded in [R1 evidence](R1-EVIDENCE.md). Accepted notification clients now remain owned across failed closes and late accepts, with manager stop retry coverage. Partial watcher/listener opens transfer unfinished cleanup to the manager, with portable and protected-handle regressions. Windows identity/session qualification remains open; stop remains forced Job Object termination until R3.
 
 stdout/stderr capture emits UTF-8 fragments of at most 64 KiB before newline/EOF, with continuation/partial metadata in journal v3 and the logs API. Queued message data is capped at 4 MiB per invocation and 16 MiB per store, with 12,288 pending fragments per invocation and a 16,384-fragment shared queue cap. Capture keeps draining on overflow; unit status exposes drops and storage errors. Capture/sync waits and journal close have deadlines; at most four sync workers can remain blocked. Tests cover Unicode reconstruction, old journal readers, blocked writes/sync, overflow, failed writes, and recovery after a close timeout. A real child also drains large stdout/stderr and exits while storage is stalled, with observable drops within the invocation budget. Injected disk-full/short-write tests verify loss reporting and recovery after reopening; a missing final newline is restored without rewriting existing bytes or swallowing the next record. A noisy short-line invocation leaves capacity for another unit. Live write failures now retain the exact unwritten record suffix and retry with bounded backoff without reopening; failed close counts abandoned pending records. Actual NTFS volume exhaustion and automatic recovery passed as SYSTEM on a disposable Server Core baseline copy; exact identities are in [R1 evidence](R1-EVIDENCE.md). Queries now use a five-second default deadline and at most four workers; timed-out native operations retain their slots until completion. Injected scan/flush-lock stalls verify bounded admission and recovery. Remaining qualification includes fairness under aggregate overload and total lifecycle admission bounds.
+
+## September 13 retained main-capture completion
+
+A timed-out journal wait used to remove its capture record. A retry could then
+succeed while the stream was still open, and replacement starts could accumulate
+abandoned output readers. Main captures now have one owned completion, retained
+through timeout. Replacement creation waits for prior output first. A failed
+wait publishes independent journal cleanup, and reload retains an unavailable
+record while its streams or failed cleanup remain owned. Close uses one aggregate
+capture-wait budget and does not report success for unfinished accepted output.
+
+The manager copies the exact capture identity for each wait. A late completion
+cannot clear a replacement's capture. Completed store entries are retired, and
+retries add no completion goroutines. This does not establish aggregate journal
+file/retention fairness or qualify all storage and native handle failure cases.
+
+Regressions cover repeated canceled waits, explicit and automatic replacement
+attempts after self-exit, stop retry after EOF, removed-record retention, close
+retry, stale completion and preservation of user journal metadata. Older hung
+capture tests now require explicit cleanup instead of successful abandonment.

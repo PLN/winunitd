@@ -286,7 +286,7 @@ RestartSec=1s
 }
 
 // hangJournalLauncher is a fakeLauncher whose stdout never reaches EOF,
-// so journal.Wait blocks until abandoned (issues #68 and #83).
+// so journal.Wait remains owned until the test closes its pipe.
 type hangJournalLauncher struct {
 	fakeLauncher
 	pw    *io.PipeWriter
@@ -366,6 +366,7 @@ WorkingDirectory=C:\Tools
 TimeoutStopSec=30s
 `,
 	})
+	t.Cleanup(launch.closePipes)
 	if _, err := m.Start(context.Background(), "foo"); err != nil {
 		t.Fatal(err)
 	}
@@ -406,15 +407,19 @@ TimeoutStopSec=30s
 		t.Fatal("Stop did not return after TimeoutStopSec")
 	}
 
-	if _, err := m.Start(context.Background(), "foo"); err != nil {
-		t.Fatalf("later Start blocked: %v", err)
+	if _, err := m.Start(context.Background(), "foo"); err == nil {
+		t.Fatal("replacement admitted while output remained owned")
 	}
-	if launch.pw != nil {
-		_ = launch.pw.Close()
+	launch.closePipes()
+	if _, err := m.Stop("foo"); err != nil {
+		t.Fatalf("cleanup retry: %v", err)
+	}
+	if _, err := m.Start(context.Background(), "foo"); err != nil {
+		t.Fatalf("replacement after cleanup: %v", err)
 	}
 }
 
-func TestLaunchUnitOpAbandonsHungJournalAfterSelfExit(t *testing.T) {
+func TestLaunchUnitOpRetainsHungJournalAfterSelfExit(t *testing.T) {
 	t.Parallel()
 	launch := &hangJournalLauncher{}
 	m, fk := managerWithFake(t, launch, map[string]string{
@@ -455,8 +460,11 @@ TimeoutStopSec=30s
 	fk.Advance(30 * time.Second)
 	select {
 	case err := <-startErr:
-		if err != nil {
-			t.Fatalf("second Start: %v", err)
+		if err == nil {
+			t.Fatal("replacement succeeded with unfinished prior output")
+		}
+		if launch.nstarts() != 1 {
+			t.Fatal("created replacement before capture cleanup")
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("second Start did not return after TimeoutStopSec")
@@ -473,7 +481,7 @@ TimeoutStopSec=30s
 	unlock()
 }
 
-func TestLaunchUnitOpAbandonsHungJournalOnAutoRestart(t *testing.T) {
+func TestLaunchUnitOpRetainsHungJournalOnAutoRestart(t *testing.T) {
 	t.Parallel()
 	launch := &hangJournalLauncher{}
 	m, fk := managerWithFake(t, launch, map[string]string{
@@ -499,7 +507,7 @@ TimeoutStopSec=30s
 	waitHungLaunchJournal(t, m, fk, launch, "foo.service")
 	fk.Advance(30 * time.Second)
 	waitCond(t, func() bool {
-		if launch.nstarts() < 2 {
+		if launch.nstarts() != 1 {
 			return false
 		}
 		unlock, ok := m.ops.tryLock("foo.service")
@@ -526,10 +534,12 @@ func assertStopTimeout(t *testing.T, m *Manager, name string, want time.Duration
 
 func waitHungLaunchJournal(t *testing.T, m *Manager, fk *timers.Fake, launch *hangJournalLauncher, name string) {
 	t.Helper()
-	// launch.Start runs before waitJournal, so the hung relaunch already
-	// counts as a second start while the previous capture is still open.
+	// The prior capture must be resolved before another native launch.
 	waitCond(t, func() bool {
-		if launch.nstarts() < 2 || !fk.Waiting() {
+		m.mu.Lock()
+		priorProcessReleased := m.units[name] != nil && m.units[name].proc == nil
+		m.mu.Unlock()
+		if launch.nstarts() != 1 || !priorProcessReleased || !fk.WaitingAt(30*time.Second) {
 			return false
 		}
 		unlock, ok := m.ops.tryLock(name)

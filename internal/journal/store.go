@@ -38,21 +38,21 @@ type Store struct {
 	keep       int
 	flushEvery time.Duration
 
-	mu          sync.Mutex
-	closed      bool
-	files       map[string]*unitFile
-	capWG       map[string]*sync.WaitGroup
-	origin      Origin
-	queueMu     sync.Mutex
-	writeQueue  chan captureWrite
-	writerDone  chan struct{}
-	writerErr   error
-	queueClosed bool
-	queuedBytes int64
-	dropped     map[string]CaptureStats
-	syncPending map[string]*journalSync
-	syncSlots   chan struct{}
-	querySlots  chan struct{}
+	mu           sync.Mutex
+	closed       bool
+	files        map[string]*unitFile
+	mainCaptures map[string]*Capture
+	origin       Origin
+	queueMu      sync.Mutex
+	writeQueue   chan captureWrite
+	writerDone   chan struct{}
+	writerErr    error
+	queueClosed  bool
+	queuedBytes  int64
+	dropped      map[string]CaptureStats
+	syncPending  map[string]*journalSync
+	syncSlots    chan struct{}
+	querySlots   chan struct{}
 
 	// onOpen / onSync / onScan / onEntryID are test hooks (nil in production).
 	// onOpen fires after a successful OpenFile; onSync fires immediately
@@ -121,18 +121,18 @@ func Open(dir string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{
-		dir:         dir,
-		maxSize:     DefaultMaxSize,
-		keep:        DefaultKeep,
-		flushEvery:  DefaultFlushEvery,
-		files:       make(map[string]*unitFile),
-		capWG:       make(map[string]*sync.WaitGroup),
-		writeQueue:  make(chan captureWrite, captureQueueRecords),
-		writerDone:  make(chan struct{}),
-		dropped:     make(map[string]CaptureStats),
-		syncPending: make(map[string]*journalSync),
-		syncSlots:   make(chan struct{}, 4),
-		querySlots:  make(chan struct{}, queryWorkers),
+		dir:          dir,
+		maxSize:      DefaultMaxSize,
+		keep:         DefaultKeep,
+		flushEvery:   DefaultFlushEvery,
+		files:        make(map[string]*unitFile),
+		mainCaptures: make(map[string]*Capture),
+		writeQueue:   make(chan captureWrite, captureQueueRecords),
+		writerDone:   make(chan struct{}),
+		dropped:      make(map[string]CaptureStats),
+		syncPending:  make(map[string]*journalSync),
+		syncSlots:    make(chan struct{}, 4),
+		querySlots:   make(chan struct{}, queryWorkers),
 	}
 	go s.writeCaptures()
 	return s, nil
@@ -228,43 +228,55 @@ func (s *Store) closeFiles() error {
 // invocationID is replaced with a new ID so isolated journal use still
 // correlates a capture. Nil streams are ignored. A nil Store still
 // drains so the child cannot block.
-func (s *Store) Attach(unit string, pid int, invocationID string, stdout, stderr io.Reader) {
-	if s == nil {
-		go drain(stdout)
-		go drain(stderr)
-		return
-	}
+func (s *Store) Attach(unit string, pid int, invocationID string, stdout, stderr io.Reader) *Capture {
 	unit = canonicalUnit(unit)
+	if s == nil {
+		return s.AttachConcurrent(unit, pid, invocationID, stdout, stderr)
+	}
 	if invocationID == "" {
 		invocationID = NewInvocationID()
 	}
 	origin := s.snapshotOrigin()
-	group := s.beginCapture(unit)
+	group := &captureGroup{}
+	group.wg.Add(2)
+	done := make(chan struct{})
+	capture := &Capture{store: s, unit: unit, done: done}
+	s.mu.Lock()
+	previous := s.mainCaptures[unit]
+	s.mainCaptures[unit] = capture
+	s.mu.Unlock()
+	// Reserve this invocation before waiting, so concurrent Attach calls form
+	// a chain and Wait always observes the newest accepted main capture.
 	go func() {
-		defer group.wg.Done()
-		s.capture(unit, pid, invocationID, origin, "stdout", stdout, group)
+		group.wg.Wait()
+		close(done)
+		s.mu.Lock()
+		if s.mainCaptures[unit] == capture {
+			delete(s.mainCaptures, unit)
+		}
+		s.mu.Unlock()
 	}()
-	go func() {
-		defer group.wg.Done()
-		s.capture(unit, pid, invocationID, origin, "stderr", stderr, group)
-	}()
+	if previous != nil {
+		<-previous.done
+	}
+	for _, stream := range []struct {
+		name   string
+		reader io.Reader
+	}{{"stdout", stdout}, {"stderr", stderr}} {
+		go func() {
+			defer group.wg.Done()
+			s.capture(unit, pid, invocationID, origin, stream.name, stream.reader, group)
+		}()
+	}
+	return capture
 }
 
-// Wait blocks until in-flight captures for unit have observed EOF,
-// then Flush+Sync that unit's file (DESIGN.md §22: Sync on unit exit,
-// not per line).
-func (s *Store) Wait(unit string) {
-	s.waitCaptures(context.Background(), unit, false)
-}
+// Wait joins the current main capture and flushes its unit journal.
+func (s *Store) Wait(unit string) { s.WaitContext(context.Background(), unit) }
 
-// WaitContext is Wait with a deadline. If ctx fires first, the hung
-// capture group is abandoned so a later Wait/Attach is not blocked
-// (stopUnit TimeoutStopSec; issue #68). Returns false on timeout or sync error.
+// WaitContext preserves capture ownership on timeout. Every retry joins the
+// same completion; it cannot report success merely because an earlier wait expired.
 func (s *Store) WaitContext(ctx context.Context, unit string) bool {
-	return s.waitCaptures(ctx, unit, true)
-}
-
-func (s *Store) waitCaptures(ctx context.Context, unit string, abandonOnCancel bool) bool {
 	if s == nil {
 		return true
 	}
@@ -273,44 +285,12 @@ func (s *Store) waitCaptures(ctx context.Context, unit string, abandonOnCancel b
 	}
 	unit = canonicalUnit(unit)
 	s.mu.Lock()
-	wg := s.capWG[unit]
+	capture := s.mainCaptures[unit]
 	s.mu.Unlock()
-	if wg == nil {
+	if capture == nil {
 		return s.syncUnitContext(ctx, unit)
 	}
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-		return s.syncUnitContext(ctx, unit)
-	case <-ctx.Done():
-		if abandonOnCancel {
-			s.mu.Lock()
-			if s.capWG[unit] == wg {
-				delete(s.capWG, unit)
-			}
-			s.mu.Unlock()
-		}
-		return false
-	}
-}
-
-func (s *Store) beginCapture(unit string) *captureGroup {
-	unit = canonicalUnit(unit)
-	s.mu.Lock()
-	prev := s.capWG[unit]
-	group := new(captureGroup)
-	wg := &group.wg
-	wg.Add(2)
-	s.capWG[unit] = wg
-	s.mu.Unlock()
-	if prev != nil {
-		prev.Wait()
-	}
-	return group
+	return capture.WaitContext(ctx)
 }
 
 func (s *Store) capture(unit string, pid int, inv string, origin Origin, stream string, r io.Reader, group *captureGroup) {

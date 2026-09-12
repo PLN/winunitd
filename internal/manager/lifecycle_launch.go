@@ -316,6 +316,9 @@ func (m *Manager) completeOneshot(ctx context.Context, effect *launchEffect, pro
 	rt.setCleanup(cleanupWorkload, false)
 	if rt.cleanupPending() {
 		rt.step(core.EventStartFailed)
+		if completionErr != nil {
+			rt.err = completionErr.Error()
+		}
 		return time.Time{}, fmt.Errorf("oneshot cleanup remains pending: %s", rt.err)
 	}
 	if ctx.Err() != nil || m.closed || rt.stopping {

@@ -98,7 +98,12 @@ For process-backed units, `mainPid` is captured at adoption and copied together
 with lifecycle/invocation state. It clears when the process reference is released.
 Status and list-units do not query process liveness; a PID retained during failed
 cleanup identifies the owned invocation and does not establish that its main
-process is still running. Native proxy, timer and journal observations remain
+process is still running. Pending `journal` cleanup means a capture or its flush
+has not completed; it can coexist with `mainPid=0` after confirmed process exit.
+An expired wait retains the same capture. A replacement process is not created
+until prior output completes, and failed cleanup requires an explicit stop retry.
+Manager close also joins main captures and reports failure while output remains
+unresolved. Native proxy, timer and journal observations remain
 separate from that manager decision snapshot.
 
 Disk-backed unit verification and reload limit each file to 64 KiB. A reload reads

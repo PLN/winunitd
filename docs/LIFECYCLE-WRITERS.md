@@ -65,6 +65,11 @@ Status derives the aggregate flag and copies resource names under m.mu.
 Stop-helper admission/process publication/completion in `stop_helper.go` retain
 the exact runtime and invocation, a bounded helper slot and output completion.
 Retries join the same helper; a late launch cannot delay forced workload cleanup.
+`lifecycle_journal.go` adopts the main capture under retained launch ownership and
+publishes cleanup by exact record/capture identity. Stream/queue completion is a
+nonblocking observation for reload retention; failed waits retain a separate
+`journal` resource. Replacement creation waits for previous output before calling
+the launcher. Close joins main captures before closing the store.
 
 ## Invariants and regression evidence
 

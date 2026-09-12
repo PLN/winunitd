@@ -13,6 +13,20 @@ type Capture struct {
 	done  <-chan struct{}
 }
 
+// Complete reports whether streams and queued writes have completed, without I/O.
+// A separate flush may still fail and remains owned by the store.
+func (c *Capture) Complete() bool {
+	if c == nil {
+		return true
+	}
+	select {
+	case <-c.done:
+		return true
+	default:
+		return false
+	}
+}
+
 // AttachConcurrent drains a bounded-queue auxiliary invocation into the same
 // unit log without waiting for or replacing the main invocation's capture.
 // The returned handle joins its streams and queued writes independently.
@@ -54,7 +68,18 @@ func (c *Capture) WaitContext(ctx context.Context) bool {
 	}
 	select {
 	case <-c.done:
-		return c.store == nil || c.store.syncUnitContext(ctx, c.unit)
+		if c.store == nil {
+			return true
+		}
+		if !c.store.syncUnitContext(ctx, c.unit) {
+			return false
+		}
+		c.store.mu.Lock()
+		if c.store.mainCaptures[c.unit] == c {
+			delete(c.store.mainCaptures, c.unit)
+		}
+		c.store.mu.Unlock()
+		return true
 	case <-ctx.Done():
 		return false
 	}

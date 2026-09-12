@@ -16,7 +16,7 @@ func TestConcurrentCaptureDoesNotWaitForOrReplaceMain(t *testing.T) {
 	defer writer.Close()
 	s.Attach("work.service", 1, "main", main, nil)
 	s.mu.Lock()
-	mainGroup := s.capWG["work.service"]
+	mainGroup := s.mainCaptures["work.service"]
 	s.mu.Unlock()
 	attached := make(chan *Capture, 1)
 	go func() {
@@ -34,7 +34,7 @@ func TestConcurrentCaptureDoesNotWaitForOrReplaceMain(t *testing.T) {
 		t.Fatal("helper capture did not complete independently")
 	}
 	s.mu.Lock()
-	retained := s.capWG["work.service"] == mainGroup
+	retained := s.mainCaptures["work.service"] == mainGroup
 	s.mu.Unlock()
 	if !retained {
 		t.Fatal("helper replaced main capture ownership")

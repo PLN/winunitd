@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/journal"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/unit"
 )
@@ -292,17 +293,29 @@ func (m *Manager) stopUnitAfterLock(ctx context.Context, name string, release fu
 	return m.applyStopCompletion(stopCompletion{owner: stopOwner, process: proc, err: stopErr})
 }
 
-func (m *Manager) waitJournal(name string, timeout time.Duration) {
-	m.waitJournalContext(context.Background(), name, timeout)
-}
-
 func (m *Manager) waitJournalContext(ctx context.Context, name string, timeout time.Duration) error {
 	if m == nil || m.journal == nil {
 		return nil
 	}
+	m.mu.Lock()
+	record := m.units[name]
+	var capture *journal.Capture
+	var generation uint64
+	if record != nil {
+		capture = record.capture
+		generation = record.gen
+	}
+	m.mu.Unlock()
 	ctx, cancel := m.clockTimeout(ctx, timeout)
 	defer cancel()
-	if !m.journal.WaitContext(ctx, name) {
+	complete := false
+	if capture != nil {
+		complete = capture.WaitContext(ctx)
+	} else {
+		complete = m.journal.WaitContext(ctx, name)
+	}
+	m.publishJournalCompletion(name, record, capture, generation, complete)
+	if !complete {
 		log.Printf("winunitd: %s: journal wait exceeded TimeoutStopSec", name)
 		err := ctx.Err()
 		if err == nil {
