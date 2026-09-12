@@ -11,12 +11,13 @@ const userManagerFlag = "--user-manager"
 
 // UserManagerSpec launches winunitd --user-manager <SID>.
 type UserManagerSpec struct {
-	SID       string
-	Token     *UserToken
-	Exe       string
-	ExtraArgs []string
-	Env       []string // nil resolves the target token's environment without broker inheritance
-	Daemon    *DaemonJob
+	SID         string
+	Token       *UserToken
+	Exe         string
+	ExtraArgs   []string
+	Env         []string // nil resolves the target token's environment without broker inheritance
+	Daemon      *DaemonJob
+	LoadProfile bool // system host owns a LoadUserProfile reference until cleanup
 	// cmdArgv, if set, is the full CreateProcessAsUser command (exe +
 	// args) and skips UserManagerArgs. Tests use it to launch ping the
 	// same way the unit-path listener regression does. Production is nil.

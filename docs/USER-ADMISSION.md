@@ -69,11 +69,19 @@ The API constraints are documented by Microsoft for
 [CreateProcessAsUser](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessasuserw)
 and [CreateEnvironmentBlock](https://learn.microsoft.com/en-us/windows/win32/api/userenv/nf-userenv-createenvironmentblock).
 
-This removes the inherited-handle obstacle to cross-session launch, but current
-native fixtures still use the test account's session. Real SYSTEM-to-standard-user
-launch, redirected/unloaded profiles, and explicit profile load/unload ownership
-remain R4 qualification/implementation work. Headless linger is not qualified by
-these changes.
+The system host now acquires a `LoadUserProfile` reference before resolving the
+launch environment and retains a duplicated token until confirmed process-tree
+cleanup and successful `UnloadUserProfile`. Failed creation or unload retains an
+owned cleanup record, including when no child was created. Cleanup retries do not
+repeat successful unloads. This managed-profile path currently accepts local
+machine accounts; domain/cloud/roaming-profile support remains outside its claims.
+Direct native test launches can exercise the already-loaded test profile without
+requiring administrative profile-loading privileges.
+
+Portable fault tests cover termination-before-unload, failed unload retry, and
+failed creation retaining profile ownership. Native SYSTEM-to-standard-user
+launch and redirected/unloaded-profile qualification remain open. Headless linger
+is not qualified by these changes.
 
 Admission snapshots are copied and revisioned. Delayed file probes and launches recheck their session request and policy revision. Explicit revocation respects an independent linger grant; disabling that last grant cannot keep a manager through a revoked interactive session.
 

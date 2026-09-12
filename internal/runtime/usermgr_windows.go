@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +42,26 @@ func StartUserManager(spec UserManagerSpec) (UserManagerProc, error) {
 	if !ok {
 		return nil, fmt.Errorf("%w: no WTS token handle for SID %s", ErrNoUserToken, spec.SID)
 	}
+	var profile io.Closer
+	if spec.LoadProfile {
+		var err error
+		profile, err = loadUserManagerProfile(tok, spec.SID)
+		if err != nil {
+			return finishProfileLaunch(spec.SID, nil, profile, err)
+		}
+		info, err := userInfoFromToken(tok)
+		if err != nil {
+			return finishProfileLaunch(spec.SID, nil, profile, err)
+		}
+		copyToken := *spec.Token
+		copyToken.Info = info
+		spec.Token = &copyToken
+	}
+	proc, err := startUserManagerProcess(tok, spec)
+	return finishProfileLaunch(spec.SID, proc, profile, err)
+}
+
+func startUserManagerProcess(tok windows.Token, spec UserManagerSpec) (UserManagerProc, error) {
 
 	job, err := OpenDaemonJob()
 	if err != nil {
