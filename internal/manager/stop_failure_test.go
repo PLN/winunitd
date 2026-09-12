@@ -158,7 +158,7 @@ func TestSuccessfulFailedStateCleanupAllowsStart(t *testing.T) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		rt := m.units["worker.service"]
-		return rt.proc == nil && !rt.stopUncertain
+		return rt.proc == nil && !rt.cleanupPending()
 	})
 	if _, err := m.Start(context.Background(), "worker"); err != nil {
 		t.Fatal("start rejected after confirmed cleanup", err)
@@ -181,7 +181,7 @@ func TestMainExitCleanupFailureRetainsOwnership(t *testing.T) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		rt := m.units["worker.service"]
-		return rt.proc == p && rt.stopUncertain && rt.state == core.Failed
+		return rt.proc == p && rt.cleanupPending() && rt.state == core.Failed
 	})
 	if len(l.specs()) != 1 {
 		t.Fatal("restarted before exit cleanup succeeded")
@@ -239,7 +239,7 @@ func TestWatchdogCleanupFailureBlocksRestart(t *testing.T) {
 	m.onWatchdogTimeout(owner)
 	m.mu.Lock()
 	rt := m.units[name]
-	retained := rt.proc == p && rt.stopUncertain && rt.state == core.Failed
+	retained := rt.proc == p && rt.cleanupPending() && rt.state == core.Failed
 	m.mu.Unlock()
 	if !retained || len(l.specs()) != 1 {
 		t.Fatal("watchdog failed to retain unresolved termination without restart")
@@ -261,7 +261,7 @@ func TestReadinessTimeoutCleanupFailureRetainsOwnership(t *testing.T) {
 	t.Cleanup(func() { p.fail.Store(false); _ = p.Process.Stop(time.Second) })
 	m.mu.Lock()
 	rt := m.units[name]
-	retained := rt.proc == p && rt.stopUncertain && rt.state == core.Failed
+	retained := rt.proc == p && rt.cleanupPending() && rt.state == core.Failed
 	m.mu.Unlock()
 	if !retained || !p.Alive() {
 		t.Fatal("readiness timeout discarded unconfirmed process")
@@ -327,7 +327,7 @@ func TestLateLaunchCleanupFailureRetainsOwnership(t *testing.T) {
 			}
 			m.mu.Lock()
 			rt := m.units[name]
-			retained := rt.proc == p && rt.stopUncertain
+			retained := rt.proc == p && rt.cleanupPending()
 			m.mu.Unlock()
 			if !retained || !p.Alive() {
 				t.Fatal("late launch lost unresolved process ownership")
@@ -368,7 +368,7 @@ func TestFailedLaunchRetainsReturnedProcess(t *testing.T) {
 	t.Cleanup(func() { p.fail.Store(false); _ = p.Process.Stop(time.Second) })
 	m.mu.Lock()
 	rt := m.units[name]
-	retained := rt.proc == p && rt.stopUncertain
+	retained := rt.proc == p && rt.cleanupPending()
 	m.mu.Unlock()
 	if !retained || !p.Alive() {
 		t.Fatal("failed launch discarded its returned process")

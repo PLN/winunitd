@@ -110,7 +110,7 @@ func TestReloadOwnershipChurnRejectsWithoutPublication(t *testing.T) {
 		attempts++
 		m.mu.Lock()
 		rt := m.units["work.service"]
-		rt.stopUncertain = !rt.stopUncertain
+		rt.setCleanup(cleanupWorkload, !rt.cleanupPending())
 		m.mu.Unlock()
 		return core.Build(units)
 	})
@@ -120,7 +120,7 @@ func TestReloadOwnershipChurnRejectsWithoutPublication(t *testing.T) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.units["work.service"].stopUncertain = false
+	m.units["work.service"].setCleanup(cleanupWorkload, false)
 	if m.configRevision != revision || m.graph != graph || m.units["work.service"].unavailable {
 		t.Fatal("rejected candidate changed accepted configuration")
 	}

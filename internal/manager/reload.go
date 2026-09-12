@@ -188,7 +188,7 @@ func readOptionalDirectory(path string) ([]os.DirEntry, error) {
 // also leave an uncertain external outcome, so only Inactive permits removal.
 // Caller holds m.mu.
 func (rt *unitRuntime) retainWithoutConfig() bool {
-	if rt.proc != nil || rt.notify != nil || rt.hub != nil || rt.operations != 0 || rt.stopUncertain {
+	if rt.proc != nil || rt.notify != nil || rt.hub != nil || rt.operations != 0 || rt.cleanupPending() {
 		return true
 	}
 	native := scmServiceName(rt.ownedUnit()) != "" || scheduledTaskName(rt.ownedUnit()) != ""

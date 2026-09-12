@@ -61,7 +61,7 @@ func (m *Manager) observeLaunch(name string) launchObservation {
 	if observation.record != nil {
 		observation.process = observation.record.proc
 	}
-	inspect := !m.closed && observation.record != nil && !observation.record.stopUncertain
+	inspect := !m.closed && observation.record != nil && !observation.record.cleanupPending()
 	m.mu.Unlock()
 	if inspect && observation.process != nil {
 		observation.alive = observation.process.Alive()
@@ -197,9 +197,9 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		if stopErr == nil && proc.Alive() {
 			stopErr = fmt.Errorf("process remains alive after late launch cleanup")
 		}
-		stopErr = errors.Join(stopErr, m.closeNotify(name))
+		notifyErr := m.closeNotify(name)
 		m.applyLateLaunchCleanup(effect, proc, stopErr)
-		return errors.Join(fmt.Errorf("start superseded during process creation"), stopErr)
+		return errors.Join(fmt.Errorf("start superseded during process creation"), stopErr, notifyErr)
 	}
 	gen := effect.owner.gen
 
@@ -241,10 +241,10 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		if cleanupErr == nil && proc.Alive() {
 			cleanupErr = fmt.Errorf("process remains alive after oneshot cleanup")
 		}
-		cleanupErr = errors.Join(cleanupErr, m.closeNotify(name))
+		notifyErr := m.closeNotify(name)
 		when, err := m.completeOneshot(ctx, effect, proc, cleanupErr)
-		if err != nil {
-			return err
+		if err != nil || notifyErr != nil {
+			return errors.Join(err, notifyErr)
 		}
 		if m.engine != nil {
 			m.engine.UnitActive(name, when)
@@ -260,12 +260,12 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 			if stopErr == nil && proc.Alive() {
 				stopErr = fmt.Errorf("process remains alive after readiness cleanup")
 			}
-			stopErr = errors.Join(stopErr, m.closeNotify(name))
+			notifyErr := m.closeNotify(name)
 			m.applyReadinessCleanup(effect, proc, stopErr)
-			if !stopping && stopErr == nil {
+			if !stopping && stopErr == nil && notifyErr == nil {
 				m.maybeRestart(name, core.ExitFailure, svc)
 			}
-			return errors.Join(err, stopErr)
+			return errors.Join(err, stopErr, notifyErr)
 		}
 	}
 
@@ -309,8 +309,10 @@ func (m *Manager) watch(name string, proc runtime.Process) {
 	if cleanupErr == nil && proc.Alive() {
 		cleanupErr = fmt.Errorf("process remains alive after exit cleanup")
 	}
-	cleanupErr = errors.Join(cleanupErr, notifyErr)
 	if !m.applyProcessExitCleanup(processExitCleanup{effect: effect, err: cleanupErr}) {
+		return
+	}
+	if notifyErr != nil {
 		return
 	}
 	// Restart waits and relaunches through the same operation lock.

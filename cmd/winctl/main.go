@@ -866,6 +866,9 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 			fmt.Fprintf(c.stdout, "   Substate: %s\n", u.SubState)
 		}
 		if u.TerminationUncertain {
+			if len(u.PendingCleanup) != 0 {
+				fmt.Fprintf(c.stdout, "PendingCleanup=%s\n", strings.Join(u.PendingCleanup, ","))
+			}
 			fmt.Fprintln(c.stdout, "Termination: unconfirmed; retry stop")
 		}
 		if u.Reason != "" {

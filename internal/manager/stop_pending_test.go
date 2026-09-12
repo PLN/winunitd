@@ -107,7 +107,7 @@ func TestNativeShutdownDeadlineJoinsPendingStop(t *testing.T) {
 				t.Fatalf("native stop calls = %d, want one pending call", n)
 			}
 			m.mu.Lock()
-			uncertain := m.units[name].stopUncertain
+			uncertain := m.units[name].cleanupPending()
 			m.mu.Unlock()
 			if !uncertain {
 				t.Fatal("native termination uncertainty discarded")
@@ -117,7 +117,7 @@ func TestNativeShutdownDeadlineJoinsPendingStop(t *testing.T) {
 				t.Fatal("native shutdown retry", err)
 			}
 			m.mu.Lock()
-			uncertain = m.units[name].stopUncertain
+			uncertain = m.units[name].cleanupPending()
 			m.mu.Unlock()
 			if uncertain {
 				t.Fatal("native cleanup still uncertain after successful retry")

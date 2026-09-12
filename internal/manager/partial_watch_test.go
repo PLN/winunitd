@@ -36,7 +36,7 @@ func TestWatchAndErrorTransfersCleanupOwnership(t *testing.T) {
 			}
 			m.mu.Lock()
 			rt := m.units[name]
-			retained := rt != nil && rt.hub != nil && rt.stopUncertain
+			retained := rt != nil && rt.hub != nil && rt.cleanupPending()
 			m.mu.Unlock()
 			if !retained {
 				t.Fatal("watch returned with error was discarded")

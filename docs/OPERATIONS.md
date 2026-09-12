@@ -86,6 +86,14 @@ permission to replace live files. Transaction budgets do not bound every native
 worker; that broader admission work remains R2.3. Control transport limits are
 described below.
 
+Unit status derives `terminationUncertain` from separate pending resource classes.
+`pendingCleanup` identifies `workload` (process/job or native proxy),
+`notification`, and `watch`. Each exact-owner completion releases only its own
+class. For example, confirmed process termination releases the process reference
+even if notification close fails; that listener remains owned and blocks restart
+until cleanup succeeds. Successful watch close cannot erase notification failure.
+Explicit stop retries the remaining owned resources.
+
 Accepted stop and restart invalidate pending activation and suppress recovery for
 their complete captured stop scope before dispatching ordered teardown workers.
 Plan validation and capacity rejection happen before this change in eligibility. Manager shutdown/close also cancels accepted starts and

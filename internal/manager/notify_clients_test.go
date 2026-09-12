@@ -92,7 +92,7 @@ func TestNotificationClientFailureRetainsManagerStop(t *testing.T) {
 		t.Fatal("failed client close reported stop success")
 	}
 	m.mu.Lock()
-	retained := m.units[name].notify == rt && m.units[name].stopUncertain
+	retained := m.units[name].notify == rt && m.units[name].cleanupPending()
 	m.mu.Unlock()
 	if !retained {
 		t.Fatal("failed client cleanup lost manager ownership")
@@ -184,7 +184,7 @@ func TestNotificationPartialOpenRetainsCleanup(t *testing.T) {
 		t.Fatalf("open result: %v", err)
 	}
 	m.mu.Lock()
-	retained := m.units[name].notify != nil && m.units[name].stopUncertain
+	retained := m.units[name].notify != nil && m.units[name].cleanupPending()
 	m.mu.Unlock()
 	if !retained {
 		t.Fatal("partial notification open lost failed cleanup")
@@ -203,7 +203,7 @@ func TestNotificationPartialOpenRetainsCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.mu.Lock()
-	retained = m.units[name].notify != nil || m.units[name].stopUncertain
+	retained = m.units[name].notify != nil || m.units[name].cleanupPending()
 	m.mu.Unlock()
 	if retained {
 		t.Fatal("partial open retry did not release ownership")

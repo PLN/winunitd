@@ -58,7 +58,7 @@ func TestLateRecoveryCannotAffectRecreatedUnit(t *testing.T) {
 				m.applyProcessExit(processExitCompletion{owner: runtimeIdentity{name: name, record: oldRecord, gen: oldGeneration}, waitErr: errors.New("old invocation exited")})
 			}
 			m.mu.Lock()
-			unchanged := m.units[name] == current && current.proc == proc && current.state == core.Active && current.sub != core.SubAutoRestart && !current.stopUncertain
+			unchanged := m.units[name] == current && current.proc == proc && current.state == core.Active && current.sub != core.SubAutoRestart && !current.cleanupPending()
 			m.mu.Unlock()
 			if !unchanged || !proc.Alive() {
 				t.Fatal("late callback changed the recreated unit")
@@ -123,7 +123,7 @@ func TestLateCallbackCannotAffectAutomaticReplacement(t *testing.T) {
 				return rt.proc != replacement || rt.state != core.Active || rt.sub == core.SubAutoRestart
 			})
 			m.mu.Lock()
-			unchanged := rt.proc == replacement && rt.state == core.Active && rt.sub != core.SubAutoRestart && rt.err == "" && !rt.stopUncertain
+			unchanged := rt.proc == replacement && rt.state == core.Active && rt.sub != core.SubAutoRestart && rt.err == "" && !rt.cleanupPending()
 			m.mu.Unlock()
 			if !unchanged || !replacement.Alive() {
 				t.Fatal("old callback changed the automatic replacement")
@@ -156,7 +156,7 @@ func TestRecoveryRevalidatesAfterWaitingForUnitGate(t *testing.T) {
 	waitCond(t, func() bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		return rt.proc == nil && rt.state == core.Failed && !rt.stopUncertain
+		return rt.proc == nil && rt.state == core.Failed && !rt.cleanupPending()
 	})
 	unlock := m.ops.lock(name)
 	var once sync.Once
