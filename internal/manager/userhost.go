@@ -30,6 +30,7 @@ type UserHostConfig struct {
 	Start          runtime.UserManagerLauncher
 	Sessions       runtime.SessionEnumerator
 	LingerDir      string
+	ListLinger     func() ([]runtime.LingerRecord, error)
 	Lookup         runtime.AccountLookup
 	LingerToken    runtime.LingerTokenFunc
 	Logf           func(string, ...any)
@@ -47,6 +48,11 @@ type UserHost struct {
 	stops                stopSet
 	cfg                  UserHostConfig
 	store                *LingerStore
+	lingerIO             sync.Mutex // filesystem observation/mutation, never a decision lock
+	lingerRecords        map[string]runtime.LingerRecord
+	lingerRevision       uint64
+	lingerKnown          bool
+	lingerError          string
 	mu                   sync.Mutex
 	bySID                map[string]*userInstance
 	sessions             map[uint32]string // session ID -> SID
@@ -115,6 +121,7 @@ func NewUserHost(cfg UserHostConfig) *UserHost {
 		bySID:           make(map[string]*userInstance),
 		sessions:        make(map[uint32]string),
 		sessionRequests: make(map[uint32]uint64),
+		lingerRecords:   make(map[string]runtime.LingerRecord),
 	}
 	if cfg.LingerDir != "" {
 		h.store = OpenLingerStore(cfg.LingerDir)
@@ -213,10 +220,9 @@ func (h *UserHost) StartLingering() {
 		return
 	}
 	defer h.finishNativeUserWork(work, nil)
-	recs, err := h.store.List()
+	recs, err := h.refreshLingerRecords()
 	if err != nil {
 		h.cfg.Logf("list linger records: %v", err)
-		return
 	}
 	for _, rec := range recs {
 		if h.Alive(rec.SID) {
@@ -389,7 +395,8 @@ func (h *UserHost) recordLogoff(sessionID uint32) string {
 }
 
 func (h *UserHost) lingeringLocked(sid string) bool {
-	return h.store != nil && h.store.Has(sid)
+	_, present := h.lingerRecords[sid]
+	return present
 }
 
 // Lingering reports whether sid has a linger record.
@@ -397,19 +404,19 @@ func (h *UserHost) Lingering(sid string) bool {
 	if h == nil {
 		return false
 	}
-	return h.store != nil && h.store.Has(sid)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.lingeringLocked(sid)
 }
 
-// LingerCount is the number of linger records on disk.
+// LingerCount is the number of validated, accepted linger records.
 func (h *UserHost) LingerCount() int {
-	if h == nil || h.store == nil {
+	if h == nil {
 		return 0
 	}
-	recs, err := h.store.List()
-	if err != nil {
-		return 0
-	}
-	return len(recs)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.lingerRecords)
 }
 
 // EnableLinger writes the linger record and starts a user manager if
@@ -469,6 +476,8 @@ func (h *UserHost) mutateLingerRecord(user string, enable bool) (runtime.LingerR
 		return runtime.LingerRecord{}, err
 	}
 	defer h.finishNativeUserWork(work, nil)
+	h.lingerIO.Lock()
+	defer h.lingerIO.Unlock()
 	rec, err := h.resolve(user)
 	if err != nil {
 		return rec, err
@@ -477,6 +486,16 @@ func (h *UserHost) mutateLingerRecord(user string, enable bool) (runtime.LingerR
 		err = h.store.Put(rec)
 	} else {
 		err = h.store.Delete(rec.SID)
+	}
+	if err == nil {
+		h.mu.Lock()
+		h.lingerRevision++
+		if enable {
+			h.lingerRecords[rec.SID] = rec
+		} else {
+			delete(h.lingerRecords, rec.SID)
+		}
+		h.mu.Unlock()
 	}
 	return rec, err
 }
@@ -530,9 +549,14 @@ func (h *UserHost) startLinger(rec runtime.LingerRecord) (startErr error) {
 	}
 	now := h.cfg.Now()
 	h.mu.Lock()
+	revision := h.lingerRevision
+	current, present := h.lingerRecords[rec.SID]
 	inst := h.bySID[rec.SID]
 	delayed := inst != nil && inst.proc == nil && now.Before(inst.nextStart)
 	h.mu.Unlock()
+	if !present || current != rec {
+		return fmt.Errorf("linger record is no longer current")
+	}
 	if delayed {
 		return fmt.Errorf("user manager recovery is delayed")
 	}
@@ -544,7 +568,7 @@ func (h *UserHost) startLinger(rec runtime.LingerRecord) (startErr error) {
 	defer func() { startErr = errors.Join(startErr, h.finishNativeUserWork(work, tok)) }()
 	tok, err = h.cfg.LingerToken(rec)
 	if err != nil {
-		h.recordLingerTokenFailure(rec.SID, err)
+		h.recordLingerTokenFailure(rec.SID, revision, err)
 		return err
 	}
 	if tok != nil {
@@ -552,7 +576,7 @@ func (h *UserHost) startLinger(rec runtime.LingerRecord) (startErr error) {
 			h.cfg.Logf("linger token for %s via %s", rec.SID, tok.Source)
 		}
 	}
-	return h.ensureRunning(rec.SID, tok, func() bool { return h.lingeringLocked(rec.SID) })
+	return h.ensureRunning(rec.SID, tok, func() bool { return h.lingerRevision == revision && h.lingerRecords[rec.SID] == rec })
 }
 
 // stillWanted is evaluated only while h.mu is held.

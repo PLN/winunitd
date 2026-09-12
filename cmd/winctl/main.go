@@ -818,9 +818,16 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		fmt.Fprintf(c.stdout, "         %d active\n", m.UnitsActive)
 		fmt.Fprintf(c.stdout, "         %d failed\n", m.UnitsFailed)
 		fmt.Fprintf(c.stdout, "  Timers: %d loaded\n", m.TimersLoaded)
-		if m.UserManagers > 0 || m.Lingering > 0 || m.UserNativeWork > 0 || len(m.UserRecovery) > 0 || len(m.UserInstances) > 0 {
+		if m.UserManagers > 0 || m.Lingering > 0 || m.LingerState != "" || m.UserNativeWork > 0 || len(m.UserRecovery) > 0 || len(m.UserInstances) > 0 {
 			fmt.Fprintf(c.stdout, "  Users:  %d managers\n", m.UserManagers)
 			fmt.Fprintf(c.stdout, "          %d lingering\n", m.Lingering)
+			if m.LingerState != "" {
+				fmt.Fprintf(c.stdout, "          linger records: %s", m.LingerState)
+				if m.LingerError != "" {
+					fmt.Fprintf(c.stdout, "; %s", m.LingerError)
+				}
+				fmt.Fprintln(c.stdout)
+			}
 			fmt.Fprintf(c.stdout, "          %d native operations pending\n", m.UserNativeWork)
 			for _, user := range m.UserInstances {
 				mode := user.Mode

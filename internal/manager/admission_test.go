@@ -106,6 +106,9 @@ func TestAdmissionRevocationKeepsOnlyExplicitLingerGrant(t *testing.T) {
 	if err := h.store.Put(runtime.LingerRecord{SID: testSIDA, Name: "alice"}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := h.refreshLingerRecords(); err != nil {
+		t.Fatal(err)
+	}
 	if err := h.SetUserAdmission(UserAdmission{}); err != nil {
 		t.Fatal(err)
 	}

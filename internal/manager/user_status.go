@@ -26,9 +26,11 @@ func userLaunchMode(token *runtime.UserToken) (string, uint32) {
 }
 
 type userDecisionSnapshot struct {
-	running, native int
-	instances       []protocol.UserManagerStatus
-	recovery        []protocol.UserRecoveryStatus
+	running, native          int
+	lingering                int
+	lingerState, lingerError string
+	instances                []protocol.UserManagerStatus
+	recovery                 []protocol.UserRecoveryStatus
 }
 
 // Copy one bounded decision view without filesystem or process-handle queries.
@@ -41,6 +43,17 @@ func (h *UserHost) decisionSnapshot() userDecisionSnapshot {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	result.native = len(h.nativeWork)
+	result.lingering = len(h.lingerRecords)
+	if h.store != nil {
+		result.lingerState = "pending"
+		if h.lingerKnown {
+			result.lingerState = "ready"
+		}
+		if h.lingerError != "" {
+			result.lingerState = "degraded"
+			result.lingerError = h.lingerError
+		}
+	}
 	sessions := make(map[string]int)
 	for _, sid := range h.sessions {
 		sessions[sid]++

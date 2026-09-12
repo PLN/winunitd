@@ -237,6 +237,17 @@ session count. These copied decisions are updated by reconciliation; they are
 not a fresh kernel liveness query. PID/session observations do not authorize
 process termination. Recovery entries retain their retry/error diagnostics.
 
+Linger decisions and counts use the last validated record snapshot. Filesystem
+scans and mutations are serialized outside the decision lock and remain tracked
+through shutdown. `lingerState` is `pending` before the initial scan, `ready`
+after a valid scan, or `degraded` with `lingerError` after a failed observation.
+Invalid or unreadable records lose cached authority; reconciliation requests
+cleanup unless an interactive session independently permits the manager.
+Records are limited to 64 KiB each, 128 grants, and 4096 directory entries.
+An oversized directory is rejected as a whole. External edits take effect on
+the next reconciliation; successful control mutations update the snapshot before
+returning. A token obtained for a superseded grant cannot start a manager.
+
 A later logon or linger toggle does not replace a running manager's chosen mode.
 An explicit manager restart selects a fresh suitable token. An interactive
 manager may still report its original selected session after that session leaves;

@@ -136,6 +136,8 @@ type MachineStatus struct {
 	TimersLoaded   int                  `json:"timersLoaded"`
 	UserManagers   int                  `json:"userManagers,omitempty"`
 	Lingering      int                  `json:"lingering,omitempty"`
+	LingerState    string               `json:"lingerState,omitempty"`
+	LingerError    string               `json:"lingerError,omitempty"`
 	UserNativeWork int                  `json:"userNativeWork,omitempty"`
 	UserRecovery   []UserRecoveryStatus `json:"userRecovery,omitempty"`
 	UserInstances  []UserManagerStatus  `json:"userInstances,omitempty"`
