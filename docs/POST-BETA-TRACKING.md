@@ -84,6 +84,15 @@ state, repeat execution, shared prerequisites, failure, cancellation, timeout,
 restart, reload and cleanup failure. Existing native output/process-tree and
 timer tests also pass. Hosted CI, merge and deployment remain separate.
 
+The unit-hosted Hermes maintenance helper is implemented separately in
+[tools/maintenance](../tools/maintenance/README.md). It keeps the user manager
+running, uses a disabled target as a persistent boot hold, removes the routine
+need for elevated task manipulation, and retains durable request/results and
+pre-/post-mutation recovery rules. It does not implement the R4.3 global barrier
+or migrate interactive startup to SCM. Local native read-only rehearsal and an
+injected pre-mutation failure/recovery succeeded; actual application-version
+updates and reboot recovery still need separate qualification.
+
 ## Dependency and CI follow-up
 
 September 9, 2026: [go-winio PR #369](https://github.com/microsoft/go-winio/pull/369)
