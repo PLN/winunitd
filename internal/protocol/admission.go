@@ -58,7 +58,7 @@ type admittedHandler struct {
 func (h *admittedHandler) Handle(ctx context.Context, method string, params json.RawMessage) (any, error) {
 	slots := h.requests
 	switch method {
-	case MethodStop, MethodDisableLinger, MethodCancelOperation:
+	case MethodStop, MethodDisableLinger, MethodCancelOperation, MethodMaintenance:
 		slots = h.stops
 	case MethodStatus, MethodOperation, MethodListUnits, MethodListTimers:
 		slots = h.diagnostics

@@ -933,6 +933,23 @@ repetitions cover blocked startup enumeration, combined decision deadlines,
 independent cleanup and retry completion. No new SCM guest qualification is
 claimed by these isolated regressions.
 
+## September 12 global maintenance API
+
+The system Control handler exposes administrator-only maintenance using the
+combined shutdown primitive and reserved stop-request capacity. One attempt owns
+an aggregate deadline independent of caller disconnection; concurrent callers
+join it, failure permits an explicit retry, and successful quiescence is
+idempotent. Machine status reports progress/failure/completion. The CLI rejects
+user scope, validates its duration, bounds transport waits, and requires explicit
+quiescence before returning success. [The operator contract](OPERATIONS.md#global-maintenance)
+defines restart-only resumption and the separate broker-stop servicing step.
+
+Twenty focused race repetitions cover caller cancellation, joined deadlines,
+pending native work, failed-attempt retry, closed admission, status after journal
+closure, administrative authorization, reserved request capacity, CLI result
+handling and old-server rejection. Raw connection saturation, full SCM/identity
+qualification and MSI servicing remain open.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

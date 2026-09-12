@@ -155,3 +155,44 @@ match `operation`: 0 succeeded, 3 running, 1 failed or RPC error, 2 invalid usag
 and 4 unknown/evicted ID. During the short completion-publication boundary,
 cancel can return busy; query or retry. Older servers return method-not-found.
 Cancellation uses the reserved stop handler budget and allocates no worker.
+
+## Global maintenance
+
+Development builds provide an administrator-only system-manager command:
+
+```powershell
+winctl maintenance --timeout 180s
+winctl status
+```
+
+The default and maximum aggregate deadline is 180 seconds; the CLI accepts
+durations from 1ms through 180s. The `maintenance` RPC accepts `timeoutMS`, with
+zero selecting the default. It closes system/user admission together, cancels
+activation/restart work, stops owned workloads, and drains tracked token,
+configuration, native-control and journal cleanup. Status and other diagnostics
+remain available. `--user` is rejected; owning a user pipe does not authorize
+global maintenance. Older servers return method-not-found, which is a failure.
+
+The accepted attempt owns its deadline independently of the requesting
+connection. Disconnecting does not cancel it. Concurrent requests join the same
+attempt without changing its deadline. Machine status exposes `maintenance`
+with `quiescing`, `failed`, or `quiesced`, start/deadline timestamps, and the last
+attempt's error. After failure, another maintenance request retries retained work
+with a new deadline. Pending native calls remain owned and are joined, not
+duplicated. The CLI exits 0 only after an explicit `quiesced` result, 1 for
+incomplete work or transport/protocol failure, and 2 for invalid usage.
+
+Admission stays closed after success or failure. Restart the manager process to
+resume enabled workloads; there is no in-process resume command. Manually started,
+non-enabled units are not promised restoration. Maintenance does not rewrite
+enable records or roll back configuration mutations admitted before the barrier.
+
+`quiesced` confirms workload/resource cleanup while the broker and control pipe
+remain running. Before replacing broker binaries, servicing must also stop the
+SCM service and confirm its process has exited. A failed or missing maintenance
+confirmation must abort replacement. This command is the runtime primitive;
+MSI servicing and rollback qualification remain separate release gates.
+
+Maintenance shares reserved stop-handler capacity. Raw connection saturation can
+still prevent a new client connection; the remaining transport progress work is
+tracked in [R2.3](https://github.com/PLN/winunitd/issues/97).

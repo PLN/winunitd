@@ -12,8 +12,9 @@ import (
 // verbs. User managers use Manager directly (linger methods stay on the
 // system pipe).
 type Control struct {
-	Units *Manager
-	Users *UserHost
+	Units       *Manager
+	Users       *UserHost
+	maintenance maintenanceState
 }
 
 // Handle implements protocol.Handler.
@@ -22,6 +23,12 @@ func (c *Control) Handle(ctx context.Context, method string, params json.RawMess
 		return nil, protocol.ErrFailed("nil handler")
 	}
 	switch method {
+	case protocol.MethodMaintenance:
+		var p protocol.MaintenanceParams
+		if err := protocol.DecodeParams(params, &p); err != nil {
+			return nil, err
+		}
+		return c.enterMaintenance(ctx, p)
 	case protocol.MethodEnableLinger:
 		var p protocol.LingerParams
 		if err := protocol.DecodeParams(params, &p); err != nil {
@@ -40,6 +47,9 @@ func (c *Control) Handle(ctx context.Context, method string, params json.RawMess
 			return res, err
 		}
 		sr, ok := res.(*protocol.StatusResult)
+		if ok && sr != nil && sr.Machine != nil {
+			sr.Machine.Maintenance = c.maintenanceSnapshot()
+		}
 		if ok && sr != nil && sr.Machine != nil && c.Users != nil {
 			sr.Machine.UserManagers = len(c.Users.Running())
 			sr.Machine.Lingering = c.Users.LingerCount()

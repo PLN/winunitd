@@ -38,6 +38,9 @@ Commands:
   daemon-reload       Reload unit files
   operation ID        Query a retained start/stop/restart outcome
   cancel ID           Cancel unfinished start/restart work
+  maintenance [--timeout DURATION]
+                      Quiesce system and user workloads until manager restart
+                      (Administrators, system pipe; default/max 180s)
   verify <path|unit>  Verify a unit file path (no daemon) or a loaded unit
   enable-linger <user>
                       Persist a user manager across logoff and at boot
@@ -204,6 +207,8 @@ func (c *cli) run(args []string) int {
 		return c.operation(rest, false)
 	case "cancel":
 		return c.operation(rest, true)
+	case "maintenance":
+		return c.maintenance(rest)
 	case "enable":
 		return c.unitCmd(rest, protocol.MethodEnable, c.printEnable)
 	case "disable":
@@ -291,6 +296,50 @@ func (c *cli) rpcError(err error) int {
 		fmt.Fprintf(c.stderr, "OperationID=%s\n", pe.OperationID)
 	}
 	return 1
+}
+
+func (c *cli) maintenance(args []string) int {
+	if c.user {
+		fmt.Fprintln(c.stderr, "winctl maintenance: system manager only")
+		return 2
+	}
+	timeout := time.Duration(protocol.MaxMaintenanceTimeoutMS) * time.Millisecond
+	if len(args) != 0 {
+		if len(args) != 2 || args[0] != "--timeout" {
+			fmt.Fprintln(c.stderr, "winctl maintenance: expected --timeout DURATION")
+			return 2
+		}
+		parsed, err := time.ParseDuration(args[1])
+		if err != nil || parsed < time.Millisecond || parsed > timeout {
+			fmt.Fprintln(c.stderr, "winctl maintenance: timeout must be between 1ms and 180s")
+			return 2
+		}
+		timeout = parsed
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout+5*time.Second)
+	defer cancel()
+	dial := c.dial
+	if dial == nil {
+		dial = defaultDial
+	}
+	conn, err := dial(ctx)
+	if err != nil {
+		return c.rpcError(err)
+	}
+	defer conn.Close()
+	deadline, _ := ctx.Deadline()
+	if err := conn.SetDeadline(deadline); err != nil {
+		return c.rpcError(err)
+	}
+	result, err := protocol.NewClient(conn).Maintenance(ctx, protocol.MaintenanceParams{TimeoutMS: timeout.Milliseconds()})
+	if err != nil {
+		return c.rpcError(err)
+	}
+	if result.State != "quiesced" {
+		return c.rpcError(fmt.Errorf("maintenance did not confirm quiescence: %s", result.State))
+	}
+	fmt.Fprintln(c.stdout, "Maintenance: quiesced; restart the manager to resume enabled workloads")
+	return 0
 }
 
 func (c *cli) needUnit(args []string, cmd string) (string, int) {
@@ -748,6 +797,12 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		m := st.Machine
 		fmt.Fprintf(c.stdout, "winunitd\n")
 		fmt.Fprintf(c.stdout, "  State: %s\n", m.State)
+		if m.Maintenance != nil {
+			fmt.Fprintf(c.stdout, "  Maintenance: %s\n", m.Maintenance.State)
+			if m.Maintenance.Error != "" {
+				fmt.Fprintf(c.stdout, "  MaintenanceError: %s\n", m.Maintenance.Error)
+			}
+		}
 		if m.ConfigRevision != "" {
 			fmt.Fprintf(c.stdout, "ConfigRevision=%s\n", m.ConfigRevision)
 		}
