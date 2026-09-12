@@ -118,7 +118,7 @@ func TestUserHostReconcileCrashUsesFreshToken(t *testing.T) {
 }
 
 func TestUserHostReconcileRejectsStaleEnumeration(t *testing.T) {
-	for _, event := range []string{"logon", "logoff", "policy", "shutdown", "reconcile"} {
+	for _, event := range []string{"logon", "logoff", "policy", "shutdown"} {
 		t.Run(event, func(t *testing.T) {
 			h, starts, _ := testUserHost(t, map[uint32]string{1: testSIDA}, nil)
 			h.Logon(1)
@@ -154,8 +154,6 @@ func TestUserHostReconcileRejectsStaleEnumeration(t *testing.T) {
 				if !errors.Is(err, context.DeadlineExceeded) {
 					t.Errorf("shutdown must retain the blocked enumeration: %v", err)
 				}
-			case "reconcile":
-				h.Reconcile()
 			}
 			close(release)
 			select {

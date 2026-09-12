@@ -139,25 +139,36 @@ func (h *UserHost) Reconcile() {
 	if h == nil || h.cfg.Sessions == nil {
 		return
 	}
+	work, err := h.acceptUserWorkClass(userWorkReconcile)
+	if err != nil {
+		return
+	}
+	h.reconcileAccepted(work)
+}
+
+func (h *UserHost) scheduleReconcile() {
+	work, err := h.acceptUserWorkClass(userWorkReconcile)
+	if err != nil {
+		return
+	}
+	go h.reconcileAccepted(work)
+}
+
+func (h *UserHost) reconcileAccepted(work *userNativeWork) {
+	defer h.finishNativeUserWork(work, nil)
 	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), time.Second)
 	if err := h.cleanupNativeUserWork(cleanupCtx, false); err != nil {
 		h.cfg.Logf("retry user token cleanup: %v", err)
 	}
 	cancelCleanup()
-	work, err := h.acceptNativeUserWork()
-	if err != nil {
-		return
-	}
 	h.mu.Lock()
 	if h.closed {
 		h.mu.Unlock()
-		_ = h.finishNativeUserWork(work, nil)
 		return
 	}
 	epoch, revision := h.nextSessionRequest, h.admissionRevision
 	h.mu.Unlock()
 	ids, err := h.cfg.Sessions()
-	_ = h.finishNativeUserWork(work, nil)
 	if err != nil {
 		h.cfg.Logf("enumerate sessions: %v", err)
 		return
@@ -182,12 +193,12 @@ func (h *UserHost) StartLingering() {
 	if h == nil || h.store == nil {
 		return
 	}
-	work, err := h.acceptNativeUserWork()
+	work, err := h.acceptUserWorkClass(userWorkLingerScan)
 	if err != nil {
 		return
 	}
+	defer h.finishNativeUserWork(work, nil)
 	recs, err := h.store.List()
-	_ = h.finishNativeUserWork(work, nil)
 	if err != nil {
 		h.cfg.Logf("list linger records: %v", err)
 		return

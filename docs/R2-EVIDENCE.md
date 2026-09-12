@@ -986,6 +986,26 @@ busy SID gates, repeated requests, four-worker admission, uncertain cleanup afte
 a new session, and shutdown during blocked liveness. Reserved enumeration/policy
 capacity, aggregate tracked-user limits and recovery backoff remain open.
 
+## September 12 reserved user reconciliation capacity
+
+Native user work has four admission slots plus one reserved slot each for session
+reconciliation, policy refresh and linger scanning. Each reserved slot owns the
+whole pass through completion, including cleanup and any nested admission work.
+Repeated scheduling coalesces while its pass is active; no additional goroutine
+is created on saturation. All seven slots remain part of shutdown accounting.
+
+The policy watcher independently schedules refresh and session reconciliation.
+Four blocked admission lookups therefore cannot prevent an empty authoritative
+session snapshot from cleaning up a missed logoff, and a blocked enumeration
+cannot prevent policy publication. Twenty focused race repetitions cover these
+cases, repeated reconciliation admission, stale events and shutdown retention.
+The previous simultaneous-enumeration test is superseded by the single-pass
+contract; logon, logoff, policy and shutdown still invalidate stale snapshots.
+
+A blocked lookup within the active reconciliation pass still delays that pass's
+later sessions. Fair token/recovery dispatch, aggregate user limits and recovery
+backoff remain open; these capacity reservations alone do not close R2 or R4.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2
