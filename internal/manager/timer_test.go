@@ -399,12 +399,14 @@ OnCalendar=*-*-* 15:00:00
 	fk.JumpWall(fk.Now().Add(4 * time.Hour))
 	m.ClockChanged()
 	waitLauncherUnit(t, launch, "job.service")
-	st, err := m.Status("job.timer")
-	if err != nil || st.Unit == nil || st.Unit.Next != "2026-09-02T15:00:00Z" {
-		t.Fatalf("status next after jump = %+v err=%v", st, err)
-	}
-	list, err := m.ListTimers()
-	if err != nil || len(list.Timers) != 1 || list.Timers[0].Next != "2026-09-02T15:00:00Z" {
-		t.Fatalf("list-timers next after jump = %+v err=%v", list, err)
-	}
+	// Activation and the following calendar calculation finish independently.
+	// Both public snapshots must eventually publish the newly accepted deadline.
+	waitCond(t, func() bool {
+		st, err := m.Status("job.timer")
+		return err == nil && st.Unit != nil && st.Unit.Next == "2026-09-02T15:00:00Z"
+	})
+	waitCond(t, func() bool {
+		list, err := m.ListTimers()
+		return err == nil && len(list.Timers) == 1 && list.Timers[0].Next == "2026-09-02T15:00:00Z"
+	})
 }
