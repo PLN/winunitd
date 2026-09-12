@@ -123,6 +123,10 @@ targets and removed definitions still needed for cleanup. Stop retained workload
 before retrying a replacement that would exceed this allowance. The unit directory
 is limited to 4096 entries; enabled-link discovery has a separate 4096-entry budget
 across its root and immediate target directories, including ignored entries.
+Disable validates that entire bounded namespace before removing enable records;
+it does not traverse or delete files in ignored nested directories. Enumeration
+failure leaves files unchanged. A later deletion failure can still leave a
+partially disabled unit and is reported to the caller.
 Oversized candidates leave the accepted graph, revisions and ownership unchanged.
 Reload reports at most 128 error messages totaling 128 KiB, plus an explicit
 omission notice. Correct the reported errors and reload to see remaining errors.
