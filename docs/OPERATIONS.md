@@ -252,3 +252,24 @@ A later logon or linger toggle does not replace a running manager's chosen mode.
 An explicit manager restart selects a fresh suitable token. An interactive
 manager may still report its original selected session after that session leaves;
 this is distinct from the current session count. Cleanup removes its record.
+
+## Timer storage work
+
+Timer arms load persisted state asynchronously. Status and `list-timers` report
+storage as `loading`, `ready`, or `failed`; a timer cannot dispatch until its
+state is loaded. One reserved loader serves at most 1024 armed timers. The 32
+callback slots include pre-dispatch persistence and completion writes. Storage
+calls are serialized outside the scheduler and manager decision locks, and all
+shutdown callers join accepted storage work.
+
+An occurrence is written before dispatch. A failed read or write suspends further
+dispatch for that arm and exposes the storage error. Repair the storage problem
+and stop/start the timer to reload its state. Complete files replace previous
+state only after write, flush and close succeed. State is bounded to 16 KiB and
+uses version 1; legacy unversioned timestamps are read and upgraded on the next
+save. Unsupported versions, malformed JSON and invalid timestamps fail visibly.
+
+This does not yet provide durable pending/result activation intent. A crash
+between recording an occurrence and dispatch can still lose that occurrence;
+the R5 pending-activation recovery policy remains open. Scheduler calendar work,
+heap bounds and aggregate decision snapshots remain separate R2/R5 work.

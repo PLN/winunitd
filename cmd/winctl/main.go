@@ -889,6 +889,13 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		if u.ArmedConfigRevision != "" {
 			fmt.Fprintf(c.stdout, "ArmedConfigRevision=%s\n", u.ArmedConfigRevision)
 		}
+		if u.TimerStorageState != "" {
+			fmt.Fprintf(c.stdout, "TimerStorage=%s", u.TimerStorageState)
+			if u.TimerStorageError != "" {
+				fmt.Fprintf(c.stdout, "; %s", u.TimerStorageError)
+			}
+			fmt.Fprintln(c.stdout)
+		}
 		if u.Error != "" {
 			fmt.Fprintf(c.stdout, "      Error: %s\n", u.Error)
 		}
@@ -944,6 +951,13 @@ func (c *cli) printListTimers(got *protocol.ListTimersResult) int {
 			last = "-"
 		}
 		fmt.Fprintf(c.stdout, "%-28s %-20s %-24s %-24s %-12s %-8s\n", u.Name, u.Unit, next, last, u.ActiveState, en)
+		if u.StorageState == "loading" || u.StorageState == "failed" {
+			fmt.Fprintf(c.stdout, "  storage: %s", u.StorageState)
+			if u.StorageError != "" {
+				fmt.Fprintf(c.stdout, "; %s", u.StorageError)
+			}
+			fmt.Fprintln(c.stdout)
+		}
 	}
 	return 0
 }

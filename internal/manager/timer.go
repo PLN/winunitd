@@ -57,7 +57,9 @@ func (m *Manager) armTimer(u *unit.Unit, revision string) error {
 	}
 	spec := timerSpec(u)
 	spec.ConfigRevision = revision
-	m.engine.Arm(spec)
+	if m.engine.Arm(spec) == 0 {
+		return fmt.Errorf("timer arm capacity %d exhausted or scheduler stopped", timers.MaxArmedTimers)
+	}
 	return nil
 }
 
@@ -127,6 +129,7 @@ func (m *Manager) overlayTimer(st *protocol.UnitStatus) {
 	snapshot := m.engine.Status(st.Name)
 	st.Next, st.Last = formatTimerStamp(snapshot.Next), formatTimerStamp(snapshot.Last)
 	st.ArmedConfigRevision = snapshot.ConfigRevision
+	st.TimerStorageState, st.TimerStorageError = snapshot.StorageState, snapshot.StorageError
 }
 
 // activationOrigin is checked under m.mu at plan and adapter admission.

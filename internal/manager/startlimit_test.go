@@ -241,6 +241,7 @@ func TestTriggersShareActivationBudget(t *testing.T) {
 	u := m.units["work.timer"].unit
 	event := timers.Fire{Name: u.Name, Unit: u.Timer.Unit, Token: m.engine.Arm(timerSpec(u))}
 	m.mu.Unlock()
+	waitCond(t, func() bool { return m.engine.Current(event.Name, event.Token) })
 	path := func() { m.onPathChanged("work.path", watch) }
 	timer := func() { m.onTimerElapsed(event) }
 	complete := func(fire func(), want int) {

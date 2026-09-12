@@ -80,6 +80,7 @@ func TestOldFireResultCannotUpdateReplacement(t *testing.T) {
 	e := &Engine{clk: clock.Clock(), store: store, armed: make(map[string]*armed), wakeup: make(chan struct{}, 1), running: true, fire: func(event Fire) { events <- event }}
 	spec := Spec{Name: "work.timer", Unit: "old.service", OnStartupSec: time.Second, OnStartupSecSet: true}
 	oldToken := e.Arm(spec)
+	waitStorageReady(t, e, spec.Name)
 	clock.Advance(2 * time.Second)
 	due, ok := e.popDue(e.clk.now())
 	if !ok {
@@ -99,6 +100,7 @@ func TestOldFireResultCannotUpdateReplacement(t *testing.T) {
 	e.Disarm(spec.Name)
 	spec.Unit = "new.service"
 	freshToken := e.Arm(spec)
+	waitStorageReady(t, e, spec.Name)
 	if freshToken == oldToken || e.Current(old.Name, old.Token) {
 		t.Fatal("old arm remained current")
 	}
@@ -173,6 +175,7 @@ func TestRetryIsMonotonicAndCannotCrossRearm(t *testing.T) {
 	}
 	e.consume(due, e.clk.now())
 	event := Fire{Name: spec.Name, Unit: spec.Unit, Token: token}
+	e.fires.Wait()
 	e.Retry(event)
 	clock.JumpWall(clock.Now().Add(time.Hour))
 	if _, ok := e.popDue(e.clk.now()); ok {
