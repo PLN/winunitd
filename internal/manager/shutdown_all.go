@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
+
+	"github.com/PLN/winunitd/internal/timers"
 )
 
 // ShutdownAll seals both admission domains before either begins teardown. System
@@ -14,6 +17,30 @@ func ShutdownAll(ctx context.Context, units *Manager, users *UserHost) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	var stops *stopSet
+	if units != nil {
+		stops = &units.stops
+	} else if users != nil {
+		stops = &users.stops
+	} else {
+		return ctx.Err()
+	}
+	for {
+		var ownsPass atomic.Bool
+		err := stops.wait(ctx, timers.DefaultClock(), stopKey{allSystem: units, allUsers: users}, 0, func() error {
+			ownsPass.Store(true)
+			return shutdownAllPass(ctx, units, users)
+		})
+		if ctx.Err() == nil && !ownsPass.Load() && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
+			continue
+		}
+		return errors.Join(err, ctx.Err())
+	}
+}
+
+// The outer retained pass bounds caller waits. Join both workers here even
+// after deadline, so a slow decision lock cannot multiply workers on retries.
+func shutdownAllPass(ctx context.Context, units *Manager, users *UserHost) error {
 	// This is the only combined lock order: manager, then user host. Holding
 	// both publishes one barrier before workers can observe either domain.
 	if units != nil {
@@ -50,12 +77,7 @@ func ShutdownAll(ctx context.Context, units *Manager, users *UserHost) error {
 	}()
 	var result error
 	for i := 0; i < 2; i++ {
-		select {
-		case err := <-results:
-			result = errors.Join(result, err)
-		case <-ctx.Done():
-			return errors.Join(result, ctx.Err())
-		}
+		result = errors.Join(result, <-results)
 	}
 	return errors.Join(result, ctx.Err())
 }

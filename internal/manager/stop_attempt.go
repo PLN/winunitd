@@ -19,6 +19,8 @@ type stopKey struct {
 	user         runtime.UserManagerProc
 	userWork     *userNativeWork
 	userShutdown *UserHost
+	allSystem    *Manager
+	allUsers     *UserHost
 	nativeKind   string
 	nativeName   string
 }
