@@ -21,6 +21,9 @@ func OpenDaemonJob() (*DaemonJob, error) {
 	return &DaemonJob{}, nil
 }
 
+// OpenBrokerJob returns a stub job on non-Windows builds.
+func OpenBrokerJob() (*DaemonJob, error) { return OpenDaemonJob() }
+
 // AssignPID is a no-op on non-Windows builds unless the stub is closed
 // or pid is invalid.
 func (j *DaemonJob) AssignPID(pid int) error {

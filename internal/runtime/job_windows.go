@@ -23,6 +23,7 @@ type DaemonJob struct {
 	exits     jobExitSet
 	mu        sync.Mutex
 	handle    windows.Handle
+	broker    bool // immutable: only the SYSTEM broker permits explicit breakaway
 }
 
 // OpenDaemonJob creates an unnamed job with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE.
@@ -32,6 +33,18 @@ type DaemonJob struct {
 // is in the job, leftover children are terminated first so CloseHandle does
 // not kill winunitd.
 func OpenDaemonJob() (*DaemonJob, error) {
+	return openDaemonJob(false)
+}
+
+// OpenBrokerJob permits the SYSTEM broker to launch into another session.
+// Such managers have separate kill-on-close jobs owned by the broker; Windows
+// cannot place processes from different sessions in the same job. Unit and
+// user-manager jobs must continue to use OpenDaemonJob, which denies breakaway.
+func OpenBrokerJob() (*DaemonJob, error) {
+	return openDaemonJob(true)
+}
+
+func openDaemonJob(broker bool) (*DaemonJob, error) {
 	h, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create daemon job: %w", err)
@@ -40,6 +53,9 @@ func OpenDaemonJob() (*DaemonJob, error) {
 		BasicLimitInformation: windows.JOBOBJECT_BASIC_LIMIT_INFORMATION{
 			LimitFlags: windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 		},
+	}
+	if broker {
+		info.BasicLimitInformation.LimitFlags |= windows.JOB_OBJECT_LIMIT_BREAKAWAY_OK
 	}
 	if _, err := windows.SetInformationJobObject(
 		h,
@@ -50,7 +66,7 @@ func OpenDaemonJob() (*DaemonJob, error) {
 		_ = windows.CloseHandle(h)
 		return nil, fmt.Errorf("set daemon job kill-on-close: %w", err)
 	}
-	return &DaemonJob{handle: h}, nil
+	return &DaemonJob{handle: h, broker: broker}, nil
 }
 
 // AssignPID assigns an existing process to the daemon job.
@@ -108,7 +124,7 @@ func assignDaemonProcess(j *DaemonJob, process windows.Handle) error {
 }
 
 // AssignSelf assigns the current process so future children inherit the job
-// unless they break away (breakaway is not enabled). Nested per-unit jobs
+// unless explicitly launched out of a broker job. Nested per-unit jobs
 // in M5 remain possible on modern Windows.
 func (j *DaemonJob) AssignSelf() error {
 	if j == nil {

@@ -31,6 +31,10 @@ type userMgrProc struct {
 	closed     bool
 }
 
+// PROC_THREAD_ATTRIBUTE_JOB_LIST from WinBase.h (Windows 10 / Server 2016).
+// Not yet exported by the pinned x/sys/windows dependency.
+const procThreadAttributeJobList = 0x0002000d
+
 // StartUserManager launches winunitd --user-manager <SID> as the user
 // via CreateProcessAsUser. spec.Token is a WTS token (interactive) or
 // an S4U linger token. Missing token fails closed.
@@ -87,6 +91,18 @@ func failedUserManagerStart(p *userMgrProc, cause error) (UserManagerProc, error
 }
 
 func createUserManager(tok windows.Token, spec UserManagerSpec, job *DaemonJob) (*userMgrProc, error) {
+	var session, returned uint32
+	if err := windows.GetTokenInformation(tok, windows.TokenSessionId, (*byte)(unsafe.Pointer(&session)), uint32(unsafe.Sizeof(session)), &returned); err != nil {
+		return nil, fmt.Errorf("query user manager session: %w", err)
+	}
+	outer, boundaryFlags, err := userManagerJobBoundary(spec.Daemon, session)
+	if err != nil {
+		return nil, err
+	}
+	return createUserManagerWithBoundary(tok, spec, job, outer, boundaryFlags)
+}
+
+func createUserManagerWithBoundary(tok windows.Token, spec UserManagerSpec, job, outer *DaemonJob, boundaryFlags uint32) (*userMgrProc, error) {
 	app, err := windows.UTF16PtrFromString(spec.Exe)
 	if err != nil {
 		return nil, err
@@ -126,10 +142,27 @@ func createUserManager(tok windows.Token, spec UserManagerSpec, job *DaemonJob) 
 	// Handle inheritance is prohibited across Windows sessions. The child
 	// receives default standard streams from Windows; no broker handles cross
 	// this boundary. Do not set STARTF_USESTDHANDLES or an inherited handle list.
-	si := &windows.StartupInfo{}
+	si := &windows.StartupInfoEx{}
 	si.Cb = uint32(unsafe.Sizeof(*si))
 	var pi windows.ProcessInformation
 	flags := uint32(windows.CREATE_SUSPENDED | windows.CREATE_UNICODE_ENVIRONMENT | windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW)
+	flags |= boundaryFlags
+	if boundaryFlags&windows.CREATE_BREAKAWAY_FROM_JOB != 0 {
+		// Atomic placement prevents a broker crash between process creation and
+		// assignment from abandoning a suspended process outside all owned jobs.
+		attrs, err := windows.NewProcThreadAttributeList(1)
+		if err != nil {
+			return nil, fmt.Errorf("create user job attributes: %w", err)
+		}
+		defer attrs.Delete()
+		if err := attrs.Update(procThreadAttributeJobList, unsafe.Pointer(&job.handle), unsafe.Sizeof(job.handle)); err != nil {
+			return nil, fmt.Errorf("set user job attribute: %w", err)
+		}
+		si.ProcThreadAttributeList = attrs.List()
+		flags |= windows.EXTENDED_STARTUPINFO_PRESENT
+	} else {
+		si.Cb = uint32(unsafe.Sizeof(si.StartupInfo))
+	}
 	err = windows.CreateProcessAsUser(
 		tok,
 		app,
@@ -140,7 +173,7 @@ func createUserManager(tok windows.Token, spec UserManagerSpec, job *DaemonJob) 
 		flags,
 		envp,
 		dirp,
-		si,
+		&si.StartupInfo,
 		&pi,
 	)
 	goruntime.KeepAlive(block)
@@ -153,9 +186,10 @@ func createUserManager(tok windows.Token, spec UserManagerSpec, job *DaemonJob) 
 		sid: spec.SID, pid: int(pi.ProcessId), process: pi.Process,
 		thread: pi.Thread, job: job, unassigned: true,
 	}
-	// Attach the outer job first; each unit/user job must remain a sibling
-	// under it, rather than making the daemon job a child of the first unit.
-	if err := assignDaemonProcess(spec.Daemon, pi.Process); err != nil {
+	// Same-session managers nest under the outer job. Cross-session managers
+	// cannot join that job: their dedicated job remains owned by this broker,
+	// with no inherited handles, and is attached before the child runs.
+	if err := assignDaemonProcess(outer, pi.Process); err != nil {
 		return p, err
 	}
 	if err := job.Assign(pi.Process); err != nil {
@@ -170,6 +204,29 @@ func createUserManager(tok windows.Token, spec UserManagerSpec, job *DaemonJob) 
 	}
 	p.thread = 0
 	return p, nil
+}
+
+func userManagerJobBoundary(daemon *DaemonJob, targetSession uint32) (*DaemonJob, uint32, error) {
+	var callerSession uint32
+	if err := windows.ProcessIdToSessionId(windows.GetCurrentProcessId(), &callerSession); err != nil {
+		return nil, 0, fmt.Errorf("query broker session: %w", err)
+	}
+	if targetSession == callerSession || daemon == nil {
+		return daemon, 0, nil
+	}
+	daemon.mu.Lock()
+	defer daemon.mu.Unlock()
+	if daemon.handle == 0 || !daemon.broker {
+		return nil, 0, fmt.Errorf("cross-session user manager requires an open broker job")
+	}
+	member, err := isProcessInJob(windows.CurrentProcess(), daemon.handle)
+	if err != nil {
+		return nil, 0, fmt.Errorf("query broker job membership: %w", err)
+	}
+	if !member {
+		return nil, 0, fmt.Errorf("cross-session user manager requires broker self-assignment")
+	}
+	return nil, windows.CREATE_BREAKAWAY_FROM_JOB, nil
 }
 
 func nativeUserManagerEnv(tok windows.Token, spec UserManagerSpec) ([]string, error) {

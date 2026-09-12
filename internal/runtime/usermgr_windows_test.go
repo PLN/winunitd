@@ -103,7 +103,7 @@ func TestStartUserManagerFailsClosedWithoutNativeToken(t *testing.T) {
 	}
 }
 
-func TestStartUserManagerFailsClosedOnEnvironmentLookup(t *testing.T) {
+func TestStartUserManagerFailsClosedOnInvalidNativeToken(t *testing.T) {
 	info, err := CurrentUserInfo()
 	if err != nil {
 		t.Fatal(err)
@@ -114,10 +114,24 @@ func TestStartUserManagerFailsClosedOnEnvironmentLookup(t *testing.T) {
 	})
 	if proc != nil {
 		defer proc.Kill()
-		t.Fatal("environment lookup failure created a process")
+		t.Fatal("invalid token created a process")
 	}
-	if err == nil || !strings.Contains(err.Error(), "user manager environment") {
-		t.Fatalf("expected environment lookup failure, got %v", err)
+	if !errors.Is(err, windows.ERROR_INVALID_HANDLE) {
+		t.Fatalf("expected invalid token handle failure, got %v", err)
+	}
+}
+
+func TestStartUserManagerFailsClosedOnEnvironmentLookup(t *testing.T) {
+	token := testUserToken(t)
+	proc, err := StartUserManager(UserManagerSpec{
+		SID: "S-1-5-21-100-200-300-9999", Exe: testAbs(t), Token: token,
+	})
+	if proc != nil {
+		defer proc.Kill()
+		t.Fatal("environment identity mismatch created a process")
+	}
+	if err == nil || !strings.Contains(err.Error(), "user manager environment: target token SID mismatch") {
+		t.Fatalf("expected environment identity failure, got %v", err)
 	}
 }
 

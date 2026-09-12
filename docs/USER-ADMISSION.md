@@ -58,6 +58,15 @@ The native user-manager launcher uses `CreateProcessAsUser` with handle
 inheritance disabled and no parent standard-handle list. Windows supplies the
 child's default streams for the windowless launch. Suspended creation and job
 assignment still precede execution; failed cleanup retains ownership.
+Cross-session children explicitly leave the SYSTEM broker's root job and join
+their dedicated kill-on-close job atomically during creation. Windows jobs cannot
+contain processes from multiple sessions. The broker owns the dedicated job's
+noninherited handle; its death closes that ownership even during launch. Ordinary
+unit and user-manager jobs do not permit breakaway. Same-session launches retain
+the outer-job assignment. Native isolated tests cover placement, broker-crash
+cleanup and rejection of workload breakaway; actual session qualification remains
+separate. This uses the Windows 10 / Server 2016
+[job-list creation attribute](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute).
 The default environment comes from `CreateEnvironmentBlock` for the target token
 with broker inheritance disabled. AppData paths are resolved through the target
 token's known-folder APIs, including when the child applies its user environment.

@@ -12,6 +12,14 @@ Per-user host starts/stops are serialized per SID; failed logoff/shutdown cleanu
 
 Daemon-job assignment verifies membership explicitly; access-denied errors no longer imply ownership, and both launchers assign through the original process handle before resuming the child, with the outer job assigned first so unit/user jobs remain siblings. Daemon-job close now seals admission, verifies membership before individual child termination, confirms captured exits, and retains failed cleanup instead of discarding the job handle. It clears kill-on-close only after descendants are confirmed gone.
 
+Cross-session user managers are an explicit exception to outer-job membership:
+Windows prohibits mixing sessions within a job. The SYSTEM broker allows explicit
+breakaway and atomically places these children in separate noninherited,
+kill-on-close jobs at creation. Isolated native tests verify placement, broker
+crash cleanup, unchanged same-session nesting and denied workload breakaway.
+Dedicated jobs remain tracked by UserHost through ordered shutdown and cleanup
+retries. Genuine SYSTEM/session transitions require separate VM evidence.
+
 Manager close now accepts a caller deadline, joins a pending cleanup pass, returns journal/watch close errors, and retains failed watch teardown for retry. System/user daemon cleanup now shares the existing SCM stop window across user-host shutdown, unit shutdown, manager close, and daemon-job close. Pending shutdown/job-close calls are joined on retry, and joined cancellation cannot mask a cleanup failure in console or SCM exit results. Failure to assign the daemon itself to its job now prevents startup.
 
 Native watcher close retries retain failed handles and drain outstanding waits/reads. Manager stop and reload retain watch ownership, reject replacement during unresolved cleanup, and join pending closes across caller deadlines. Partial opens retain their cleanup on the unit when possible, otherwise on the manager. Real Windows session qualification and remaining asynchronous teardown paths still need qualification. Stop remains forced Job Object termination until R3.
