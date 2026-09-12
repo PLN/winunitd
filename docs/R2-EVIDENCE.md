@@ -847,6 +847,25 @@ and 128 local Markdown links passed. Exact hosted evidence is recorded in the
 associated PR. Coordinator-wide lifetime coverage
 and the remaining R2 acceptance work are still open.
 
+## September 12 user native work ownership
+
+User-host shutdown now tracks session enumeration and token lookup/launch flows
+before a SID or process exists. Four admission slots include unfinished token
+cleanup; a failed close retains ownership and its slot. Reconciliation retries
+completed cleanup with a shared one-second wait budget. Shutdown joins pending
+close attempts under its caller deadline, so repeated timeouts cannot accumulate
+concurrent closes of the same handle. Machine status exposes `userNativeWork`.
+Token-source errors can return an owned token for cleanup; both interactive and
+linger callers honor that contract.
+
+Race regressions cover blocked unknown-SID lookup, blocked enumeration, late
+completion after shutdown, admission saturation by failed cleanup, reconciliation
+recovery, repeated shutdown joining a blocked close, and token-plus-error linger
+cleanup. Native token close has a failure/retry/idempotence regression. This slice
+does not qualify internal S4U acquisition cleanup, asynchronous session dispatch,
+per-user recovery backoff, reserved enumeration/cleanup progress, or global
+maintenance. Those remain separate ownership and fairness obligations.
+
 ## Limits
 
 These are incremental R2 ownership and admission slices, not the completed v2

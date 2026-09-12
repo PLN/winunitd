@@ -17,6 +17,7 @@ type stopKey struct {
 	shutdown   *Manager
 	proc       runtime.Process
 	user       runtime.UserManagerProc
+	userWork   *userNativeWork
 	nativeKind string
 	nativeName string
 }

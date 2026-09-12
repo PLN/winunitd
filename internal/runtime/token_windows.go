@@ -3,6 +3,9 @@
 package runtime
 
 import (
+	"errors"
+	"fmt"
+
 	"golang.org/x/sys/windows"
 )
 
@@ -23,11 +26,14 @@ func QueryUserToken(sessionID uint32) (*UserToken, error) {
 		return nil, failClosed(sessionID, err)
 	}
 	info, err := userInfoFromToken(tok)
+	owner := &UserToken{Info: info, native: winToken(tok)}
 	if err != nil {
-		_ = tok.Close()
+		if closeErr := owner.Close(); closeErr != nil {
+			return owner, errors.Join(failClosed(sessionID, err), fmt.Errorf("token lookup cleanup: %w", closeErr))
+		}
 		return nil, failClosed(sessionID, err)
 	}
-	return &UserToken{Info: info, native: winToken(tok)}, nil
+	return owner, nil
 }
 
 // CurrentUserInfo reads identity from the current process token.

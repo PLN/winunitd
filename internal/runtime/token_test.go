@@ -6,6 +6,30 @@ import (
 	"testing"
 )
 
+type retryTokenCloser struct{ calls int }
+
+func (c *retryTokenCloser) Close() error {
+	c.calls++
+	if c.calls == 1 {
+		return errors.New("injected close failure")
+	}
+	return nil
+}
+
+func TestTokenCloseRetainsFailureAndReleasesOnce(t *testing.T) {
+	c := &retryTokenCloser{}
+	tok := &UserToken{native: c}
+	if err := tok.Close(); err == nil || tok.native != c {
+		t.Fatal("failed close lost ownership")
+	}
+	if err := tok.Close(); err != nil || tok.native != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if err := tok.Close(); err != nil || c.calls != 2 {
+		t.Fatalf("closed token reused: calls=%d err=%v", c.calls, err)
+	}
+}
+
 func TestQueryUserTokenFailsClosedWithoutWTS(t *testing.T) {
 	// On Linux this is a stub. On Windows CI without SeTcbPrivilege,
 	// WTSQueryUserToken also fails. Either way: no fallback token.
