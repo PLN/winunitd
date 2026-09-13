@@ -2,9 +2,9 @@
 
 **Delivery status:** [B1-B4 public beta gates](BETA-RELEASE.md) completed with
 `0.2.1-beta` on September 6, 2026. Prioritize supported-path defects and adopter
-feedback while continuing the R0-R8 design and qualification work. Complete
-coordinator migration, exhaustive qualification and the seven-day soak remain
-separate acceptance requirements; beta publication does not close them.
+feedback while continuing the R0-R8 design and qualification work. Exhaustive
+Windows qualification and the seven-day soak remain separate acceptance
+requirements; beta publication does not close them.
 
 Status updated September 13, 2026. Implements [ROADMAP.md](../ROADMAP.md) and [Design v2](../DESIGN.md).
 R2 and R3 have completed their technical acceptance. R0, R1 and R4-R6 remain
@@ -75,42 +75,23 @@ Exit gate: conformance tests cover startup, explicit stop, restart, natural exit
 
 Status: in progress. Dependencies for closure: R2, R3. Outcome: real Windows identities and session transitions behave as designed.
 
-- [ ] **R4.1 Launch context:** select and implement a SYSTEM-to-user process launch mechanism that obeys cross-session handle rules. Obtain the target user's profile/environment/known folders; exclude arbitrary broker environment; track profile and token lifetime.
-- [ ] **R4.2 User host:** implement the accepted [interactive user admission policy](USER-ADMISSION.md): administrator-enabled users by default, optional delegation through user unit-file presence, and explicit per-SID overrides. Reconcile sessions, file-presence changes, policy changes, and manager exits; acquire fresh tokens on bounded recovery; cancel stale launch/recovery on logoff, admission revocation, disable-linger, and shutdown. File-based admission does not grant headless linger or bypass workload enablement.
-- [ ] **R4.3 SCM/maintenance:** report readiness after listener/coordinator initialization; keep diagnostics available when workload configuration is invalid; implement a global maintenance barrier with one deadline across user managers and system units.
+- [ ] **R4.1 Launch context:** SYSTEM-to-user launch, target environment/known folders, disabled handle inheritance and Windows-owned profile lifetime are implemented with selected native evidence. Complete the cross-session/profile/security matrix in the [R4 ledger](R4-EVIDENCE.md#current-implementation-and-remaining-identity-matrix).
+- [ ] **R4.2 User host:** the [interactive user admission policy](USER-ADMISSION.md), session reconciliation, fresh-token bounded recovery and cancellation are implemented. Complete multiple-session/user, rapid native transition and launch/shutdown qualification. File-based admission grants neither headless linger nor workload enablement.
+- [x] **R4.3 SCM/maintenance:** genuine SCM readiness, invalid-configuration control/repair, pending-notify stop, and one-deadline combined system/user maintenance passed at `5443e42` and `d173bf4`, including 128 occupied ordinary connections and reserved named-pipe maintenance. Later native saturation and completed coordinator acceptance retain the cleanup/deadline contract; [acceptance evidence](R4-EVIDENCE.md#scm-readiness-and-combined-maintenance-acceptance).
 - [ ] **R4.4 Security:** verify pipe ownership/DACL/token checks, UAC-filtered users, cross-user rejection, protected privileged paths, reparse-point handling, and no unintended inherited handles.
 - [ ] **R4.5 Linger modes:** qualify explicit headless S4U behavior and its credential limitations. Any unqualified optional credential-store mode remains disabled/experimental and is excluded from supported release claims.
 
-Initial R4.2 admission implementation reads protected machine policy, defaults to explicit admission, probes unit-file presence under a duplicated user token with bounded workers, and rejects stale admission results. Existing sessions and policy are reconciled every ten seconds. Portable/native regressions cover revocation, independent linger grants, directory presence, junction rejection, token identity, and deadline ownership. Administrative CLI/installer controls, complete recovery coordination, and real SYSTEM/session evidence remain pending; this does not close R4 or its dependencies.
+The [current R4 ledger](R4-EVIDENCE.md) supersedes the earlier implementation-gap
+descriptions. Both interactive and headless profiles now use Windows-owned
+lifetimes. Genuine local-account launch/crash/logoff and S4U recovery evidence is
+recorded, while the complete concurrent session/user/security matrix stays open.
+Admission administration currently uses protected configuration; dedicated
+commands and installer controls remain separate work. Unsupported account/profile
+modes are excluded from qualification claims.
 
-R4.1 launch groundwork now disables handle inheritance, obtains the default
-environment from the target token without broker variables, and resolves target
-AppData known folders. Native stream/environment and retained-cleanup regressions
-pass in the test account's session. The broker uses Windows-owned interactive
-profiles with a retained registry handle; headless loading still requires
-abrupt-death lifetime qualification. Managed profiles remain limited to local
-machine accounts. The `68d3397` disposable guest candidate passed genuine
-SYSTEM-to-standard-user launch, user-token control, workload identity/environment,
-manager and broker crash recovery. Its manually loaded interactive profile leaked
-after broker death; ordinary logoff after a fresh boot passed. The `8a61393`
-registry-handle replacement passed the full repeated launch, user-manager crash,
-broker crash and logoff sequence, including profile release and no resurrection.
-This is not R4.1 acceptance; the remaining session/security/linger matrix stays open.
-
-SCM startup now awaits an explicit listener/coordinator readiness signal before
-reporting Running. Control starts before boot workload activation, and an initial
-configuration rejection leaves control available for repair. Native host tests
-cover delayed readiness, startup failure, progress checkpoints, stale interrogate
-snapshots and stop before a late readiness callback. Genuine SCM boot/repair
-qualification remains pending; this does not implement the maintenance barrier.
-
-The next R2/R4 session slice repairs missed logoffs through authoritative session
-enumeration, rejects stale snapshots, preserves replacement sessions and linger,
-and retries retained idle cleanup. Public UserHost regressions cover those
-interleavings and fresh-token recovery after an interactive manager exits.
-Bounded recovery workers/backoff and real SYSTEM/session qualification remain open.
-
-An [external maintenance helper](../tools/maintenance/README.md) now covers the existing interactive Hermes pilot. Native testing includes injected pre-update failure/recovery, offline updater planning, a real application update with retained backups, disabled legacy-task restoration, listener ancestry, and an unchanged Windows Task Scheduler process. This is operator tooling for the pilot; it does not implement the system daemon's R4.3 maintenance barrier or qualify MSI upgrades.
+The [external maintenance helper](../tools/maintenance/README.md) remains separate
+operator tooling for the existing interactive pilot. Its update/rollback evidence
+does not qualify MSI servicing or replace the real R7 ownership handoff and soak.
 
 Exit gate: disposable VM evidence includes genuine LocalSystem session-0 launch into a standard user's session, existing-session reconciliation, multiple sessions for one SID, separate users, manager crash, rapid logon/logoff, shutdown during launch, profile/environment cases, and explicit linger behavior. One manager per SID and no post-stop resurrection hold. Unsupported modes fail visibly. No hosted-admin-only evidence is accepted as a substitute.
 
