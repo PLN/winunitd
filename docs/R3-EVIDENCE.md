@@ -1,5 +1,12 @@
 # Unit semantics qualification
 
+September 13, 2026: R3 technical acceptance is complete. The native conformance
+packages below cover its work items, and [consolidated R2 acceptance](R2-EVIDENCE.md#consolidated-coordinator-acceptance)
+satisfies its coordinator dependency. Earlier open-dependency wording records
+the state at each individual qualification. Broader Windows identity/security,
+operational stress, installer and pilot gates remain separate in
+[milestones](MILESTONES.md).
+
 ## Native proxy ownership diagnostics
 
 PR #190 source `71c27e917ba949a2279e1719b53049e7934841e8` passed

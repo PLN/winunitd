@@ -1,151 +1,69 @@
 # Lifecycle writer audit
 
-September 9, 2026. Working inventory for [issue #96](https://github.com/PLN/winunitd/issues/96),
-against [Design v2 sections 2-3](../DESIGN.md#3-records-and-invariants).
-This is an incremental migration map, not evidence that R2 is complete.
-
-Recovery admission now precedes worker creation, including initial launch
-failures. The accepted record carries its exact owner and cancellation context;
-duplicate same-invocation requests allocate no worker. Backoff and unit-gate
-waits honor cancellation. A newer explicit attempt can therefore release an
-obsolete recovery waiter while still holding the gate for its own native work.
-The retained-identity/backoff matrix covers stale replacement, cancellation,
-start-limit exhaustion and native restart behavior.
-
-Adapter error messages and start-error classification are observed before
-entering lifecycle decisions. Launch, cleanup, native observation, user-manager
-and operation completion handlers recheck retained identity after that observation.
-Operation completion freezes adapter protocol classification before locking, then
-joins manager-owned cancellation causes under the publication lock. A slow error
-formatter/classifier retains its delivering operation; it cannot block unrelated
-snapshots, start/stop or cancellation. Public lifecycle regressions cover delayed
-partial-creation error formatting and cancellation during start classification.
-Formatting of locally constructed timer/graph/cancellation errors uses only
-manager-owned values. This boundary review does not close the full writer audit.
-
-The journal admission mutex also excludes storage-error formatting. Capture
-retirement observes that error before publishing counters, so a delayed native
-error cannot hold the queue lock needed by retention metadata or rejected-
-transition diagnostics. Its retained sync attempt still owns failed retirement
-and can be retried after error observation completes.
-Timer state load/save likewise observes storage errors before the engine mutex;
-the accepted arm/token is checked again afterward. Delayed error formatting
-cannot block disarm, independent rearm or status, and stale failures cannot
-publish into another arm.
-
-Notification listeners reserve one of 64 per-listener connection slots before
-PID authorization or reader creation. Idle/banner-blocked readers retain slots;
-overload closes without acceptance. Listener cancellation joins every admitted
-reader, and a released slot permits notification delivery again. This bounds
-the previously uncapped notification-reader class without changing unit state
-or the existing notification authorization checks.
+September 13, 2026. The completed [R2 authority and worker audit](R2-COORDINATOR-AUDIT.md)
+supersedes the incremental migration inventory formerly maintained here.
+[Consolidated acceptance](R2-EVIDENCE.md#consolidated-coordinator-acceptance)
+records clean source, hosted checks, native identities, invariant coverage and
+remaining qualification limits for issues #96/#97.
 
 ## Current authority and migration boundary
 
 Design section 2 selects mutex-serialized decision handlers as the R2 end-state.
-The mutex supplies ordering; it is not sufficient without one audited handler set,
-bounded command admission, reserved completion progress, and immutable snapshots.
-Handlers execute on the delivering goroutine, capture effects and never wait on
-workers or perform blocking OS/persistence work. The unit gate serializes native
-work for one name while independent units perform I/O concurrently. A dedicated
-event-loop goroutine is not required. Migration remains incomplete where this
-inventory still names direct policy writers or blocking status observations.
+`Manager.mu` serializes unit, configuration and operation decisions;
+`UserHost.mu` serializes instance, session, admission and linger policy decisions.
+Combined snapshots and shutdown acquire manager then user host. User-host
+handlers never acquire the manager mutex. Workers report captured observations;
+only current-owner decisions publish accepted lifecycle records.
 
-Graph execution now reports never-launched failures through StartRejectionObserver.
-The manager delivers those failures using the accepted runtime record, generation,
-stop epoch and origin. Successful/failed adapter calls publish their member outcome
-while still holding the unit gate. A canceled gate wait also publishes a rejection.
-Each real automatic or explicit launch receives a fresh generation; redundant
-starts retain the live invocation identity. No final transaction Run is applied to manager lifecycle state. Run remains a graph
-execution result; a failed operation does not rewrite successfully started members.
+Unit/SID gates and configuration/linger storage locks order effects without
+becoming lifecycle authorities. Parsing, planning, process/token/handle I/O,
+readiness/liveness probes, persistence and adapter error observation occur
+outside decision locks. Independent units remain concurrent. Completion bypasses
+ordinary command admission. Accepted work retains its slot and resources through
+late completion; a response deadline cannot discard native ownership.
 
 ## Writer inventory
 
-Paths below are relative to internal/manager. Include ownership and eligibility
-writes as well as state/substate assignment when migrating each row.
+The [complete writer table](R2-COORDINATOR-AUDIT.md#review-method-and-authority)
+includes lifecycle handlers, operation/configuration admission, shutdown transfer,
+health/native observations, helper/journal cleanup and user-host worker metadata.
+It distinguishes constructor initialization and private worker results from
+accepted state. Callers and lock boundaries were reviewed alongside the
+mechanical assignment/map-deletion/goroutine inventory.
 
-| Source and entry points | Decisions and owned fields | Remaining migration |
-| --- | --- | --- |
-| manager.go: startOperation, CloseContext; operations.go; start_coalescing.go | Admission counters, retained operation records, captured plans, shared waiters, history, manager close barrier | Coordinator command admission and completion publication |
-| operation_lifetime.go; lifecycle_operations.go: beginOperationTaskLocked, cancelOperationLocked, finishOperationTask | Accepted context, deadline, stop epoch, recovery suppression, uncertainty, slot release | Explicit requests and deadline expiry use the same serialized cancellation handler. Finish coordinator-wide operation lifetime and completion publication coverage |
-| lifecycle_events.go, lifecycle_launch.go, lifecycle_watch.go and lifecycle_config.go: admission and completion handlers | Member state/error, matching generation, cleanup ownership, restart decision, watch ownership and predicate latch | Serialized handler boundary exists; finish the remaining writers, bounded admission and immutable snapshot publication |
-| supervise.go: launchUnitOwnedOp | Invocation generation/configuration, process adoption, notify ownership, readiness/oneshot results, start cancellation, late cleanup | Launch admission, previous cleanup, invocation metadata and partial-failure adoption now use captured effects/handlers. Successful process adoption, readiness/oneshot cleanup and activation now use lifecycle handlers; endpoint readiness owns a bounded cancellable worker wait and publishes through the same exact-invocation activation/cleanup handlers; supervise.go has no direct runtime lifecycle writes |
-| supervise.go: watch, reapFailedLocked, reapFailed | Exit cleanup ownership, uncertainty, process removal, failure diagnostics | watch now uses typed cleanup admission/results in lifecycle_events.go; failed-process reaping also uses captured effects and typed results |
-| supervise.go: maybeRestart, beginRestart; startlimit.go | Recovery eligibility, start history/budget, restart cancellation, auto-restart state | Recovery acceptance now uses a lifecycle handler, which also captures the bounded backoff step/delay and rejects duplicate invocation recovery; delay and launch remain workers. Start-limit accounting and failure publication now reside in lifecycle_launch.go |
-| shutdown.go: Shutdown, stopTransaction, stopUnitWithContext, stopUnitAfterLock | Scope suppression, stop epochs/generations, retained records, stop request state, watchdog detach | Complete stop/restart scope is now disarmed at admission through a lifecycle helper; per-member teardown now receives a retained stop effect. Typed stop results already exist |
-| lifecycle_bound.go; stop_plan.go: queueBoundStopsLocked, runBoundStops, stopBoundMember, stopGraphLocked | Captured dependency-stop scope, coalesced pending records, reserved worker, operation identity and current-owner checks | Explicit stop/restart/shutdown and bound cleanup share captured invocation membership/ordering under m.mu. Workers execute retained plans outside the decision lock; late bound work cannot change replacement identity. Confirmed external SCM/task inactivity enters through lifecycle_native.go |
-| notify.go: closeNotifyContext, disposeNotify, startWatchdog, stopWatchdog, onWatchdogTimeout | Notify/watchdog handles, termination intent, watchdog failure, cleanup result | Watchdog timeout now uses typed decision/cleanup events; close results now use typed handlers; watchdog registration/detach now use handlers; partial-open handle admission/disposal now use lifecycle handlers. notifyRuntime's message channels remain adapter observations |
-| scm.go: startSCM; task.go: startTask | Native recovery start success; timer activation notification | Native completions now validate captured owner and cancellation before publishing timer activation; external status queries remain observations |
-| lifecycle_config.go: replaceLocked, acceptConfigRevisionLocked, acceptEnabledGraphLocked | Accepted graph/configuration, stable record creation/removal, load state, enablement and revisions | Commit decisions reside in lifecycle_config.go. Reload graph planning runs outside m.mu and validates retained ownership before publication; enable/disable planning uses configMu to protect accepted definitions while lifecycle work continues |
-| watchhub.go: installHub, failHub, disarmHubContext, closeHub, disposeHub, syncHubsLocked | Watch ownership, failure, uncertainty, configuration reconciliation | Admission, failure, disarm, disposal and reconciliation use lifecycle handlers; no direct unitRuntime writes remain in watchhub.go. Reconciliation admits each retained hub to at most one reload cleanup worker; completion releases admission without discarding failed native-close ownership. Watch I/O remains in workers |
-| pathwatch.go, registry.go, eventlog.go | Origin validation and trigger dispatch; path predicate latch on current hub | Predicate results now use an exact-generation lifecycle handler. Origin-bearing dispatch still needs bounded admission integration; probes and watch I/O stay outside it |
-| lifecycle_timer.go; timer.go; internal/timers engine | Accepted timer arm token/revision, activation origins, reload/stop reconciliation | Arm/disarm/retain decisions publish manager records under m.mu; callbacks require matching accepted token plus current scheduler storage eligibility. Scheduler deadlines, calendar work and persistence remain independent observations |
-| unitruntime.go: step, publishStartOutcome, cancelRestart, detachAsync, error helpers | Event transitions and explicit-member publication, cancellation and handle transfer | Restrict calls to coordinator decision handlers; helpers are not separate authorities. Rejected transitions enqueue bounded journal diagnostics instead of performing console I/O under the decision mutex |
-| lifecycle_userhost.go; lifecycle_userpolicy.go; user_native_work.go | Separate UserHost mutex, session/admission/linger policy, bySID instances, launch placeholders, uncertainty, cleanup and bounded native work | Instance launch/cleanup/shutdown and authoritative session snapshot acceptance use lifecycle_userhost.go handlers. Session requests, logoff, identity acceptance, admission revision/revocation and completed linger mutations/scans use lifecycle_userpolicy.go. Session observations require request identity and the accepted policy revision. Native work admission/completion retains token cleanup ownership. Token lookup, liveness, persistence and process cleanup execute outside h.mu; the SID gate and lingerIO serialize effects without becoming policy authorities. Full writer/class-budget acceptance remains open |
+Graph transactions publish each member through current record/generation/stop-
+epoch decisions. Their final result is never applied as a lifecycle snapshot.
+Timer arms and native triggers carry accepted origin identity; watch capacity
+waits stay in the existing watch loop rather than allocating retry workers.
+System snapshots copy units, active operations and user-host ownership under the
+same authorities; encoding occurs after unlock. Native status overlays remain
+separate observations and do not become lifecycle writers.
 
-Status assembly in manager.go copies lifecycle records and the PID accepted at
-process adoption together under m.mu. It never queries process liveness while
-building status or list-units. Journal/timer/native-proxy observations are still
-overlaid outside m.mu. The separate `snapshot` method publishes a bounded,
-immutable manager-local aggregate of units and active operations under that same
-decision lock, with no observation overlays. System control also captures the
-user host while holding m.mu then h.mu. User-host decisions never acquire the
-manager lock or call manager handlers; token/launch/cleanup effects run after
-unlock. The copy includes host-scoped attempt IDs, captured policy revisions,
-session requests and retained cleanup. Encoding and the complete response-size
-check run after both locks are released. Remaining writer/event coverage stays open.
-Native query results can describe a different observation time from the copied
-manager fields; retaining the existing response format does not close R2.1.
-
-Cleanup uncertainty is now a per-record resource set, with independent workload,
-notification, watch and stop-helper entries. `cleanup_resources.go` supplies the nonblocking
-set/projection helpers; exact-owner lifecycle handlers are the writers. Workload
-results exclude notification/watch errors, and confirmed process termination
-releases its process reference while unrelated failed closes remain owned.
-Status derives the aggregate flag and copies resource names under m.mu.
-Stop-helper admission/process publication/completion in `stop_helper.go` retain
-the exact runtime and invocation, a bounded helper slot and output completion.
-Retries join the same helper; a late launch cannot delay forced workload cleanup.
-`lifecycle_journal.go` adopts the main capture under retained launch ownership and
-publishes cleanup by exact record/capture identity. Stream/queue completion is a
-nonblocking observation for reload retention; failed waits retain a separate
-`journal` resource. Replacement creation waits for previous output before calling
-the launcher. Close joins main captures before closing the store.
+The [worker table](R2-COORDINATOR-AUDIT.md#worker-admission-retention-and-completion)
+records numeric admission and retained completion bounds for every reviewed class.
+Notification listeners admit at most 64 readers before PID authorization/spawn;
+recovery admission precedes spawning and obsolete gate waits cancel. Journal
+queue/timer-engine locks perform bounded memory work without storage-error
+formatting or file I/O. Reserved stop/diagnostic/maintenance paths retain progress
+under ordinary overload.
 
 ## Invariants and regression evidence
 
-`lifecycle_native.go` owns background proxy observations. Admission captures the
-runtime, generation, stop epoch and native target; queries execute outside the
-decision lock in at most four retained slots. Completion alone publishes bounded
-query diagnostics or confirmed inactivity and dependent-stop intent. Record
-operation counts retain outstanding queries through reload; close joins them.
-No status-time query is replayed into lifecycle state.
-
-All test paths below are relative to internal/manager unless noted. These tests
-protect existing behavior during migration; they do not substitute for the
-remaining SYSTEM/session and VM qualification.
-
-| Design invariant | Existing regression evidence |
-| --- | --- |
-| 1. Ownership through confirmed cleanup and reload | reload_ownership_test.go; reload_native_test.go; TestLateLaunchCleanupFailureRetainsOwnership in stop_failure_test.go |
-| 2. One owned invocation per unit | serialize_test.go; stop_pending_test.go; recovery_identity_test.go; invocation_test.go |
-| 3. Only current identity changes lifecycle | plan_config_test.go; stop_completion_test.go; start_rejection_test.go; recovery_identity_test.go |
-| 4. Stop/maintenance disarms recovery and late activation | shutdown_test.go; reload_trigger_test.go; timer_revision_test.go; operation_lifetime_test.go |
-| 5. Concurrent independent I/O, ordered transitions | internal/core/transaction_test.go and stop_test.go; TestRejectedMemberPublishesBeforeIndependentWorkerReturns in start_rejection_test.go; shutdown_test.go |
-| 6. Output drain independent of activation | TestReviewReproOneshotDrainsOutput in review_repro_windows_test.go; shutdown_test.go; internal/journal tests |
-| 7. Honest lifecycle, operation outcome and uncertain stop diagnostics | stop_failure_test.go; stop_completion_test.go; operations_test.go; operation_lifetime_test.go; review_status_test.go covers protocol-visible uncertainty during a real stop; immutable aggregate status remains open |
+All seven Design section 3 invariants have an explicit
+[test mapping](R2-COORDINATOR-AUDIT.md#invariant-and-sequence-matrix).
+The final 61-case matrix passed three repetitions per SYSTEM/headless standard-
+user identity at `4855ce8`, with no skips and full cleanup. Exact-source hosted
+race suites, vet and Windows/Linux staticcheck passed. Existing R1/R3 native
+ownership and conformance results remain complementary evidence.
 
 ## Audit procedure and completion gate
 
-Search production Go files for assignments to runtime state, substate, generation,
-stop epoch, process/notify/watch handles, invocation/configuration pointers,
-uncertainty, cancellation and restart history. Also inspect step calls, runtime
-construction, map replacement/deletion, accepted operations, timer engine updates
-and UserHost instance/session updates. Review the containing functions and their
-lock/I/O boundaries; text search alone cannot establish authority or ownership. Explicit member outcomes use publishStartOutcome with documented state/substate pairs; process events use step. Both are restricted to identity-checked handlers, not transaction snapshots.
+Future lifecycle changes must preserve the audited authority, current identity,
+bounded admission and retained resources. Repeat the relevant writer/caller/I/O
+review and invariant regressions when changing those paths. Text search or
+handler extraction alone cannot establish acceptance.
 
-Repeat this inventory after each migration. R2 closes only after every row has one
-coordinator decision path, worker observations cannot mutate records, bounded
-admission preserves completion delivery, and aggregate status snapshots are
-published by that authority. Removing transaction-result application is one
-completed slice, not the coordinator itself.
+This audit completes the R2 technical scope. It does not establish finite return
+of an uncancellable native call, maximum-configuration resource guarantees, every
+Windows identity/security mode, historical disk retention, full MSI servicing or
+the actual pilot soak. Those retain the separate [milestone gates](MILESTONES.md).

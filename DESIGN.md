@@ -1,6 +1,6 @@
 # winunitd design — revision 2
 
-September 5, 2026; status refreshed September 9, 2026. Target architecture for
+September 5, 2026; status refreshed September 13, 2026. Target architecture for
 the [roadmap](ROADMAP.md), based on the [architecture review](docs/DESIGN-REVIEW.md).
 This supersedes [revision 1](docs/archive/DESIGN-v1.md). The published `0.2.1-beta`
 implements a narrower supported contract; this document specifies intended
@@ -45,8 +45,9 @@ handler set is the sole authority. Handlers validate identity, update records an
 return retained effects. They do not wait for unit gates, workers, process I/O,
 client contexts or persistence. Workers perform those effects and deliver results
 through the same handlers. A future event loop is optional, not a second migration
-gate. User-host instance handlers follow this discipline; their remaining session
-policy and integration with system-manager admission remain explicit audit items.
+gate. User-host instance/session/policy handlers follow this discipline. Their
+authority and integration with system-manager admission are covered by the
+[completed R2 audit](docs/R2-COORDINATOR-AUDIT.md).
 
 Commands acquire bounded admission slots before allocating worker work; a bounded
 queue is optional. Reject excess control work with an explicit busy result. Worker
@@ -56,7 +57,8 @@ Stop and maintenance retain independent admission/precedence. A handler must nev
 wait synchronously for a worker whose completion needs the same authority.
 Removing scattered writers alone cannot close R2: R2.3 additionally requires
 measured overload/completion progress and bounded work for every operation class,
-and R2.1 still requires immutable aggregate snapshots.
+and R2.1 requires immutable aggregate snapshots. The [consolidated acceptance](docs/R2-EVIDENCE.md#consolidated-coordinator-acceptance)
+records those delivered requirements and the remaining separate qualification gates.
 
 ## 3. Records and invariants
 
@@ -130,7 +132,8 @@ Cleanup obligations are tracked independently for workload, notification, watch
 and stop-helper resources. Completion of one helper/process cannot clear another
 resource's uncertainty. Stop-helper output finalization retains the same helper
 owner until joined. See the unit reference for implemented command restrictions;
-the broader R3.2 conformance and native qualification gates remain open.
+the [R3 conformance evidence](docs/R3-EVIDENCE.md) records the qualified semantics
+and native modes; wider platform/security acceptance remains separate.
 
 Reserve part of the total deadline for forced termination and confirmation; the cooperative phase cannot consume the entire budget. Do not discard kill/wait/close errors. If termination cannot be established, retain ownership and failed/stopping diagnostics, refuse a replacement invocation, and fail maintenance. Console CTRL_BREAK and GUI messages remain deferred until a compatible console/session arrangement is implemented and tested; `CREATE_NEW_PROCESS_GROUP` alone is insufficient.
 
