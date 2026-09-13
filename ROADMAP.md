@@ -7,7 +7,7 @@ preserve documented beta syntax, and continue the R0-R8 architecture and
 qualification backlog. [Post-beta tracking](docs/POST-BETA-TRACKING.md) links
 GitHub milestones and the next focused work.
 
-Revision 2 - status refreshed September 9, 2026. Original review baseline:
+Revision 2 - status refreshed September 13, 2026. Original review baseline:
 `98abb80`, `0.1.0-alpha`; current published release: `0.2.1-beta`.
 
 This roadmap adopts the direction of the [architecture review](docs/DESIGN-REVIEW.md). It defines future work; it does not mark reviewed defects as fixed. [DESIGN.md](DESIGN.md) specifies the target architecture. [Milestones](docs/MILESTONES.md) define work packages, dependencies, and completion evidence. The [installer plan](docs/MSI-INSTALLER-PLAN.md) specifies package servicing details.
@@ -38,7 +38,7 @@ Other feature expansion is paused through the stabilization milestones. Existing
 
 ## Milestone sequence
 
-R0, R1, and R2 are **in progress**; later milestones contain groundwork but remain open. Their IDs track the longer-term design, not beta release prerequisites or deadlines. See the milestones for completed work packages and qualification evidence; B1-B4 record the completed first beta delivery. Use the post-beta tracking for current work.
+R2 and R3 have completed technical acceptance. R0, R1 and R4-R6 remain **in progress**; R7/R8 are planned. The [coordinator audit](docs/R2-COORDINATOR-AUDIT.md) and [consolidated evidence](docs/R2-EVIDENCE.md#consolidated-coordinator-acceptance) record the latest closure. Their IDs track the longer-term design, not beta release prerequisites or deadlines. See the milestones for completed work packages and qualification evidence; B1-B4 record the completed first beta delivery. Use the post-beta tracking for current work.
 
 | ID | Outcome | Depends on | Completion signal |
 | --- | --- | --- | --- |

@@ -1,14 +1,16 @@
 # Post-beta tracking
 
-September 7, 2026. The public 0.2.1-beta delivery gates B1-B4 are complete.
+Status refreshed September 13, 2026. The public 0.2.1-beta delivery gates B1-B4 are complete.
 Prioritize adopter feedback and reproducible defects in the supported core, then
 continue the architecture and qualification backlog. Preserve documented beta
-syntax. No new release or milestone closure is implied by this tracking update.
+syntax. Status follows the linked qualification evidence; no new release is
+implied by this tracking update.
 
 ## Milestones
 
-GitHub milestones mirror [repository acceptance gates](MILESTONES.md). R0-R6
-are in progress; R7-R8 remain planned, with the packaging spike already delivered.
+GitHub milestones mirror [repository acceptance gates](MILESTONES.md). R2/R3
+technical acceptance is complete; R0/R1/R4-R6 remain in progress and R7-R8 remain
+planned. The packaging spike is already delivered.
 Planned milestones may have no implementation issues yet; their work packages
 remain in MILESTONES.md. There are no promised due dates.
 
@@ -46,10 +48,12 @@ Repeatable oneshots are merged (below). As of September 13, tracked ExecStop,
 user-session reconciliation/recovery, SCM readiness and global maintenance are
 also implemented. Native SYSTEM/interactive and headless-user results have
 expanded; see [R2 evidence](R2-EVIDENCE.md), [stop evidence](R3-EVIDENCE.md) and
-the [maintenance contract](OPERATIONS.md#global-maintenance). Remaining
-R2.1-R2.2 state-writer/coordinator work continues in #96. The full health/dependency contract,
-session/security matrix, MSI servicing and signing retain their
-separate gates. The live pilot handoff and seven-day soak have not begun;
+the [maintenance contract](OPERATIONS.md#global-maintenance). The complete
+[coordinator audit and qualification](R2-EVIDENCE.md#consolidated-coordinator-acceptance)
+now finish the technical scope of #96/#97 and the R2 dependency of the delivered
+R3 conformance work. Broader session/security, operational stress, MSI servicing
+and signing retain their separate gates. The live pilot handoff and seven-day
+soak have not begun;
 successful beta installation and selected runtime tests do not close them.
 
 September 13: Fable issues #162-#165 are closed by PR #166-#169: unrelated

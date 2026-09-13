@@ -1,4 +1,69 @@
-# R2 initial evidence
+# R2 lifecycle coordinator evidence
+
+## Consolidated coordinator acceptance
+
+September 13, 2026. The [authority and worker audit](R2-COORDINATOR-AUDIT.md)
+maps production writer families, accepted ownership, lock/I/O boundaries,
+worker admission/joins and all seven Design section 3 invariants. It found one
+serialized decision authority per manager domain, with no transaction-result
+replay or worker-owned copy of accepted lifecycle state. The selected end-state
+is mutex-serialized handlers; a dedicated event-loop goroutine is not required.
+
+The final fixes and consolidated regressions passed exact-source Windows/Linux
+CI and isolated Windows 11 Enterprise LTSC build 26100 qualification. Each case
+ran three times under SYSTEM and three times under a headless standard user.
+There were no skips. Four final test-binary hashes, clean source, module hashes,
+CI identity, raw results and explicit fixture cleanup are retained privately.
+
+| Change | Exact source and CI | Cases per identity; SYSTEM/user seconds | Equal-tree merge |
+| --- | --- | --- | --- |
+| PR #206: journal/timer storage error observation | `c4f6341b55176940358736b462d624db0acc1828`, [CI](https://github.com/PLN/winunitd/actions/runs/34768748133) | 57; 8.680/6.613 | `ca3c3576edd49fc00d6892a6bcb5c7b83e2a6b26` |
+| PR #207: notification admission and consolidated matrix | `4855ce8c90fc2676f608ef778371592fd6a117e5`, [CI](https://github.com/PLN/winunitd/actions/runs/34769236108) | 61; 9.660/6.944 | `741575d2a02029ef7cd93bf91d04b54d1cd09fdc` |
+
+The final matrix selects 50 manager, four journal, three timer and four
+notification cases. It combines public control/lifecycle paths with delayed
+adapters for late creation/cleanup, captured reload/stop plans, stale recovery,
+operation cancellation/deadlines/disconnection, bounded user/idle/reload work,
+coherent snapshots and reserved completion/maintenance progress. Actual Windows
+workloads additionally exercise maintenance with all ordinary connections held,
+restart limits and new invocation identity. Notification saturation uses both
+loopback and real named pipes, including client-PID authorization. The
+[audit matrix](R2-COORDINATOR-AUDIT.md#invariant-and-sequence-matrix) names the
+invariant regressions. Existing R1 ownership and R3 conformance evidence remains
+part of acceptance; this matrix does not replace their broader native coverage.
+
+Storage error formatting previously could hold journal admission or timer-engine
+mutexes needed by otherwise independent lifecycle decisions. Error observation
+now precedes those locks, then revalidates the retained arm/token where applicable.
+Both permanent regressions fail on the previous implementation. Notification
+listeners now reserve 64 slots before PID authorization or reader creation.
+Denied/excess clients receive no acceptance; idle clients retain their slots.
+After one release, READY delivery recovers; cancellation closes and joins readers.
+Both portable and Windows-pipe saturation regressions fail without the cap.
+
+The final source passed the complete hosted race suites, vet and Windows/Linux
+staticcheck. Local full uncached race checks passed, as did twenty final
+notification-package repetitions. The existing invariant tests are selected as
+one qualification matrix rather than duplicated as new handler-only tests.
+An earlier 54-case journal-only candidate was not qualified: PowerShell treated
+expected native stderr as a terminating shell error after three passing cases.
+Its failure evidence is retained separately. A corrected fresh harness checks
+every native exit code while retaining stderr; neither timeouts nor tests were
+relaxed to obtain the final pass.
+
+Final teardown removed the fixture unit, disabled its temporary linger grant,
+joined test/user-manager/helper processes and confirmed profile release. The
+hosting broker remained running; the real pilot was unchanged. These results
+complete technical R2.1-R2.5 acceptance and the scope of issues #96/#97. They do
+not qualify every Windows identity/session/security mode, constrained workers,
+maximum-configuration stress, historical journal disk retention, durable daemon
+event resources, full MSI servicing or the real pilot soak. Those remain separate
+R0/R4-R7 gates. Admission bounds do not promise finite completion of an
+uncancellable native call: retained ownership and visible failure remain required.
+
+Earlier sections below record incremental evidence and its limitations at the
+time. Their open-work wording is historical; use this section, the completed
+audit and [milestones](MILESTONES.md) for current coordinator status.
 
 ## Nonblocking lifecycle diagnostics and error observations
 
