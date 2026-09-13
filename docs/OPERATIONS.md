@@ -403,6 +403,21 @@ state only after write, flush and close succeed. State is bounded to 16 KiB and
 uses version 2; legacy unversioned and version 1 timestamps are read and upgraded on the next
 save. Unsupported versions, malformed JSON and invalid timestamps fail visibly.
 
+Replacement uses a same-directory temporary file. Windows requests immediate
+`MoveFileExW` replacement with `MOVEFILE_WRITE_THROUGH`, without cross-volume
+copy fallback; Unix also syncs the parent directory after rename. Every write,
+flush, close and replacement error suspends dispatch. If replacement completed
+but its acknowledgement failed, the complete new record can remain on disk;
+repair/rearm reloads it and retains any pending activation identity. No fallback
+truncates the destination. Normal failed writes remove their temporary files;
+process death can leave an uncommitted `.timer-*` file, which readers ignore.
+
+The Windows contract follows [MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw).
+[Go Rename](https://pkg.go.dev/os#Rename) alone does not promise atomic behavior
+on Windows. Native process-crash and sharing-violation tests qualify complete
+record recovery on the tested local filesystem. They do not establish universal
+power-loss durability for storage controllers, network shares or other filesystems.
+
 Persistent calendar timers write a pending activation ID, target and timestamps
 before dispatch, then record activation success or failure. An interrupted
 pending record is retried once on the next arm with the same ID. The retry

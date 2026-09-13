@@ -14,9 +14,10 @@ import (
 // Store persists last scheduled/actual/successful execution under
 // <dir>/<name>.json (DESIGN.md §17, §32).
 type Store struct {
-	dir  string
-	load func(string) (Runtime, error) // fault injection, configured before use
-	save func(string, Runtime) error
+	dir   string
+	load  func(string) (Runtime, error) // fault injection, configured before use
+	save  func(string, Runtime) error
+	files *stateFileOps // per-store fault injection, configured before use
 }
 
 type persisted struct {
@@ -145,20 +146,7 @@ func (s *Store) Save(name string, rt Runtime) error {
 		return err
 	}
 	data = append(data, '\n')
-	f, err := os.CreateTemp(s.dir, ".timer-*")
-	if err != nil {
-		return err
-	}
-	temporary := f.Name()
-	defer os.Remove(temporary)
-	_, err = f.Write(data)
-	if err == nil {
-		err = f.Sync()
-	}
-	if err = errors.Join(err, f.Close()); err != nil {
-		return err
-	}
-	return os.Rename(temporary, path)
+	return writeStateFile(s.dir, path, data, s.files)
 }
 
 func formatStamp(t time.Time) string {
