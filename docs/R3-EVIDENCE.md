@@ -1,5 +1,42 @@
 # Unit semantics qualification
 
+## Dependency and native trigger conformance
+
+PR #187 source `a2ed9b4883d20ea72f5912c14810f29c70599d12` passed
+[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34760487473)
+and the consolidated disposable LTSC build 26100 matrix. All 27 SYSTEM cases
+and 17 headless standard-user cases passed three repetitions without skips,
+in 57.437 and 22.218 seconds respectively. Merge
+`f7d0ff1e80f09e45c8ee5d25f6d2bdf6ce139e41` has the tested tree.
+
+The native cases cover PartOf restart without root Wants, three successive
+process replacements, captured membership after reload, and adoption of new
+membership on the next invocation. Unexpected peer exit stops BindsTo members
+while Requires/PartOf peers remain running; explicit stop cleans their captured
+scope. Public-path regressions additionally verify stop/restart/shutdown ordering
+across changed definitions and preservation of dependents for paused/pending or
+missing SCM observations. Earlier real SCM/task inactivity qualification is
+recorded below. The reference distinguishes requirement propagation, ordering,
+partial transaction results and native uncertainty.
+
+The same native matrix covers format-2 CPU controls and OR path policy; changed,
+missing, disabled, file-filtered and initial/later existence watches; registry
+creation/deletion/disable and running-service behavior; and event-channel/event-ID
+filtering, missing channels, disable and running-service behavior. SYSTEM rejects
+HKCU watches; the headless user passes real loaded-HKCU notification and rejects
+System event-log access. Trigger events remain coalescible notifications.
+
+An initial matrix found two fixture errors, retained with its failed evidence:
+a directory watch legitimately reported immediate-child directory metadata, and
+the HKCU helper incorrectly equated session 0 with a service identity. The
+corrected file-specific negative/positive test and token/loaded-hive checks passed
+twenty local race repetitions before the final native matrix. Production path
+filtering was unchanged. All fixture processes exited, linger was disabled,
+the user profile unloaded, and the original hosting broker remained running.
+
+This completes technical R3.2. R3.5 still needs exposed proxy ownership and
+capabilities; overall R3 depends on R2 acceptance.
+
 ## Explicit format-2 policies and migration
 
 The versioned [unit reference](UNIT-REFERENCE.md#format-selection-and-migration)

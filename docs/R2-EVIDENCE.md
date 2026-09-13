@@ -1,5 +1,33 @@
 # R2 initial evidence
 
+## System user-host snapshot qualification
+
+PR #188 source `724cab62f3e339e2db604579821fa7c8a3ffc7a3` passed
+[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34760653961).
+Disposable LTSC build 26100 qualification installed the immutable CI payload
+under the existing SYSTEM service and captured 65 system snapshots during real
+headless S4U admission, two user-manager crashes, recovery and disable-linger.
+Each snapshot's running-manager/native-work/linger counts matched its copied
+user-host records. Independent native process and token queries verified the
+reported PID, target identity, session 0 and absence of duplicate managers.
+
+Both replacements had new instance IDs under the same host ID, recovering in
+8.936 and 9.822 seconds. Snapshot sequence increased and captured policy
+revisions did not exceed the host's accepted revisions. Disabling linger emptied
+ownership records, released the profile and prevented resurrection during the
+following twelve seconds. The previous broker's verified payload, manifest and
+service configuration were restored. Merge
+`9a1b54100ec814e7c59f7b2f056f124af1a567a8` has the tested tree.
+
+Wire regressions cover pending token work, capture without querying a blocked
+process adapter, immutable copies, retained failed cleanup, replacement identity
+and rejection of oversized user diagnostics. Ten focused race repetitions and
+the full uncached race suite, vet and Windows/Linux staticcheck passed; three
+combined repetitions passed after integration. Full native artifacts, hashes,
+snapshots and restoration evidence are retained privately. This closes the
+accepted user-ownership snapshot gap; complete event/writer/admission acceptance
+remains under R2.
+
 ## Service definition ownership
 
 A valid reload previously replaced the definition used to address an existing
