@@ -53,6 +53,9 @@ R2 and R3 have completed technical acceptance. R0, R1 and R4-R6 remain **in prog
 | R8 | Public release and supply-chain verification | R7 | Public-readiness review complete; signing provider integrated; final signed MSI, attestations, and immutable release verified |
 
 Dependencies describe acceptance, not a ban on overlapping implementation.
+R5.1 persistence and R5.2 delivery policy are technically complete; the
+[timer qualification](docs/R5-EVIDENCE.md#timer-delivery-acceptance) records
+clock/DST/coalescing coverage and the remaining operational gates.
 R2 closure requires the R1.1-R1.3 ownership/cleanup regressions to remain passing;
 it does not wait for R1.4 aggregate fairness, unattended R0 provisioning, or R4
 identity/session qualification. Those retain their own release gates. R6's R3-R5
