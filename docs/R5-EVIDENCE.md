@@ -1,9 +1,59 @@
 # Durable timers and diagnostics qualification
 
+## Journaling acceptance
+
+R5.3 technical acceptance is complete as of September 13, 2026. The R2/R3
+dependencies are satisfied. R5.4 durable daemon diagnostics/event resources and
+R5.5 combined operational stress remain open; this does not close overall R5.
+
+The final changes qualify total historical retention and separate captured
+stream identity from severity:
+
+| Source / change | Exact-source CI | Native cases per identity | Repetitions | SYSTEM / headless standard-user time | Equal-tree merge |
+| --- | --- | --- | --- | --- | --- |
+| `a38c88f269ea3a5903a737ad79f3e448195e170c`, [PR #215](https://github.com/PLN/winunitd/pull/215), historical disk retention | [34776212301](https://github.com/PLN/winunitd/actions/runs/34776212301) | 52 | 3 | 59.156s / 61.255s | `a4bc1433fe5f5233cc812fb850f847e07955eb9c` |
+| `a576ef265a376a8a4a8b3b67782c5389333ab58e`, [PR #216](https://github.com/PLN/winunitd/pull/216), stream/severity separation | [34776680148](https://github.com/PLN/winunitd/actions/runs/34776680148) | 59 | 3 | 56.811s / 54.691s | `84740a71d254bbc5155211ca3fda3531b86b150a` |
+
+Both disposable Windows 11 Enterprise LTSC build 26100 matrices ran with one
+logical CPU, `GOMAXPROCS=1` and test parallelism one, with no skips. The final
+matrix contains 43 journal, seven manager, one timer and eight notification
+cases. Four clean-source non-race test binaries, module/toolchain hashes and
+successful hosted Windows/Linux CI were verified for each source. Fixture,
+process, profile and linger cleanup passed; the hosting broker stayed running.
+Raw scripts, logs, measurements and manifests are retained privately. The test
+binaries embed the candidate manager; this does not qualify a newly installed
+broker or the MSI/pilot gates.
+
+| Requirement | Bound and accepted evidence |
+| --- | --- |
+| Lines and continuation | Captured messages fragment at 64 KiB with UTF-8 reconstruction and continuation/partial metadata. Unterminated stdout/stderr drain before EOF. Fragment/schema cases pass in the final matrix. |
+| Queue and fairness | 16 MiB / 16,384 records per store, including the in-flight write; 4 MiB / 12,288 records per invocation; 2048 queued groups. Round-robin service and displacement preserve quiet progress with explicit victim loss. [Combined manager pressure measurements](R1-EVIDENCE.md#combined-manager-pressure-measurements) qualify five noisy children plus a quiet child, sampled memory/worker growth, status latency and concurrent stop under stalled storage. |
+| File ownership and counter memory | 1024 owned file records/handles/buffers; 2048 per-name statistics entries, with up to 1024 protected configuration/ownership names. Lifetime totals survive history and configuration removal. Churn, failed retirement, concurrent captures, stale sync and manager status cases pass in the final matrix. |
+| Historical disk retention | 1 GiB including accepted buffered bytes, 8192 canonical current/archive filenames and a 16,384-entry initial scan limit. Only unowned historical units are evicted, ordered by their most recent generation activity. Buffered accounting, restart indexing, oversized index, alias protection, live-owner preservation and partial deletion retry pass. Real Windows sharing violations preserve locked history and recover after release. |
+| Observable storage degradation | Drops, write errors and historical eviction have separate counters. Short/partial writes retain the exact unwritten suffix; repair retries without new output. Failed-close loss, tail repair and every rotation step pass again. Blocked storage-error formatting and retention deletion preserve queue/admission or independent sync progress. [Earlier actual volume exhaustion](R1-EVIDENCE.md#actual-volume-exhaustion) supplements these injected failures. |
+| Compatible reads and severity | Journal v4 leaves raw stdout/stderr severity unknown, preserves stream/PID/invocation/user origin, and retains explicit daemon severity. Mixed v1-v4 reads preserve historical values and bytes. Native child output, system/user logs API and bounded supervisor diagnostic cases pass in the final matrix. The two new regressions fail against the old inference/version behavior. |
+
+Both changes passed full local race suites, vet and Windows/Linux staticcheck.
+Final full race times were journal 46.612s / manager 61.071s for retention and
+journal 51.472s / manager 63.073s for stream/severity. A stale test-helper deadline
+was corrected to give the later independent capture wait its own unchanged
+one-second allowance; 30 constrained repetitions passed. Exact-source CI covers
+the final retention retry check and all final test assertions.
+
+The [operational contract](OPERATIONS.md#accepted-work-and-cancellation) states
+admission and recovery limits. The disk budget is not a filesystem quota:
+unrelated/external files and oversized preexisting history can require operator
+repair. An overlarge initial index rejects writes visibly. Active or uncertain
+file owners are never evicted for space. Rotation progress is retained in memory,
+not an atomic multi-file power-loss transaction. Earlier resource measurements
+are sampled maxima for the documented fixture, not universal process-memory
+bounds. Full combined trigger/reader/disk/crash stress remains R5.5.
+
 ## Timer delivery acceptance
 
 R5.2 technical acceptance is complete as of September 13, 2026. The R2/R3
-dependencies are satisfied. R5.3-R5.5 and the complete R5 gate remain open.
+dependencies are satisfied. R5.3 is accepted above; R5.4-R5.5 and the complete
+R5 gate remain open.
 The [delivery contract](OPERATIONS.md#timer-delivery-and-clock-domains) documents
 relative and wall-clock origins, civil-time gaps/folds and active-service overlap;
 the [persistence evidence](#timer-state-replacement-and-interrupted-activation)
@@ -90,8 +140,8 @@ after integration.
 
 This qualifies retryable rotation errors. Progress is in-memory; multi-file
 rotation is not an atomic crash/power-loss transaction. Earlier file-handle and
-per-name-counter bounds remain implemented. Total historical disk retention,
-durable daemon diagnostics and the complete R5 acceptance remain open.
+per-name-counter bounds remain implemented. Total historical disk retention is
+now accepted above; durable daemon diagnostics and complete R5 remain open.
 
 ## Timer state replacement and interrupted activation
 
@@ -137,6 +187,6 @@ publication, so persistent workloads must be idempotent.
 This delivers the R5.1 technical slice and issue #99's crash/failure-injection
 scope. The evidence covers process crashes and the tested local filesystem; it
 does not establish universal power-loss durability for controllers or remote
-filesystems. The delivery policy is now qualified above. Journaling retention,
-diagnostics, stress, installer state rollback and overall R5 acceptance remain
+filesystems. Delivery policy and journaling are now qualified above. Diagnostics,
+stress, installer state rollback and overall R5 acceptance remain
 separate gates; R2/R3 technical acceptance is complete.
