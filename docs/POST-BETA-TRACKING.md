@@ -7,8 +7,8 @@ syntax. No new release or milestone closure is implied by this tracking update.
 
 ## Milestones
 
-GitHub milestones mirror [repository acceptance gates](MILESTONES.md). R0-R2
-are in progress; R3-R8 remain planned, with some groundwork already delivered.
+GitHub milestones mirror [repository acceptance gates](MILESTONES.md). R0-R5
+are in progress; R6-R8 remain planned, with the packaging spike already delivered.
 Planned milestones may have no implementation issues yet; their work packages
 remain in MILESTONES.md. There are no promised due dates.
 
@@ -51,6 +51,15 @@ R2.1-R2.2 state-writer/coordinator work continues in #96. Semantic migration,
 the full session/security matrix, MSI servicing and signing retain their
 separate gates. The live pilot handoff and seven-day soak have not begun;
 successful beta installation and selected runtime tests do not close them.
+
+September 13: Fable issues #162-#165 are closed by PR #166-#169: unrelated
+dependency allocation, journal retention, staticcheck enforcement and snapshot
+encoding are fixed. PR #170 adds qualified native proxy disappearance handling;
+PR #171-#172 retain output/bootstrap cleanup and join listener/job workers.
+The exact-source SYSTEM/headless-user results are recorded in
+[ownership evidence](R1-EVIDENCE.md#september-13-native-close-and-bootstrap-qualification)
+and [proxy evidence](R3-EVIDENCE.md#native-proxy-inactivity-observation).
+These merges advance R1/R3/R5 without closing the remaining acceptance gates.
 
 ## Priority: repeatable oneshots
 

@@ -6,9 +6,9 @@ feedback while continuing the R0-R8 design and qualification work. Complete
 coordinator migration, exhaustive qualification and the seven-day soak remain
 separate acceptance requirements; beta publication does not close them.
 
-September 9, 2026. Implements [ROADMAP.md](../ROADMAP.md) and [Design v2](../DESIGN.md).
-R0, R1 and the initial R2 ownership work are **in progress**; later milestones
-remain planned with some groundwork delivered. [Post-beta tracking](POST-BETA-TRACKING.md)
+Status updated September 13, 2026. Implements [ROADMAP.md](../ROADMAP.md) and [Design v2](../DESIGN.md).
+R0-R5 are **in progress**; R6-R8 remain planned, with the packaging spike and
+public beta already delivered. [Post-beta tracking](POST-BETA-TRACKING.md)
 maps the GitHub milestones and focused issues to these gates. Documentation and
 issue creation do not complete implementation or substitute for acceptance.
 
@@ -45,7 +45,7 @@ Exit gate: real-process tests cover deletion, invalid replacement, recreation wh
 
 ## R2 — Authoritative lifecycle coordinator
 
-Status: in progress (handler migration; admission/snapshots pending). Closure depends on preserved R1.1-R1.3 ownership/cleanup invariants, not completion of unrelated R1.4 or R4 qualification. Outcome: one state owner, concurrent I/O, explicit operation identity.
+Status: in progress (handler migration, bounded admission and snapshots delivered; complete writer/invariant acceptance pending). Closure depends on preserved R1.1-R1.3 ownership/cleanup invariants, not completion of unrelated R1.4 or R4 qualification. Outcome: one state owner, concurrent I/O, explicit operation identity.
 
 - [ ] **R2.1 Records/events:** a bounded immutable manager-local unit/active-operation snapshot is exposed through `winctl snapshot`; native and user-host observations remain separate domains. Complete coordinator-wide identity-bearing event coverage. Accepted/invocation/armed revisions and operation IDs are implemented. [Evidence](R2-EVIDENCE.md), [snapshot contract](OPERATIONS.md).
 - [ ] **R2.2 Coordinator:** Remaining to close: finish the [writer audit](LIFECYCLE-WRITERS.md), including timer/session policy and admission decisions, using the mutex-serialized handler contract in Design section 2. Preserve independent blocking I/O and prohibit transaction-result replay. [Evidence](R2-EVIDENCE.md).
@@ -59,7 +59,7 @@ Exit gate: each invariant in Design v2 §3 has a test/evidence mapping. Start/st
 
 ## R3 — Unit semantics, compatibility, and application health
 
-Status: planned. Dependencies: R2. Outcome: an explicit v2 behavior contract and controlled migration from alpha semantics.
+Status: in progress. Dependencies for closure: R2. Outcome: an explicit v2 behavior contract and controlled migration from alpha semantics.
 
 - [ ] **R3.1 Reference/migration:** publish `docs/UNIT-REFERENCE.md` with format marker, exact directive names/defaults, accepted/rejected features, argv grammar, and a compatibility table. Add a dry-run converter for legacy PathExists and CPU policy; never silently rewrite unit files. The accepted oneshot default changes directly to `RemainAfterExit=no`, with `yes` available explicitly; no oneshot migration layer is required.
 - [ ] **R3.2 Dependencies:** implement/test BindsTo on unexpected disappearance and PartOf stop/restart participation, including reverse members absent from the root's Wants. Document Requires versus ordering and partial transaction results.
@@ -72,7 +72,7 @@ Exit gate: conformance tests cover startup, explicit stop, restart, natural exit
 
 ## R4 — Windows service and user-manager qualification
 
-Status: planned. Dependencies: R2, R3. Outcome: real Windows identities and session transitions behave as designed.
+Status: in progress. Dependencies for closure: R2, R3. Outcome: real Windows identities and session transitions behave as designed.
 
 - [ ] **R4.1 Launch context:** select and implement a SYSTEM-to-user process launch mechanism that obeys cross-session handle rules. Obtain the target user's profile/environment/known folders; exclude arbitrary broker environment; track profile and token lifetime.
 - [ ] **R4.2 User host:** implement the accepted [interactive user admission policy](USER-ADMISSION.md): administrator-enabled users by default, optional delegation through user unit-file presence, and explicit per-SID overrides. Reconcile sessions, file-presence changes, policy changes, and manager exits; acquire fresh tokens on bounded recovery; cancel stale launch/recovery on logoff, admission revocation, disable-linger, and shutdown. File-based admission does not grant headless linger or bypass workload enablement.
@@ -115,7 +115,7 @@ Exit gate: disposable VM evidence includes genuine LocalSystem session-0 launch 
 
 ## R5 — Durable timers and operational diagnostics
 
-Status: planned. Dependencies: R2, R3. Outcome: bounded resource use and visible recovery/storage failures.
+Status: in progress. Dependencies for closure: R2, R3. Outcome: bounded resource use and visible recovery/storage failures.
 
 - [ ] **R5.1 Timer persistence:** implement atomic validated state replacement, pending/result activation records, corruption diagnostics, durable-write failure suspension, and explicit state-format migration.
 - [ ] **R5.2 Delivery policy:** coalesce missed calendar occurrences; retry interrupted pending activation with documented duplicate possibility. Test clock jumps, DST, suspend/resume, boot/startup origins, and overlap with a running service.
