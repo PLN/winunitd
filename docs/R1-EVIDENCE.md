@@ -47,13 +47,41 @@ retries. Genuine SYSTEM/session transitions require separate VM evidence.
 
 Manager close now accepts a caller deadline, joins a pending cleanup pass, returns journal/watch close errors, and retains failed watch teardown for retry. System/user daemon cleanup now shares the existing SCM stop window across user-host shutdown, unit shutdown, manager close, and daemon-job close. Pending shutdown/job-close calls are joined on retry, and joined cancellation cannot mask a cleanup failure in console or SCM exit results. Failure to assign the daemon itself to its job now prevents startup.
 
-Native watcher close retries retain failed handles and drain outstanding waits/reads. Manager stop and reload retain watch ownership, reject replacement during unresolved cleanup, and join pending closes across caller deadlines. Partial opens retain their cleanup on the unit when possible, otherwise on the manager. Real Windows session qualification and remaining asynchronous teardown paths still need qualification. Stop remains forced Job Object termination until R3.
+Native watcher close retries retain failed handles and drain outstanding waits/reads. Manager stop and reload retain watch ownership, reject replacement during unresolved cleanup, and join pending closes across caller deadlines. Partial opens retain their cleanup on the unit when possible, otherwise on the manager. The remaining session/teardown matrix still needs qualification. Tracked ExecStop now precedes forced cleanup where configured; see [the qualified stop contract](R3-EVIDENCE.md#tracked-cooperative-stop).
 
 Notification listeners also retain accepted clients until each connection closes successfully. Close seals accept admission, drains in-flight accepts after native listener close, and includes late clients in cleanup. Failed connection closes remain available to manager stop retry and block replacement. Successful native closes are not repeated, and an already-closed error cannot hide another failure in a joined error. Twenty race-enabled repetitions cover client-close failure, manager ownership/replacement rejection, late acceptance during close, and joined-error handling; the full local race suite and vet pass.
 
 A notification adapter returning both a listener and an open error transfers cleanup ownership to the manager. No process is launched from that partial result. Failed cleanup remains attached to the unit for stop retry, or to manager shutdown if the unit cannot own it. Successful cleanup permits a later start attempt. Both retry paths pass twenty race-enabled repetitions, alongside the full suite and vet.
 
 Path, existence, registry, and event-log adapters use the same resource-plus-error ownership contract. The manager includes the failed opening's resource alongside earlier watches in retained cleanup. Native directory/event allocation and registry notification-arm failures return unfinished handles if cleanup fails. Existence-watch rearming preserves partial opens as pending cleanup and stops rearming. Twenty portable race repetitions cover all four manager adapters; twenty Windows repetitions use protected native handles to verify failed-open cleanup retention and successful retry.
+
+## September 13 native close and bootstrap qualification
+
+PR #171 source `9ee2b5419677763423b24397b463e8820ee141bc` passed
+[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34751916046)
+and isolated Enterprise LTSC SYSTEM/headless standard-user qualification.
+Twenty repetitions per identity covered stdout/stderr protected-close retries,
+pending readers during capture/process cleanup, stream attachment and empty-job
+confirmation before process-handle release. Linux CI exposed a separate listener
+close completion race; a deterministic delayed-close regression reproduced it,
+and serving now joins that native closure before returning.
+
+PR #172 source `7cc8cbbbf7e1513fd3c353f164d3bb1ef8293c1e` passed
+[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34752120996)
+and the same native identities. Twenty repetitions of all eight selected tests
+also covered the five bootstrap handles, partial pipe/input setup, failed job
+configuration and parent-writer close after suspended process creation.
+Portable manager tests verified that cleanup without a PID remains observable,
+rejects replacement and permits stop retry. Unit-job close joins its completion
+worker. Both merge trees match their tested sources.
+
+Neither native run skipped a selected case. Final cleanup removed the fixture
+unit, disabled linger, unloaded the standard-user profile and found no test,
+user-manager or desktop-helper process. The existing hosting broker remained
+unchanged and Running. Raw logs, scripts, build manifests, CI identities and
+binary hashes are retained privately. These isolated test binaries qualify the
+listed cleanup paths; they do not replace the installed broker or close the
+remaining combined R1/R4 acceptance matrix, MSI servicing or R7 soak.
 
 ## Validation
 
@@ -138,7 +166,7 @@ Five aggregate-pressure repetitions filled the 16 MiB shared queue using five in
 
 - Windows identity/session scenarios and broader installer qualification remain open.
 - Aggregate overload fairness is qualified below. Lifecycle admission and journal file/retention bounds remain open; actual volume exhaustion passed on Server Core and injected read stalls preserve bounded worker admission.
-- Immutable configuration revisions and stale-event handling remain R2 work; service stop semantics remain R3 work.
+- Immutable revisions, selected stale-event handling and tracked ExecStop are delivered. Complete coordinator invariants, remaining health semantics and the full identity/session matrix retain their separate R2-R4 gates.
 
 ## Delivered implementation detail
 

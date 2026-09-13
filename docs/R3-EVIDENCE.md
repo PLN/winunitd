@@ -13,8 +13,15 @@ delayed results after replacement, blocked-query capacity and close retries,
 progress beside a blocked query, error recovery and task-instance disambiguation.
 The local Windows task fixture passed three real external-stop/dependent-cleanup
 cycles at about one second each. Local SCM fixture creation was skipped for lack
-of service-registration access; SYSTEM qualification remains required. This slice
-does not close missing-target/paused-state policy or the complete R3 acceptance.
+of service-registration access. Subsequent disposable LTSC SYSTEM qualification
+passed all six cases at `14cfc987a7c3d79b85607be94906068129f4cb8f`: three SCM
+and three scheduled-task cycles, including real dependent process cleanup, in
+0.998-1.012 seconds per cycle. No cases were skipped; no fixture services, tasks
+or processes remained. [Exact-source CI](https://github.com/PLN/winunitd/actions/runs/34750966320)
+passed, and PR #170 merged the same tested tree. An initial task registration
+fixture failed due to XML encoding; the corrected UTF-16 fixture and both raw
+attempts are retained privately. This does not close missing-target/paused-state
+policy or the complete R3 acceptance.
 
 ## Unrelated dependency-event allocation
 
