@@ -46,11 +46,22 @@
 			<ComponentRef Id="WorkerService" /><ComponentRef Id="WorkerTarget" /><ComponentRef Id="ExampleInstructions" />
 		</Feature>
 		<Binary Id="Preflight" SourceFile="$(Payload)\msi-check.exe" />
+		<Binary Id="PolicyToken" SourceFile="$(Payload)\msi-token.dll" />
+		<CustomAction Id="NewPolicyTransaction" BinaryRef="PolicyToken" DllEntry="NewPolicyTransaction" Execute="immediate" Return="check" />
+		<CustomAction Id="RollbackPolicy" BinaryRef="Preflight" ExeCommand="policy-rollback &quot;[INSTALLFOLDER].&quot; &quot;[DATADIR].&quot; [WinunitdPolicyTransaction]" Execute="rollback" Impersonate="no" Return="check" />
+		<CustomAction Id="PreparePolicy" BinaryRef="Preflight" ExeCommand="policy-prepare &quot;[INSTALLFOLDER].&quot; &quot;[DATADIR].&quot; [WinunitdPolicyTransaction]" Execute="deferred" Impersonate="no" Return="check" />
+		<CustomAction Id="ApplyPolicy" BinaryRef="Preflight" ExeCommand="policy-apply &quot;[INSTALLFOLDER].&quot; &quot;[DATADIR].&quot; [WinunitdPolicyTransaction]" Execute="deferred" Impersonate="no" Return="check" />
+		<CustomAction Id="CommitPolicy" BinaryRef="Preflight" ExeCommand="policy-commit &quot;[INSTALLFOLDER].&quot; &quot;[DATADIR].&quot; [WinunitdPolicyTransaction]" Execute="commit" Impersonate="no" Return="check" />
 		<CustomAction Id="CheckStopped" BinaryRef="Preflight" ExeCommand="check &quot;[INSTALLFOLDER].&quot; &quot;[DATADIR].&quot; &quot;[Installed][WIX_UPGRADE_DETECTED]&quot;"
 			Execute="deferred" Impersonate="no" Return="check" />
 		<CustomAction Id="TestFailure" BinaryRef="Preflight" ExeCommand="fail" Execute="deferred" Impersonate="no" Return="check" />
 		<InstallExecuteSequence>
-			<Custom Action="CheckStopped" Before="StopServices" Condition="NOT UPGRADINGPRODUCTCODE" />
+			<Custom Action="NewPolicyTransaction" After="InstallInitialize" Condition="NOT UPGRADINGPRODUCTCODE" />
+			<Custom Action="CheckStopped" Before="RollbackPolicy" Condition="NOT UPGRADINGPRODUCTCODE" />
+			<Custom Action="RollbackPolicy" Before="PreparePolicy" Condition="NOT UPGRADINGPRODUCTCODE" />
+			<Custom Action="PreparePolicy" Before="StopServices" Condition="NOT UPGRADINGPRODUCTCODE" />
+			<Custom Action="CommitPolicy" After="PreparePolicy" Condition="NOT UPGRADINGPRODUCTCODE" />
+			<Custom Action="ApplyPolicy" After="InstallServices" Condition="NOT REMOVE AND NOT UPGRADINGPRODUCTCODE" />
 			<Custom Action="TestFailure" After="RemoveExistingProducts" Condition="WINUNITD_TEST_FAIL = &quot;1&quot; AND NOT REMOVE" />
 		</InstallExecuteSequence>
 	</Package>

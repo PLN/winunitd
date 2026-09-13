@@ -26,7 +26,7 @@ Usage:
   winunitd uninstall
 
 Runs as the Windows Service "winunitd" (DisplayName: WinUnit Manager) when
-started by SCM: LocalSystem, Automatic (Delayed Start), restart on failure.
+started by SCM: LocalSystem, Automatic, restart on failure.
 Preshutdown is accepted and used for ordered stop (DESIGN.md §42).
 
 Console mode (no SCM) is used for tests and local runs. --base-dir still
