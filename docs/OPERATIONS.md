@@ -161,8 +161,39 @@ retained runtime ownership protect up to 1024 names from eviction; other names
 use insertion-order history and may restart their per-name counters after eviction.
 Machine `status` includes lifetime journal loss/error totals across all names,
 including evicted history. Last storage-error text is limited to 4096 UTF-8 bytes.
-These changes do not delete historical on-disk logs or impose a total disk quota
-across all historical names. They do not make filesystem I/O latency bounded.
+Retention counters `logEvictedFiles` and `logEvictedBytes` report successful
+historical-file deletion separately from rejected output. Unit status attributes
+eviction to that history's unit; machine status and `winctl status` retain totals
+for the manager lifetime, including removed configurations.
+
+Each journal store admits at most 1 GiB in total, counting canonical journal
+files and accepted buffered bytes, and 8192 current/archive filenames. Under pressure it deletes
+the least recently written historical unit's current file and archives. A unit
+is eligible only when it has no open or failed journal file owner; loaded-unit
+counter protection does not pin on-disk history. A temporary name reservation
+prevents a new writer racing deletion. Active/uncertain file ownership is never
+evicted to make space. If no eligible history exists, new output is drained and
+dropped with visible loss/storage errors until capacity becomes available.
+
+The initial history index is lazy and reads at most 16,384 directory entries;
+it retains at most 8192 canonical filenames. Excess historical files, nonregular
+journal paths or enumeration errors reject writes visibly and leave control
+available. Repair the directory and retry; failed indexing retries no more often
+than once per second. Existing over-budget history is counted before admitting
+new bytes. Unrelated filenames are untouched and outside the quota. External
+writers or files exceeding the budget before startup may require operator
+cleanup; this is a journal admission limit, not a filesystem quota.
+Standalone journal callers must use a reversible unit filename; ambiguous `.`
+and `..` names are rejected. Normal managed unit names are unaffected.
+
+Deletion uses the opened journal directory as its boundary. Each successful
+delete updates accounting once; a sharing/access failure preserves remaining
+files for retry. Indexing/deletion use one retained caller slot, perform no I/O
+under store/queue metadata locks, and do not block independent file sync workers.
+The byte budget includes pending buffers and interrupted-tail repair, with
+rotation accounting updated only after each successful native step. Retention
+is not an atomic multi-file transaction across crash or power loss. It does not
+make filesystem I/O latency bounded.
 
 Per-unit rotation keeps the current file and three archives, rotating before a
 record would exceed the 10 MiB current-file limit (one oversized record may exceed

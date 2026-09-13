@@ -141,6 +141,8 @@ type StatusResult struct {
 
 // MachineStatus is the daemon-wide view (DESIGN.md §46).
 type MachineStatus struct {
+	LogEvictedFiles     uint64 `json:"logEvictedFiles,omitempty"`
+	LogEvictedBytes     uint64 `json:"logEvictedBytes,omitempty"`
 	NativeProbes        int    `json:"nativeProbes,omitempty"`
 	ConfigRevision      string `json:"configRevision,omitempty"`
 	LogDroppedRecords   uint64 `json:"logDroppedRecords,omitempty"`
@@ -192,6 +194,8 @@ type UserRecoveryStatus struct {
 // Resource metrics are not reported. Legacy/native CPU controls and IoPriority are the
 // configured unit-file values when set (cheap; not a live Job Object query).
 type UnitStatus struct {
+	LogEvictedFiles        uint64             `json:"logEvictedFiles,omitempty"`
+	LogEvictedBytes        uint64             `json:"logEvictedBytes,omitempty"`
 	NativeProxy            *NativeProxyStatus `json:"nativeProxy,omitempty"`
 	RestartAttempt         uint32             `json:"restartAttempt,omitempty"`
 	RestartDelaySec        float64            `json:"restartDelaySec,omitempty"`

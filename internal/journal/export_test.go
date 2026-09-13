@@ -1,5 +1,13 @@
 package journal
 
+func OpenRetentionTestStore(dir string, maxFiles int) (*Store, error) {
+	s, err := Open(dir)
+	if err == nil {
+		s.maxDiskFiles = maxFiles
+	}
+	return s, err
+}
+
 // Exported only in the journal test build, for external manager integration.
 func OpenPressureTestStore(dir string, onOpen func()) (*Store, error) {
 	s, err := Open(dir)

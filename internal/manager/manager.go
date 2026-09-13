@@ -477,6 +477,7 @@ func (m *Manager) Status(name string) (*protocol.StatusResult, error) {
 		ms := m.machineLocked()
 		m.mu.Unlock()
 		stats := m.journal.TotalCaptureStats()
+		ms.LogEvictedFiles, ms.LogEvictedBytes = stats.EvictedFiles, stats.EvictedBytes
 		ms.LogDroppedRecords, ms.LogDroppedBytes = stats.DroppedRecords, stats.DroppedBytes
 		ms.LogStorageErrors, ms.LogLastStorageError = stats.StorageErrors, stats.LastStorageError
 		return &protocol.StatusResult{Machine: ms}, nil
@@ -518,6 +519,7 @@ func (m *Manager) machineLocked() *protocol.MachineStatus {
 // Process identity and lifecycle fields are copied together by unitStatusLocked.
 func (m *Manager) overlayJournal(st *protocol.UnitStatus) {
 	stats := m.journal.CaptureStats(st.Name)
+	st.LogEvictedFiles, st.LogEvictedBytes = stats.EvictedFiles, stats.EvictedBytes
 	st.LogDroppedRecords = stats.DroppedRecords
 	st.LogDroppedBytes = stats.DroppedBytes
 	st.LogStorageErrors = stats.StorageErrors

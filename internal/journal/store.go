@@ -36,10 +36,17 @@ const followPoll = 50 * time.Millisecond
 
 // Store is a directory of per-unit append-only journal files.
 type Store struct {
-	dir        string
-	maxSize    int64
-	keep       int
-	flushEvery time.Duration
+	dir               string
+	maxSize           int64
+	keep              int
+	flushEvery        time.Duration
+	maxDiskSize       int64
+	maxDiskFiles      int
+	diskMu            sync.Mutex
+	disk              diskRetention
+	diskGate          chan struct{}
+	pruning           map[string]bool // mu; excludes new opens while historical files are removed
+	onRetentionRemove func(string) error
 
 	mu            sync.Mutex
 	closed        bool
@@ -147,6 +154,10 @@ func Open(dir string) (*Store, error) {
 		maxSize:       DefaultMaxSize,
 		keep:          DefaultKeep,
 		flushEvery:    DefaultFlushEvery,
+		maxDiskSize:   DefaultMaxDiskSize,
+		maxDiskFiles:  DefaultMaxDiskFiles,
+		diskGate:      make(chan struct{}, 1),
+		pruning:       make(map[string]bool),
 		files:         make(map[string]*unitFile),
 		mainCaptures:  make(map[string]*Capture),
 		captureWake:   make(chan struct{}, 1),
@@ -378,10 +389,16 @@ func (s *Store) append(e Entry) error {
 
 func (s *Store) file(unit string) (*unitFile, error) {
 	unit = canonicalUnit(unit)
+	if decoded, ok := retainedDiskName(unitFileName(unit)); !ok || decoded != unit {
+		return nil, errors.New("journal unit name has no unique reversible filename")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return nil, fmt.Errorf("journal closed")
+	}
+	if s.pruning[unit] {
+		return nil, errRetentionBusy
 	}
 	if s.files == nil {
 		s.files = make(map[string]*unitFile)
@@ -437,7 +454,11 @@ func (u *unitFile) write(raw []byte, messageBytes int) error {
 			return err
 		}
 	}
+	if err := u.store.reserveDisk(u.unit, int64(len(raw)), false); err != nil {
+		return err
+	}
 	if err := u.w.append(raw, messageBytes); err != nil {
+		u.store.releaseDisk(u.unit, int64(len(raw)))
 		u.writeFailureLocked(err)
 		return err
 	}
@@ -448,8 +469,14 @@ func (u *unitFile) write(raw []byte, messageBytes int) error {
 }
 
 func (u *unitFile) openLocked() error {
+	// Reserve a possible new file and the interrupted-tail repair byte before
+	// native creation. The final size replaces this conservative reservation.
+	if err := u.store.reserveDisk(u.unit, 1, true); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(u.path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
 	if err != nil {
+		u.store.releaseDisk(u.unit, 1)
 		return err
 	}
 	size, repaired, err := repairJournalTail(f)
@@ -463,6 +490,7 @@ func (u *unitFile) openLocked() error {
 	u.f = f
 	u.w = &recordBuffer{writer: f}
 	u.size = size
+	u.store.observeDisk(u.unit, size)
 	if u.store.onOpen != nil {
 		u.store.onOpen()
 	}
@@ -584,6 +612,7 @@ func (u *unitFile) rotateLocked() error {
 		if err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("journal rotation step %d: %w", i, err)
 		}
+		u.store.rotatedDisk(u.unit, i, keep, err == nil)
 		u.rotateStep--
 	}
 	if err := u.openLocked(); err != nil {

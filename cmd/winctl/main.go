@@ -832,6 +832,9 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		if m.NativeProbes > 0 {
 			fmt.Fprintf(c.stdout, "  Native proxy queries: %d pending\n", m.NativeProbes)
 		}
+		if m.LogEvictedFiles != 0 {
+			fmt.Fprintf(c.stdout, "  Journal retention: %d historical files, %d bytes evicted (manager lifetime)\n", m.LogEvictedFiles, m.LogEvictedBytes)
+		}
 		if m.LogDroppedRecords != 0 || m.LogStorageErrors != 0 {
 			fmt.Fprintf(c.stdout, "  Journal: %d dropped records, %d dropped bytes, %d storage errors (manager lifetime)\n", m.LogDroppedRecords, m.LogDroppedBytes, m.LogStorageErrors)
 			if m.LogLastStorageError != "" {
