@@ -974,6 +974,12 @@ Environment="WINUNITD_JOB_PRINT_ERR=warn from journal"
 				if e.InvocationID != st.Unit.InvocationID {
 					t.Fatalf("journal invocation %q != status %q", e.InvocationID, st.Unit.InvocationID)
 				}
+				if e.Message == "hello from journal" && (e.Stream != "stdout" || e.Severity != "") {
+					t.Fatalf("native stdout identity/severity: %+v", e)
+				}
+				if e.Message == "warn from journal" && (e.Stream != "stderr" || e.Severity != "") {
+					t.Fatalf("native stderr identity/severity: %+v", e)
+				}
 			}
 			return
 		}

@@ -94,6 +94,7 @@ type Store struct {
 // Entry is one journal fragment. v=2 adds Severity, Session, and UserSID.
 // v=3 adds Continuation (follows a fragment on the same invocation/stream)
 // and Partial (no terminating newline). Older records default these to false.
+// V4 leaves raw capture severity unknown, independently of Stream.
 type Entry struct {
 	Timestamp    time.Time
 	Unit         string
@@ -257,7 +258,7 @@ func (s *Store) closeFiles() error {
 
 // Attach queues stdout and stderr for the unit's journal file, tagging
 // each line with invocationID (DESIGN.md §22, §24) and v=2 fields
-// (severity from stream; session and user SID from SetOrigin). Empty
+// (unknown severity; session and user SID from SetOrigin). Empty
 // invocationID is replaced with a new ID so isolated journal use still
 // correlates a capture. Nil streams are ignored. A nil Store still
 // drains so the child cannot block.
@@ -338,7 +339,6 @@ func (s *Store) capture(unit string, pid int, inv string, origin Origin, stream 
 			Stream:       stream,
 			Message:      msg,
 			InvocationID: inv,
-			Severity:     SeverityFromStream(stream),
 			Session:      origin.Session,
 			UserSID:      origin.UserSID,
 			Continuation: continuation,
@@ -352,9 +352,6 @@ func (s *Store) append(e Entry) error {
 		return nil
 	}
 	e.Unit = canonicalUnit(e.Unit)
-	if e.Severity == "" {
-		e.Severity = SeverityFromStream(e.Stream)
-	}
 	rec := record{
 		V:            FormatVersion,
 		Timestamp:    e.Timestamp.UTC().Format(time.RFC3339Nano),

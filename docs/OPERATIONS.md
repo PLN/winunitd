@@ -148,6 +148,12 @@ the normal invocation allowance; a blocked disk or console cannot hold the
 coordinator while it records a rejection. Manager close joins accepted journal
 records. Other daemon output and Windows event resources remain separate work.
 
+Journal v4 records leave raw stdout/stderr severity empty (unknown), while
+retaining stream identity. Neither stderr nor text resembling an error sets a
+severity. Explicit supervisor diagnostics keep their supplied level. Readers
+preserve historical v1-v3 values without rewriting or reclassifying old records;
+see the [journal format](RUNTIME-REFERENCE.md#journal-and-logs).
+
 Journal capture waits flush, sync and retire successfully persisted file records;
 later output reopens the same on-disk log with existing repair/rotation behavior.
 At most 1024 file records, handles and buffers can remain owned at once. A failed

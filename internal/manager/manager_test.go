@@ -336,13 +336,13 @@ WorkingDirectory=C:\Tools
 	if msgs["hello from unit"].Stream != "stdout" {
 		t.Fatalf("stdout = %+v", msgs["hello from unit"])
 	}
-	if msgs["hello from unit"].Severity != journal.SeverityInfo {
+	if msgs["hello from unit"].Severity != "" {
 		t.Fatalf("stdout severity = %+v", msgs["hello from unit"])
 	}
 	if msgs["warn from unit"].Stream != "stderr" {
 		t.Fatalf("stderr = %+v", msgs["warn from unit"])
 	}
-	if msgs["warn from unit"].Severity != journal.SeverityErr {
+	if msgs["warn from unit"].Severity != "" {
 		t.Fatalf("stderr severity = %+v", msgs["warn from unit"])
 	}
 	if msgs["hello from unit"].Session != "" || msgs["hello from unit"].UserSID != "" {
@@ -489,10 +489,10 @@ WorkingDirectory=C:\Tools
 	for _, e := range logs.Entries {
 		msgs[e.Message] = e
 	}
-	if msgs["hello from user"].Severity != journal.SeverityInfo {
+	if msgs["hello from user"].Stream != "stdout" || msgs["hello from user"].Severity != "" {
 		t.Fatalf("stdout = %+v", msgs["hello from user"])
 	}
-	if msgs["warn from user"].Severity != journal.SeverityErr {
+	if msgs["warn from user"].Stream != "stderr" || msgs["warn from user"].Severity != "" {
 		t.Fatalf("stderr = %+v", msgs["warn from user"])
 	}
 }
