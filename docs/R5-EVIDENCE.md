@@ -1,5 +1,38 @@
 # Durable timers and diagnostics qualification
 
+## Journal rotation failure and retry
+
+PR #192 source `7c114fb04d653dc5ae8bc254dc71359a136ebd48` passed
+[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34761951461).
+The previous implementation silently succeeded when a middle archive was locked
+on Windows. Rotation now checks every file operation and retains the failed step
+until repair, preventing repeated retries from evicting additional generations.
+
+Disposable LTSC build 26100 qualification ran the following five cases ten times
+each as SYSTEM and a headless standard user, with no skips:
+
+- Real Windows archive sharing violation, three rejected retries, then exact
+  retained-history recovery after handle release.
+- Six injected close/delete/archive-shift/current-rename/replacement-open phases,
+  with repeated capture cleanup retaining ownership, visible loss/storage errors,
+  and successful repair without duplicate or missing retained records.
+- Normal per-unit generation/size retention and chronological reading.
+- Retirement followed by interrupted-tail repair, reopening and rotation.
+- Failed write/close retirement retaining ownership until recovery.
+
+The suites took 5.122 seconds as SYSTEM and 5.183 seconds as the headless user.
+Final process/profile/linger cleanup passed; the hosting broker stayed running.
+Exact artifacts, module hashes, CI, full logs and cleanup observations are retained
+privately. Merge `fb68cb833aa777a5bf09e9d466f2f9e8f188c39b` has the tested tree.
+Twenty focused local race repetitions, the full uncached race suite, vet and
+Windows/Linux staticcheck passed; three combined proxy/rotation repetitions passed
+after integration.
+
+This qualifies retryable rotation errors. Progress is in-memory; multi-file
+rotation is not an atomic crash/power-loss transaction. Earlier file-handle and
+per-name-counter bounds remain implemented. Total historical disk retention,
+durable daemon diagnostics and the complete R5 acceptance remain open.
+
 ## Timer state replacement and interrupted activation
 
 PR #185 source `1d6719dc856499b8280d4570248ba634ecea6056` passed
