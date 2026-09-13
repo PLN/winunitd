@@ -60,7 +60,7 @@ func (h *admittedHandler) Handle(ctx context.Context, method string, params json
 	switch method {
 	case MethodStop, MethodDisableLinger, MethodCancelOperation, MethodMaintenance:
 		slots = h.stops
-	case MethodStatus, MethodOperation, MethodListUnits, MethodListTimers:
+	case MethodStatus, MethodSnapshot, MethodOperation, MethodListUnits, MethodListTimers:
 		slots = h.diagnostics
 	}
 	select {
