@@ -15,7 +15,7 @@ try {
 	$compilerVersion = & $compiler -dumpfullversion
 	if ($LASTEXITCODE) { throw 'C compiler version probe failed' }
 	if ($compilerVersion -ne '16.1.0') { throw 'MSI token helper requires GCC 16.1.0' }
-	& $compiler -shared -O2 -Wall -Wextra -Werror '-Wl,--no-insert-timestamp' -o dist/beta/payload/msi-token.dll tools/msi-token/token.c -lmsi -lbcrypt
+	& $compiler -shared -nostdlib -O2 -Wall -Wextra -Werror '-Wl,--no-insert-timestamp,--entry,0' -o dist/beta/payload/msi-token.dll tools/msi-token/token.c -lmsi -lbcrypt
 	if ($LASTEXITCODE) { throw 'MSI transaction identity helper build failed' }
 	Push-Location $PSScriptRoot
 	try {

@@ -120,7 +120,7 @@ func policy(args []string) error {
 }
 
 func createPolicyState(path string) (*os.File, error) {
-	sd, err := windows.SecurityDescriptorFromString("O:SYG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)")
+	sd, err := windows.SecurityDescriptorFromString("O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)")
 	if err != nil {
 		return nil, err
 	}
