@@ -68,7 +68,11 @@ func TestConcurrentCaptureDrainsDuringStorageStall(t *testing.T) {
 	helper := s.AttachConcurrent("work.service", 2, "helper", reader, nil)
 	produced := make(chan error, 1)
 	go func() {
-		_, err := io.WriteString(writer, strings.Repeat("x", invocationQueueBytes*2))
+		// Exceed the invocation's record budget with short lines. This tests
+		// draining/overflow while storage is held, without timing an 8 MiB
+		// rune-decoding workload on the same constrained runner. Separate
+		// aggregate/native pressure cases retain the byte-volume assertions.
+		_, err := io.WriteString(writer, strings.Repeat("x\n", invocationQueueRecords*2))
 		writer.Close()
 		produced <- err
 	}()

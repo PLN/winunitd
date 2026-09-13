@@ -204,6 +204,12 @@ remains tracked through shutdown even before its SID is known. Shared store I/O
 is still serialized; a reserved slot cannot interrupt a blocked filesystem or
 account lookup call. Existing per-instance cleanup ownership remains separate.
 
+Idle user cleanup has four workers and at most 132 queued SID entries: 128
+tracked managers plus four active completions whose owner may already have been
+removed. New queue entries discard obsolete, inactive requests before consuming
+that bound. Active requests retain their identity/revision until completion;
+repeated logoffs coalesce and never consume another worker for the same SID.
+
 Accepted stop and restart invalidate pending activation and suppress recovery for
 their complete captured stop scope before dispatching ordered teardown workers.
 Plan validation and capacity rejection happen before this change in eligibility. Manager shutdown/close also cancels accepted starts and

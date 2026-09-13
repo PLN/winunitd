@@ -7,6 +7,10 @@ import (
 
 const userIdleCleanupWorkers = 4
 
+// Pruning at admission leaves at most the tracked-owner limit plus one entry
+// per active worker finishing after another cleanup removed that owner.
+const maxUserIdleRequests = maxTrackedUserManagers + userIdleCleanupWorkers
+
 type userIdleRequest struct {
 	revision uint64
 	active   bool
@@ -40,6 +44,13 @@ func (h *UserHost) queueIdleCleanup(sid string) {
 	}
 	r := d.pending[sid]
 	if r == nil {
+		if len(d.pending) >= maxTrackedUserManagers {
+			for queuedSID, pending := range d.pending {
+				if !pending.active && h.bySID[queuedSID] == nil {
+					delete(d.pending, queuedSID)
+				}
+			}
+		}
 		r = &userIdleRequest{}
 		d.pending[sid] = r
 	}

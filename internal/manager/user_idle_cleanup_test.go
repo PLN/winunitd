@@ -173,3 +173,43 @@ func TestUserIdleCleanupFinishesUncertainStopAfterNewLogon(t *testing.T) {
 		t.Fatal("new logon abandoned already accepted cleanup")
 	}
 }
+
+// Hold each SID gate to keep the notification dispatcher from racing the
+// separately accepted cleanup. Completed owners must not accumulate queue
+// entries when new SIDs keep arriving before the dispatcher gets its next turn.
+func TestUserIdleCleanupBoundsRetiredSIDChurn(t *testing.T) {
+	h, _, _ := testUserHost(t, nil, nil)
+	h.cfg.QueryToken = func(id uint32) (*runtime.UserToken, error) {
+		return &runtime.UserToken{Info: runtime.UserInfo{SID: fmt.Sprintf("S-1-5-21-1-2-3-%d", id+5000)}}, nil
+	}
+	var unlocks []func()
+	defer func() {
+		for _, unlock := range unlocks {
+			unlock()
+		}
+	}()
+	for id := uint32(1); id <= 4*maxTrackedUserManagers; id++ {
+		h.Logon(id)
+		sid := h.recordLogoff(id)
+		if sid == "" {
+			t.Fatal("churn logon was not accepted")
+		}
+		unlocks = append(unlocks, h.ops.lock(sid))
+		h.queueIdleCleanup(sid)
+		h.mu.Lock()
+		inst := h.bySID[sid]
+		pending := len(h.idleDispatch.pending)
+		h.mu.Unlock()
+		if pending > maxUserIdleRequests {
+			t.Fatalf("retired SID queue grew to %d with only one owned manager", pending)
+		}
+		// Model an independent, already accepted cleanup retaining the SID gate.
+		if err := inst.proc.Kill(); err != nil {
+			t.Fatal(err)
+		}
+		h.applyUserCleanup(sid, inst, nil, false)
+	}
+	if h.ManagerCount() != 0 {
+		t.Fatal("churn left an owned manager")
+	}
+}
