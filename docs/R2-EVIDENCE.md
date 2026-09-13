@@ -1,5 +1,56 @@
 # R2 initial evidence
 
+## User policy and cleanup admission acceptance
+
+The following September 13 candidates passed exact-source Windows/Linux CI and
+isolated LTSC build 26100 qualification. Every selected case ran ten times as
+SYSTEM and ten times as a headless standard user, without skips. Each fixture
+finished with no helper/user-manager process, linger grant or loaded user profile;
+the hosting broker remained running. Raw artifacts, hashes, logs and cleanup
+observations are retained privately.
+
+| Change | Tested source and CI | Cases per identity; SYSTEM/user seconds | Equal-tree merge |
+| --- | --- | --- | --- |
+| PR #197: reserved linger revocation | `86bd7e27cffe7e7cd8b53e5effff137dfdd10502`, [CI](https://github.com/PLN/winunitd/actions/runs/34763167061) | 6; 2.067/0.866 | `bc7391e17e1c2638143495f44b69d24d2592c794` |
+| PR #198: user-policy decision handlers | `2e746a8d792954b54e9109e3701ea8e1581ed6bb`, [CI](https://github.com/PLN/winunitd/actions/runs/34764252879) | 14; 11.501/10.707 | `beb131d5c1bf31d291d2b696bed3fc1e6963ff89` |
+| PR #199: retired-SID queue bounds | `b8fe16d43ce45331194c3e588beec827d2d04c1c`, [CI](https://github.com/PLN/winunitd/actions/runs/34765087985) | 8; 1.816/0.753 | `b99f91db9bd9487d34fc3048247ac4a47b59d254` |
+| PR #200: reload watch-cleanup coalescing | `452afd26427e0dd9a22b658aabe86c87ffb96de7`, [CI](https://github.com/PLN/winunitd/actions/runs/34765143769) | 8; 2.100/0.827 | `936957ac0280e2435524a04d5c70a174dce9a55c` |
+
+Four blocked ordinary token queries could previously prevent disable-linger.
+Revocation now has one independent, tracked native slot, and a second request
+receives the RPC `busy` code. The control regression fills all eight native-work
+slots, checks a coherent snapshot and completes grant/process cleanup while
+ordinary observations remain blocked. Store I/O remains serialized; a reservation
+cannot interrupt a blocked account lookup or filesystem call.
+
+Session request identity, logoff, admission-policy revision/revocation and completed
+linger mutations/scans now publish through explicit decision handlers. Qualification
+covers stale token/file/session observations, launch races, failed cleanup,
+shutdown during persistence, grant replacement and immutable ownership snapshots.
+Two cases also run actual native children through exit without restart; the other
+cases use delayed adapters under real identities. This does not replace the
+separate actual S4U launch/recovery evidence below.
+
+Retired-SID churn reproduced 133 queued requests with only one current owner.
+Admission now prunes obsolete inactive requests, retaining at most 132 entries
+(128 owned managers plus four active completions). The 512-SID regression holds
+SID gates and delivers separately accepted cleanup; companion cases cover busy
+gates, coalescing, independent progress, failed stops and shutdown ownership.
+
+Repeated public reloads reproduced two waiters for one blocked watch. The fixed
+32-reload sequence keeps one admitted waiter, permits independent work, retains
+a failed close and retries it exactly once. Additional cases cover partial opens,
+late watch/condition observations, captured revisions and timer-arm ownership.
+The writer and complete worker-class/invariant audits remain R2 acceptance gates.
+
+CI also exposed fixture timing assumptions. Native no-restart checks now observe
+the first child start and exit before their absence window. The concurrent capture
+test uses short-line record pressure for stalled-storage drain/overflow; separate
+aggregate/native tests retain byte-volume coverage. The timer next-deadline fixture
+joins callback completion before comparing cached observations. Timeout and skip
+policies were not relaxed. Initial failed runs and final passing results are
+retained; [constrained-worker qualification](TEST-HARDENING.md) remains separate.
+
 ## Control overload and reserved maintenance acceptance
 
 Snapshot requests formerly consumed ordinary handler capacity. PR #194 source
