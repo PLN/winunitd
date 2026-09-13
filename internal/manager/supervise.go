@@ -163,6 +163,16 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		spec.TimeoutStart = 0
 	}
 
+	if svc.HasReadinessProbe() {
+		var cancel context.CancelFunc
+		ctx, cancel = m.clockTimeout(ctx, svc.TimeoutStartSec)
+		if !m.registerStartWait(effect, cancel) {
+			cancel()
+		}
+		defer cancel()
+		defer m.clearStartWait(effect)
+		spec.TimeoutStart = 0 // one shared creation/readiness budget above
+	}
 	proc, err := m.launch.Start(ctx, spec)
 	pid := 0
 	if proc != nil {
@@ -259,8 +269,14 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		return nil
 	}
 
-	if svc.Type == unit.TypeNotify {
-		if err := m.waitReady(ctx, name, proc, svc.TimeoutStartSec); err != nil {
+	if svc.WaitsForReadiness() {
+		var readyErr error
+		if svc.HasReadinessProbe() {
+			readyErr = m.waitProbeReadiness(ctx, effect.owner, proc, svc)
+		} else {
+			readyErr = m.waitReady(ctx, name, proc, svc.TimeoutStartSec)
+		}
+		if err := readyErr; err != nil {
 			stopping := m.acceptReadinessFailure(effect, proc, err)
 			stopErr := m.stopProcess(proc, stopTimeout(u))
 			if stopErr == nil && proc.Alive() {

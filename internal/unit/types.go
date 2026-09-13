@@ -195,6 +195,13 @@ type Unit struct {
 
 // ServiceSpec is the [Service] section.
 type ServiceSpec struct {
+	ReadinessMode            WatchdogMode
+	ReadinessEndpoint        string
+	ReadinessAddr            string
+	ReadinessURL             string
+	ReadinessExpectedStatus  int
+	ReadinessIntervalSec     time.Duration
+	ReadinessTimeoutSec      time.Duration
 	Type                     ServiceType
 	RemainAfterExit          bool     // oneshot: retain active state after successful completion
 	ServiceName              string   // Type=scm: existing SCM service (DESIGN.md §51)
