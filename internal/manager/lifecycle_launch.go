@@ -248,7 +248,7 @@ func (m *Manager) adoptProcess(event processAdoption) bool {
 		return false
 	}
 	rt.terminated = false
-	if event.effect.unit.Service.Type == unit.TypeNotify {
+	if event.effect.unit.Service.WaitsForReadiness() {
 		rt.step(core.EventStartRequested)
 	} else if event.autoRestart && event.alive && event.effect.unit.Service.Type != unit.TypeOneshot {
 		if rt.step(core.EventStartSucceeded) {
@@ -392,7 +392,7 @@ func (m *Manager) acceptProcessActivation(ctx context.Context, effect *launchEff
 		return time.Time{}, false
 	}
 	rt := effect.owner.record
-	if effect.unit.Service.Type == unit.TypeNotify {
+	if effect.unit.Service.WaitsForReadiness() {
 		if !rt.step(core.EventStartSucceeded) {
 			return time.Time{}, false
 		}

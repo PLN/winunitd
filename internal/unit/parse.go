@@ -28,6 +28,11 @@ var knownDirectives = map[string]map[string]bool{
 	},
 	"Service": {
 		"Type":                     true,
+		"ReadinessMode":            true,
+		"ReadinessEndpoint":        true,
+		"ReadinessExpectedStatus":  true,
+		"ReadinessIntervalSec":     true,
+		"ReadinessTimeoutSec":      true,
 		"RemainAfterExit":          true,
 		"ServiceName":              true,
 		"TaskName":                 true,
@@ -94,6 +99,16 @@ var sectionsByKind = map[Kind]map[string]bool{
 }
 
 type serviceBuilder struct {
+	readinessMode       string
+	readinessModeL      int
+	readinessEndpoint   string
+	readinessEndpointL  int
+	readinessStatus     string
+	readinessStatusL    int
+	readinessInterval   string
+	readinessIntervalL  int
+	readinessTimeout    string
+	readinessTimeoutL   int
 	remainAfterExit     string
 	remainAfterExitLine int
 
@@ -451,6 +466,16 @@ func (p *parser) applyService(e iniEntry) {
 		s.restartBackoff, s.restartBackoffL = e.value, e.line
 	case "RestartMaxDelaySec":
 		s.restartMaxDelay, s.restartMaxDelayL = e.value, e.line
+	case "ReadinessMode":
+		s.readinessMode, s.readinessModeL = e.value, e.line
+	case "ReadinessEndpoint":
+		s.readinessEndpoint, s.readinessEndpointL = e.value, e.line
+	case "ReadinessExpectedStatus":
+		s.readinessStatus, s.readinessStatusL = e.value, e.line
+	case "ReadinessIntervalSec":
+		s.readinessInterval, s.readinessIntervalL = e.value, e.line
+	case "ReadinessTimeoutSec":
+		s.readinessTimeout, s.readinessTimeoutL = e.value, e.line
 	case "RestartSec":
 		s.restartSec = e.value
 		s.restartSecL = e.line
@@ -806,6 +831,7 @@ func (p *parser) finishService() {
 		p.errorf(s.timeoutStopL, "ExecStop requires a positive TimeoutStopSec")
 	}
 
+	p.finishReadiness(spec, s)
 	if spec.Type.IsExternalProxy() {
 		p.finishWatchdogPolicy(spec, s)
 		tag := string(spec.Type)

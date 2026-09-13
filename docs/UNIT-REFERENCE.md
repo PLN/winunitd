@@ -287,6 +287,38 @@ The snapshot copies both with the same invocation/configuration identity.
 Stop, removal and shutdown cancel accepted recovery; duplicate or stale results
 cannot replace its wait, increment the step or affect a replacement invocation.
 
+## Startup readiness probes
+
+Format-2 `Type=simple` services can gate activation and ordered dependents on a
+loopback TCP or HTTP endpoint. Without a readiness probe, simple activation still
+means successful process creation. `Type=notify` keeps its authenticated READY=1
+contract; it rejects endpoint readiness directives, as do oneshots and proxies.
+
+| Directive | Default and accepted values |
+| --- | --- |
+| `ReadinessMode` | Omitted disables probes; explicit tcp or http |
+| `ReadinessEndpoint` | Required loopback host:port for TCP or http(s) URL for HTTP |
+| `ReadinessExpectedStatus` | HTTP only; default 200, integer 100..599 |
+| `ReadinessIntervalSec` | 100ms; positive finite interval between failed attempts |
+| `ReadinessTimeoutSec` | 1s; positive finite per-probe timeout |
+| `TimeoutStartSec` | 90s when omitted with endpoint readiness; positive finite aggregate creation/readiness budget |
+
+The first probe runs after output capture attaches to the created process.
+Probes run serially; a failed attempt waits ReadinessIntervalSec before retry.
+The aggregate budget also limits the per-probe request. The unit remains
+activating with unknown health, and After-ordered dependents wait for accepted
+readiness. Success publishes active/ready for the same invocation; any configured
+watchdog starts afterward. HTTP uses the same bounded body/status and loopback
+validation as watchdog probes. TCP establishes a connection only. Neither probe
+proves listener ownership, authenticated application operation or version; those
+remain separate application checks.
+
+Stop, operation cancellation and shutdown cancel the active readiness request.
+Timeout or main-process exit fails activation and retains normal process/job/
+output cleanup ownership. A retry cannot replace unresolved resources. Configured
+Restart and start limits still govern recovery. Reload does not retarget an
+in-flight readiness request; the next explicit activation adopts new settings.
+
 ## Probe health policy
 
 TCP and HTTP watchdogs observe liveness after activation. Format 2 adds:
@@ -319,9 +351,8 @@ successful stop clears the health observation; a watchdog failure retains its
 unhealthy result until stop or replacement. Late canceled/stale probes cannot
 alter a replacement. Authenticated notify readiness reports ready separately.
 
-These liveness settings do not gate dependent startup for Type=simple. Application
-startup readiness endpoints remain a separate R3 requirement; Type=notify keeps
-its authenticated READY=1 activation contract.
+These liveness settings do not gate dependent startup. Use the separate startup
+readiness directives above or Type=notify when dependent activation must wait.
 
 ## Unsupported syntax and updates
 
