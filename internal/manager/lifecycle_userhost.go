@@ -61,7 +61,7 @@ func (h *UserHost) acceptUserSessions(ids []uint32, epoch, revision uint64) (map
 
 // User-host instance decisions use h.mu and retained instance identity. The SID
 // gate serializes workers; token lookup, liveness, launch and kill stay outside
-// these decisions. Session/admission policy remains a separate migration row.
+// these decisions. Session/admission/linger policy uses lifecycle_userpolicy.go.
 func (h *UserHost) inspectUserLaunch(sid string, wanted func() bool) (*userInstance, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

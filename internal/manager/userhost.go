@@ -252,34 +252,12 @@ func (h *UserHost) dispatchLogon(sessionID uint32, asynchronous bool) {
 	if h == nil {
 		return
 	}
-	// Register the request before token lookup, which can outlive logoff or
-	// another logon that reuses the same session ID.
-	h.mu.Lock()
-	if h.closed {
-		h.mu.Unlock()
-		return
-	}
-	if _, known := h.sessions[sessionID]; !known && len(h.sessions) >= runtime.MaxInteractiveSessions {
-		h.mu.Unlock()
-		h.cfg.Logf("session admission exceeds limit %d", runtime.MaxInteractiveSessions)
-		return
-	}
-	if _, known := h.sessionRequests[sessionID]; !known && len(h.sessionRequests) >= runtime.MaxInteractiveSessions {
-		h.mu.Unlock()
-		h.cfg.Logf("pending session admission exceeds limit %d", runtime.MaxInteractiveSessions)
-		return
-	}
-	h.nextSessionRequest++
-	request := h.nextSessionRequest
-	work, err := h.acceptNativeUserWorkLocked()
-	if err == nil {
-		h.sessionRequests[sessionID] = request
-	} else {
-		delete(h.sessionRequests, sessionID)
-	}
-	h.mu.Unlock()
+	request, work, err := h.acceptSessionRequest(sessionID)
 	if err != nil {
-		h.cfg.Logf("session %d admission: %v", sessionID, err)
+		h.cfg.Logf("%v", err)
+		return
+	}
+	if work == nil {
 		return
 	}
 	if asynchronous {
@@ -287,14 +265,6 @@ func (h *UserHost) dispatchLogon(sessionID uint32, asynchronous bool) {
 	} else {
 		h.queryAcceptedUserLogon(sessionID, request, work)
 	}
-}
-
-func (h *UserHost) finishSessionRequest(sessionID uint32, request uint64) {
-	h.mu.Lock()
-	if h.sessionRequests[sessionID] == request {
-		delete(h.sessionRequests, sessionID)
-	}
-	h.mu.Unlock()
 }
 
 func (h *UserHost) queryAcceptedUserLogon(sessionID uint32, request uint64, work *userNativeWork) {
@@ -318,7 +288,8 @@ func (h *UserHost) queryAcceptedUserLogon(sessionID uint32, request uint64, work
 	revision := h.admissionRevision
 	policy := h.admission
 	h.mu.Unlock()
-	current := func() bool { return h.sessionRequests[sessionID] == request && h.admissionRevision == revision }
+	origin := userSessionOrigin{session: sessionID, request: request, revision: revision}
+	current := func() bool { return origin.currentLocked(h) }
 	var err error
 	tok, err = h.cfg.QueryToken(sessionID)
 	if err != nil {
@@ -349,18 +320,14 @@ func (h *UserHost) queryAcceptedUserLogon(sessionID uint32, request uint64, work
 		return
 	}
 
-	h.mu.Lock()
-	if h.closed || !current() {
-		h.mu.Unlock()
+	accepted, err := h.acceptSessionIdentity(origin, sid)
+	if err != nil {
+		h.cfg.Logf("%v", err)
 		return
 	}
-	if _, known := h.sessions[sessionID]; !known && len(h.sessions) >= runtime.MaxInteractiveSessions {
-		h.mu.Unlock()
-		h.cfg.Logf("session admission exceeds limit %d", runtime.MaxInteractiveSessions)
+	if !accepted {
 		return
 	}
-	h.sessions[sessionID] = sid
-	h.mu.Unlock()
 
 	if err := h.ensureRunning(sid, tok, current); err != nil {
 		h.cfg.Logf("start user manager %s: %v", sid, err)
@@ -389,16 +356,6 @@ func (h *UserHost) Logoff(sessionID uint32) {
 	if err := h.stopUser(context.Background(), sid, true); err != nil {
 		h.cfg.Logf("kill user manager %s: %v", sid, err)
 	}
-}
-
-func (h *UserHost) recordLogoff(sessionID uint32) string {
-	h.mu.Lock()
-	h.nextSessionRequest++ // invalidate any enumeration started before logoff
-	sid := h.sessions[sessionID]
-	delete(h.sessionRequests, sessionID)
-	delete(h.sessions, sessionID)
-	h.mu.Unlock()
-	return sid
 }
 
 func (h *UserHost) lingeringLocked(sid string) bool {
@@ -499,14 +456,7 @@ func (h *UserHost) mutateLingerRecord(user string, enable bool) (runtime.LingerR
 		err = h.store.Delete(rec.SID)
 	}
 	if err == nil {
-		h.mu.Lock()
-		h.lingerRevision++
-		if enable {
-			h.lingerRecords[rec.SID] = rec
-		} else {
-			delete(h.lingerRecords, rec.SID)
-		}
-		h.mu.Unlock()
+		h.acceptLingerMutation(rec, enable)
 	}
 	return rec, err
 }
