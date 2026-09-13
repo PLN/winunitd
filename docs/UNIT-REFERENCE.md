@@ -139,7 +139,7 @@ and `%NAME%` are not substituted.
 | Unit: `FormatVersion` | 1 (default) or 2; selects the explicit policies above |
 | Unit: `Requires`, `Wants` | Pull dependencies into the start plan; Requires propagates start failure, Wants permits failure |
 | Unit: `After`, `Before` | Ordering only; does not pull in the named unit |
-| Unit: `PartOf` | Reverse stop/restart participation; restart restores active/activating members, leaving otherwise unselected idle members inactive |
+| Unit: `PartOf` | Reverse stop/restart participation uses the running invocation's captured membership and ordering; restart restores active/activating members with new configuration, leaving otherwise unselected idle members inactive |
 | Unit: `StartLimitIntervalSec`, `StartLimitBurst` | Defaults 10s / 5; burst 0 disables the limit; explicit start resets the budget |
 | Service: `Type` | Default simple; simple launches a process; notify waits for readiness; oneshot waits for exit; proxies described below |
 | Service: `RemainAfterExit` | oneshot only; no (default) finishes inactive after success; yes retains active state |
@@ -222,6 +222,10 @@ outside the core beta guarantee; passing `verify` is not a qualification claim.
 Timers require at least one trigger. Path/registry/eventlog units always activate
 the neighboring same-basename `.service`; they do not accept `Unit=`. Empty
 trigger assignments are not list-reset syntax. Paths are non-recursive watches.
+Directory watches can still report metadata changes to an immediate child
+entry, including a child directory changed by activity below it. Use a file path
+when activation must be restricted to that filename. These are the native
+[ReadDirectoryChangesW notification semantics](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-readdirectorychangesw).
 Do not rely on persistent timers for lossless or exactly-once job delivery.
 
 Existence predicates activate at initial arm when satisfied and on an observed

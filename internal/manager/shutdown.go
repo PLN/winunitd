@@ -74,11 +74,14 @@ func (m *Manager) sealShutdownLocked() {
 // Callers retain one pass after their deadline and join it on retry.
 func (m *Manager) shutdownPass(ctx context.Context) error {
 	m.mu.Lock()
-	g := m.graph
+	g, planErr := m.stopGraphLocked()
 	roots := m.shutdownRootsLocked()
 	m.mu.Unlock()
 	if m.engine != nil {
 		m.engine.Stop()
+	}
+	if planErr != nil {
+		return planErr
 	}
 	if g == nil || len(roots) == 0 {
 		return ctx.Err()
@@ -141,6 +144,11 @@ func (m *Manager) stopTransaction(ctx context.Context, name string) (*protocol.U
 	if m.activeStops >= limit {
 		m.mu.Unlock()
 		return nil, protocol.ErrFailed("stop transaction capacity exhausted")
+	}
+	g, err := m.stopGraphLocked()
+	if err != nil {
+		m.mu.Unlock()
+		return nil, protocol.ErrFailed(err.Error())
 	}
 	plan, err := g.PlanStop(name)
 	if err != nil {

@@ -43,16 +43,8 @@ func (m *Manager) queueBoundStopsLocked(peer string) {
 	// Most lifecycle events have no bound dependents. Collect the retained
 	// policy graph only after finding work; the negative path allocates nothing
 	// for canonical dependency names, regardless of the loaded unit count.
-	definitions := make([]*unit.Unit, 0, len(m.units))
-	for _, rt := range m.units {
-		if rt != nil {
-			if u := rt.ownedUnit(); u != nil {
-				definitions = append(definitions, u)
-			}
-		}
-	}
 	sort.Strings(roots)
-	g, err := core.Build(definitions)
+	g, err := m.stopGraphLocked()
 	var plan *core.Transaction
 	if err == nil {
 		plan, err = g.PlanStop(roots...)
