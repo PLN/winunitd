@@ -90,6 +90,8 @@ func (s *Store) syncUnitContext(ctx context.Context, unit string) bool {
 // Unwritten records retained after a flush failure are counted only if close
 // abandons them. Sync failures and external file damage can lose additional data.
 type CaptureStats struct {
+	EvictedFiles     uint64
+	EvictedBytes     uint64
 	DroppedRecords   uint64
 	DroppedBytes     uint64
 	StorageErrors    uint64

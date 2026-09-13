@@ -93,6 +93,8 @@ func (s *Store) TotalCaptureStats() CaptureStats {
 }
 
 func addStats(to *CaptureStats, delta CaptureStats) {
+	to.EvictedFiles += delta.EvictedFiles
+	to.EvictedBytes += delta.EvictedBytes
 	to.DroppedRecords += delta.DroppedRecords
 	to.DroppedBytes += delta.DroppedBytes
 	to.StorageErrors += delta.StorageErrors

@@ -9,6 +9,11 @@ headless standard user, with no skips and complete fixture cleanup.
 exact source, CI, execution scope and the equal-tree merge.
 The contract is [Design sections 2-3](../DESIGN.md#2-architecture-and-ownership).
 
+The journal worker row also records the subsequent bounded disk-retention
+extension described in [OPERATIONS](OPERATIONS.md). Its index and deletion
+reservation are storage metadata; they do not publish lifecycle state or change
+the source identity of the original coordinator acceptance above.
+
 ## Review method and authority
 
 The review inventories production assignments, increment/decrement, map deletion,
@@ -75,7 +80,7 @@ still owns an incomplete operation.
 | Native stop/close calls | One pending `stopSet` attempt per exact process, handle, target or shutdown owner. Caller timeouts do not spawn a duplicate OS call; completed failed attempts may be explicitly retried. |
 | Native watch subscriptions | One event loop per accepted specification and one optional initial path activation per hub. Configuration limits are 1024 retained units and 64 KiB per file. Close fanout follows the captured specification set; reload has one cleanup admission per retained hub. Maximum-configuration stress remains R5.5. |
 | Timer engine | 1024 arms, 64 calendar expressions per arm, 32 active callbacks, one reserved calendar planner and one coalesced state-loading worker. Pending arms retain capacity-limited occurrences; stop joins callbacks/planning/storage work. |
-| Journal | One fair capture writer; aggregate 16 MiB/16,384 queued records and per-group 4 MiB/12,288 records. Four sync and four query workers. Retained captures own stream drain and cleanup; timeout cannot release unfinished sync ownership. |
+| Journal | One fair capture writer; aggregate 16 MiB/16,384 queued records and per-group 4 MiB/12,288 records. Four sync and four query workers. One caller owns history indexing/eviction, with no I/O under store/queue metadata locks; the disk index has at most 8192 filenames. Retained captures own stream drain and cleanup; timeout cannot release unfinished sync ownership. |
 | User-host native work | Four ordinary admissions plus one each for reconciliation, policy, linger scan and explicit revocation: eight slots total. Failed token close retains its slot; reconciliation or shutdown joins cleanup. |
 | User-host records and session requests | 128 manager/linger records; 4096 interactive session and pending-request identities. Late results require the accepted request/revision. |
 | User-host idle cleanup | One dispatcher, four workers, at most 132 requests (128 owners plus four retired active completions). Busy SID gates consume no worker; duplicate requests coalesce. |

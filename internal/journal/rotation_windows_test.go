@@ -67,4 +67,5 @@ func TestWindowsRotationLockedArchive(t *testing.T) {
 			t.Fatalf("recovered record %d=%q, want %q", i, entries[i].Message, want)
 		}
 	}
+	assertDiskAccounting(t, s)
 }

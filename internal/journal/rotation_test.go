@@ -94,6 +94,7 @@ func TestRotationFailureRetainsProgressAndCaptureCleanup(t *testing.T) {
 			if !reflect.DeepEqual(messages, []string{"two", "three", "four", "five"}) {
 				t.Fatalf("history changed during failed retries: %v", messages)
 			}
+			assertDiskAccounting(t, s)
 		})
 	}
 }

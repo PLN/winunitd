@@ -33,6 +33,7 @@ func TestConcurrentCaptureDoesNotWaitForOrReplaceMain(t *testing.T) {
 	if !helper.WaitContext(ctx) {
 		t.Fatal("helper capture did not complete independently")
 	}
+	cancel()
 	s.mu.Lock()
 	retained := s.mainCaptures["work.service"] == mainGroup
 	s.mu.Unlock()
@@ -43,6 +44,10 @@ func TestConcurrentCaptureDoesNotWaitForOrReplaceMain(t *testing.T) {
 		t.Fatal(err)
 	}
 	writer.Close()
+	// Main completion is a separate wait after producing its output. It must
+	// not inherit the helper wait's already-consumed deadline.
+	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 	if !s.WaitContext(ctx, "work.service") {
 		t.Fatal("main capture did not complete")
 	}
