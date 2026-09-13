@@ -131,29 +131,33 @@ Type=oneshot
 	}
 }
 
-func TestWindowsPathSubdirDoesNotFire(t *testing.T) {
+func TestWindowsPathFileIgnoresDescendantChanges(t *testing.T) {
 	watchDir := t.TempDir()
 	sub := filepath.Join(watchDir, "nested")
 	if err := os.Mkdir(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	watched := filepath.Join(watchDir, "top.txt")
+	if err := os.WriteFile(watched, []byte("0"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	dir := t.TempDir()
 	count := filepath.Join(dir, "count.txt")
-	m := windowsPathManager(t, dir, watchDir, `
-Type=oneshot
-`, "exit", 0, count)
+	m := windowsPathManager(t, dir, watched, "Type=oneshot\n", "exit", 0, count)
 	if _, err := m.Start(context.Background(), "foo.path"); err != nil {
 		t.Fatal(err)
 	}
 	assertState(t, m, "foo.path", core.Active)
+	// A directory watch can receive metadata notifications naming its immediate
+	// child directory. A file filter must reject those and descendant file names.
 	if err := os.WriteFile(filepath.Join(sub, "deep.txt"), []byte("1"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(800 * time.Millisecond)
 	if helperCountLines(count) != 0 {
-		t.Fatal("non-recursive watch must not fire on subdirectory writes")
+		t.Fatal("file watch fired for a descendant change")
 	}
-	if err := os.WriteFile(filepath.Join(watchDir, "top.txt"), []byte("1"), 0o644); err != nil {
+	if err := os.WriteFile(watched, []byte("1"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	waitWindowsCount(t, count, 1, 8*time.Second)

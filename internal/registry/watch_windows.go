@@ -157,21 +157,28 @@ func isMissingKey(err error) bool {
 		errors.Is(err, windows.ERROR_PATH_NOT_FOUND)
 }
 
-// UserHiveWatchOK reports whether this process can watch HKCU for the
-// current user. Session 0 (LocalSystem / windows-latest Actions) is not
-// a real user session; CreateKey succeeding is not enough.
+// UserHiveWatchOK checks a real user token and its loaded profile hive.
+// Headless S4U users can run in session 0; the session number is not identity.
 func UserHiveWatchOK() error {
-	var session uint32
-	if err := windows.ProcessIdToSessionId(windows.GetCurrentProcessId(), &session); err != nil {
-		return fmt.Errorf("cannot open HKCU: %w", err)
-	}
-	if session == 0 {
-		return fmt.Errorf("cannot open HKCU: process is in session 0 (not a user session)")
-	}
-	k, _, err := registry.CreateKey(registry.CURRENT_USER, `Software\winunitd\t1-registry\.probe`, registry.ALL_ACCESS)
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
 		return fmt.Errorf("cannot open HKCU: %w", err)
 	}
-	_ = k.Close()
-	return nil
+	sid := user.User.Sid
+	if sid.IsWellKnown(windows.WinLocalSystemSid) || sid.IsWellKnown(windows.WinLocalServiceSid) || sid.IsWellKnown(windows.WinNetworkServiceSid) {
+		return fmt.Errorf("cannot qualify HKCU with a built-in service identity")
+	}
+	// Require the user's actual loaded hive rather than accepting a fallback hive.
+	loaded, err := registry.OpenKey(registry.USERS, sid.String(), registry.READ)
+	if err != nil {
+		return fmt.Errorf("user profile hive is not loaded: %w", err)
+	}
+	if err := loaded.Close(); err != nil {
+		return err
+	}
+	current, err := registry.OpenKey(registry.CURRENT_USER, "", registry.NOTIFY)
+	if err != nil {
+		return fmt.Errorf("cannot open HKCU: %w", err)
+	}
+	return current.Close()
 }

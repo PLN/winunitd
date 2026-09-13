@@ -222,6 +222,10 @@ outside the core beta guarantee; passing `verify` is not a qualification claim.
 Timers require at least one trigger. Path/registry/eventlog units always activate
 the neighboring same-basename `.service`; they do not accept `Unit=`. Empty
 trigger assignments are not list-reset syntax. Paths are non-recursive watches.
+Directory watches can still report metadata changes to an immediate child
+entry, including a child directory changed by activity below it. Use a file path
+when activation must be restricted to that filename. These are the native
+[ReadDirectoryChangesW notification semantics](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-readdirectorychangesw).
 Do not rely on persistent timers for lossless or exactly-once job delivery.
 
 Existence predicates activate at initial arm when satisfied and on an observed
