@@ -33,6 +33,13 @@ the accepted arm/token is checked again afterward. Delayed error formatting
 cannot block disarm, independent rearm or status, and stale failures cannot
 publish into another arm.
 
+Notification listeners reserve one of 64 per-listener connection slots before
+PID authorization or reader creation. Idle/banner-blocked readers retain slots;
+overload closes without acceptance. Listener cancellation joins every admitted
+reader, and a released slot permits notification delivery again. This bounds
+the previously uncapped notification-reader class without changing unit state
+or the existing notification authorization checks.
+
 ## Current authority and migration boundary
 
 Design section 2 selects mutex-serialized decision handlers as the R2 end-state.

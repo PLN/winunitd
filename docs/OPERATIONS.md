@@ -206,7 +206,7 @@ history remains available through `operation ID`. A snapshot exceeding 1024 unit
 128 active operations or 512 KiB fails explicitly; it never truncates a complete
 view into apparent success. Use individual status/operation queries above those
 bounds. User-host input additionally allows at most 128 instance/linger records,
-256 entries in each accepted-session/pending-request map, and eight native-work
+4096 entries in each accepted-session/pending-request map, and eight native-work
 slots. All user-host text is included in the same 512 KiB response allowance.
 Snapshot captures do not retain additional history in the manager.
 
@@ -263,6 +263,14 @@ still retain their connection slots; deadlines do not forcibly terminate them.
 Raw connections can therefore exhaust the hard cap even when reserved handler
 slots are free. These bounds limit resource growth and isolate handler classes;
 they do not guarantee remote stop access under connection-flood overload.
+
+Each unit notification listener separately admits at most 64 connections,
+including idle readers and clients waiting for the acceptance banner. Extra
+connections close before PID authorization and receive no banner; `notify.Send`
+reports an acceptance error, and callers may retry within their deadline.
+The connection keeps its slot until its reader and close finish. Releasing a
+slot permits new notifications; cancellation closes and joins accepted readers.
+The existing `NotifyAccess` checks still apply to every admitted connection.
 
 Reload constructs candidate dependency graphs outside the lifecycle mutex and
 rechecks ownership before accepting them. If concurrent lifecycle changes
