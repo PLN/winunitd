@@ -7,7 +7,7 @@ coordinator migration, exhaustive qualification and the seven-day soak remain
 separate acceptance requirements; beta publication does not close them.
 
 Status updated September 13, 2026. Implements [ROADMAP.md](../ROADMAP.md) and [Design v2](../DESIGN.md).
-R0-R5 are **in progress**; R6-R8 remain planned, with the packaging spike and
+R0-R6 are **in progress**; R7-R8 remain planned, with the packaging spike and
 public beta already delivered. [Post-beta tracking](POST-BETA-TRACKING.md)
 maps the GitHub milestones and focused issues to these gates. Documentation and
 issue creation do not complete implementation or substitute for acceptance.
@@ -34,9 +34,9 @@ Exit gate: supported builds and existing isolated test lanes pass; the two revie
 
 Status: in progress alongside remaining supervised R0 qualification. Dependencies for closure: R0. Outcome: urgent correctness fixes in the existing implementation before structural refactoring.
 
-- [ ] **R1.1 Reload:** Remaining to close: consolidate the required real-process/native ownership matrix and obtain maintainer acceptance of retained status/log/stop and suppressed restart after removal. [Evidence](R1-EVIDENCE.md), [revision/trigger coverage](R2-EVIDENCE.md).
-- [ ] **R1.2 Activation:** Remaining to close: finish the post-creation failure/exit-before-attach qualification matrix jointly with R1.3; retain passing large-output/stop-during-start regressions. Completed-oneshot beta semantics remain unchanged until R3. [Evidence](R1-EVIDENCE.md).
-- [ ] **R1.3 Stop results:** Remaining to close: finish the exact-identity termination/handle-failure matrix and confirm every failed cleanup remains owned, observable and retryable. SYSTEM-to-user session qualification belongs to R4; graceful stop belongs to R3. [Evidence](R1-EVIDENCE.md).
+- [x] **R1.1 Reload:** deletion, invalid replacement, same-name recreation, retained status/log/stop and suppressed replacement passed the consolidated real-process matrix at `f91fdb7`. [Evidence](R1-EVIDENCE.md#consolidated-ownership-and-cleanup-acceptance).
+- [x] **R1.2 Activation:** output-before-wait, large/no-newline streams, timeout/stop during start, real exit-before-attach and all five postcreation setup failure stages passed the same SYSTEM/headless-user matrix. [Evidence](R1-EVIDENCE.md#consolidated-ownership-and-cleanup-acceptance).
+- [x] **R1.3 Stop results:** exact native wait/kill/query/handle failures retain observable cleanup and block replacement until retry succeeds; consolidated qualification passed at `f91fdb7`. [Evidence](R1-EVIDENCE.md#consolidated-ownership-and-cleanup-acceptance). Overall R1 still depends on R0 and milestone acceptance.
 - [x] **R1.4 Capture bounds:** queue fairness plus combined memory/worker, loss, quiet progress and status/stop measurements qualified at `ff822d2` by exact-source Windows/Linux race CI and isolated native SYSTEM/standard-user pressure runs. Three cycles per identity verify storage recovery and cleanup stability. Overall lifecycle admission remains R2.3; historical journal file/retention bounds remain R5.3. [Measured evidence and limits](R1-EVIDENCE.md#combined-manager-pressure-measurements), [issue #95](https://github.com/PLN/winunitd/issues/95).
 
 Implementation history and exact qualification identities are in [R1 evidence](R1-EVIDENCE.md).
@@ -61,7 +61,7 @@ Exit gate: each invariant in Design v2 §3 has a test/evidence mapping. Start/st
 
 Status: in progress. Dependencies for closure: R2. Outcome: an explicit v2 behavior contract and controlled migration from alpha semantics.
 
-- [ ] **R3.1 Reference/migration:** publish `docs/UNIT-REFERENCE.md` with format marker, exact directive names/defaults, accepted/rejected features, argv grammar, and a compatibility table. Add a dry-run converter for legacy PathExists and CPU policy; never silently rewrite unit files. The accepted oneshot default changes directly to `RemainAfterExit=no`, with `yes` available explicitly; no oneshot migration layer is required.
+- [x] **R3.1 Reference/migration:** delivered in PR #175 with exact-source CI and native SYSTEM/headless-user CPU/path qualification at `ad5f17f`; [evidence](R3-EVIDENCE.md). Published `docs/UNIT-REFERENCE.md` with format marker, exact directive names/defaults, accepted/rejected features, argv grammar, and a compatibility table. The dry-run converter preserves legacy PathExists and CPU policy without silently rewriting unit files. The accepted oneshot default changes directly to `RemainAfterExit=no`, with `yes` available explicitly; no oneshot migration layer is required.
 - [ ] **R3.2 Dependencies:** implement/test BindsTo on unexpected disappearance and PartOf stop/restart participation, including reverse members absent from the root's Wants. Document Requires versus ordering and partial transaction results.
 - [x] **R3.3a Repeatable oneshots:** completed/inactive oneshots by default and explicit RemainAfterExit merged in PR #116 after exact-head Windows/Linux CI at `c1a87e3`. Delivered separately from graceful stop; [scope and evidence](POST-BETA-TRACKING.md#priority-repeatable-oneshots) cover repeat invocation, overlap, ordering, failure and cleanup.
 - [x] **R3.3b Services/stop:** single ExecStop with captured context, separate bounded helper ownership/output, shared graceful/forced budget, late-launch retention and cleanup retries. Exact-source CI and eight genuine SYSTEM/headless-user cases passed at `b8f356e`, including hung helper/descendant termination and both oneshot modes. [Evidence and limits](R3-EVIDENCE.md#tracked-cooperative-stop). Console/GUI signals remain deferred.
@@ -127,7 +127,7 @@ Exit gate: fault injection never silently treats corrupt persistence as an empty
 
 ## R6 — Serviceable internal MSI
 
-Status: planned. Dependencies: R3, R4, R5; packaging spike from R0. Outcome: an internal installer whose install/upgrade/rollback behavior is proven.
+Status: in progress. Dependencies: R3, R4, R5; packaging spike from R0. Outcome: an internal installer whose install/upgrade/rollback behavior is proven. [Delivered startup/servicing evidence](R6-EVIDENCE.md) covers selected paths without closing the full gate.
 
 - [ ] **R6.1 Package:** implement the [installer contract](MSI-INSTALLER-PLAN.md), stable component/upgrade identity, version/PE metadata, protected files/data, optional owned PATH entry, service/event registration, quiet UI, and no destination build prerequisites.
 - [ ] **R6.2 Maintenance/rollback:** quiesce before replacing files; test stop beyond MSI's standard wait; preserve prior service/configuration state and restore it on injected failures. Abort replacement when processes or handles remain owned/live.

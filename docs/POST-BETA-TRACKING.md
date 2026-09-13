@@ -7,8 +7,8 @@ syntax. No new release or milestone closure is implied by this tracking update.
 
 ## Milestones
 
-GitHub milestones mirror [repository acceptance gates](MILESTONES.md). R0-R5
-are in progress; R6-R8 remain planned, with the packaging spike already delivered.
+GitHub milestones mirror [repository acceptance gates](MILESTONES.md). R0-R6
+are in progress; R7-R8 remain planned, with the packaging spike already delivered.
 Planned milestones may have no implementation issues yet; their work packages
 remain in MILESTONES.md. There are no promised due dates.
 
@@ -47,8 +47,8 @@ user-session reconciliation/recovery, SCM readiness and global maintenance are
 also implemented. Native SYSTEM/interactive and headless-user results have
 expanded; see [R2 evidence](R2-EVIDENCE.md), [stop evidence](R3-EVIDENCE.md) and
 the [maintenance contract](OPERATIONS.md#global-maintenance). Remaining
-R2.1-R2.2 state-writer/coordinator work continues in #96. Semantic migration,
-the full session/security matrix, MSI servicing and signing retain their
+R2.1-R2.2 state-writer/coordinator work continues in #96. The full health/dependency contract,
+session/security matrix, MSI servicing and signing retain their
 separate gates. The live pilot handoff and seven-day soak have not begun;
 successful beta installation and selected runtime tests do not close them.
 
@@ -60,6 +60,13 @@ The exact-source SYSTEM/headless-user results are recorded in
 [ownership evidence](R1-EVIDENCE.md#september-13-native-close-and-bootstrap-qualification)
 and [proxy evidence](R3-EVIDENCE.md#native-proxy-inactivity-observation).
 These merges advance R1/R3/R5 without closing the remaining acceptance gates.
+
+September 13 follow-up: format-2 reference/migration is delivered in PR #175;
+startup/recovery policy and selected MSI paths in PR #177; snapshot failure
+diagnostics in PR #178; consolidated R1 ownership/cleanup qualification in
+PR #179. [R1 acceptance evidence](R1-EVIDENCE.md#consolidated-ownership-and-cleanup-acceptance)
+completes the technical scope of #94. [Installer evidence](R6-EVIDENCE.md) moves
+R6 into progress. Remaining milestone exit gates and the pilot soak stay open.
 
 ## Priority: repeatable oneshots
 
