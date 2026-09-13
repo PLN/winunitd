@@ -1,10 +1,25 @@
 package timers
 
 import (
+	"math"
 	"runtime"
 	"testing"
 	"time"
 )
+
+func TestFakeLongWaitKeepsRemainingBudget(t *testing.T) {
+	fk := NewFake(time.Time{})
+	tm := fk.Clock().Timer(time.Duration(math.MaxInt64))
+	fk.Advance(time.Second)
+	if !fk.WaitingAt(time.Duration(math.MaxInt64) - time.Second) {
+		t.Fatal("long wait overflowed its uptime deadline")
+	}
+	select {
+	case <-tm.C():
+		t.Fatal("long wait fired early")
+	default:
+	}
+}
 
 func TestFakeAdvanceFiresTimer(t *testing.T) {
 	t.Parallel()
@@ -73,19 +88,46 @@ func TestFakeJumpWallDoesNotFireMonotonicTimer(t *testing.T) {
 	default:
 		t.Fatal("JumpWall must signal Changed")
 	}
+	fk.Advance(30 * time.Minute)
+	select {
+	case <-tm.C():
+		t.Fatal("advance after a wall jump fired a partly elapsed wait")
+	default:
+	}
+	fk.JumpWall(fk.Now().Add(-3 * time.Hour))
+	if when, ok := fk.NextWhen(); !ok || !when.Equal(fk.Now().Add(30*time.Minute)) {
+		t.Fatalf("remaining monotonic wait projection = %v, %v", when, ok)
+	}
+	fk.Advance(30 * time.Minute)
+	select {
+	case <-tm.C():
+	default:
+		t.Fatal("backward wall jump delayed an elapsed wait")
+	}
 }
 
-func TestFakeSuspendLeavesSinceBoot(t *testing.T) {
+func TestFakeSuspendIncludesWindowsUptime(t *testing.T) {
 	t.Parallel()
 	fk := NewFake(time.Time{})
 	boot := fk.SinceBoot()
 	wall := fk.Now()
+	tm := fk.Clock().Timer(time.Hour)
 	fk.Suspend(2 * time.Hour)
-	if fk.SinceBoot() != boot {
-		t.Fatalf("SinceBoot = %s, want %s", fk.SinceBoot(), boot)
+	if fk.SinceBoot() != boot+2*time.Hour || fk.SinceStart() != 2*time.Hour {
+		t.Fatalf("resume uptime = %s/%s", fk.SinceBoot(), fk.SinceStart())
 	}
 	if !fk.Now().Equal(wall.Add(2 * time.Hour)) {
 		t.Fatalf("wall = %v", fk.Now())
+	}
+	select {
+	case <-tm.C():
+	default:
+		t.Fatal("resume did not deliver the elapsed wait")
+	}
+	select {
+	case <-fk.Clock().Changed:
+	default:
+		t.Fatal("resume did not signal clock reconciliation")
 	}
 }
 

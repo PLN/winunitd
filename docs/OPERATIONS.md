@@ -463,6 +463,13 @@ eligible. Simultaneously due triggers coalesce into one activation. Recorded
 scheduled time identifies the due source rather than an obsolete projection.
 The existing start contract coalesces activation of an already active service.
 
+Calendar expressions use the manager's local timezone. A requested civil time
+inside a spring-forward gap moves to the first valid instant after that gap on
+the same date. A repeated time during rollback uses its first occurrence,
+including offset changes shorter than one hour. Reconciliation does not deliver
+the second copy; the next matching civil date remains eligible. Persistent
+catch-up and interrupted-attempt recovery retain the rules below.
+
 ## Timer storage work
 
 Timer arms load persisted state asynchronously. Status and `list-timers` report

@@ -6,9 +6,9 @@ import (
 )
 
 // Fake is a test clock. Advance moves wall time and SinceBoot together
-// and fires due NewTimer waits. JumpWall / Suspend move wall time only
-// and signal Clock.Changed so calendar and OnUnitActiveSec deadlines
-// are recomputed (DESIGN.md §18).
+// and fires due NewTimer waits. JumpWall changes only wall time. Suspend models
+// Windows resume: uptime includes sleep, so both clocks and due waits advance.
+// Both discontinuities signal Clock.Changed for wall deadline reconciliation.
 type Fake struct {
 	mu         sync.Mutex
 	now        time.Time
@@ -64,8 +64,8 @@ func (f *Fake) SinceBoot() time.Duration {
 	return f.boot
 }
 
-// SinceStart is monotonic time since this Fake was created. JumpWall
-// and Suspend do not move it; Advance does.
+// SinceStart is monotonic time since this Fake was created. Advance and Suspend
+// move it; JumpWall does not.
 func (f *Fake) SinceStart() time.Duration {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -109,14 +109,17 @@ func (f *Fake) JumpWall(to time.Time) {
 	}
 }
 
-// Suspend jumps wall time forward by d without advancing SinceBoot
-// (sleep / hibernation). Calendar and wall-based deadlines recompute
-// via Changed; relative NewTimer waits do not elapse.
+// Suspend advances wall time and uptime together, as Windows does across sleep
+// and hibernation. Due waits become observable on resume, followed by Changed.
 func (f *Fake) Suspend(d time.Duration) {
 	if f == nil || d == 0 {
 		return
 	}
-	f.JumpWall(f.Now().Add(d))
+	f.Advance(d)
+	select {
+	case f.changed <- struct{}{}:
+	default:
+	}
 }
 
 // Waiting reports whether any NewTimer is pending. Tests wait for the
@@ -139,12 +142,12 @@ func (f *Fake) WaitingAt(d time.Duration) bool {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	want := f.now.Add(d)
+	want := uint64(f.boot) + uint64(d)
 	for tm := range f.timers {
 		if tm.stopped || tm.fired {
 			continue
 		}
-		if tm.when.Equal(want) {
+		if tm.deadline == want {
 			return true
 		}
 	}
@@ -164,8 +167,9 @@ func (f *Fake) NextWhen() (time.Time, bool) {
 		if tm.stopped || tm.fired {
 			continue
 		}
-		if !found || tm.when.Before(earliest) {
-			earliest = tm.when
+		when := f.now.Add(time.Duration(tm.deadline - uint64(f.boot)))
+		if !found || when.Before(earliest) {
+			earliest = when
 			found = true
 		}
 	}
@@ -176,12 +180,12 @@ func (f *Fake) newTimer(d time.Duration) Timer {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	tm := &fakeTimer{
-		fake: f,
-		ch:   make(chan time.Time, 1),
-		when: f.now.Add(d),
+		fake:     f,
+		ch:       make(chan time.Time, 1),
+		deadline: uint64(f.boot) + uint64(d),
 	}
 	f.timers[tm] = struct{}{}
-	if d <= 0 || !tm.when.After(f.now) {
+	if d <= 0 || tm.deadline <= uint64(f.boot) {
 		f.markFiredLocked(tm)
 		now := f.now
 		// Buffered send; do not hold callers in Reset/NewTimer.
@@ -199,7 +203,7 @@ func (f *Fake) takeDueLocked() []*fakeTimer {
 		if tm.stopped || tm.fired {
 			continue
 		}
-		if tm.when.After(f.now) {
+		if tm.deadline > uint64(f.boot) {
 			continue
 		}
 		f.markFiredLocked(tm)
@@ -224,11 +228,11 @@ func (f *Fake) deliver(due []*fakeTimer) {
 }
 
 type fakeTimer struct {
-	fake    *Fake
-	ch      chan time.Time
-	when    time.Time
-	stopped bool
-	fired   bool
+	fake     *Fake
+	ch       chan time.Time
+	deadline uint64 // uptime + a positive Duration can exceed signed Duration
+	stopped  bool
+	fired    bool
 }
 
 func (tm *fakeTimer) C() <-chan time.Time { return tm.ch }
@@ -258,9 +262,9 @@ func (tm *fakeTimer) Reset(d time.Duration) bool {
 	}
 	tm.stopped = false
 	tm.fired = false
-	tm.when = tm.fake.now.Add(d)
+	tm.deadline = uint64(tm.fake.boot) + uint64(d)
 	tm.fake.timers[tm] = struct{}{}
-	if d <= 0 || !tm.when.After(tm.fake.now) {
+	if d <= 0 || tm.deadline <= uint64(tm.fake.boot) {
 		tm.fake.markFiredLocked(tm)
 		now := tm.fake.now
 		select {
