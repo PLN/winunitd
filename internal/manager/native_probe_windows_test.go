@@ -4,6 +4,7 @@ package manager
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/xml"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/runtime"
@@ -109,11 +111,19 @@ func installNativeProbeTask(t *testing.T) string {
 	}
 	data := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Principals><Principal id="system"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal></Principals><Settings><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate><AllowStartOnDemand>true</AllowStartOnDemand><ExecutionTimeLimit>PT0S</ExecutionTimeLimit></Settings><Actions Context="system"><Exec><Command>%s</Command><Arguments>%s</Arguments></Exec></Actions></Task>`, command.String(), arguments.String())
 	path := filepath.Join(t.TempDir(), "task.xml")
-	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+	// schtasks reads the XML as a Unicode document; keep the declaration and
+	// file encoding consistent, including the UTF-16LE byte-order marker.
+	data = strings.Replace(data, `encoding="UTF-8"`, `encoding="UTF-16"`, 1)
+	words := utf16.Encode([]rune("\ufeff" + data))
+	encoded := make([]byte, 2*len(words))
+	for i, word := range words {
+		binary.LittleEndian.PutUint16(encoded[2*i:], word)
+	}
+	if err := os.WriteFile(path, encoded, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := exec.Command("schtasks.exe", "/Create", "/TN", full, "/XML", path, "/RU", "SYSTEM").Run(); err != nil {
-		t.Fatalf("register SYSTEM fixture task: %v", err)
+	if output, err := exec.Command("schtasks.exe", "/Create", "/TN", full, "/XML", path, "/RU", "SYSTEM").CombinedOutput(); err != nil {
+		t.Fatalf("register SYSTEM fixture task: %v: %s", err, strings.ReplaceAll(string(output), path, "<fixture XML>"))
 	}
 	t.Cleanup(func() {
 		_, _ = runtime.DefaultTaskScheduler().Stop(context.Background(), full, 15*time.Second)
