@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"reflect"
 	"time"
 
 	"github.com/PLN/winunitd/internal/protocol"
@@ -27,23 +26,10 @@ func (h *UserHost) SetUserAdmission(p UserAdmission) error {
 	if err != nil {
 		return err
 	}
-	h.mu.Lock()
-	if h.closed {
-		h.mu.Unlock()
-		return fmt.Errorf("user host is closed")
+	revoked, err := h.acceptAdmissionPolicy(p)
+	if err != nil {
+		return err
 	}
-	if !reflect.DeepEqual(p, h.admission) {
-		h.admission = p
-		h.admissionRevision++
-	}
-	var revoked []string
-	for sid := range h.bySID {
-		allow, probe := p.decision(sid)
-		if !allow && !probe && !h.lingeringLocked(sid) {
-			revoked = append(revoked, sid)
-		}
-	}
-	h.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), defaultStopTimeout)
 	defer cancel()
 	var result error
@@ -53,18 +39,7 @@ func (h *UserHost) SetUserAdmission(p UserAdmission) error {
 			result = errors.Join(result, err)
 			continue
 		}
-		h.mu.Lock()
-		allow, probe := h.admission.decision(sid)
-		inst := h.bySID[sid]
-		revoke := !allow && !probe && !h.lingeringLocked(sid)
-		if revoke {
-			for session, mapped := range h.sessions {
-				if mapped == sid {
-					delete(h.sessions, session)
-				}
-			}
-		}
-		h.mu.Unlock()
+		inst, revoke := h.acceptAdmissionRevocation(sid)
 		if revoke {
 			result = errors.Join(result, h.killUserInstance(ctx, sid, inst))
 		}

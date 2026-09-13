@@ -3,7 +3,6 @@ package manager
 import (
 	"errors"
 	"fmt"
-	"maps"
 
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
@@ -39,25 +38,11 @@ func (h *UserHost) refreshLingerRecords() ([]runtime.LingerRecord, error) {
 		accepted[rec.SID] = rec
 		valid = append(valid, rec)
 	}
-	h.mu.Lock()
-	var removed []string
-	if !h.closed {
-		for sid := range h.lingerRecords {
-			if _, present := accepted[sid]; !present {
-				removed = append(removed, sid)
-			}
-		}
-		if !maps.Equal(h.lingerRecords, accepted) {
-			h.lingerRevision++
-		}
-		h.lingerRecords = accepted
-		h.lingerKnown = true
-		h.lingerError = ""
-		if scanErr != nil {
-			h.lingerError = scanErr.Error()
-		}
+	scanError := ""
+	if scanErr != nil {
+		scanError = scanErr.Error()
 	}
-	h.mu.Unlock()
+	removed := h.acceptLingerSnapshot(accepted, scanError)
 	h.lingerIO.Unlock()
 	for _, sid := range removed {
 		h.queueIdleCleanup(sid)
