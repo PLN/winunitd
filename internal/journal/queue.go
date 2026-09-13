@@ -100,9 +100,12 @@ func (s *Store) storageError(unit string, err error) {
 	if err == nil {
 		return
 	}
+	// Error formatting can call native resources or adapter hooks. Keep it
+	// outside the lock shared by capture admission and lifecycle diagnostics.
+	message := err.Error()
 	s.queueMu.Lock()
 	defer s.queueMu.Unlock()
-	s.addStatsLocked(unit, CaptureStats{StorageErrors: 1, LastStorageError: err.Error()})
+	s.addStatsLocked(unit, CaptureStats{StorageErrors: 1, LastStorageError: message})
 }
 
 func (s *Store) CaptureStats(unit string) CaptureStats {
