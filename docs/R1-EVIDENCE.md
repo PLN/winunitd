@@ -303,3 +303,69 @@ queue fairness and storage-fault regressions. The test embeds the candidate
 manager in its isolated process; the guest's hosting broker remained at the
 previous qualified artifact. It does not qualify a new installed daemon, arbitrary
 unit-name churn, total lifecycle admission, MSI servicing, or R7.
+
+## Consolidated ownership and cleanup acceptance
+
+September 13: PR #179 source `f91fdb76326472d92045c0e48d2a3d97af50483d`
+passed [exact-source CI](https://github.com/PLN/winunitd/actions/runs/34756114828)
+and merged with the same tree. Three clean-source, non-race, trimpath test
+binaries built with Go 1.27.1 passed the following combined matrix on Windows 11
+Enterprise LTSC build 26100, as genuine SYSTEM and a headless standard user.
+Every listed manager/runtime test ran three times per identity, with no skips.
+
+| Required behavior | Permanent native regression |
+| --- | --- |
+| Deleted/invalid/recreated definition retains live status, logs and stop; removal suppresses replacement | `TestReviewReproReloadKeepsLiveUnit` |
+| Output attaches before waiting; small controls and 5,000-line stdout/stderr complete | `TestReviewReproOneshotDrainsOutput` |
+| Unterminated stdout/stderr reconstruct exactly across bounded fragments | `TestWindowsOneshotNoNewlineFragments` |
+| Timeout and explicit stop during activation release the child | `TestWindowsOneshotTimeoutAndExplicitStop` |
+| Real exit before manager attachment preserves success, failure, output and invocation identity | `TestWindowsExitBeforeManagerAttachPreservesResultAndOutput` |
+| Terminal failure and start-limit diagnostics remain consistent in snapshots | `TestWindowsSnapshotTerminalFailureReasons` |
+| Failed native wait, job query or kill retains the process handle | `TestStopWaitFailurePreservesProcessHandle`, `TestStopJobQueryFailurePreservesProcessHandle`, `TestStopKillFailurePreservesProcessHandle` |
+| Empty job and closed admission precede exit/handle release | `TestKilledJobEmptiesBeforeProcessHandleClose`, `TestStopClosesJobAdmissionBeforeExitCapture`, `TestCapturedProcessExitDeadlineRetainsHandle` |
+| Failed process/job close and unfinished start cleanup retain ownership for retry | `TestUnitJobCloseFailureRetainsHandle`, `TestStopRetriesProtectedProcessHandleClose`, `TestFailedStartTransfersUnfinishedCleanup`, `TestStopCleansProcessNotAssignedToUnitJob` |
+| Descendants cannot break away; tree kill and canceled waits preserve ownership | `TestGrandchildCannotBreakAway`, `TestKillUnitJobTearsDownTree`, `TestWaitCancelDoesNotCloseWaitedHandle` |
+| Failed output close remains owned, including a pending reader | `TestStopRetriesProtectedOutputHandleClose`, `TestOutputCloseRetainsProtectedHandleAcrossPendingRead` |
+| Every bootstrap handle, partial open and job setup retains failed cleanup | `TestBootstrapRetainsEachFailedHandleClose`, `TestPartialLaunchOpenRetainsFailedCleanup`, `TestUnitJobSetupRetainsFailedClose` |
+| Parent writer-close failure after process creation cleans the suspended child | `TestPostCreationWriterCloseFailureTerminatesSuspendedProcess` |
+| Outer/unit assignment, I/O priority, resume and initial-thread close failures release or retain the exact native resources | `TestPostCreationSetupFailuresRetainNativeOwnership` |
+| Standard streams attach and unit jobs disallow breakaway | `TestStdoutStderrAttached`, `TestUnitJobNoBreakawayFlags` |
+
+Postcreation setup includes successful cleanup and protected native-close failure
+followed by retry for each of five stages. Independent process handles confirm
+actual child exit. Portable public-manager regressions additionally cover late
+launch adoption, zero-PID bootstrap ownership, delayed stop completion and stale
+replacement results (`stop_failure_test.go`, `stop_completion_test.go`,
+`reload_ownership_test.go`, `reload_atomic_test.go`, `reload_native_test.go`).
+The full uncached local Windows race suite and vet passed; focused runtime and
+early-exit race repetitions also passed.
+
+The same qualification ran `TestManagerAggregateCapturePressure` once per
+identity, with three complete internal cycles each. Its isolated Go scheduler
+is now fixed at two threads across hosts. Releasing stalled storage starts a
+separate 20-second recovery phase: one-second stop retries must retain visible
+cleanup until completion. This removes the former assumption that releasing
+storage immediately drains the backlog. Existing resource and control limits
+remain unchanged; recovery duration is now recorded separately.
+
+| Native measurement | SYSTEM | Standard user |
+| --- | ---: | ---: |
+| Six concurrent stops | 1.014-1.115 s | 1.012-1.137 s |
+| Storage recovery | 0.144-0.148 s | 0.133-0.190 s |
+| Sampled peak private committed bytes | 91,680,768 | 92,164,096 |
+| Handles after each cycle | 217 / 223 / 223 | 217 / 217 / 217 |
+| Threads after each cycle | 24 / 25 / 25 | 25 / 25 / 25 |
+
+Status calls passed the one-second bound and stayed below the measurement
+clock's resolution; this does not imply zero cost. Quiet output survived and
+queue/loss/resource limits held in every cycle. Five additional local race
+repetitions passed with the constrained scheduler. The earlier CI failure and
+local thread-cache variation are retained privately alongside the correction.
+
+Final teardown removed the fixture unit, disabled linger, unloaded the profile
+and found no test, user-manager or desktop-helper processes. The existing hosting
+broker remained unchanged. Raw logs, build/module/binary hashes, source, CI and
+cleanup scripts/results are retained in the private qualification store.
+This completes the R1.1-R1.3 technical qualification matrix tracked by #94.
+Overall R1 closure still depends on R0 and milestone acceptance. Broader R4
+session/security, arbitrary load, production MSI servicing and R7 remain separate.

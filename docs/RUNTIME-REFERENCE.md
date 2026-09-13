@@ -60,7 +60,7 @@ Versioned JSON-RPC on `\\.\pipe\winunitd\control` (LocalSystem and Administrator
 
 ### `winctl` commands
 
-`start`, `stop`, `restart`, `status`, `operation`, `cancel`, `enable`, `disable`, `list-units`, `list-timers`, `logs`, `daemon-reload`, `enable-linger`, `disable-linger`, `verify`.
+`start`, `stop`, `restart`, `status`, `operation`, `cancel`, `snapshot`, `migrate`, `enable`, `disable`, `list-units`, `list-timers`, `logs`, `daemon-reload`, `enable-linger`, `disable-linger`, `verify`.
 
 Unit status and list-units responses add optional `subState` and
 `terminationUncertain` fields. `winctl status` shows the manager phase and
@@ -144,16 +144,19 @@ Limits apply on the existing per-unit job. Hitting `MemoryMax=` or `ProcessLimit
 | `ProcessLimit=` | Active processes |
 | `PriorityClass=` | `idle` / `below-normal` / `normal` / `above-normal` / `high` (not `realtime`) |
 | `CPUWeight=` | 1–10000 → Windows job weight 1–9 as `clamp(1, 9, (CPUWeight + 1110) / 1111)` |
-| `CPUQuota=` | `N%` with N in **1–100** = percentage of **total machine CPU** → `CpuRate = N * 100` (Windows max 10000; not systemd per-CPU) |
+| `CPUQuota=` | `N%` with N in **1–100** = percentage of **available CPU** (relative to a CPU-controlled parent job when nested) → `CpuRate = N * 100` (Windows max 10000; not systemd per-CPU) |
 | `IoPriority=` | `idle` / `low` / `normal` / `high` via `NtSetInformationProcess` after job assignment |
 
-`CPUWeight=` and `CPUQuota=` cannot both be set. Job Objects have no I/O-priority class; a failed `IoPriority=` set fails activation with reason `configuration`. These are Windows Job Object semantics, not cgroup `cpu.weight` / `cpu.max` / `io.weight`.
+These CPU names apply to format 1. Format 2 uses exact native
+`WindowsCPUWeight=1..9` or `WindowsCPUQuota=1%..100%`; see the
+[format and migration table](UNIT-REFERENCE.md#format-selection-and-migration).
+Weight and quota cannot both be set. Job Objects have no I/O-priority class; a failed `IoPriority=` set fails activation with reason `configuration`. These are Windows Job Object semantics, not cgroup `cpu.weight` / `cpu.max` / `io.weight`.
 
 `winctl verify` rejects bad sizes, `ProcessLimit=0` or negative, unknown `PriorityClass=` (including `realtime`), `CPUWeight=` outside 1–10000, `CPUQuota=` without `%` or N outside 1–100, both CPU keys together, unknown `IoPriority=`, and those keys on `.timer` / `.target`.
 
 ### Proxy unit types
 
-**`Type=scm`** — system-manager proxy for an existing SCM service (`ServiceName=` required, e.g. `MSSQLSERVER`). Maps StartService / StopService / QueryServiceStatusEx to ActiveState. Already running/stopped is success. No CreateProcess, Job Object, ExecStart, notify pipe, `WINUNIT_*` env, or WatchdogMode. Timeouts wait for SCM state. `Restart=` applies to start failure only; winunitd does not watch the service after it reports running. Invalid in a user unit. Does not register or edit SCM configuration (not `import-service`).
+**`Type=scm`** — system-manager proxy for an existing SCM service (`ServiceName=` required, e.g. `MSSQLSERVER`). Maps StartService / StopService / QueryServiceStatusEx to ActiveState. Already running/stopped is success. No CreateProcess, Job Object, ExecStart, notify pipe, `WINUNIT_*` env, or WatchdogMode. Timeouts wait for SCM state. `Restart=` applies to start failure only; bounded background observations detect confirmed inactivity and stop bound dependents. Query failures remain diagnostics; they do not prove inactivity. Invalid in a user unit. Does not register or edit SCM configuration (not `import-service`).
 
 **`Type=scheduled-task`** — system-manager proxy for an existing Task Scheduler task (`TaskName=` required, e.g. `\Backups\LegacyBackup`). Native `.timer` is preferred for new schedules; this type is legacy interop. Maps IRegisteredTask.Run / Stop / State to ActiveState. Same constraints as `Type=scm` (no process ownership, no watchdog; `Restart=` on start failure only). Invalid in a user unit. Does not create or edit the task definition (not `import-task`).
 
@@ -161,13 +164,13 @@ After=/Requires=/Wants= work so a native unit can wait until the proxy reports r
 
 ### Companion units
 
-Companions start `foo.service` by basename. `Unit=` is not accepted. The companion `.service` must sit next to the companion file.
+Path, registry and event-log companions start `foo.service` by basename and do not accept `Unit=`. Timers accept an explicit `Unit=` target, as described below.
 
 | Type | Trigger | Notes |
 | --- | --- | --- |
 | `.registry` | `[Registry]` `RegistryChanged=HKLM\…` or `HKCU\…` | Key+subtree via `RegNotifyChangeKeyValue`. Missing key → reason `configuration`. System-scope verify rejects `HKCU`; `winctl --user verify` accepts `HKCU` and `HKLM`. |
 | `.eventlog` | `[EventLog]` `EventLogTrigger=<Channel>:EventID=<uint16>` | Via `EvtSubscribe`. Subscribe failure or unknown channel → reason `configuration`. `winctl --user verify` rejects `System` and `Security`. |
-| `.path` | `[Path]` `PathChanged=` (absolute, repeatable **OR**) and/or `PathExists=` (absolute, repeatable **AND** — lock vs systemd OR) | Mix: either may start. `ReadDirectoryChangesW` non-recursive; a file path watches the parent and filters by name. Bad `PathChanged=` → reason `configuration`; missing `PathExists=` waits for creation. |
+| `.path` | `[Path]` `PathChanged=` (absolute, repeatable OR) and/or an existence predicate | Format 1 repeated `PathExists=` is AND. Format 2 repeated `PathExists=` is OR; `PathExistsAll=` is explicit AND. Do not mix existence operators. Changes use nonrecursive directory notifications; missing existence paths wait for creation. |
 
 ### Timers
 

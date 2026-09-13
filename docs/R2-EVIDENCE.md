@@ -1230,3 +1230,23 @@ the index; restoring the previous completion lock gap makes that regression fail
 The full uncached Windows race suite and vet pass. A 1,024-unit response benchmark
 reduced result encodings from two to one and allocations from 19 to 12; response
 envelope encoding still occurs normally. Complete R2 acceptance remains open.
+
+## September 13 snapshot failure diagnostics
+
+PR #178 source `a95cdc3371ead08198f758e371fa0f25865f7022` passed
+[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34755168192)
+and merged with the same tree. The immutable unit snapshot now includes the
+accepted error and reason from the same invocation/configuration identity as
+its lifecycle state. Pending cleanup remains distinct from terminal failure;
+the existing aggregate response bound also includes diagnostic text.
+
+Twenty native repetitions as SYSTEM and twenty as a headless standard user on
+Windows 11 Enterprise LTSC build 26100 verified actual exit-7 restart exhaustion
+and abnormal process exit. Snapshot/status diagnostics and identities agreed;
+terminal processes had no retained cleanup. No selected case was skipped.
+Final fixture teardown removed the user manager/helper, disabled linger and
+unloaded the profile. The existing broker and real pilot remained unchanged.
+Portable regressions additionally cover immutable old snapshots after a new
+activation, pending cleanup diagnostics and oversized diagnostic rejection.
+Raw logs, scripts, build hashes and exact CI identity remain privately retained.
+This addresses the consumer feedback on #96; full R2 acceptance remains open.
