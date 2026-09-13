@@ -42,6 +42,11 @@ func (h *UserHost) decisionSnapshot() userDecisionSnapshot {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return h.decisionSnapshotLocked()
+}
+
+func (h *UserHost) decisionSnapshotLocked() userDecisionSnapshot {
+	var result userDecisionSnapshot
 	result.native = len(h.nativeWork)
 	result.lingering = len(h.lingerRecords)
 	if h.store != nil {
@@ -69,9 +74,9 @@ func (h *UserHost) decisionSnapshot() userDecisionSnapshot {
 		case inst.err != "":
 			state = "waiting"
 		}
-		result.instances = append(result.instances, protocol.UserManagerStatus{SID: sid, Mode: inst.mode, SessionID: inst.session, PID: inst.pid, State: state, InteractiveSessions: sessions[sid]})
+		result.instances = append(result.instances, protocol.UserManagerStatus{InstanceID: inst.id, AdmissionRevision: inst.admissionRevision, LingerRevision: inst.lingerRevision, SID: sid, Mode: inst.mode, SessionID: inst.session, PID: inst.pid, State: state, InteractiveSessions: sessions[sid]})
 		if state != "running" {
-			r := protocol.UserRecoveryStatus{SID: sid, State: state, Error: inst.err}
+			r := protocol.UserRecoveryStatus{InstanceID: inst.id, SID: sid, State: state, Error: inst.err}
 			if state == "waiting" && !inst.nextStart.IsZero() {
 				r.NextAttemptAt = inst.nextStart.UTC().Format(time.RFC3339Nano)
 			}

@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"os"
@@ -41,6 +42,8 @@ type UserHostConfig struct {
 // First interactive logon starts the manager. Last logoff kills it
 // unless the user is lingering.
 type UserHost struct {
+	hostID               string
+	instanceSequence     uint64
 	admission            UserAdmission
 	admissionRevision    uint64
 	closed               bool
@@ -64,16 +67,19 @@ type UserHost struct {
 }
 
 type userInstance struct {
-	mode         string
-	session      uint32
-	pid          int
-	uncertain    bool
-	err          string
-	sid          string
-	proc         runtime.UserManagerProc
-	restartDelay time.Duration
-	nextStart    time.Time
-	startedAt    time.Time
+	id                string
+	admissionRevision uint64
+	lingerRevision    uint64
+	mode              string
+	session           uint32
+	pid               int
+	uncertain         bool
+	err               string
+	sid               string
+	proc              runtime.UserManagerProc
+	restartDelay      time.Duration
+	nextStart         time.Time
+	startedAt         time.Time
 }
 
 // NewUserHost creates a host. Call Listen after the system manager is up.
@@ -116,6 +122,7 @@ func NewUserHost(cfg UserHostConfig) *UserHost {
 		}
 	}
 	h := &UserHost{
+		hostID:          rand.Text(),
 		admission:       policy,
 		cfg:             cfg,
 		bySID:           make(map[string]*userInstance),

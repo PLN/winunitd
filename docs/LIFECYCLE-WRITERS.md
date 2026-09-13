@@ -52,8 +52,12 @@ process adoption together under m.mu. It never queries process liveness while
 building status or list-units. Journal/timer/native-proxy observations are still
 overlaid outside m.mu. The separate `snapshot` method publishes a bounded,
 immutable manager-local aggregate of units and active operations under that same
-decision lock, with no observation overlays. User-host decisions remain a separate
-snapshot domain; coordinator-wide identity/event coverage remains open.
+decision lock, with no observation overlays. System control also captures the
+user host while holding m.mu then h.mu. User-host decisions never acquire the
+manager lock or call manager handlers; token/launch/cleanup effects run after
+unlock. The copy includes host-scoped attempt IDs, captured policy revisions,
+session requests and retained cleanup. Encoding and the complete response-size
+check run after both locks are released. Remaining writer/event coverage stays open.
 Native query results can describe a different observation time from the copied
 manager fields; retaining the existing response format does not close R2.1.
 

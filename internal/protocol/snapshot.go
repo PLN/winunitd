@@ -1,8 +1,10 @@
 package protocol
 
-// SnapshotResult is one immutable manager-local decision view. It contains no
-// fresh process, proxy, journal, timer-engine or separate user-host observations.
+// SnapshotResult is one immutable decision view. System control additionally
+// copies user-host ownership while both decision locks are held in fixed order.
+// It contains no fresh process, proxy, journal or timer-engine observations.
 type SnapshotResult struct {
+	UserHost   *UserHostSnapshot `json:"userHost,omitempty"`
 	ManagerID  string            `json:"managerId"`
 	Sequence   uint64            `json:"sequence"` // capture order, not a lifecycle revision
 	CapturedAt string            `json:"capturedAt"`
@@ -31,4 +33,28 @@ type UnitSnapshot struct {
 	ArmedConfigRevision      string   `json:"armedConfigRevision,omitempty"`
 	LastOperationID          string   `json:"lastOperationId,omitempty"`
 	PendingCleanup           []string `json:"pendingCleanup,omitempty"`
+}
+
+// UserHostSnapshot contains accepted ownership, not queried process liveness.
+// Its host-scoped instance IDs survive cleanup uncertainty and change on launch.
+type UserHostSnapshot struct {
+	HostID              string                `json:"hostId"`
+	State               string                `json:"state"`
+	AdmissionRevision   uint64                `json:"admissionRevision"`
+	LingerRevision      uint64                `json:"lingerRevision"`
+	SessionEpoch        uint64                `json:"sessionEpoch"`
+	NativeWork          int                   `json:"nativeWork"`
+	PendingTokenCleanup int                   `json:"pendingTokenCleanup"`
+	Lingering           int                   `json:"lingering"`
+	LingerState         string                `json:"lingerState,omitempty"`
+	LingerError         string                `json:"lingerError,omitempty"`
+	Instances           []UserManagerStatus   `json:"instances"`
+	Recovery            []UserRecoveryStatus  `json:"recovery"`
+	Sessions            []UserSessionSnapshot `json:"sessions"`
+}
+
+type UserSessionSnapshot struct {
+	SessionID      uint32 `json:"sessionId"`
+	SID            string `json:"sid,omitempty"`
+	PendingRequest uint64 `json:"pendingRequest,omitempty"`
 }

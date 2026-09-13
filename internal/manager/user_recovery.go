@@ -34,7 +34,9 @@ func (h *UserHost) recordLingerTokenFailure(sid string, revision uint64, err err
 		return
 	}
 	delay := userRecoveryDelay(previous, now)
-	h.bySID[sid] = &userInstance{sid: sid, err: err.Error(), restartDelay: delay, nextStart: now.Add(delay)}
+	inst := h.newUserInstanceLocked(sid, "", 0, delay, now)
+	inst.err = err.Error()
+	h.bySID[sid] = inst
 }
 
 func userRecoveryDelay(previous *userInstance, now time.Time) time.Duration {
