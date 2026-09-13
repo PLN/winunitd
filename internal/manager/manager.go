@@ -302,7 +302,8 @@ func (m *Manager) Handle(ctx context.Context, method string, params json.RawMess
 		if err := protocol.DecodeParams(params, &p); err != nil {
 			return nil, err
 		}
-		return m.Snapshot()
+		_, encoded, err := m.snapshotEncoded()
+		return encoded, err
 	case protocol.MethodListTimers:
 		var p protocol.ListTimersParams
 		if err := protocol.DecodeParams(params, &p); err != nil {

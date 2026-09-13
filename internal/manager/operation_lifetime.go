@@ -103,8 +103,8 @@ func (m *Manager) finishOperationTask(name string, task *operationTask, result *
 	task.timer.Stop()
 	err = errors.Join(err, context.Cause(task.ctx))
 	releaseLocked()
+	result, err = m.finishOperationLocked(task.flight.id, result, err)
 	m.mu.Unlock()
-	result, err = m.finishOperation(task.flight.id, result, err)
 	m.finishStartFlight(name, task.flight, result, err)
 	task.cancel(context.Canceled)
 }

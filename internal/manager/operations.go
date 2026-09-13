@@ -43,9 +43,8 @@ func (m *Manager) beginOperationLocked(name, action string, origin activationOri
 	return id
 }
 
-func (m *Manager) finishOperation(id string, result *protocol.UnitResult, err error) (*protocol.UnitResult, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// Publish terminal state under the same lock that removes active-task ownership.
+func (m *Manager) finishOperationLocked(id string, result *protocol.UnitResult, err error) (*protocol.UnitResult, error) {
 	op := m.operations[id]
 	op.State = "succeeded"
 	op.CompletedAt = m.now().UTC().Format(time.RFC3339Nano)
