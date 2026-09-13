@@ -216,3 +216,37 @@ take less than one second. These fixture budgets do not establish resource
 bounds for arbitrary service counts, historical journal names or all storage
 failures. Exact-source CI and native lab measurements for this combined fixture
 must be retained before closing its qualification gate.
+
+September 13: [exact-source CI](https://github.com/PLN/winunitd/actions/runs/34726457612)
+passed at `ff822d2e0bc12e69e234cca3bc52ee7e6be574d9`; PR #159 merged the identical
+tree. The full uncached Windows race suite and vet passed locally, alongside
+an isolated race run and three non-race repetitions. A clean-source, non-race
+standalone test binary built with Go 1.27.1 then passed three cycles each as
+genuine SYSTEM and a headless standard user on the disposable Enterprise LTSC
+baseline. Its SHA-256, source/module hashes, build command, CI identity, complete
+logs, collector scripts and numeric measurements are retained privately.
+
+| Sampled maximum / measured stop | SYSTEM | Standard user |
+| --- | ---: | ---: |
+| Go heap bytes | 36,960,232 | 36,679,664 |
+| Private committed bytes | 92,688,384 | 92,426,240 |
+| Resident working-set bytes | 53,293,056 | 54,083,584 |
+| Goroutines / handles / threads | 48 / 289 / 30 | 60 / 283 / 29 |
+| Concurrent stop elapsed | 1.011–1.042 s | 1.012–1.062 s |
+
+Each cycle retained 14,639,191 queued message bytes across 16,384 records and
+reported 29,392,831 dropped noisy message bytes; the quiet record survived with
+zero drops. Status measurements stayed below the clock's measured resolution
+in this native run and passed the one-second bound; this is not a claim of zero
+execution cost. Cleanup returned to three goroutines. SYSTEM handles/threads
+settled at 246/30 after every cycle; the user run settled at 240/28, 240/28 and
+246/29. All six workload processes exited before storage recovery and all
+journal cleanup retries succeeded afterward. Final fixture cleanup removed the
+unit, disabled linger, unloaded the profile, and found no remaining test process
+or user manager/helper after twelve seconds.
+
+This completes the combined R1.4 fixture qualification, together with the earlier
+queue fairness and storage-fault regressions. The test embeds the candidate
+manager in its isolated process; the guest's hosting broker remained at the
+previous qualified artifact. It does not qualify a new installed daemon, arbitrary
+unit-name churn, total lifecycle admission, MSI servicing, or R7.
