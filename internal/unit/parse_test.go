@@ -303,7 +303,7 @@ ExecStart=C:\Tools\foo.exe
 WorkingDirectory=C:\Tools
 RestartMaxDelaySec=5m
 `,
-			wantErr: []string{`unknown directive "RestartMaxDelaySec"`},
+			wantErr: []string{`RestartMaxDelaySec requires FormatVersion=2`},
 		},
 		{
 			name: "RestartBackoff is not parsed in S1",
@@ -314,7 +314,7 @@ ExecStart=C:\Tools\foo.exe
 WorkingDirectory=C:\Tools
 RestartBackoff=exponential
 `,
-			wantErr: []string{`unknown directive "RestartBackoff"`},
+			wantErr: []string{`RestartBackoff requires FormatVersion=2`},
 		},
 		{
 			name: "StartLimitBurst in Service is unknown",

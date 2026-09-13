@@ -147,6 +147,8 @@ and `%NAME%` are not substituted.
 | Service: `ExecStop`, `ExecStopArg` | Optional single cooperative stop command; same executable/argument grammar as ExecStart |
 | Service: `Restart` | no (default), on-failure, always, on-watchdog |
 | Service: `RestartSec` | Recovery delay; default 100ms; setting 2s is a practical application default |
+| Service: `RestartBackoff` | Format 2: fixed (default) or exponential |
+| Service: `RestartMaxDelaySec` | Format 2: required positive finite cap for exponential backoff; at least RestartSec |
 | Service: `TimeoutStartSec` | Startup/oneshot/readiness timeout; set explicitly when startup can wait |
 | Service: `TimeoutStopSec` | Shared cooperative and forced cleanup budget; default 5s; must be positive with ExecStop |
 | Install: `WantedBy` | Enable links for named targets; enable does not itself start a service |
@@ -239,16 +241,56 @@ Status reports format-2 settings as `windowsCPUWeight` and `windowsCPUQuota`
 Proxies are system-manager only, do not own native process trees, and do not
 continuously observe the native service/task after startup. Some process-only
 directives on proxies produce ignored-setting warnings; read verifier warnings.
-See [runtime details](../README.md#proxy-unit-types) for those restrictions.
+See [runtime details](RUNTIME-REFERENCE.md#proxy-unit-types) for those restrictions.
 
 Notify clients must consume the `WINUNITD-NOTIFY/1` acceptance banner before
 sending. Upgrade the daemon and notify helper together. Readiness and heartbeat
-details are in [the notify documentation](../README.md#notify-and-watchdog).
+details are in [the notify documentation](RUNTIME-REFERENCE.md#notify-and-watchdog).
+
+## Recovery delay and backoff
+
+Unversioned/format-1 files retain fixed `RestartSec` recovery delay and reject
+both new backoff directives. Format 2 also defaults to fixed delay. To enable
+capped exponential recovery explicitly:
+
+```ini
+[Unit]
+FormatVersion=2
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+[Service]
+ExecStart=C:\Apps\worker.exe
+Restart=on-failure
+RestartSec=1s
+RestartBackoff=exponential
+RestartMaxDelaySec=10s
+```
+
+Accepted automatic recoveries wait 1, 2, 4, 8, then 10 seconds, remaining capped
+there. `RestartSec` must be positive for exponential mode; its omitted default
+is 100ms. The cap must be finite and at least that base. A cap without explicit
+exponential mode is rejected. Fixed mode continues to allow zero delay.
+
+Backoff does not change which failures qualify for `Restart`, waive start-rate
+limits or allow replacement while cleanup remains uncertain. Reload retains
+the existing invocation's captured recovery policy. A real explicit start or
+restart resets the backoff step and adopts the accepted definition; a redundant
+start of a live invocation does neither. Timer/watch-triggered activations do
+not reset recovery history or bypass their existing start limits. Successful
+activation or elapsed uptime alone does not reset the step. History is local to
+the manager runtime record and is not persisted across manager restart.
+
+Status and snapshot expose `restartAttempt`, the accepted recovery step since
+that explicit launch (saturating at 64), and `restartDelaySec` while waiting for
+automatic recovery. The delay is the accepted total, not a live countdown.
+The snapshot copies both with the same invocation/configuration identity.
+Stop, removal and shutdown cancel accepted recovery; duplicate or stale results
+cannot replace its wait, increment the step or affect a replacement invocation.
 
 ## Unsupported syntax and updates
 
 `User`, `Group`, `EnvironmentFile`, `SessionMode`,
-`SessionPolicy`, `RestartMaxDelaySec`, `RestartBackoff`, and unknown directives
+`SessionPolicy`, and unknown directives
 are rejected. Do not copy a Linux systemd unit without checking this reference.
 
 Use `winctl verify` before deployment and `daemon-reload` after changing files.

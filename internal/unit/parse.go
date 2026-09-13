@@ -39,6 +39,8 @@ var knownDirectives = map[string]map[string]bool{
 		"Environment":            true,
 		"Restart":                true,
 		"RestartSec":             true,
+		"RestartBackoff":         true,
+		"RestartMaxDelaySec":     true,
 		"TimeoutStartSec":        true,
 		"TimeoutStopSec":         true,
 		"NotifyAccess":           true,
@@ -110,12 +112,16 @@ type serviceBuilder struct {
 	restLine     int
 	restSet      bool
 
-	restartSec    string
-	restartSecL   int
-	timeoutStart  string
-	timeoutStartL int
-	timeoutStop   string
-	timeoutStopL  int
+	restartSec       string
+	restartSecL      int
+	restartBackoff   string
+	restartBackoffL  int
+	restartMaxDelay  string
+	restartMaxDelayL int
+	timeoutStart     string
+	timeoutStartL    int
+	timeoutStop      string
+	timeoutStopL     int
 
 	serviceName  string
 	serviceNameL int
@@ -432,6 +438,10 @@ func (p *parser) applyService(e iniEntry) {
 		s.restart = e.value
 		s.restLine = e.line
 		s.restSet = true
+	case "RestartBackoff":
+		s.restartBackoff, s.restartBackoffL = e.value, e.line
+	case "RestartMaxDelaySec":
+		s.restartMaxDelay, s.restartMaxDelayL = e.value, e.line
 	case "RestartSec":
 		s.restartSec = e.value
 		s.restartSecL = e.line
@@ -756,6 +766,7 @@ func (p *parser) finishService() {
 			spec.RestartSecSet = true
 		}
 	}
+	p.finishRestartBackoff(spec, s)
 	if s.timeoutStart != "" {
 		d, err := ParseDuration(s.timeoutStart)
 		if err != nil {

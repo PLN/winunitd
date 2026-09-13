@@ -120,6 +120,7 @@ func (m *Manager) acceptLaunch(ctx context.Context, name string, autoRestart boo
 		rt.stopping = false
 		rt.cancelRestart()
 		if !triggered {
+			rt.restartAttempt = 0
 			rt.startTimes = nil
 		}
 	} else if m.startLimitHitLocked(rt) {
@@ -130,6 +131,7 @@ func (m *Manager) acceptLaunch(ctx context.Context, name string, autoRestart boo
 	// generation. Callbacks from the previous process must become stale.
 	rt.operations++
 	rt.gen++
+	rt.restartDelay = 0
 	startGen := rt.gen
 	if planned != nil {
 		planned.launchGen = startGen

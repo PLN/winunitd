@@ -491,13 +491,21 @@ func (m *Manager) applyHubCleanup(event hubCleanup) {
 
 // Recovery admission decides eligibility and installs cancellation before the
 // worker waits. Delay and launch never run inside this lifecycle decision.
-func (m *Manager) acceptRecovery(request recoveryRequest) context.Context {
+type acceptedRecovery struct {
+	context.Context
+	delay time.Duration
+}
+
+func (m *Manager) acceptRecovery(request recoveryRequest) *acceptedRecovery {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	owner := request.owner
 	rt := m.units[owner.name]
 	if m.closed || !owner.currentLocked(m) || rt.stopping || rt.unavailable || rt.cleanupPending() || rt.proc != nil {
 		return nil
+	}
+	if rt.sub == core.SubAutoRestart && rt.restartCancel != nil && rt.restartGeneration == rt.gen {
+		return nil // the same invocation already owns its recovery wait
 	}
 	if m.startLimitHitLocked(rt) {
 		m.failStartLimitLocked(rt)
@@ -516,7 +524,16 @@ func (m *Manager) acceptRecovery(request recoveryRequest) context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	rt.cancelRestart()
 	rt.restartCancel = cancel
-	return ctx
+	rt.restartGeneration = rt.gen
+	delay := request.delay
+	if u := rt.ownedUnit(); u != nil && u.Service != nil && u.Service.RestartBackoff == "exponential" {
+		delay = cappedRestartDelay(restartDelay(u.Service), u.Service.RestartMaxDelaySec, rt.restartAttempt)
+	}
+	if rt.restartAttempt < 64 {
+		rt.restartAttempt++
+	}
+	rt.restartDelay = delay
+	return &acceptedRecovery{Context: ctx, delay: delay}
 }
 
 func (m *Manager) acceptWatchdog(name string, gen uint64, cancel context.CancelFunc) (runtimeIdentity, context.CancelFunc, bool) {
