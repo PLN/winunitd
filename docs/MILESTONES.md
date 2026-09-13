@@ -84,7 +84,9 @@ Status: in progress. Dependencies for closure: R2, R3. Outcome: real Windows ide
 The [current R4 ledger](R4-EVIDENCE.md) supersedes the earlier implementation-gap
 descriptions. Both interactive and headless profiles now use Windows-owned
 lifetimes. Genuine local-account launch/crash/logoff and S4U recovery evidence is
-recorded, while the complete concurrent session/user/security matrix stays open.
+recorded. [Two concurrent headless standard users](R4-EVIDENCE.md#concurrent-local-headless-users)
+passed existing/first-created profile, cross-user pipe denial and independent
+recovery/revocation checks; the complete interactive session/security matrix stays open.
 Admission administration currently uses protected configuration; dedicated
 commands and installer controls remain separate work. Unsupported account/profile
 modes are excluded from qualification claims.
