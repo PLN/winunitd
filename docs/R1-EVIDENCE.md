@@ -11,7 +11,18 @@ The owner protects the handle while joining Go readers, then releases it
 explicitly and retains it on failure. Stop terminates pipe writers before
 joining synchronous readers. Protected-handle regressions cover stop retry and
 capture close concurrent with a pending read and process termination. These
-checks do not qualify every early launch allocation failure; R1 remains open.
+checks leave the broader R1 acceptance matrix open.
+
+Launch bootstrap now owns its job and five standard-I/O handles from allocation,
+before a process exists. Partial pipe setup and failed job configuration retain
+native resources when cleanup fails. A failed parent-writer close after process
+creation terminates the still-suspended child and preserves unfinished cleanup.
+Stop can release bootstrap resources without waiting for a nonexistent PID.
+Unit-job close also joins its completion-port worker. Native protected-handle
+tests cover each standard-I/O handle, both partial pipe opens, job setup and
+post-creation writer cleanup; manager tests verify observable zero-PID cleanup,
+replacement rejection and stop retry. These cases do not close the complete R1
+or SYSTEM-to-user launch qualification matrix.
 
 Control serving also joins listener closure before returning. A native accept
 wait can finish before its sibling close releases the listening handle. A

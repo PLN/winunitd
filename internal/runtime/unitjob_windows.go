@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -28,14 +29,15 @@ type jobAssociateCompletionPort struct {
 // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE and without BREAKAWAY_OK /
 // SILENT_BREAKAWAY_OK, so children cannot leave the job (DESIGN.md §5.2).
 type UnitJob struct {
-	stopMu  sync.Mutex
-	exits   jobExitSet
-	mu      sync.Mutex
-	handle  windows.Handle
-	iocp    windows.Handle
-	limitCh chan struct{}
-	hit     atomic.Uint32
-	limits  JobLimits
+	stopMu    sync.Mutex
+	exits     jobExitSet
+	mu        sync.Mutex
+	handle    windows.Handle
+	iocp      windows.Handle
+	limitCh   chan struct{}
+	limitDone chan struct{}
+	hit       atomic.Uint32
+	limits    JobLimits
 }
 
 // OpenUnitJob creates an unnamed unit job. Nested assignment under the
@@ -50,14 +52,28 @@ func OpenUnitJob() (*UnitJob, error) {
 // CPUWeight=/CPUQuota= use JobObjectCpuRateControlInformation on this job
 // (not the daemon job). IoPriority= is recorded here and applied to the
 // process after job assignment.
+// On failure, a non-nil result retains unfinished native cleanup for Close.
 func OpenUnitJobWith(lim JobLimits) (*UnitJob, error) {
+	return openUnitJobWith(lim, windows.CreateJobObject)
+}
+
+// A failed open returns a non-nil job only when native cleanup needs retry.
+func openUnitJobWith(lim JobLimits, create func(*windows.SecurityAttributes, *uint16) (windows.Handle, error)) (result *UnitJob, resultErr error) {
 	if lim.CPUWeight > 0 && lim.CPURate > 0 {
 		return nil, fmt.Errorf("configuration: CPUWeight and CPUQuota cannot both be set")
 	}
-	h, err := windows.CreateJobObject(nil, nil)
+	h, err := create(nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create unit job: %w", err)
 	}
+	j := &UnitJob{handle: h, limits: lim}
+	defer func() {
+		if resultErr != nil {
+			if err := j.Close(); err != nil {
+				result, resultErr = j, errors.Join(resultErr, fmt.Errorf("unit job setup cleanup: %w", err))
+			}
+		}
+	}()
 	// Empty JobLimits is today's job: KILL_ON_JOB_CLOSE only. Do not set
 	// BREAKAWAY_OK, SILENT_BREAKAWAY_OK, or PRIORITY_CLASS unless PriorityClass=
 	// was given. Windows QueryInformationJobObject still fills PriorityClass
@@ -83,17 +99,13 @@ func OpenUnitJobWith(lim JobLimits) (*UnitJob, error) {
 		uintptr(unsafe.Pointer(&info)),
 		uint32(unsafe.Sizeof(info)),
 	); err != nil {
-		_ = windows.CloseHandle(h)
 		return nil, fmt.Errorf("set unit job limits: %w", err)
 	}
 	if err := setJobCPURate(h, lim); err != nil {
-		_ = windows.CloseHandle(h)
 		return nil, err
 	}
-	j := &UnitJob{handle: h, limits: lim}
 	if lim.WatchViolations() {
 		if err := j.startLimitWatch(); err != nil {
-			_ = windows.CloseHandle(h)
 			return nil, err
 		}
 	}
@@ -190,6 +202,10 @@ func (j *UnitJob) Close() error {
 			return fmt.Errorf("close job completion port: %w", err)
 		}
 		j.iocp = 0
+		if j.limitDone != nil {
+			<-j.limitDone
+			j.limitDone = nil
+		}
 	}
 	if j.handle != 0 {
 		if err := windows.CloseHandle(j.handle); err != nil {
@@ -380,6 +396,7 @@ func (j *UnitJob) startLimitWatch() error {
 	if err != nil {
 		return fmt.Errorf("create job completion port: %w", err)
 	}
+	j.iocp = port // Own the port before association can fail.
 	assoc := jobAssociateCompletionPort{
 		CompletionKey:  1,
 		CompletionPort: port,
@@ -390,12 +407,15 @@ func (j *UnitJob) startLimitWatch() error {
 		uintptr(unsafe.Pointer(&assoc)),
 		uint32(unsafe.Sizeof(assoc)),
 	); err != nil {
-		_ = windows.CloseHandle(port)
 		return fmt.Errorf("associate job completion port: %w", err)
 	}
-	j.iocp = port
 	j.limitCh = make(chan struct{})
-	go j.limitLoop(port)
+	j.limitDone = make(chan struct{})
+	done := j.limitDone
+	go func() {
+		defer close(done)
+		j.limitLoop(port)
+	}()
 	return nil
 }
 

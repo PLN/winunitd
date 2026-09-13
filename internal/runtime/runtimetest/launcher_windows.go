@@ -4,6 +4,7 @@ package runtimetest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -58,15 +59,18 @@ func (l stubLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtim
 		_ = spec.TimeoutStart
 	}
 	job, err := runtime.OpenUnitJobWith(spec.Limits)
-	if err != nil {
-		return nil, err
-	}
 	p := &stubProc{
 		pid:    1,
 		job:    job,
 		stdout: io.NopCloser(strings.NewReader(l.stdout)),
 		stderr: io.NopCloser(strings.NewReader(l.stderr)),
 		done:   make(chan struct{}),
+	}
+	if err != nil {
+		if cleanupErr := p.Close(); cleanupErr != nil {
+			return p, errors.Join(err, cleanupErr)
+		}
+		return nil, err
 	}
 	if spec.Type == unit.TypeOneshot {
 		p.dead, p.exited = true, true
@@ -140,25 +144,30 @@ func (p *stubProc) finish() {
 func (p *stubProc) Close() error {
 	p.finish()
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.closed {
-		p.mu.Unlock()
 		return nil
 	}
-	p.closed = true
 	job := p.job
 	stdout := p.stdout
 	stderr := p.stderr
-	p.stdout = nil
-	p.stderr = nil
-	p.mu.Unlock()
 	if job != nil {
-		_ = job.Close()
+		if err := job.Close(); err != nil {
+			return err
+		}
 	}
 	if stdout != nil {
-		_ = stdout.Close()
+		if err := stdout.Close(); err != nil {
+			return err
+		}
+		p.stdout = nil
 	}
 	if stderr != nil {
-		_ = stderr.Close()
+		if err := stderr.Close(); err != nil {
+			return err
+		}
+		p.stderr = nil
 	}
+	p.closed = true
 	return nil
 }

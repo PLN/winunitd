@@ -349,6 +349,56 @@ func TestLateLaunchCleanupFailureRetainsOwnership(t *testing.T) {
 
 type partialStartLauncher struct{ failedStopLauncher }
 
+type bootstrapCleanupProcess struct{ runtime.Process }
+
+func (*bootstrapCleanupProcess) PID() int    { return 0 }
+func (*bootstrapCleanupProcess) Alive() bool { return false }
+
+type bootstrapCleanupLauncher struct {
+	failedStopLauncher
+	owner *bootstrapCleanupProcess
+}
+
+func (l *bootstrapCleanupLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
+	p, err := l.failedStopLauncher.Start(ctx, spec)
+	if err != nil {
+		return p, err
+	}
+	l.owner = &bootstrapCleanupProcess{Process: p}
+	return l.owner, errors.New("injected bootstrap failure before process creation")
+}
+
+func TestFailedBootstrapWithoutPIDRemainsObservableAndRetryable(t *testing.T) {
+	const name = "bootstrap.service"
+	l := &bootstrapCleanupLauncher{}
+	m := managerWith(t, l, map[string]string{name: "[Service]\nExecStart=C:\\Tools\\worker.exe\nRestart=always\n"})
+	if _, err := m.Start(context.Background(), name); err == nil {
+		t.Fatal("bootstrap failure reported success")
+	}
+	t.Cleanup(func() { l.proc.fail.Store(false); _ = l.proc.Process.Stop(time.Second) })
+	status, err := m.Status(name)
+	if err != nil || status.Unit.MainPID != 0 || !status.Unit.TerminationUncertain {
+		t.Fatalf("bootstrap owner missing from status: %+v, %v", status, err)
+	}
+	if _, err := m.Start(context.Background(), name); err == nil {
+		t.Fatal("replacement admitted over failed bootstrap cleanup")
+	}
+	m.mu.Lock()
+	retained := m.units[name].proc == l.owner && m.units[name].cleanupPending()
+	m.mu.Unlock()
+	if !retained || len(l.specs()) != 1 {
+		t.Fatal("bootstrap cleanup ownership was replaced")
+	}
+	l.proc.fail.Store(false)
+	if _, err := m.Stop(name); err != nil {
+		t.Fatal("bootstrap stop retry", err)
+	}
+	status, err = m.Status(name)
+	if err != nil || status.Unit.TerminationUncertain {
+		t.Fatalf("bootstrap cleanup did not complete: %+v, %v", status, err)
+	}
+}
+
 func (l *partialStartLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
 	p, err := l.failedStopLauncher.Start(ctx, spec)
 	if err != nil {
