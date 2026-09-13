@@ -59,7 +59,7 @@ func (m *Manager) armPath(u *unit.Unit, revision string) error {
 	}
 	satisfied := false
 	if len(u.PathWatch.Exists) > 0 {
-		ok, err := m.pathExistsAll(u.PathWatch.Exists)
+		ok, err := m.pathExistsPredicate(u.PathWatch.Exists, u.PathWatch.ExistsAny)
 		if err != nil {
 			cancel()
 			cleanupErr := m.disposeHub(u.Name, &watchRuntime{watches: toWatchIO(opened)})
@@ -120,10 +120,11 @@ func (m *Manager) onPathExistsForHub(name string, h *watchRuntime) {
 		return
 	}
 	specs := h.unit.PathWatch.Exists
+	anyExists := h.unit.PathWatch.ExistsAny
 	activated := h.unit.PathWatch.Unit
 	m.mu.Unlock()
 
-	ok, err := m.pathExistsAll(specs)
+	ok, err := m.pathExistsPredicate(specs, anyExists)
 	if err != nil {
 		m.failHub(name, h, fmt.Errorf("%s: %w", core.ReasonConfiguration, err))
 		return
@@ -141,7 +142,7 @@ func (m *Manager) startPathCompanion(name string, h *watchRuntime, activated str
 	m.startFromWatch(context.Background(), activated, &watchOrigin{name: name, hub: h})
 }
 
-func (m *Manager) pathExistsAll(specs []pathwatch.Spec) (bool, error) {
+func (m *Manager) pathExistsPredicate(specs []pathwatch.Spec, anyExists bool) (bool, error) {
 	if len(specs) == 0 {
 		return false, nil
 	}
@@ -149,14 +150,24 @@ func (m *Manager) pathExistsAll(specs []pathwatch.Spec) (bool, error) {
 	if fn == nil {
 		fn = pathwatch.Exists
 	}
+	var probeErr error
 	for _, s := range specs {
 		ok, err := fn(s)
 		if err != nil {
-			return false, err
+			if !anyExists {
+				return false, err
+			}
+			if probeErr == nil {
+				probeErr = err
+			}
+			continue
 		}
-		if !ok {
+		if ok && anyExists {
+			return true, nil
+		}
+		if !ok && !anyExists {
 			return false, nil
 		}
 	}
-	return true, nil
+	return !anyExists, probeErr
 }

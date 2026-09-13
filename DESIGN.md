@@ -147,7 +147,7 @@ This table defines v2 targets, not current support. Upstream comparisons and sou
 | `Type=notify` | Activation completes on authenticated readiness for the current invocation or fails on deadline/exit |
 | `Type=oneshot` | Activation waits for exit while draining logs; default completed/inactive, optional `RemainAfterExit` |
 | `PathExists` | Repeated predicates use OR in the new format; any AND facility gets an explicit distinct operator/name |
-| CPU controls | Use explicit Windows names/ranges for whole-machine quota and native job weight; migration preserves effective limits or rejects lossy conversion |
+| CPU controls | Use explicit Windows names/ranges for native job quota and weight; quota is relative to a CPU-controlled parent job when nested, otherwise machine capacity; migration preserves effective limits or rejects lossy conversion |
 | Native proxies | Report external ownership/capabilities; no claimed job containment or restart/watchdog coverage beyond the adapter |
 | Unsupported directives | Reject; no partial acceptance of unimplemented safety or lifecycle guarantees |
 

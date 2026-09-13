@@ -45,13 +45,15 @@ Commands:
                       Quiesce system and user workloads until manager restart
                       (Administrators, reserved maintenance pipe; default/max 180s)
   verify <path|unit>  Verify a unit file path (no daemon) or a loaded unit
+  migrate --file PATH [--output NEWPATH]
+                      Preview format-2 conversion; optionally create a new file
   enable-linger <user>
                       Persist a user manager across logoff and at boot
                       (Administrators, system pipe)
   disable-linger <user>
                       Stop lingering for a user (Administrators, system pipe)
 
-Commands other than verify-on-a-file-path talk to winunitd over
+Commands other than migrate and verify-on-a-file-path talk to winunitd over
 \\.\pipe\winunitd\control. --user talks to
 \\.\pipe\winunitd\user\<SID>\control for the current user.
 --user is accepted before or after the verb. enable-linger /
@@ -195,6 +197,8 @@ func (c *cli) run(args []string) int {
 		switch cmd {
 		case "verify":
 			fmt.Fprint(c.stdout, verifyUsage)
+		case "migrate":
+			fmt.Fprint(c.stdout, migrateUsage)
 		case "status":
 			fmt.Fprint(c.stdout, statusUsage)
 		default:
@@ -204,6 +208,8 @@ func (c *cli) run(args []string) int {
 	}
 
 	switch cmd {
+	case "migrate":
+		return c.migrate(rest)
 	case "verify":
 		return c.verify(rest)
 	case "start":
@@ -930,6 +936,12 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		}
 		if u.Last != "" {
 			fmt.Fprintf(c.stdout, "       Last: %s\n", u.Last)
+		}
+		if u.WindowsCPUWeight != 0 {
+			fmt.Fprintf(c.stdout, "  WindowsCPUWeight: %d\n", u.WindowsCPUWeight)
+		}
+		if u.WindowsCPUQuota != 0 {
+			fmt.Fprintf(c.stdout, "  WindowsCPUQuota: %d%%\n", u.WindowsCPUQuota)
 		}
 		if u.CPUWeight != 0 {
 			fmt.Fprintf(c.stdout, "  CPUWeight: %d\n", u.CPUWeight)

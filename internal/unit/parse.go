@@ -14,6 +14,7 @@ import (
 
 var knownDirectives = map[string]map[string]bool{
 	"Unit": {
+		"FormatVersion":              true,
 		"Description":                true,
 		"Requires":                   true,
 		"Wants":                      true,
@@ -49,6 +50,8 @@ var knownDirectives = map[string]map[string]bool{
 		"ProcessLimit":           true,
 		"PriorityClass":          true,
 		"CPUWeight":              true,
+		"WindowsCPUWeight":       true,
+		"WindowsCPUQuota":        true,
 		"CPUQuota":               true,
 		"IoPriority":             true,
 	},
@@ -67,8 +70,9 @@ var knownDirectives = map[string]map[string]bool{
 		"EventLogTrigger": true,
 	},
 	"Path": {
-		"PathChanged": true,
-		"PathExists":  true,
+		"PathChanged":   true,
+		"PathExists":    true,
+		"PathExistsAll": true,
 	},
 	"Install": {
 		"WantedBy": true,
@@ -129,18 +133,22 @@ type serviceBuilder struct {
 	watchdogStat  string
 	watchdogStatL int
 
-	memoryMax      string
-	memoryMaxL     int
-	processLimit   string
-	processLimitL  int
-	priorityClass  string
-	priorityClassL int
-	cpuWeight      string
-	cpuWeightL     int
-	cpuQuota       string
-	cpuQuotaL      int
-	ioPriority     string
-	ioPriorityL    int
+	memoryMax         string
+	memoryMaxL        int
+	processLimit      string
+	processLimitL     int
+	priorityClass     string
+	priorityClassL    int
+	windowsCPUWeight  string
+	windowsCPUWeightL int
+	windowsCPUQuota   string
+	windowsCPUQuotaL  int
+	cpuWeight         string
+	cpuWeightL        int
+	cpuQuota          string
+	cpuQuotaL         int
+	ioPriority        string
+	ioPriorityL       int
 }
 
 type timerBuilder struct {
@@ -171,6 +179,8 @@ type eventLogBuilder struct {
 }
 
 type pathBuilder struct {
+	existsAll    bool
+	existsAny    bool
 	changed      []string
 	changedLines []int
 	exists       []string
@@ -178,11 +188,12 @@ type pathBuilder struct {
 }
 
 type parser struct {
-	path   string
-	name   string
-	kind   Kind
-	unit   *Unit
-	issues []Issue
+	formatLine int
+	path       string
+	name       string
+	kind       Kind
+	unit       *Unit
+	issues     []Issue
 
 	svc   *serviceBuilder
 	timer *timerBuilder
@@ -243,9 +254,10 @@ func parseReport(path, name string, src []byte, stat func(string) (os.FileInfo, 
 		name: canon,
 		kind: kind,
 		unit: &Unit{
-			Name: canon,
-			Path: path,
-			Kind: kind,
+			FormatVersion: 1,
+			Name:          canon,
+			Path:          path,
+			Kind:          kind,
 		},
 		stat: stat,
 	}
@@ -333,6 +345,19 @@ func (p *parser) apply(section string, e iniEntry) {
 
 func (p *parser) applyUnit(e iniEntry) {
 	switch e.key {
+	case "FormatVersion":
+		if p.formatLine != 0 {
+			p.errorf(e.line, "FormatVersion may be specified only once")
+		}
+		p.formatLine = e.line
+		switch e.value {
+		case "1":
+			p.unit.FormatVersion = 1
+		case "2":
+			p.unit.FormatVersion = 2
+		default:
+			p.errorf(e.line, "unsupported FormatVersion %q (supported: 1, 2)", e.value)
+		}
 	case "Description":
 		p.unit.Description = e.value
 	case "Requires":
@@ -440,6 +465,10 @@ func (p *parser) applyService(e iniEntry) {
 	case "PriorityClass":
 		s.priorityClass = e.value
 		s.priorityClassL = e.line
+	case "WindowsCPUWeight":
+		s.windowsCPUWeight, s.windowsCPUWeightL = e.value, e.line
+	case "WindowsCPUQuota":
+		s.windowsCPUQuota, s.windowsCPUQuotaL = e.value, e.line
 	case "CPUWeight":
 		s.cpuWeight = e.value
 		s.cpuWeightL = e.line
@@ -502,7 +531,12 @@ func (p *parser) applyPath(e iniEntry) {
 	case "PathChanged":
 		ph.changed = append(ph.changed, e.value)
 		ph.changedLines = append(ph.changedLines, e.line)
-	case "PathExists":
+	case "PathExists", "PathExistsAll":
+		if e.key == "PathExistsAll" {
+			ph.existsAll = true
+		} else {
+			ph.existsAny = true
+		}
 		ph.exists = append(ph.exists, e.value)
 		ph.existsLines = append(ph.existsLines, e.line)
 	}
@@ -655,7 +689,7 @@ func (p *parser) finishService() {
 		if !s.execSet || (strings.TrimSpace(s.execRaw) == "" && len(s.execArgs) == 0) {
 			p.errorf(s.execLine, "ExecStart is required")
 		} else {
-			if len(s.execArgs) > 0 && execStartArgFootgun(s.execRaw, p.stat) {
+			if p.unit.FormatVersion != 2 && len(s.execArgs) > 0 && execStartArgFootgun(s.execRaw, p.stat) {
 				p.errorf(s.execLine, "ExecStart must be an executable path when ExecStartArg is set; unquoted arguments belong in ExecStartArg")
 			}
 			argv, err := buildArgv(s.execRaw, s.execArgs)
@@ -686,7 +720,7 @@ func (p *parser) finishService() {
 		} else if !s.execStopSet || strings.TrimSpace(s.execStopRaw) == "" {
 			p.errorf(s.execStopLine, "ExecStop requires an executable path")
 		} else {
-			if len(s.execStopArgs) > 0 && execStartArgFootgun(s.execStopRaw, p.stat) {
+			if p.unit.FormatVersion != 2 && len(s.execStopArgs) > 0 && execStartArgFootgun(s.execStopRaw, p.stat) {
 				p.errorf(s.execStopLine, "ExecStop must be an executable path when ExecStopArg is set")
 			}
 			argv, err := buildArgv(s.execStopRaw, s.execStopArgs)
@@ -812,6 +846,7 @@ func (p *parser) finishJobLimits(spec *ServiceSpec, s *serviceBuilder) {
 			spec.PriorityClassSet = true
 		}
 	}
+	p.finishWindowsCPU(spec, s)
 	if s.cpuWeight != "" {
 		n, err := parseCPUWeight(s.cpuWeight)
 		if err != nil {
@@ -1024,6 +1059,13 @@ func (p *parser) finishPath() {
 		p.errorf(0, "path unit requires a [Path] section")
 		return
 	}
+	if ph.existsAll && p.unit.FormatVersion != 2 {
+		p.errorf(0, "PathExistsAll requires FormatVersion=2")
+	}
+	if ph.existsAll && ph.existsAny {
+		p.errorf(0, "PathExists and PathExistsAll cannot be combined")
+	}
+	spec.ExistsAny = p.unit.FormatVersion == 2 && !ph.existsAll
 	for i, raw := range ph.changed {
 		line := ph.changedLines[i]
 		if strings.TrimSpace(raw) == "" {

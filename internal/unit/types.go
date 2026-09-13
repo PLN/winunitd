@@ -160,9 +160,10 @@ type EnvVar struct {
 
 // Unit is a parsed unit file.
 type Unit struct {
-	Name string
-	Path string
-	Kind Kind
+	FormatVersion int // 1 is the beta format; 2 selects explicit v2 semantics.
+	Name          string
+	Path          string
+	Kind          Kind
 
 	Description string
 	Requires    []string
@@ -219,8 +220,10 @@ type ServiceSpec struct {
 	ProcessLimit  uint32
 	PriorityClass PriorityClass
 	// CPUWeight is the unit-file integer 1–10000 (not the Windows 1–9 weight).
-	CPUWeight uint32
-	// CPUQuota is N from CPUQuota=N% (1–100, % of total machine CPU).
+	CPUWeight        uint32
+	WindowsCPUWeight uint32 // Explicit native job weight, 1-9 (format 2).
+	WindowsCPUQuota  uint32 // Explicit quota percentage, 1-100 (format 2).
+	// CPUQuota is N from CPUQuota=N% (1–100, % of available CPU allocation).
 	// CpuRate = N * 100 (max 10000).
 	CPUQuota   uint32
 	IoPriority IoPriority
@@ -324,9 +327,10 @@ type EventLogSpec struct {
 // PathSpec is the [Path] section. The activated unit is always
 // the same basename with a .service suffix (no Unit=).
 type PathSpec struct {
-	Changed []pathwatch.Spec
-	Exists  []pathwatch.Spec
-	Unit    string
+	ExistsAny bool // Format 2 PathExists is OR; legacy/PathExistsAll is AND.
+	Changed   []pathwatch.Spec
+	Exists    []pathwatch.Spec
+	Unit      string
 }
 
 // CompanionService returns the basename .service for a companion unit

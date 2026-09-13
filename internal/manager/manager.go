@@ -568,6 +568,8 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 		}
 		if u := rt.ownedUnit(); u != nil && u.Service != nil {
 			svc := u.Service
+			st.WindowsCPUWeight = svc.WindowsCPUWeight
+			st.WindowsCPUQuota = svc.WindowsCPUQuota
 			if svc.CPUWeightSet {
 				st.CPUWeight = svc.CPUWeight
 			}
