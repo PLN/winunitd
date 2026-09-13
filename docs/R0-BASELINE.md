@@ -1,5 +1,11 @@
 # R0 baseline and initial qualification
 
+September 13 update: [constrained Windows qualification](TEST-HARDENING.md#constrained-windows-acceptance)
+completes issue #112 with one-CPU race measurements and repeated native
+SYSTEM/headless-user runs. Permission prerequisites and incomplete attempts are
+recorded explicitly. R0.4 provisioning/session repeatability remains open; the
+earlier baseline below is historical.
+
 September 5, 2026. Implementation: `15ccd9d`. R0.2 and R0.3 are complete work packages; R0 is not closed. No R1 runtime fix is claimed.
 
 ## Isolated tests

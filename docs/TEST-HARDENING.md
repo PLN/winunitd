@@ -1,9 +1,62 @@
 # Post-beta test hardening
 
+## Constrained Windows acceptance
+
+September 13, 2026: the technical scope of
+[issue #112](https://github.com/PLN/winunitd/issues/112) is complete. PR #212 source
+`7396beefb88b4400ff10842bdc86f5cfd433cb38` passed
+[exact-source Windows/Linux CI](https://github.com/PLN/winunitd/actions/runs/34772550381);
+merge `912d84197ed2211704d9a36f537758fc1bc03ee6` has the tested tree. R0.4's
+clean-input provisioning/session harness and broader R4 acceptance remain open.
+
+The runner and inherited test processes were constrained to one logical CPU,
+with `GOMAXPROCS=1` and test parallelism one. The uncached source-tree full race
+command passed in 176.962s, including manager 61.583s and journal 49.665s. This
+fits the existing 180s full-command and 90s manager review budgets, with little
+full-command margin. Cold hosted setup remains a separate measurement.
+
+On disposable Windows Enterprise LTSC build 26100, the same four clean native
+manager/journal/timer/notification binaries passed these constrained matrices:
+
+| Identity | Selected cases | Repetitions per case | Suite time |
+| --- | --- | --- | --- |
+| SYSTEM | 105 | 3 | 53.871s |
+| Headless standard user with temporary Application-log test access | 101 | 3 | 47.315s |
+
+No selected case skipped. The matrix covers notify/watchdog policy and native
+helpers, late-client ownership, real directory/registry/event delivery, and
+existing storage/clock/notification regressions. SYSTEM covers HKLM operations;
+the standard-user lane covers the loaded user hive. Native binaries are non-race;
+the source-tree and hosted race suites are separate. CLI compilation/delivery
+belongs to the source-tree lane, which has the Go toolchain. Both native runners'
+CPU/Go constraints, source/module identity and all four binary hashes were checked.
+
+The headless test account initially lacked Application-log read access. A reader
+membership experiment permitted subscription, but these fixtures also publish
+their own probe events and need write access for `RegisterEventSource`.
+[Windows defines those access rights separately](https://learn.microsoft.com/en-us/windows/win32/eventlog/event-logging-security).
+The final lane granted only that account Application-log read/write access for
+the fixture. Exact original channel security and account membership were restored.
+Subscription consumers need channel read access; the extra write right here is
+for the fixture publisher. Neither earlier attempt's twelve skips counted as
+qualification; both incomplete runs are retained separately.
+
+Final teardown removed the fixture, disabled linger, unloaded the profile and
+left no fixture, user-manager or desktop-helper process. The original broker
+remained running. Full logs, exact scripts, permission backup/restoration,
+manifests and failed attempts are retained privately. The pilot was unchanged.
+
+Two controlled mutations check the assertion improvements: omitting the accepted
+client join fails immediately; suppressing accepted watchdog health passes the
+old scheduler-yield assertion and fails the revised positive-completion check.
+A separate 100ms delayed-arm stimulus passes. Twenty focused race repetitions
+passed in 2.607s, as did vet and Windows/Linux staticcheck. No production timeout,
+native observation window or suite deadline was increased.
+
 ## September 13 scheduler-sensitive test inventory
 
-The remaining [issue #112](https://github.com/PLN/winunitd/issues/112) scope is
-constrained-worker qualification. Policy checks use completed decisions or held
+The [accepted constrained-worker run](#constrained-windows-acceptance) covers
+the following inventory. Policy checks use completed decisions or held
 adapters; real transport and OS-event checks retain bounded observation windows.
 The following inventory distinguishes those boundaries. A successful smoke
 window does not prove absence for arbitrary time.
@@ -20,16 +73,8 @@ window does not prove absence for arbitrary time.
 | Native directory and registry adapters (`internal/pathwatch`, `internal/registry`) | Directory filter smoke retains 400ms observations followed by matching events with three-second delivery bounds. Registry set notification has a three-second bound. Protected-handle cleanup and late-open ownership use explicit adapter/worker synchronization. |
 | Windows event subscription (`internal/eventlog/subscribe_windows_test.go`) | Actual Application event publication and subscription delivery use an eight-second bound. XML/filter parsing is synchronous policy coverage. |
 
-The focused watchdog/late-accept changes passed twenty race-enabled repetitions
-in 2.607s. With the runner and inherited child processes restricted to one logical
-CPU and `GOMAXPROCS=1`, the uncached full race command passed in 176.962s; manager
-took 61.583s and journal 49.665s. This is within the provisional 180s/90s review
-budgets, with little full-command margin. Compiler/action identity remains pinned
-to Go 1.27.1. Vet and Windows/Linux staticcheck passed.
-
-Exact-source CI and repeated constrained native identity lanes are still pending;
-this inventory alone does not close #112, R0.4 or broader SYSTEM/session acceptance.
-No production timeout or existing native observation bound is increased.
+Compiler/action identity remains pinned to Go 1.27.1. The accepted measurements
+above complete #112; they do not close R0.4 or broader SYSTEM/session acceptance.
 
 ## Original September 7 checkpoint
 

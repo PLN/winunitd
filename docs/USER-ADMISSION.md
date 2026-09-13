@@ -1,6 +1,6 @@
 # Interactive user admission policy
 
-Status: initial runtime implementation present; administration tooling, real SYSTEM-to-user session qualification, and the remaining R4 lifecycle work are pending. Interactive user managers now default to administrator-enabled admission.
+Status: admission, reconciliation and bounded recovery are implemented, with selected genuine SYSTEM/interactive and headless-user qualification. The [R4 evidence ledger](R4-EVIDENCE.md) records delivered behavior and the remaining session/security matrix. Dedicated admission administration commands and installer controls remain pending. Interactive user managers default to administrator-enabled admission.
 
 Interactive admission is machine-configurable. The default is conservative: an administrator explicitly enables individual users. An optional machine-wide rule delegates interactive admission to the presence of user unit files. Installing winunitd does not enable that delegation automatically.
 
@@ -85,11 +85,13 @@ applicable recovery. Failed or pending native cleanup must still complete before
 replacement. Each admitted retry obtains a fresh token. Status exposes bounded
 per-SID `userRecovery` entries with starting/waiting/cleanup state, the last error
 and the earliest retry time when waiting. No separate per-user timer goroutine is
-created. Native headless profile/crash qualification remains a separate gate.
+created. Selected native headless profile/crash qualification is recorded in the
+[R4 ledger](R4-EVIDENCE.md#current-implementation-and-remaining-identity-matrix);
+the broader identity/session matrix remains open.
 
 ## Implementation evidence and limits
 
-The native user-manager launcher uses `CreateProcessAsUser` with handle
+The interactive user-manager launcher uses `CreateProcessAsUser` with handle
 inheritance disabled and no parent standard-handle list. Windows supplies the
 child's default streams for the windowless launch. Suspended creation and job
 assignment still precede execution; failed cleanup retains ownership.
@@ -123,16 +125,26 @@ interactive profiles fail closed and can be retried by session reconciliation.
 The `8a61393` replacement passed the same disposable SYSTEM/user launch and crash
 sequence, with profile release and no manager resurrection at final logoff.
 
-The headless path still uses an explicit `LoadUserProfile` reference and duplicated
-token with retryable unload after process-tree cleanup. Its abrupt-death profile
-ownership is not qualified and remains an R4.5 prerequisite; interactive evidence
-does not qualify it. Managed-profile paths currently accept local machine accounts;
-domain/cloud/roaming-profile support remains outside their claims.
+The headless local-account S4U path now uses
+`CreateProcessWithTokenW(LOGON_WITH_PROFILE)` with the target profile environment
+and an exclusive private desktop helper. Windows owns the profile through child
+lifetime, including abrupt broker death; the manual `LoadUserProfile` reference
+has been removed. Suspended creation inherits the verified broker job and joins
+the dedicated child job before resume. Helper and failed-launch cleanup remain
+owned until released. See the [headless profile implementation](R2-EVIDENCE.md#september-12-windows-owned-headless-profiles).
 
-Portable fault tests cover termination-before-unload, failed unload retry, and
-failed creation retaining profile ownership. The remaining native session matrix
-and redirected/unloaded-profile qualification remain open. Headless linger
-is not qualified by these changes.
+Production [broker-crash recovery and final profile release](R3-EVIDENCE.md#managed-bound-dependent-cleanup)
+and [repeated S4U user-manager recovery](R2-EVIDENCE.md#system-user-host-snapshot-qualification)
+have passed. These selected native results do not close R4.5's broader mode,
+session, credential and profile matrix. Managed profiles remain limited to local
+machine accounts; domain/cloud/roaming and redirected-profile support is outside
+these qualification claims.
+
+Event-log triggers also depend on Windows channel read permission; accepting an
+Application-channel unit does not grant access to that channel. The
+[constrained qualification](TEST-HARDENING.md#constrained-windows-acceptance)
+records explicit headless-account access. Its fixtures also publish probe events
+and therefore need a separate write grant; ordinary subscriptions need read access.
 
 Admission snapshots are copied and revisioned. Delayed file probes and launches recheck their session request and policy revision. Explicit revocation respects an independent linger grant; disabling that last grant cannot keep a manager through a revoked interactive session.
 
@@ -144,8 +156,9 @@ preserves current ownership. Snapshots overlapping newer logon/logoff, policy,
 shutdown or reconciliation decisions are discarded; later passes retry.
 Exited interactive managers obtain fresh tokens before recovery, and failed idle
 cleanup remains tracked for retry. Independent linger grants remain effective.
-This does not yet qualify native SYSTEM/session transitions or provide bounded
-concurrent recovery workers and restart backoff.
+Recovery uses the bounded workers and backoff described above. Selected native
+crash/logoff observations are recorded in the R4 ledger; the complete concurrent
+user/session transition matrix remains open.
 
 The Windows probe duplicates the supplied token, impersonates it on a dedicated OS thread, resolves LocalAppData through the Windows known-folder API, and pins directory ancestors against replacement while rejecting reparse points. Four probe workers and a five-second caller deadline bound stalled probes; each pending worker retains its token, handles, and slot until cleanup succeeds. Enumeration is capped at 4,096 entries. Delegation currently rejects UNC and reparse-point paths; redirected-profile support still needs R4 qualification. No user file contents are parsed by the broker.
 
