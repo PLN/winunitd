@@ -412,16 +412,23 @@ func (m *Manager) maybeRestart(name string, kind core.ExitKind, svc *unit.Servic
 	gen := rt.gen
 	owner := runtimeIdentity{name: name, record: rt, gen: gen}
 	m.mu.Unlock()
-	go m.beginRestart(recoveryRequest{owner: owner, delay: restartDelay(svc)})
+	if work := m.acceptRecovery(recoveryRequest{owner: owner, delay: restartDelay(svc)}); work != nil {
+		go m.runRecovery(work)
+	}
 }
 
 func (m *Manager) beginRestart(request recoveryRequest) {
-	name, owner := request.owner.name, request.owner
 	work := m.acceptRecovery(request)
 	if work == nil {
 		return
 	}
+	m.runRecovery(work)
+}
 
+// Only accepted work reaches this worker. Existing exit/watchdog workers call
+// it directly; initial launch failures reserve recovery before spawning.
+func (m *Manager) runRecovery(work *acceptedRecovery) {
+	name, owner := work.owner.name, work.owner
 	ctx := work.Context
 	if work.delay > 0 {
 		timer := m.clock().Timer(work.delay)
@@ -443,7 +450,10 @@ func (m *Manager) beginRestart(request recoveryRequest) {
 	}
 	m.mu.Unlock()
 
-	unlock := m.ops.lock(name)
+	unlock, err := m.ops.lockContext(ctx, name)
+	if err != nil {
+		return
+	}
 	defer unlock()
 	// Stop, recreation, or another recovery can win while this worker waits
 	// for the unit gate. Validate the same owner inside launch admission too.

@@ -4,6 +4,14 @@ September 9, 2026. Working inventory for [issue #96](https://github.com/PLN/winu
 against [Design v2 sections 2-3](../DESIGN.md#3-records-and-invariants).
 This is an incremental migration map, not evidence that R2 is complete.
 
+Recovery admission now precedes worker creation, including initial launch
+failures. The accepted record carries its exact owner and cancellation context;
+duplicate same-invocation requests allocate no worker. Backoff and unit-gate
+waits honor cancellation. A newer explicit attempt can therefore release an
+obsolete recovery waiter while still holding the gate for its own native work.
+The retained-identity/backoff matrix covers stale replacement, cancellation,
+start-limit exhaustion and native restart behavior.
+
 Adapter error messages and start-error classification are observed before
 entering lifecycle decisions. Launch, cleanup, native observation, user-manager
 and operation completion handlers recheck retained identity after that observation.
