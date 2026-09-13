@@ -195,27 +195,30 @@ type Unit struct {
 
 // ServiceSpec is the [Service] section.
 type ServiceSpec struct {
-	Type                   ServiceType
-	RemainAfterExit        bool     // oneshot: retain active state after successful completion
-	ServiceName            string   // Type=scm: existing SCM service (DESIGN.md §51)
-	TaskName               string   // Type=scheduled-task: existing task path (DESIGN.md §52)
-	ExecStart              []string // argv: executable then arguments
-	ExecStop               []string // optional cooperative-stop command, same identity
-	WorkingDirectory       string
-	Environment            []EnvVar
-	Restart                RestartPolicy
-	RestartSec             time.Duration
-	RestartBackoff         string // fixed (default) or exponential, format 2 only
-	RestartMaxDelaySec     time.Duration
-	TimeoutStartSec        time.Duration
-	TimeoutStopSec         time.Duration
-	NotifyAccess           NotifyAccess
-	WatchdogSec            time.Duration
-	WatchdogMode           WatchdogMode
-	WatchdogEndpoint       string
-	WatchdogExpectedStatus int
-	WatchdogAddr           string // host:port for tcp/http (loopback)
-	WatchdogURL            string // http(s) URL for WatchdogMode=http
+	Type                     ServiceType
+	RemainAfterExit          bool     // oneshot: retain active state after successful completion
+	ServiceName              string   // Type=scm: existing SCM service (DESIGN.md §51)
+	TaskName                 string   // Type=scheduled-task: existing task path (DESIGN.md §52)
+	ExecStart                []string // argv: executable then arguments
+	ExecStop                 []string // optional cooperative-stop command, same identity
+	WorkingDirectory         string
+	Environment              []EnvVar
+	Restart                  RestartPolicy
+	RestartSec               time.Duration
+	RestartBackoff           string // fixed (default) or exponential, format 2 only
+	RestartMaxDelaySec       time.Duration
+	TimeoutStartSec          time.Duration
+	TimeoutStopSec           time.Duration
+	NotifyAccess             NotifyAccess
+	WatchdogSec              time.Duration
+	WatchdogMode             WatchdogMode
+	WatchdogEndpoint         string
+	WatchdogExpectedStatus   int
+	WatchdogAddr             string // host:port for tcp/http (loopback)
+	WatchdogURL              string // http(s) URL for WatchdogMode=http
+	WatchdogGraceSec         time.Duration
+	WatchdogTimeoutSec       time.Duration
+	WatchdogFailureThreshold int
 
 	// Job Object limits (DESIGN.md §43 R1). Zero / empty means omitted.
 	MemoryMax     uint64

@@ -310,7 +310,9 @@ func ProbeHTTP(ctx context.Context, rawURL string, wantStatus int) error {
 		return err
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<10))
+	if _, err := io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<10)); err != nil {
+		return err
+	}
 	if resp.StatusCode != wantStatus {
 		return fmt.Errorf("watchdog http status %d, want %d", resp.StatusCode, wantStatus)
 	}

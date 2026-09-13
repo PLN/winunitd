@@ -27,35 +27,38 @@ var knownDirectives = map[string]map[string]bool{
 		"StartLimitBurst":            true,
 	},
 	"Service": {
-		"Type":                   true,
-		"RemainAfterExit":        true,
-		"ServiceName":            true,
-		"TaskName":               true,
-		"ExecStart":              true,
-		"ExecStartArg":           true,
-		"ExecStop":               true,
-		"ExecStopArg":            true,
-		"WorkingDirectory":       true,
-		"Environment":            true,
-		"Restart":                true,
-		"RestartSec":             true,
-		"RestartBackoff":         true,
-		"RestartMaxDelaySec":     true,
-		"TimeoutStartSec":        true,
-		"TimeoutStopSec":         true,
-		"NotifyAccess":           true,
-		"WatchdogSec":            true,
-		"WatchdogMode":           true,
-		"WatchdogEndpoint":       true,
-		"WatchdogExpectedStatus": true,
-		"MemoryMax":              true,
-		"ProcessLimit":           true,
-		"PriorityClass":          true,
-		"CPUWeight":              true,
-		"WindowsCPUWeight":       true,
-		"WindowsCPUQuota":        true,
-		"CPUQuota":               true,
-		"IoPriority":             true,
+		"Type":                     true,
+		"RemainAfterExit":          true,
+		"ServiceName":              true,
+		"TaskName":                 true,
+		"ExecStart":                true,
+		"ExecStartArg":             true,
+		"ExecStop":                 true,
+		"ExecStopArg":              true,
+		"WorkingDirectory":         true,
+		"Environment":              true,
+		"Restart":                  true,
+		"RestartSec":               true,
+		"RestartBackoff":           true,
+		"RestartMaxDelaySec":       true,
+		"TimeoutStartSec":          true,
+		"TimeoutStopSec":           true,
+		"NotifyAccess":             true,
+		"WatchdogSec":              true,
+		"WatchdogMode":             true,
+		"WatchdogEndpoint":         true,
+		"WatchdogExpectedStatus":   true,
+		"MemoryMax":                true,
+		"ProcessLimit":             true,
+		"PriorityClass":            true,
+		"CPUWeight":                true,
+		"WindowsCPUWeight":         true,
+		"WindowsCPUQuota":          true,
+		"CPUQuota":                 true,
+		"IoPriority":               true,
+		"WatchdogGraceSec":         true,
+		"WatchdogTimeoutSec":       true,
+		"WatchdogFailureThreshold": true,
 	},
 	"Timer": {
 		"OnBootSec":       true,
@@ -128,16 +131,22 @@ type serviceBuilder struct {
 	taskName     string
 	taskNameL    int
 
-	notifyAccess  string
-	notifyAccessL int
-	watchdogSec   string
-	watchdogSecL  int
-	watchdogMode  string
-	watchdogModeL int
-	watchdogEP    string
-	watchdogEPL   int
-	watchdogStat  string
-	watchdogStatL int
+	notifyAccess       string
+	notifyAccessL      int
+	watchdogSec        string
+	watchdogSecL       int
+	watchdogGrace      string
+	watchdogGraceL     int
+	watchdogTimeout    string
+	watchdogTimeoutL   int
+	watchdogThreshold  string
+	watchdogThresholdL int
+	watchdogMode       string
+	watchdogModeL      int
+	watchdogEP         string
+	watchdogEPL        int
+	watchdogStat       string
+	watchdogStatL      int
 
 	memoryMax         string
 	memoryMaxL        int
@@ -454,6 +463,12 @@ func (p *parser) applyService(e iniEntry) {
 	case "NotifyAccess":
 		s.notifyAccess = e.value
 		s.notifyAccessL = e.line
+	case "WatchdogGraceSec":
+		s.watchdogGrace, s.watchdogGraceL = e.value, e.line
+	case "WatchdogTimeoutSec":
+		s.watchdogTimeout, s.watchdogTimeoutL = e.value, e.line
+	case "WatchdogFailureThreshold":
+		s.watchdogThreshold, s.watchdogThresholdL = e.value, e.line
 	case "WatchdogSec":
 		s.watchdogSec = e.value
 		s.watchdogSecL = e.line
@@ -792,6 +807,7 @@ func (p *parser) finishService() {
 	}
 
 	if spec.Type.IsExternalProxy() {
+		p.finishWatchdogPolicy(spec, s)
 		tag := string(spec.Type)
 		if s.notifyAccess != "" {
 			p.warnf(s.notifyAccessL, "NotifyAccess is ignored for Type=%s", tag)
@@ -827,6 +843,7 @@ func (p *parser) finishService() {
 	}
 
 	p.finishWatchdog(spec, s)
+	p.finishWatchdogPolicy(spec, s)
 }
 
 func (p *parser) finishJobLimits(spec *ServiceSpec, s *serviceBuilder) {

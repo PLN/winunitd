@@ -29,10 +29,15 @@ func TestRestartBackoffPublicLifecycle(t *testing.T) {
 		owner := runtimeIdentity{name: "work.service", record: rt, gen: rt.gen}
 		m.mu.Unlock()
 		old.die(7)
-		waitCond(t, func() bool { return clock.WaitingAt(delay) })
+		waitCond(t, func() bool {
+			m.mu.Lock()
+			accepted := rt.sub == core.SubAutoRestart && rt.restartAttempt == uint32(i+1) && rt.restartDelay == delay
+			m.mu.Unlock()
+			return accepted && clock.WaitingAt(delay)
+		})
 		status, err := m.Status("work")
 		if err != nil || status.Unit.RestartAttempt != uint32(i+1) || status.Unit.RestartDelaySec != delay.Seconds() {
-			t.Fatalf("backoff status: %+v, %v", status, err)
+			t.Fatalf("backoff status: %+v, %v", status.Unit, err)
 		}
 		snapshot, err := m.Snapshot()
 		if err != nil {

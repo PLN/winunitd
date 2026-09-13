@@ -136,6 +136,7 @@ func (m *Manager) applyStopCompletion(event stopCompletion) (*protocol.UnitResul
 			}
 		} else {
 			rt.step(core.EventStopFinished)
+			rt.health, rt.probeFailures = "unknown", 0
 		}
 	}
 	active := core.Inactive.String()
@@ -234,6 +235,7 @@ func (m *Manager) acceptWatchdogFailure(owner runtimeIdentity) *watchdogEffect {
 		return nil
 	}
 	m.queueBoundStopsLocked(owner.name)
+	rt.health = "unhealthy"
 	rt.err = "watchdog timed out"
 	rt.terminated = true
 	effect := &watchdogEffect{owner: owner, unit: rt.ownedUnit(), process: rt.proc, cancel: rt.watchdog, stopEligible: stopEligible}
@@ -334,6 +336,7 @@ func (m *Manager) applyProcessExitCleanup(event processExitCleanup) bool {
 		}
 		return false
 	}
+	rt.health, rt.probeFailures = "unknown", 0
 	return true
 }
 
