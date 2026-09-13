@@ -821,6 +821,12 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		fmt.Fprintf(c.stdout, "         %d active\n", m.UnitsActive)
 		fmt.Fprintf(c.stdout, "         %d failed\n", m.UnitsFailed)
 		fmt.Fprintf(c.stdout, "  Timers: %d loaded\n", m.TimersLoaded)
+		if m.LogDroppedRecords != 0 || m.LogStorageErrors != 0 {
+			fmt.Fprintf(c.stdout, "  Journal: %d dropped records, %d dropped bytes, %d storage errors (manager lifetime)\n", m.LogDroppedRecords, m.LogDroppedBytes, m.LogStorageErrors)
+			if m.LogLastStorageError != "" {
+				fmt.Fprintf(c.stdout, "  Journal error: %s\n", m.LogLastStorageError)
+			}
+		}
 		if m.UserManagers > 0 || m.Lingering > 0 || m.LingerState != "" || m.UserNativeWork > 0 || len(m.UserRecovery) > 0 || len(m.UserInstances) > 0 {
 			fmt.Fprintf(c.stdout, "  Users:  %d managers\n", m.UserManagers)
 			fmt.Fprintf(c.stdout, "          %d lingering\n", m.Lingering)

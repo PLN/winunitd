@@ -141,7 +141,11 @@ type StatusResult struct {
 
 // MachineStatus is the daemon-wide view (DESIGN.md §46).
 type MachineStatus struct {
-	ConfigRevision string `json:"configRevision,omitempty"`
+	ConfigRevision      string `json:"configRevision,omitempty"`
+	LogDroppedRecords   uint64 `json:"logDroppedRecords,omitempty"`
+	LogDroppedBytes     uint64 `json:"logDroppedBytes,omitempty"`
+	LogStorageErrors    uint64 `json:"logStorageErrors,omitempty"`
+	LogLastStorageError string `json:"logLastStorageError,omitempty"`
 
 	State          string               `json:"state"`
 	UnitsLoaded    int                  `json:"unitsLoaded"`

@@ -9,12 +9,13 @@ import (
 	"sort"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/journal"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/unit"
 )
 
 const (
-	maxManagedUnits         = 1024 // includes builtins and retained removed definitions
+	maxManagedUnits         = journal.MaxRetainedNames // includes builtins and retained removed definitions
 	maxConfigurationEntries = 4096
 	maxReloadErrors         = 128
 	maxReloadErrorBytes     = 128 << 10
@@ -76,6 +77,10 @@ func (m *Manager) reloadWithBuilder(build func([]*unit.Unit) (*core.Graph, error
 		for _, u := range snapshot.retained {
 			graphUnits = append(graphUnits, u)
 		}
+		journalNames := make([]string, 0, len(graphUnits))
+		for _, u := range graphUnits {
+			journalNames = append(journalNames, u.Name)
+		}
 		g, buildErr := build(withEnabledWants(graphUnits, links))
 		cycle := ""
 		if buildErr == nil {
@@ -100,6 +105,10 @@ func (m *Manager) reloadWithBuilder(build func([]*unit.Unit) (*core.Graph, error
 			result.Cycle = cycle
 			m.mu.Unlock()
 			return result, nil
+		}
+		if err := m.journal.RetainNames(journalNames); err != nil {
+			m.mu.Unlock()
+			return nil, protocol.ErrFailed(err.Error())
 		}
 		dropped := m.replaceLocked(loaded, g, links)
 		result.ConfigRevision = m.configRevision

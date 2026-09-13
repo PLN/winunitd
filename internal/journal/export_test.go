@@ -26,3 +26,13 @@ func (s *Store) PressureTestQueue() PressureTestQueue {
 	}
 	return result
 }
+
+func (s *Store) RetentionTestCounts() (files, names int) {
+	s.mu.Lock()
+	files = len(s.files)
+	s.mu.Unlock()
+	s.queueMu.Lock()
+	names = len(s.dropped)
+	s.queueMu.Unlock()
+	return
+}

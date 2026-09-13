@@ -133,6 +133,22 @@ omission notice. Correct the reported errors and reload to see remaining errors.
 These are input/record bounds, not a guarantee of bounded filesystem latency or
 aggregate process/output memory.
 
+Journal capture waits flush, sync and retire successfully persisted file records;
+later output reopens the same on-disk log with existing repair/rotation behavior.
+At most 1024 file records, handles and buffers can remain owned at once. A failed
+flush or retirement close retains its record for retry; new names at capacity
+lose output with visible loss/storage counters rather than allocating more files.
+Complete outstanding capture waits to release capacity. A concurrent later capture
+must be covered by a new sync when the earlier shared sync predates its writes.
+
+Per-name loss/error history is limited to 2048 names. Accepted configuration and
+retained runtime ownership protect up to 1024 names from eviction; other names
+use insertion-order history and may restart their per-name counters after eviction.
+Machine `status` includes lifetime journal loss/error totals across all names,
+including evicted history. Last storage-error text is limited to 4096 UTF-8 bytes.
+These changes do not delete historical on-disk logs or impose a total disk quota
+across all historical names. They do not make filesystem I/O latency bounded.
+
 `winctl snapshot` (also `--user`) prints a JSON copy of one manager's accepted
 unit states and active operations, captured together under its decision lock.
 It includes manager identity, capture sequence/time, machine counts, configuration
