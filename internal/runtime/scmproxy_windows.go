@@ -147,3 +147,5 @@ func scmWantName(want svc.State) string {
 		return fmt.Sprintf("state(%d)", int(want))
 	}
 }
+
+const defaultSCMPoll = 100 * time.Millisecond

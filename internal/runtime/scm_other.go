@@ -2,7 +2,13 @@
 
 package runtime
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
+
+// errNotWindows is returned by SCM install/uninstall on non-Windows builds.
+var errNotWindows = fmt.Errorf("Windows Service registration is only available on Windows")
 
 // RunningAsService is always false off Windows.
 func RunningAsService() (bool, error) {

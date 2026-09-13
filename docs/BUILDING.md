@@ -9,12 +9,25 @@ From the repository root:
 ```powershell
 $env:GOTOOLCHAIN = 'go1.27.1'
 go vet ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
 go test -race -parallel 1 ./... -timeout 180s
 go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 go run ./tools/build
 ```
 
 Go can download the selected toolchain through its normal verified module mechanism. Alternatively install that version from [official Go downloads](https://go.dev/dl/). The build command rejects a compiler different from `.go-version`. Direct `go test` commands do not enforce exact compiler equality, so record `go version` when reporting local results.
+
+The builder resolves the pinned compiler using `go env GOROOT GOVERSION`, then
+verifies the absolute child compiler with toolchain switching disabled. Inherited
+GOROOT values cannot redirect child builds. Compiler-selection regressions reject
+wrong versions, relative roots and unavailable tools.
+
+CI runs Staticcheck 2026.2.1 (`v0.8.1`) on both Windows and Linux, including tests.
+`staticcheck.conf` preserves default checks except ST1011 (systemd directive
+spelling) and ST1005 (native API capitalization). Shared command files exempt
+SA4023 because non-Windows API stubs always fail; their Windows callers must still
+check errors. The Windows-only test command field has a narrow U1000 exemption.
+Unused COM entries retain blank pointer-sized slots to preserve ABI offsets.
 
 `tools/build` runs on Windows or Linux and defaults to Windows/amd64 output under `dist/`. Use `-goos` and `-goarch` to select another compilation target; compilation alone does not qualify it. The command builds all three executables with CGO disabled and source paths trimmed. It fixes the baseline architecture level and clears ambient build flags/experiments for child builds. Race tests still require the host C compiler; no C compiler is needed for the production binaries.
 
@@ -37,7 +50,7 @@ and the weekly schedule do not automatically spend hosted-runner minutes.
 Use trusted local Gitea dispatch for reviewed full commit IDs and Proxmox guests
 for installation acceptance. Keep deployment configuration and credentials in
 the private operator workspace. Local CI must run the same vet, race, nested
-pipe regression, maintenance, vulnerability, and build checks; do not equate a
+pipe regression, staticcheck, maintenance, vulnerability, and build checks; do not equate a
 skipped GitHub run with a passing check. Do not admit unreviewed public PR code
 to the trusted local runners. GitHub source/release hosting remains independent
 of where builds run. Manual hosted verification is reserved for release candidates.

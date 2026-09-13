@@ -21,10 +21,6 @@ const (
 	defaultRestartDelay = 100 * time.Millisecond
 )
 
-func (m *Manager) startOne(ctx context.Context, name string) error {
-	return m.launchUnit(ctx, name, false)
-}
-
 func (m *Manager) launchUnit(ctx context.Context, name string, autoRestart bool) error {
 	unlock := m.ops.lock(name)
 	defer unlock()

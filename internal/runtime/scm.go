@@ -7,9 +7,6 @@ import (
 	"time"
 )
 
-// errNotWindows is returned by SCM install/uninstall on non-Windows builds.
-var errNotWindows = fmt.Errorf("Windows Service registration is only available on Windows")
-
 // SCM identity (DESIGN.md §49). Empty ServiceStartName is LocalSystem.
 const (
 	ServiceName    = "winunitd"
@@ -37,13 +34,6 @@ const PreshutdownTimeout = 3 * time.Minute
 // service hung while units drain (issue #33). Aggregate TimeoutStopSec
 // for a running graph is bounded by this window.
 const StopPendingWaitHint = PreshutdownTimeout
-
-// stopPendingTick is how often the SCM host increments CheckPoint while
-// waiting for ordered stop. Tests on Windows shorten this.
-var stopPendingTick = 2 * time.Second
-
-// startPendingTick refreshes SCM progress while listener initialization runs.
-var startPendingTick = 2 * time.Second
 
 // DataDirNames are created under the install base directory (DESIGN.md §7, §48).
 // units, enabled, journal, runtime. PATH and Event Log provider are not touched.

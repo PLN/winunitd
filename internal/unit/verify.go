@@ -59,7 +59,7 @@ func RegistryScopeIssues(u *Unit, userScope bool) []Issue {
 		out = append(out, Issue{
 			Path:     u.Path,
 			Severity: SeverityError,
-			Message:  fmt.Sprintf("HKCU is not valid in the system manager (LocalSystem hive); use HKLM or a user manager"),
+			Message:  "HKCU is not valid in the system manager (LocalSystem hive); use HKLM or a user manager",
 		})
 	}
 	return out

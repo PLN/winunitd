@@ -64,10 +64,6 @@ func (t *UserToken) closeAuxiliary() error {
 	return result
 }
 
-type tokenCleanupFunc func() error
-
-func (f tokenCleanupFunc) Close() error { return f() }
-
 // No acquisition returns a usable token while temporary resources remain
 // unresolved. A failure transfers only unfinished cleanup, never launch authority.
 func finishTokenAcquisition(t *UserToken, err error) (*UserToken, error) {

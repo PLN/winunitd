@@ -21,6 +21,7 @@ type UserManagerSpec struct {
 	// cmdArgv, if set, is the full CreateProcessAsUser command (exe +
 	// args) and skips UserManagerArgs. Tests use it to launch ping the
 	// same way the unit-path listener regression does. Production is nil.
+	//lint:ignore U1000 Used by the Windows launcher and native tests only.
 	cmdArgv []string
 }
 

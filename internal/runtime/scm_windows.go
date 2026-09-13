@@ -331,3 +331,10 @@ func overlayTimeChangeAccept(st svc.Status) {
 	ss.WaitHint = st.WaitHint
 	_ = windows.SetServiceStatus(h, &ss)
 }
+
+// stopPendingTick is how often the SCM host increments CheckPoint while
+// waiting for ordered stop. Tests on Windows shorten this.
+var stopPendingTick = 2 * time.Second
+
+// startPendingTick refreshes SCM progress while listener initialization runs.
+var startPendingTick = 2 * time.Second

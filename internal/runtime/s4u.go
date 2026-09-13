@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"strings"
-	"sync"
 )
 
 // Linger token path names logged when ObtainLingerToken succeeds.
@@ -31,29 +30,6 @@ const (
 	logon32LogonNetwork    = logonTypeNetwork // documented only; URI fallback must not use this
 	logon32ProviderDefault = 0
 )
-
-// lingerLogf, if set, receives path-selection messages (S4U vs store URI).
-// The daemon wires this to stderr. Default is a no-op.
-var (
-	lingerLogMu sync.Mutex
-	lingerLogf  func(string, ...any)
-)
-
-// SetLingerLogf sets the optional linger path logger.
-func SetLingerLogf(fn func(string, ...any)) {
-	lingerLogMu.Lock()
-	lingerLogf = fn
-	lingerLogMu.Unlock()
-}
-
-func logLinger(format string, args ...any) {
-	lingerLogMu.Lock()
-	fn := lingerLogf
-	lingerLogMu.Unlock()
-	if fn != nil {
-		fn(format, args...)
-	}
-}
 
 // useStoreURIFallback is the path-selection rule: a named CredMan/LSA
 // URI is tried only when it is present AND S4U is insufficient for
@@ -128,18 +104,6 @@ func s4uNames(rec LingerRecord) (upn, realm string) {
 		return name[i+1:], name[:i]
 	}
 	return name, ""
-}
-
-func applyAccountName(info *UserInfo, name string) {
-	if info == nil || strings.TrimSpace(name) == "" || info.Username != "" {
-		return
-	}
-	if i := strings.LastIndex(name, `\`); i >= 0 {
-		info.Domain = name[:i]
-		info.Username = name[i+1:]
-		return
-	}
-	info.Username = name
 }
 
 func splitUserDomain(name string) (user, domain string) {

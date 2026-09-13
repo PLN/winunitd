@@ -71,8 +71,6 @@ func (s SCMState) String() string {
 	}
 }
 
-const defaultSCMPoll = 100 * time.Millisecond
-
 func scmWaitTimeout(timeout time.Duration) time.Duration {
 	if timeout > 0 {
 		return timeout

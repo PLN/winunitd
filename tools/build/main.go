@@ -66,10 +66,9 @@ func run() error {
 	if runtime.Version() != want {
 		return fmt.Errorf("requires %s, running %s; set GOTOOLCHAIN=%s", want, runtime.Version(), want)
 	}
-	// Child builds must use the same compiler even if another go.exe is on PATH.
-	goexe := filepath.Join(runtime.GOROOT(), "bin", "go")
-	if runtime.GOOS == "windows" {
-		goexe += ".exe"
+	goexe, err := pinnedGo(want, queryGoEnvironment)
+	if err != nil {
+		return err
 	}
 	commit, err := commandOutput("git", "rev-parse", "HEAD")
 	if err != nil {
@@ -166,7 +165,7 @@ func buildEnv(env []string, goos, arch string) []string {
 	for _, e := range env {
 		key, _, _ := strings.Cut(e, "=")
 		switch strings.ToUpper(key) {
-		case "GOOS", "GOARCH", "CGO_ENABLED", "GOTOOLCHAIN", "GOFLAGS", "GOEXPERIMENT", "GOAMD64", "GOARM64", "GOWORK":
+		case "GOOS", "GOARCH", "CGO_ENABLED", "GOTOOLCHAIN", "GOROOT", "GOFLAGS", "GOEXPERIMENT", "GOAMD64", "GOARM64", "GOWORK":
 			continue
 		}
 		result = append(result, e)
