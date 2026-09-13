@@ -750,14 +750,15 @@ func (m *Manager) executeStartOperation(ctx context.Context, name string, origin
 		}
 	}
 	_, err := tx.Execute(ctx, operationStarter{manager: m, definitions: definitions})
+	message := waitFailMessage(err)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err != nil {
 		return &protocol.UnitResult{
 			Unit:        name,
 			ActiveState: m.stateOfLocked(name).String(),
-			Error:       waitFailMessage(err),
-		}, protocol.ErrFailed(waitFailMessage(err))
+			Error:       message,
+		}, protocol.ErrFailed(message)
 	}
 	return &protocol.UnitResult{Unit: name, ActiveState: m.stateOfLocked(name).String()}, nil
 }

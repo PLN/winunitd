@@ -4,6 +4,17 @@ September 9, 2026. Working inventory for [issue #96](https://github.com/PLN/winu
 against [Design v2 sections 2-3](../DESIGN.md#3-records-and-invariants).
 This is an incremental migration map, not evidence that R2 is complete.
 
+Adapter error messages and start-error classification are observed before
+entering lifecycle decisions. Launch, cleanup, native observation, user-manager
+and operation completion handlers recheck retained identity after that observation.
+Operation completion freezes adapter protocol classification before locking, then
+joins manager-owned cancellation causes under the publication lock. A slow error
+formatter/classifier retains its delivering operation; it cannot block unrelated
+snapshots, start/stop or cancellation. Public lifecycle regressions cover delayed
+partial-creation error formatting and cancellation during start classification.
+Formatting of locally constructed timer/graph/cancellation errors uses only
+manager-owned values. This boundary review does not close the full writer audit.
+
 ## Current authority and migration boundary
 
 Design section 2 selects mutex-serialized decision handlers as the R2 end-state.

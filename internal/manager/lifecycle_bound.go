@@ -148,12 +148,13 @@ func (m *Manager) runBoundStops() {
 				return m.stopBoundMember(ctx, members[name])
 			}))
 		}
+		message := waitFailMessage(err)
 		m.mu.Lock()
 		result := &protocol.UnitResult{Unit: names[0], ActiveState: m.stateOfLocked(names[0]).String()}
 		if err != nil {
 			for _, member := range members {
 				if member.owner.currentLocked(m) && member.owner.record.stopEpoch == member.epoch {
-					member.owner.record.err = fmt.Sprintf("bound dependency stop: %v", err)
+					member.owner.record.err = "bound dependency stop: " + message
 				}
 			}
 		}

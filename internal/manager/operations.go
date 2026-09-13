@@ -43,7 +43,38 @@ func (m *Manager) beginOperationLocked(name, action string, origin activationOri
 	return id
 }
 
+// Preserve the protocol outcome without retaining an adapter's formatting or
+// classification callbacks in the serialized completion path.
+type observedOperationError struct {
+	message  string
+	protocol *protocol.Error
+}
+
+func (e *observedOperationError) Error() string { return e.message }
+
+func (e *observedOperationError) As(target any) bool {
+	if p, ok := target.(**protocol.Error); ok && e.protocol != nil {
+		*p = e.protocol
+		return true
+	}
+	return false
+}
+
+func observeOperationError(err error) error {
+	if err == nil {
+		return nil
+	}
+	observed := &observedOperationError{message: err.Error()}
+	var original *protocol.Error
+	if errors.As(err, &original) {
+		copy := *original
+		observed.protocol = &copy
+	}
+	return observed
+}
+
 // Publish terminal state under the same lock that removes active-task ownership.
+// err contains an observed adapter error and/or manager-owned cancellation causes.
 func (m *Manager) finishOperationLocked(id string, result *protocol.UnitResult, err error) (*protocol.UnitResult, error) {
 	op := m.operations[id]
 	op.State = "succeeded"

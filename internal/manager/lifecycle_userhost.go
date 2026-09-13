@@ -101,6 +101,7 @@ func (h *UserHost) acceptUserLaunch(sid, mode string, session uint32, wanted fun
 }
 
 func (h *UserHost) applyUserLaunch(sid string, inst *userInstance, proc runtime.UserManagerProc, err error, wanted func() bool) bool {
+	message := waitFailMessage(err)
 	pid := 0
 	if proc != nil {
 		pid = proc.PID()
@@ -113,7 +114,7 @@ func (h *UserHost) applyUserLaunch(sid string, inst *userInstance, proc runtime.
 	superseded := h.closed || h.bySID[sid] != inst || !wanted()
 	inst.nextStart = now.Add(inst.restartDelay)
 	if err != nil {
-		inst.err = err.Error()
+		inst.err = message
 	}
 	if proc == nil {
 		if h.bySID[sid] == inst && superseded {
@@ -138,6 +139,7 @@ func (h *UserHost) acceptUserCleanup(inst *userInstance) runtime.UserManagerProc
 }
 
 func (h *UserHost) applyUserCleanup(sid string, inst *userInstance, err error, retainRecovery bool) {
+	message := waitFailMessage(err)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.bySID[sid] != inst {
@@ -153,7 +155,7 @@ func (h *UserHost) applyUserCleanup(sid string, inst *userInstance, err error, r
 			delete(h.bySID, sid)
 		}
 	} else {
-		inst.err = err.Error()
+		inst.err = message
 	}
 }
 

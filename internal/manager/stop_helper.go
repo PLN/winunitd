@@ -74,13 +74,14 @@ func (m *Manager) publishStopHelperProcess(h *stopHelperWork, p runtime.Process)
 }
 
 func (m *Manager) releaseStopHelper(h *stopHelperWork, p runtime.Process, err error) {
+	message := waitFailMessage(err)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, owned := m.stopHelpers[h]; !owned || h.process != p {
 		return
 	}
 	if err != nil {
-		h.owner.record.err = fmt.Sprintf("stop helper cleanup: %v", err)
+		h.owner.record.err = "stop helper cleanup: " + message
 		return
 	}
 	h.process = nil

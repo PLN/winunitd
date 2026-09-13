@@ -3,7 +3,6 @@ package manager
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
@@ -20,13 +19,26 @@ type startCompletion struct {
 	err  error
 }
 
-func (m *Manager) applyStartCompletion(event startCompletion) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.applyStartCompletionLocked(event)
+// Adapter errors may format native resources or implement arbitrary Is/As
+// methods. Observe them before entering decision serialization.
+type observedStartCompletion struct {
+	startCompletion
+	message string
+	skipped bool
 }
 
-func (m *Manager) applyStartCompletionLocked(event startCompletion) {
+func observeStartCompletion(event startCompletion) observedStartCompletion {
+	return observedStartCompletion{startCompletion: event, message: waitFailMessage(event.err), skipped: errors.Is(event.err, core.ErrSkipped)}
+}
+
+func (m *Manager) applyStartCompletion(event startCompletion) {
+	observed := observeStartCompletion(event)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.applyStartCompletionLocked(observed)
+}
+
+func (m *Manager) applyStartCompletionLocked(event observedStartCompletion) {
 	planned := event.plan
 	planned.completed = true
 	if m.units[event.name] != planned.record || planned.record.stopEpoch != planned.stopEpoch || m.closed || (!planned.launched && planned.origin != nil && !planned.origin.validLocked(m)) {
@@ -39,12 +51,12 @@ func (m *Manager) applyStartCompletionLocked(event startCompletion) {
 			state = core.Inactive
 		}
 	}
-	if errors.Is(event.err, core.ErrSkipped) {
+	if event.skipped {
 		state = core.Inactive
 	} else if event.err != nil {
 		state = core.Failed
 	}
-	m.applyStartOutcomeLocked(event.name, state, event.err)
+	m.applyStartOutcomeLocked(event.name, state, event.err != nil, event.message)
 	if event.err == nil {
 		m.clearErrLocked(event.name)
 		if u := planned.record.ownedUnit(); scmServiceName(u) != "" || scheduledTaskName(u) != "" {
@@ -56,7 +68,7 @@ func (m *Manager) applyStartCompletionLocked(event startCompletion) {
 
 // applyStartOutcomeLocked handles one identity-checked member outcome. Graph
 // transaction snapshots are diagnostic results, never lifecycle input.
-func (m *Manager) applyStartOutcomeLocked(name string, state core.State, err error) {
+func (m *Manager) applyStartOutcomeLocked(name string, state core.State, failed bool, message string) {
 	rt := m.units[name]
 	if rt == nil || rt.sub == core.SubAutoRestart {
 		return
@@ -76,21 +88,22 @@ func (m *Manager) applyStartOutcomeLocked(name string, state core.State, err err
 	if (state == core.Inactive || state == core.Failed) && !rt.stopping {
 		m.queueBoundStopsLocked(name)
 	}
-	if err != nil && rt.state != core.Active {
-		rt.err = waitFailMessage(err)
+	if failed && rt.state != core.Active {
+		rt.err = message
 	}
 }
 
 // Jobs blocked by dependencies or cancellation never acquire a unit gate.
 // Their accepted record/generation must still match at event delivery.
 func (m *Manager) applyStartRejection(event startCompletion) {
+	observed := observeStartCompletion(event)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	plan := event.plan
 	if plan.completed || m.units[event.name] != plan.record || plan.record.gen != plan.gen {
 		return
 	}
-	m.applyStartCompletionLocked(event)
+	m.applyStartCompletionLocked(observed)
 }
 
 type stopCompletion struct {
@@ -126,13 +139,14 @@ func (m *Manager) applyStopCleanup(event workloadCleanup) {
 }
 
 func (m *Manager) applyStopCompletion(event stopCompletion) (*protocol.UnitResult, error) {
+	message := waitFailMessage(event.err)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rt := m.units[event.owner.name]
 	if event.owner.currentLocked(m) && rt.sameOp(event.owner.gen, event.process) {
 		if event.err != nil {
 			if rt.step(core.EventStartFailed) {
-				rt.err = event.err.Error()
+				rt.err = message
 			}
 		} else {
 			rt.step(core.EventStopFinished)
@@ -149,8 +163,8 @@ func (m *Manager) applyStopCompletion(event stopCompletion) (*protocol.UnitResul
 	// A newer operation owns current state, but cannot change this operation's
 	// outcome. In particular, a successful retry must not erase an earlier error.
 	if event.err != nil {
-		result.Error = event.err.Error()
-		return result, protocol.ErrFailed(event.err.Error())
+		result.Error = message
+		return result, protocol.ErrFailed(message)
 	}
 	return result, nil
 }
@@ -172,6 +186,7 @@ func (m *Manager) applyProcessExit(event processExitCompletion) {
 		return
 	}
 	kind := classifyWait(event.waitErr)
+	message := mainExitMessage(event.waitErr)
 	if event.limitHit {
 		kind = core.ExitResourceLimit
 	}
@@ -202,7 +217,7 @@ func (m *Manager) applyProcessExit(event processExitCompletion) {
 		if event.limitHit {
 			rt.err = core.ReasonResourceLimit
 		} else {
-			rt.err = mainExitMessage(event.waitErr)
+			rt.err = message
 		}
 	}
 }
@@ -247,6 +262,7 @@ func (m *Manager) acceptWatchdogFailure(owner runtimeIdentity) *watchdogEffect {
 // Cleanup can release only its exact invocation; recovery checks the same owner
 // again after the worker releases the unit gate.
 func (m *Manager) applyWatchdogCleanup(event watchdogCleanup) bool {
+	message := waitFailMessage(event.err)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	owner, proc := event.effect.owner, event.effect.process
@@ -255,7 +271,7 @@ func (m *Manager) applyWatchdogCleanup(event watchdogCleanup) bool {
 		return false
 	}
 	if event.err != nil {
-		rt.err = fmt.Sprintf("watchdog cleanup: %v", event.err)
+		rt.err = "watchdog cleanup: " + message
 		return false
 	}
 	rt.proc = nil
@@ -308,6 +324,7 @@ func (m *Manager) acceptProcessExitCleanup(name string, proc runtime.Process) *p
 }
 
 func (m *Manager) applyProcessExitCleanup(event processExitCleanup) bool {
+	message := waitFailMessage(event.err)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	owner, proc := event.effect.owner, event.effect.process
@@ -319,7 +336,7 @@ func (m *Manager) applyProcessExitCleanup(event processExitCleanup) bool {
 		if rt.state != core.Failed {
 			rt.step(core.EventStartFailed)
 		}
-		rt.err = fmt.Sprintf("exit cleanup: %v", event.err)
+		rt.err = "exit cleanup: " + message
 		if !rt.stopping {
 			m.queueBoundStopsLocked(owner.name)
 		}
@@ -426,6 +443,7 @@ func (m *Manager) acceptFailedProcessCleanup(effect failedProcessEffect) bool {
 }
 
 func (m *Manager) applyFailedProcessCleanup(effect failedProcessEffect, err error) {
+	message := waitFailMessage(err)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !effect.owner.currentLocked(m) || effect.owner.record.proc != effect.process {
@@ -433,7 +451,7 @@ func (m *Manager) applyFailedProcessCleanup(effect failedProcessEffect, err erro
 	}
 	rt := effect.owner.record
 	if err != nil {
-		rt.err = fmt.Sprintf("failed-state cleanup: %v", err)
+		rt.err = "failed-state cleanup: " + message
 		return
 	}
 	rt.proc = nil
@@ -459,6 +477,7 @@ func (m *Manager) acceptNotifyCleanup(name string) *notifyRuntime {
 }
 
 func (m *Manager) applyNotifyCleanup(event notifyCleanup) {
+	message := waitFailMessage(event.err)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if rt := m.units[event.name]; rt != nil && rt.notify == event.notify {
@@ -467,7 +486,7 @@ func (m *Manager) applyNotifyCleanup(event notifyCleanup) {
 			rt.setCleanup(cleanupNotify, false)
 		} else {
 			rt.setCleanup(cleanupNotify, true)
-			rt.err = fmt.Sprintf("notification cleanup: %v", event.err)
+			rt.err = "notification cleanup: " + message
 		}
 	}
 }
@@ -479,6 +498,7 @@ type hubCleanup struct {
 }
 
 func (m *Manager) applyHubCleanup(event hubCleanup) {
+	message := waitFailMessage(event.err)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if rt := m.units[event.name]; rt != nil && rt.hub == event.hub {
@@ -487,7 +507,7 @@ func (m *Manager) applyHubCleanup(event hubCleanup) {
 			rt.setCleanup(cleanupWatch, false)
 		} else {
 			rt.setCleanup(cleanupWatch, true)
-			rt.err = fmt.Sprintf("watch cleanup: %v", event.err)
+			rt.err = "watch cleanup: " + message
 		}
 	}
 }
