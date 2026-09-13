@@ -443,7 +443,7 @@ func (h *UserHost) EnableLinger(user string) (*protocol.LingerResult, error) {
 	}
 	rec, err := h.mutateLingerRecord(user, true)
 	if err != nil {
-		return nil, protocol.ErrFailed(err.Error())
+		return nil, lingerMutationError(err)
 	}
 	if !h.Alive(rec.SID) {
 		if err := h.startLinger(rec); err != nil {
@@ -465,7 +465,7 @@ func (h *UserHost) DisableLinger(user string) (*protocol.LingerResult, error) {
 	}
 	rec, err := h.mutateLingerRecord(user, false)
 	if err != nil {
-		return nil, protocol.ErrFailed(err.Error())
+		return nil, lingerMutationError(err)
 	}
 
 	result := &protocol.LingerResult{SID: rec.SID, User: rec.Name, Lingering: false}
@@ -478,7 +478,11 @@ func (h *UserHost) DisableLinger(user string) (*protocol.LingerResult, error) {
 // Accepted account lookup and record persistence stay visible to shutdown, even
 // before a SID is known. Subsequent launch admission separately rechecks closure.
 func (h *UserHost) mutateLingerRecord(user string, enable bool) (runtime.LingerRecord, error) {
-	work, err := h.acceptNativeUserWork()
+	class := userWorkAdmission
+	if !enable {
+		class = userWorkRevocation
+	}
+	work, err := h.acceptUserWorkClass(class)
 	if err != nil {
 		return runtime.LingerRecord{}, err
 	}
@@ -505,6 +509,14 @@ func (h *UserHost) mutateLingerRecord(user string, enable bool) (runtime.LingerR
 		h.mu.Unlock()
 	}
 	return rec, err
+}
+
+func lingerMutationError(err error) error {
+	var rpcErr *protocol.Error
+	if errors.As(err, &rpcErr) && rpcErr.Code == protocol.CodeBusy {
+		return rpcErr
+	}
+	return protocol.ErrFailed(err.Error())
 }
 
 func (h *UserHost) resolve(user string) (runtime.LingerRecord, error) {

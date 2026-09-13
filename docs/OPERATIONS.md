@@ -191,9 +191,18 @@ history remains available through `operation ID`. A snapshot exceeding 1024 unit
 128 active operations or 512 KiB fails explicitly; it never truncates a complete
 view into apparent success. Use individual status/operation queries above those
 bounds. User-host input additionally allows at most 128 instance/linger records,
-256 entries in each accepted-session/pending-request map, and seven native-work
+256 entries in each accepted-session/pending-request map, and eight native-work
 slots. All user-host text is included in the same 512 KiB response allowance.
 Snapshot captures do not retain additional history in the manager.
+
+User-native work has four ordinary admission slots and one reserved slot each
+for session reconciliation, admission-policy refresh, linger scanning and explicit
+`disable-linger` revocation. Enable/logon work cannot consume the revocation slot;
+a second concurrent revocation receives `busy`. Native admission overload keeps
+the RPC `busy` code so callers can retry it. Accepted revocation lookup/persistence
+remains tracked through shutdown even before its SID is known. Shared store I/O
+is still serialized; a reserved slot cannot interrupt a blocked filesystem or
+account lookup call. Existing per-instance cleanup ownership remains separate.
 
 Accepted stop and restart invalidate pending activation and suppress recovery for
 their complete captured stop scope before dispatching ordered teardown workers.
