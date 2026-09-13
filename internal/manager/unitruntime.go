@@ -3,7 +3,6 @@ package manager
 import (
 	"context"
 	"errors"
-	"log"
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
@@ -15,6 +14,7 @@ import (
 // unitRuntime is all per-unit manager state. Removing a name from
 // Manager.units tears this down in one place (issue #26).
 type unitRuntime struct {
+	diagnostics        *journal.Store
 	capture            *journal.Capture
 	unit               *unit.Unit
 	invocationUnit     *unit.Unit // captured service definition; reload only replaces unit
@@ -77,7 +77,7 @@ func (rt *unitRuntime) step(ev core.Event) bool {
 		if rt.unit != nil {
 			name = rt.unit.Name
 		}
-		logIllegalTransition(name, err)
+		rt.diagnostics.RecordDiagnostic(name, rt.invocation, err.Error()+" (not applied)")
 		return false
 	}
 	rt.state = st
@@ -102,13 +102,6 @@ func (rt *unitRuntime) publishStartOutcome(state core.State) {
 		}
 		rt.state = core.Failed
 	}
-}
-
-func logIllegalTransition(name string, err error) {
-	if name == "" {
-		name = "?"
-	}
-	log.Printf("winunitd: %s: %v (not applied)", name, err)
 }
 
 // sameOp reports whether this runtime still owns the lifecycle op that

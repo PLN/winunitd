@@ -45,7 +45,8 @@ type Store struct {
 	closed        bool
 	files         map[string]*unitFile
 	mainCaptures  map[string]*Capture
-	origin        Origin
+	origin        atomic.Pointer[Origin]
+	diagnostics   captureGroup
 	queueMu       sync.Mutex
 	captureWake   chan struct{}
 	captureQueues map[*captureGroup]*capturePending
@@ -174,18 +175,17 @@ func (s *Store) SetOrigin(o Origin) {
 	if s == nil {
 		return
 	}
-	s.mu.Lock()
-	s.origin = o
-	s.mu.Unlock()
+	s.origin.Store(&o)
 }
 
 func (s *Store) snapshotOrigin() Origin {
 	if s == nil {
 		return Origin{}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.origin
+	if origin := s.origin.Load(); origin != nil {
+		return *origin
+	}
+	return Origin{}
 }
 
 // Close flushes and Syncs every open unit file, then closes them.

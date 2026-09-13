@@ -139,6 +139,15 @@ blocked. A completed failed wait releases worker admission for a later retry;
 the watch and underlying close remain owned until cleanup is confirmed. Reloads
 with no newly admitted stale watches create no cleanup worker.
 
+Rejected lifecycle transitions are recorded in the affected unit's journal with
+stream `daemon`, severity `err` and the captured invocation/manager identity.
+They preserve accepted lifecycle state and use the existing bounded queue,
+storage-error and loss counters. Diagnostic messages are limited to 4096 UTF-8
+bytes, with `partial` identifying truncation. One shared diagnostic group uses
+the normal invocation allowance; a blocked disk or console cannot hold the
+coordinator while it records a rejection. Manager close joins accepted journal
+records. Other daemon output and Windows event resources remain separate work.
+
 Journal capture waits flush, sync and retire successfully persisted file records;
 later output reopens the same on-disk log with existing repair/rotation behavior.
 At most 1024 file records, handles and buffers can remain owned at once. A failed

@@ -17,7 +17,7 @@ func (m *Manager) replaceLocked(units []*unit.Unit, g *core.Graph, links map[str
 		keep[name] = true
 		rt := m.units[name]
 		if rt == nil {
-			rt = &unitRuntime{state: core.Inactive}
+			rt = &unitRuntime{state: core.Inactive, diagnostics: m.journal}
 		}
 		targets := enabledTargetsFrom(links, name)
 		rt.unit = u
