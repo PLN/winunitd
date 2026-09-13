@@ -78,6 +78,9 @@ type Store struct {
 	onClose    func() error
 	onSynced   func()
 	onSyncJoin func()
+	// Per-store rotation fault seams; nil selects the native file operation.
+	onRotateRemove func(string) error
+	onRotateRename func(string, string) error
 }
 
 // Entry is one journal fragment. v=2 adds Severity, Session, and UserSID.
@@ -126,6 +129,8 @@ type unitFile struct {
 	writeErr   error
 	retryDelay time.Duration
 	retryAt    time.Time
+	rotating   bool
+	rotateStep int // keep removes the oldest; keep-1..0 move archives/current
 }
 
 // Open creates dir if needed and returns a store rooted there.
@@ -405,6 +410,11 @@ func (u *unitFile) write(raw []byte, messageBytes int) error {
 	if u.closed {
 		return fmt.Errorf("journal file closed")
 	}
+	if u.rotating {
+		if err := u.rotateLocked(); err != nil {
+			return err
+		}
+	}
 	if u.f == nil {
 		if err := u.openLocked(); err != nil {
 			return err
@@ -513,6 +523,9 @@ func (u *unitFile) writeFailureLocked(err error) {
 }
 
 func (u *unitFile) syncLocked() error {
+	if u.rotating {
+		return u.rotateLocked()
+	}
 	if err := u.flushLocked(); err != nil {
 		return err
 	}
@@ -526,30 +539,58 @@ func (u *unitFile) syncLocked() error {
 }
 
 func (u *unitFile) rotateLocked() error {
-	if err := u.syncLocked(); err != nil {
-		return err
-	}
-	if u.f != nil {
-		_ = u.f.Close()
-		u.f = nil
-		u.w = nil
-	}
 	keep := u.store.keep
 	if keep <= 0 {
 		keep = DefaultKeep
 	}
-	base := u.path
-	_ = os.Remove(fmt.Sprintf("%s.%d", base, keep))
-	for i := keep - 1; i >= 1; i-- {
-		src := fmt.Sprintf("%s.%d", base, i)
-		dst := fmt.Sprintf("%s.%d", base, i+1)
-		_ = os.Rename(src, dst)
+	if !u.rotating {
+		if err := u.syncLocked(); err != nil {
+			return err
+		}
+		if u.f != nil {
+			if u.store.onClose != nil {
+				if err := u.store.onClose(); err != nil {
+					return err
+				}
+			}
+			if err := u.f.Close(); err != nil {
+				return err
+			}
+			u.f, u.w = nil, nil
+		}
+		u.rotating, u.rotateStep = true, keep
 	}
-	if err := os.Rename(base, base+".1"); err != nil && !os.IsNotExist(err) {
-		_ = u.openLocked()
+	remove, rename := os.Remove, os.Rename
+	if u.store.onRotateRemove != nil {
+		remove = u.store.onRotateRemove
+	}
+	if u.store.onRotateRename != nil {
+		rename = u.store.onRotateRename
+	}
+	base := u.path
+	// Resume the failed step. Repeating completed shifts could evict retained
+	// generations on every retry, even though no new record was accepted.
+	for u.rotateStep >= 0 {
+		i := u.rotateStep
+		var err error
+		switch i {
+		case keep:
+			err = remove(fmt.Sprintf("%s.%d", base, keep))
+		case 0:
+			err = rename(base, base+".1")
+		default:
+			err = rename(fmt.Sprintf("%s.%d", base, i), fmt.Sprintf("%s.%d", base, i+1))
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("journal rotation step %d: %w", i, err)
+		}
+		u.rotateStep--
+	}
+	if err := u.openLocked(); err != nil {
 		return err
 	}
-	return u.openLocked()
+	u.rotating = false
+	return nil
 }
 
 func (u *unitFile) close() error {
