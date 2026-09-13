@@ -1,5 +1,42 @@
 # R2 initial evidence
 
+## Control overload and reserved maintenance acceptance
+
+Snapshot requests formerly consumed ordinary handler capacity. PR #194 source
+`c1c00b0abc843ab56ff4b5a7139411431ed6fb9e` moved them to the reserved diagnostic
+class and passed [exact-source CI](https://github.com/PLN/winunitd/actions/runs/34762361940).
+Five control/ownership cases passed ten repetitions each as SYSTEM and a headless
+standard user on disposable LTSC build 26100, in 1.483 and 0.455 seconds, without
+skips. These use real transport with deliberately delayed adapters; the separate
+user-host qualification below verifies native process/token ownership.
+
+The combined public control sequence fills ordinary admission with a delayed
+launch while a token observation remains outstanding, rejects twenty extra
+starts, uses reserved stop, and enters maintenance. While maintenance occupies
+the only configured stop slot, snapshots and operation completion still progress.
+A late successful process creation is cleaned up exactly once; completion does
+not mutate earlier snapshots. Other cases cover disconnected clients/history
+eviction, retained failed cleanup, replacement identity and oversized diagnostics.
+Merge `587b71074490aea365d239ceaf8ec7cad50d1d45` has the tested tree.
+
+PR #195 source `90a2689b15a71aba1d9168213cd46204cd333e18` adds the real-process
+hard-connection-cap case and passed
+[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34762692644).
+All 128 ordinary connections retain idle decoders. The next connection closes
+without authorization or a timeout; the independently bounded maintenance endpoint
+then quiesces an actual Windows workload and confirms no remaining process,
+cleanup or active operation. Replacement remains forbidden. Ten repetitions per
+SYSTEM/headless-user identity passed in 1.632/0.572 seconds with no skips.
+Merge `e81b28d41feb1946db7f0cf0d6a1de374b772b77` has the tested tree.
+
+These fixtures use isolated loopback transport; they do not qualify named-pipe
+identity or DACL enforcement. Ordinary stop/diagnostic connections can still be
+rejected at the hard connection cap; reserved maintenance provides global
+quiescence through its separate endpoint. Final process/profile/linger cleanup
+passed for both qualifications, and the hosting broker stayed running. Exact
+artifacts, hashes, logs and cleanup observations are retained privately. Complete
+native-work priority, writer audit and coordinator-wide acceptance remain open.
+
 ## System user-host snapshot qualification
 
 PR #188 source `724cab62f3e339e2db604579821fa7c8a3ffc7a3` passed
