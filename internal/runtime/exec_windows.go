@@ -38,8 +38,8 @@ type winProc struct {
 	thread        windows.Handle
 	unassigned    bool
 	job           *UnitJob
-	stdout        *os.File
-	stderr        *os.File
+	stdout        *ownedOutput
+	stderr        *ownedOutput
 	closed        bool
 	exitCode      uint32
 	exited        bool
@@ -211,8 +211,8 @@ func (l *winLauncher) create(spec StartSpec) (*winProc, error) {
 	p := &winProc{
 		pid: int(pi.ProcessId), process: pi.Process, thread: pi.Thread,
 		job: job, unassigned: true,
-		stdout: os.NewFile(uintptr(stdoutR), spec.Unit+"-stdout"),
-		stderr: os.NewFile(uintptr(stderrR), spec.Unit+"-stderr"),
+		stdout: newOwnedOutput(stdoutR, spec.Unit+"-stdout"),
+		stderr: newOwnedOutput(stderrR, spec.Unit+"-stderr"),
 	}
 	// Attach the outer job first; each unit/user job must remain a sibling
 	// under it, rather than making the daemon job a child of the first unit.

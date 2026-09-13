@@ -31,7 +31,7 @@ func Serve(ctx context.Context, lis net.Listener, h Handler, auth Authorizer) er
 // ServeWithLimits bounds accepted connections and concurrent handler calls.
 // A connection beyond the hard cap is closed without decoding; an authenticated
 // request beyond its class budget receives a versioned busy response.
-func ServeWithLimits(ctx context.Context, lis net.Listener, h Handler, auth Authorizer, limits ServerLimits) error {
+func ServeWithLimits(ctx context.Context, lis net.Listener, h Handler, auth Authorizer, limits ServerLimits) (resultErr error) {
 	if h == nil {
 		return ErrFailed("nil handler")
 	}
@@ -44,10 +44,18 @@ func ServeWithLimits(ctx context.Context, lis net.Listener, h Handler, auth Auth
 	// Accepted connections belong to this serving lifetime, including when
 	// Accept fails before the caller cancels its own context.
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	closed := make(chan error, 1)
+	defer func() {
+		cancel()
+		// Accept can return before Close finishes releasing the listening
+		// handle. Keep that close owned until endpoint shutdown completes.
+		if err := <-closed; err != nil && !errors.Is(err, net.ErrClosed) {
+			resultErr = errors.Join(resultErr, err)
+		}
+	}()
 	go func() {
 		<-ctx.Done()
-		_ = lis.Close()
+		closed <- lis.Close()
 	}()
 	for {
 		conn, err := lis.Accept()
