@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -201,7 +200,11 @@ Restart=no
 	if _, ok := notify.LookupEnv(launch.specs()[0].Env, notify.EnvWatchdogUsec); ok {
 		t.Fatal("tcp watchdog must not inject WINUNIT_WATCHDOG_USEC")
 	}
-	advanceWait(t, fk, time.Second)
+	// READY already published ready health. Wait for this probe's consumed
+	// deadline to be rearmed so startup readiness cannot satisfy the check.
+	waitCond(t, func() bool { return fk.WaitingAt(time.Second) })
+	fk.Advance(time.Second)
+	waitCond(t, func() bool { return fk.WaitingAt(time.Second) })
 	assertWatchdogActive(t, m, "both.service")
 }
 
@@ -467,25 +470,19 @@ func serveWatchdogHTTP(t *testing.T, status int) string {
 
 func assertWatchdogActive(t *testing.T, m *Manager, name string) {
 	t.Helper()
-	for i := 0; i < 100_000; i++ {
-		m.mu.Lock()
-		st := m.stateOfLocked(name)
-		sub := m.subOfLocked(name)
-		err := m.errOfLocked(name)
-		m.mu.Unlock()
-		if st == core.Failed {
-			t.Fatalf("state = %s sub=%s error=%q, want active", st, sub, err)
+	// Simple fixtures start with unknown health. The notify fixture separately
+	// joins the probe's timer rearm because READY already set its health.
+	// A fixed number of scheduler yields cannot establish probe completion.
+	waitCond(t, func() bool {
+		st, err := m.Status(name)
+		if err != nil {
+			t.Fatal(err)
 		}
-		runtime.Gosched()
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	st := m.stateOfLocked(name)
-	sub := m.subOfLocked(name)
-	err := m.errOfLocked(name)
-	if st != core.Active {
-		t.Fatalf("state = %s sub=%s error=%q, want active", st, sub, err)
-	}
+		if st.Unit.ActiveState == "failed" {
+			t.Fatalf("watchdog failed before a successful probe: %+v", st.Unit)
+		}
+		return st.Unit.ActiveState == "active" && st.Unit.Health == "ready" && st.Unit.ProbeFailures == 0
+	})
 }
 
 func waitWatchdogFailed(t *testing.T, m *Manager, name string) {

@@ -1,5 +1,38 @@
 # Post-beta test hardening
 
+## September 13 scheduler-sensitive test inventory
+
+The remaining [issue #112](https://github.com/PLN/winunitd/issues/112) scope is
+constrained-worker qualification. Policy checks use completed decisions or held
+adapters; real transport and OS-event checks retain bounded observation windows.
+The following inventory distinguishes those boundaries. A successful smoke
+window does not prove absence for arbitrary time.
+
+| Area | Assertion boundary and remaining wall-clock use |
+| --- | --- |
+| Notify start timeout, watchdog expiry/refresh, exact boundary, restart and redundant start (`internal/manager/notify_test.go`) | Fake-clock deadlines are armed before advancement; positive state/operation waits observe accepted completion. Transport retries poll at 20/50ms within existing bounded contexts. The repeated readiness sender spans stop/relaunch; it is stimulus, not a negative timing assertion. |
+| TCP/HTTP watchdog policy (`internal/manager/watchdog_test.go`) | Fake time triggers probes; accepted public health replaces 100,000 scheduler yields. The combined notify/TCP fixture also waits for the consumed probe deadline to rearm because startup READY already sets health. Real loopback connect/HTTP requests retain their configured timeout. |
+| Late notify-client cleanup (`internal/manager/notify_clients_test.go`) | A held Accept and `testing/synctest.Wait` establish that Close waits for its owned result. No 20ms scheduling window remains; failed late-client close still has to remain retryable. |
+| Notification transport (`internal/notify`) | TCP acceptance has a 20ms pre-banner observation and a one-second connection deadline; payload and cancellation checks exercise real transport. Native pipe acceptance uses a five-second context. Admission uses held connections, explicit accept/close signals and five-second positive waits inside a 20-second context. |
+| Native helper READY/watchdog (`internal/manager/manager_windows_test.go`) | Delayed READY uses a 300ms stimulus, two-second activating observation and five-second startup limit; missing READY has a 300ms startup limit. Heartbeat helpers send every 50ms against a 300ms watchdog with a 700ms active observation. Missing heartbeats use a 200ms watchdog and three-second failure observation. Real TCP/HTTP smoke retains 800ms observations with 300ms watchdogs. CLI compilation is part of the source-tree lane. |
+| Manager path/registry/event policy (`internal/manager/{pathwatch,registry,eventlog}_test.go`) | Fake subscriptions acknowledge the next receive after synchronous activation; running-service, unrelated/disabled and AND/OR semantics use processed-event or startup boundaries. No elapsed negative window is needed. |
+| Manager native path/registry/event delivery (`internal/manager/*_windows_test.go`) | Existing 800ms negative observations complement up-to-eight-second positive helper-count waits. They cover real directory/registry/event delivery and remain smoke checks alongside deterministic policy cases. |
+| Native directory and registry adapters (`internal/pathwatch`, `internal/registry`) | Directory filter smoke retains 400ms observations followed by matching events with three-second delivery bounds. Registry set notification has a three-second bound. Protected-handle cleanup and late-open ownership use explicit adapter/worker synchronization. |
+| Windows event subscription (`internal/eventlog/subscribe_windows_test.go`) | Actual Application event publication and subscription delivery use an eight-second bound. XML/filter parsing is synchronous policy coverage. |
+
+The focused watchdog/late-accept changes passed twenty race-enabled repetitions
+in 2.607s. With the runner and inherited child processes restricted to one logical
+CPU and `GOMAXPROCS=1`, the uncached full race command passed in 176.962s; manager
+took 61.583s and journal 49.665s. This is within the provisional 180s/90s review
+budgets, with little full-command margin. Compiler/action identity remains pinned
+to Go 1.27.1. Vet and Windows/Linux staticcheck passed.
+
+Exact-source CI and repeated constrained native identity lanes are still pending;
+this inventory alone does not close #112, R0.4 or broader SYSTEM/session acceptance.
+No production timeout or existing native observation bound is increased.
+
+## Original September 7 checkpoint
+
 September 7, 2026. Follow-up to [issue #40](https://github.com/PLN/winunitd/issues/40).
 These changes strengthen regressions without changing production behavior or
 expanding the supported beta feature set.

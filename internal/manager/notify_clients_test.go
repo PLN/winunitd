@@ -8,7 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	"github.com/PLN/winunitd/internal/notify"
 )
@@ -125,6 +125,10 @@ func (l *lateNotifyListener) Close() error {
 }
 
 func TestNotificationCloseOwnsLateAcceptedClient(t *testing.T) {
+	synctest.Test(t, testNotificationCloseOwnsLateAcceptedClient)
+}
+
+func testNotificationCloseOwnsLateAcceptedClient(t *testing.T) {
 	server, peer := net.Pipe()
 	defer server.Close()
 	defer peer.Close()
@@ -138,11 +142,14 @@ func TestNotificationCloseOwnsLateAcceptedClient(t *testing.T) {
 	result := make(chan error, 1)
 	go func() { result <- w.Close() }()
 	<-lis.closed
+	// Wait until Close is blocked on the held Accept, rather than granting
+	// an arbitrary scheduling window in which an incorrect Close may return.
+	synctest.Wait()
 	select {
 	case <-result:
 		close(lis.release)
 		t.Fatal("close did not wait for the in-flight accept")
-	case <-time.After(20 * time.Millisecond):
+	default:
 	}
 	close(lis.release)
 	<-accepted
