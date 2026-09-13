@@ -98,6 +98,7 @@ func (m *Manager) cancelOperationsLocked() {
 }
 
 func (m *Manager) finishOperationTask(name string, task *operationTask, result *protocol.UnitResult, err error, releaseLocked func()) {
+	err = observeOperationError(err)
 	m.mu.Lock()
 	delete(m.activeOperations, task.flight.id)
 	task.timer.Stop()
@@ -112,12 +113,13 @@ func (m *Manager) finishOperationTask(name string, task *operationTask, result *
 // Complete under the same lock as cancellation. A timer cannot disarm a member
 // between a successful completion decision and publication of that decision.
 func (m *Manager) publishOperationStart(ctx context.Context, event startCompletion) bool {
+	observed := observeStartCompletion(event)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if ctx.Err() != nil {
 		return false
 	}
-	m.applyStartCompletionLocked(event)
+	m.applyStartCompletionLocked(observed)
 	return true
 }
 

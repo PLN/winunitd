@@ -23,6 +23,7 @@ func (m *Manager) acceptHub(h *watchRuntime) error {
 }
 
 func (m *Manager) acceptHubFailure(event hubCleanup) bool {
+	message := waitFailMessage(event.err)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rt := m.units[event.name]
@@ -36,7 +37,7 @@ func (m *Manager) acceptHubFailure(event hubCleanup) bool {
 	rt.setCleanup(cleanupWatch, true)
 	if rt.state == core.Active || rt.state == core.Activating {
 		if rt.step(core.EventStartFailed) {
-			rt.err = event.err.Error()
+			rt.err = message
 			m.queueBoundStopsLocked(event.name)
 		}
 	}

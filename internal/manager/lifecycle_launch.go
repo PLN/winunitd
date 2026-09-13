@@ -159,6 +159,7 @@ func (m *Manager) releaseLaunch(effect *launchEffect) {
 }
 
 func (m *Manager) applyPreviousCleanup(effect *launchEffect, err error) bool {
+	message := waitFailMessage(err)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rt := effect.owner.record
@@ -169,7 +170,7 @@ func (m *Manager) applyPreviousCleanup(effect *launchEffect, err error) bool {
 		rt.proc = nil
 		rt.setCleanup(cleanupWorkload, false)
 	} else {
-		rt.err = fmt.Sprintf("previous invocation cleanup: %v", err)
+		rt.err = "previous invocation cleanup: " + message
 	}
 	return true
 }
@@ -216,6 +217,7 @@ func (m *Manager) adoptLaunchNotify(effect *launchEffect, notify *notifyRuntime)
 }
 
 func (m *Manager) retainLaunchFailure(effect *launchEffect, proc runtime.Process, pid int, err error) {
+	message := waitFailMessage(err)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// The retained record and unit gate exclude removal/replacement. Adopt
@@ -224,7 +226,7 @@ func (m *Manager) retainLaunchFailure(effect *launchEffect, proc runtime.Process
 	rt.proc = proc
 	rt.mainPID = pid
 	rt.setCleanup(cleanupWorkload, true)
-	rt.err = err.Error()
+	rt.err = message
 }
 
 type processAdoption struct {
@@ -259,6 +261,7 @@ func (m *Manager) adoptProcess(event processAdoption) bool {
 }
 
 func (m *Manager) applyLateLaunchCleanup(effect *launchEffect, proc runtime.Process, err error) {
+	message := waitFailMessage(err)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !effect.owner.currentLocked(m) || effect.owner.record.proc != proc {
@@ -270,7 +273,7 @@ func (m *Manager) applyLateLaunchCleanup(effect *launchEffect, proc runtime.Proc
 		rt.setCleanup(cleanupWorkload, false)
 	} else {
 		rt.step(core.EventStartFailed)
-		rt.err = fmt.Sprintf("late launch cleanup: %v", err)
+		rt.err = "late launch cleanup: " + message
 	}
 }
 
@@ -293,6 +296,8 @@ func (m *Manager) clearStartWait(effect *launchEffect) {
 }
 
 func (m *Manager) applyOneshotCleanup(effect *launchEffect, proc runtime.Process, cleanupErr, waitErr error) {
+	err := errors.Join(waitErr, cleanupErr)
+	message := waitFailMessage(err)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !effect.owner.currentLocked(m) || effect.owner.record.proc != proc {
@@ -303,15 +308,16 @@ func (m *Manager) applyOneshotCleanup(effect *launchEffect, proc runtime.Process
 		rt.terminated = true
 	}
 	rt.setCleanup(cleanupWorkload, cleanupErr != nil)
-	if err := errors.Join(waitErr, cleanupErr); err != nil && !rt.stopping {
+	if err != nil && !rt.stopping {
 		rt.step(core.EventStartFailed)
-		rt.err = err.Error()
+		rt.err = message
 	}
 }
 
 // Successful completion owns cleanup and final state before releasing the unit
 // gate. A later invocation cannot race the old process's exit watcher.
 func (m *Manager) completeOneshot(ctx context.Context, effect *launchEffect, proc runtime.Process, cleanupErr, completionErr error) (time.Time, error) {
+	cleanupMessage, completionMessage := waitFailMessage(cleanupErr), waitFailMessage(completionErr)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rt := effect.owner.record
@@ -324,7 +330,7 @@ func (m *Manager) completeOneshot(ctx context.Context, effect *launchEffect, pro
 	if cleanupErr != nil {
 		rt.setCleanup(cleanupWorkload, true)
 		rt.step(core.EventStartFailed)
-		rt.err = fmt.Sprintf("oneshot cleanup: %v", cleanupErr)
+		rt.err = "oneshot cleanup: " + cleanupMessage
 		return time.Time{}, cleanupErr
 	}
 	rt.proc = nil
@@ -332,7 +338,7 @@ func (m *Manager) completeOneshot(ctx context.Context, effect *launchEffect, pro
 	if rt.cleanupPending() {
 		rt.step(core.EventStartFailed)
 		if completionErr != nil {
-			rt.err = completionErr.Error()
+			rt.err = completionMessage
 		}
 		return time.Time{}, fmt.Errorf("oneshot cleanup remains pending: %s", rt.err)
 	}
@@ -341,7 +347,7 @@ func (m *Manager) completeOneshot(ctx context.Context, effect *launchEffect, pro
 	}
 	if completionErr != nil {
 		rt.step(core.EventStartFailed)
-		rt.err = completionErr.Error()
+		rt.err = completionMessage
 		return time.Time{}, completionErr
 	}
 	state := core.Inactive
@@ -354,6 +360,7 @@ func (m *Manager) completeOneshot(ctx context.Context, effect *launchEffect, pro
 }
 
 func (m *Manager) acceptReadinessFailure(effect *launchEffect, proc runtime.Process, err error) bool {
+	message := waitFailMessage(err)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !effect.owner.currentLocked(m) || effect.owner.record.proc != proc {
@@ -363,13 +370,14 @@ func (m *Manager) acceptReadinessFailure(effect *launchEffect, proc runtime.Proc
 	rt.terminated = true
 	rt.setCleanup(cleanupWorkload, true)
 	if !rt.stopping && rt.step(core.EventStartFailed) {
-		rt.err = err.Error()
+		rt.err = message
 		m.queueBoundStopsLocked(effect.owner.name)
 	}
 	return rt.stopping
 }
 
 func (m *Manager) applyReadinessCleanup(effect *launchEffect, proc runtime.Process, err error) {
+	message := waitFailMessage(err)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !effect.owner.currentLocked(m) || !effect.owner.record.sameOp(effect.owner.gen, proc) {
@@ -381,7 +389,7 @@ func (m *Manager) applyReadinessCleanup(effect *launchEffect, proc runtime.Proce
 		rt.setCleanup(cleanupWorkload, false)
 		rt.terminated = false
 	} else {
-		rt.err = fmt.Sprintf("readiness cleanup: %v", err)
+		rt.err = "readiness cleanup: " + message
 	}
 }
 

@@ -127,6 +127,7 @@ func (m *Manager) queryNativeProbe(probe *nativeProbe) {
 }
 
 func (m *Manager) completeNativeProbe(probe *nativeProbe, inactive bool, err error) {
+	message := waitFailMessage(err)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rt := probe.owner.record
@@ -145,7 +146,7 @@ func (m *Manager) completeNativeProbe(probe *nativeProbe, inactive bool, err err
 	rt.nativeProbeError = ""
 	if err != nil {
 		// An inaccessible or missing target is unknown, not confirmed stopped.
-		rt.nativeProbeError = err.Error()
+		rt.nativeProbeError = message
 		if len(rt.nativeProbeError) > nativeProbeErrorLimit {
 			rt.nativeProbeError = rt.nativeProbeError[:nativeProbeErrorLimit-3]
 			for !utf8.ValidString(rt.nativeProbeError) {

@@ -182,14 +182,15 @@ func (m *Manager) stopTransaction(ctx context.Context, name string) (*protocol.U
 
 func (m *Manager) executeStopOperation(ctx context.Context, name string, plan *core.Transaction) (*protocol.UnitResult, error) {
 	_, err := plan.ExecuteStop(ctx, core.StopFunc(m.stopAcceptedUnitCtx))
+	message := waitFailMessage(err)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err != nil {
 		return &protocol.UnitResult{
 			Unit:        name,
 			ActiveState: m.stateOfLocked(name).String(),
-			Error:       err.Error(),
-		}, protocol.ErrFailed(err.Error())
+			Error:       message,
+		}, protocol.ErrFailed(message)
 	}
 	return &protocol.UnitResult{Unit: name, ActiveState: m.stateOfLocked(name).String()}, nil
 }
