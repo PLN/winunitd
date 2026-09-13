@@ -1,7 +1,6 @@
 package manager
 
 import (
-	"encoding/json"
 	"sort"
 	"time"
 
@@ -18,23 +17,28 @@ const (
 // Nothing in the result aliases a mutable runtime record. Native observations
 // cannot overwrite it after publication, and no worker or I/O is dispatched.
 func (m *Manager) Snapshot() (*protocol.SnapshotResult, error) {
+	result, _, err := m.snapshotEncoded()
+	return result, err
+}
+
+func (m *Manager) snapshotEncoded() (*protocol.SnapshotResult, protocol.EncodedResult, error) {
 	m.mu.Lock()
 	result, err := m.snapshotLocked()
 	m.mu.Unlock()
 	if err != nil {
-		return nil, err
+		return nil, protocol.EncodedResult{}, err
 	}
 	// Enforce the transport allowance outside the coordinator. Record-count
 	// admission bounds the copy; reject oversized text rather than truncating
 	// units or returning a partial view that could be mistaken for complete.
-	encoded, err := json.Marshal(result)
+	encoded, err := protocol.EncodeResult(result)
 	if err != nil {
-		return nil, err
+		return nil, protocol.EncodedResult{}, err
 	}
-	if len(encoded) > maxSnapshotBytes {
-		return nil, protocol.ErrFailed("coordinator snapshot exceeds 512 KiB; use individual status/operation queries")
+	if encoded.Size() > maxSnapshotBytes {
+		return nil, protocol.EncodedResult{}, protocol.ErrFailed("coordinator snapshot exceeds 512 KiB; use individual status/operation queries")
 	}
-	return result, nil
+	return result, encoded, nil
 }
 
 func (m *Manager) snapshotLocked() (*protocol.SnapshotResult, error) {
@@ -63,13 +67,12 @@ func (m *Manager) snapshotLocked() (*protocol.SnapshotResult, error) {
 			PendingCleanup: st.PendingCleanup,
 		})
 	}
-	for _, operation := range m.operations {
-		if operation.State == "running" {
-			if len(out.Operations) == maxSnapshotOperations {
-				return nil, protocol.ErrFailed("coordinator snapshot exceeds 128 active operations")
-			}
-			out.Operations = append(out.Operations, *operation)
+	for id := range m.activeOperations {
+		operation := m.operations[id]
+		if operation == nil || operation.State != "running" {
+			return nil, protocol.ErrFailed("coordinator snapshot operation index is inconsistent")
 		}
+		out.Operations = append(out.Operations, *operation)
 	}
 	sort.Slice(out.Operations, func(i, j int) bool { return out.Operations[i].ID < out.Operations[j].ID })
 	return out, nil

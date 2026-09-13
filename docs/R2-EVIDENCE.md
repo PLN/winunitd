@@ -1207,3 +1207,17 @@ hundred race repetitions cover that case, concurrent clock notifications, stale
 popped identities and the manager calendar-jump/watchdog scenarios. The full
 uncached Windows race suite passes with the combined capture changes. This
 closes these lost-dispatch paths, not the complete timer/clock qualification gate.
+
+## September 13 snapshot encoding and operation publication
+
+Snapshot responses reuse the result bytes encoded for the 512 KiB size check.
+The typed Snapshot API, wire fields, ordering and oversized-response error remain
+unchanged. The coordinator copies only the active operation index; completion
+removes ownership and publishes terminal state in the same decision lock.
+
+Wire tests verify one result encoding, successful decoding and the unchanged size
+error. Concurrent lifecycle tests check that every running operation remains in
+the index; restoring the previous completion lock gap makes that regression fail.
+The full uncached Windows race suite and vet pass. A 1,024-unit response benchmark
+reduced result encodings from two to one and allocations from 19 to 12; response
+envelope encoding still occurs normally. Complete R2 acceptance remains open.

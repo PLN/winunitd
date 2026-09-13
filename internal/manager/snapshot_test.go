@@ -2,7 +2,9 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -24,11 +26,10 @@ func TestSnapshotKeepsAcceptedOperationAndUnitTogether(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("launch did not enter")
 	}
-	result, err := m.Handle(context.Background(), protocol.MethodSnapshot, nil)
+	snapshot, err := m.Snapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot := result.(*protocol.SnapshotResult)
 	if len(snapshot.Operations) != 1 || len(snapshot.Units) != snapshot.Machine.UnitsLoaded {
 		t.Fatalf("incomplete aggregate: %+v", snapshot)
 	}
@@ -96,9 +97,11 @@ func TestSnapshotRejectsOversizedViewsWithoutPartialResults(t *testing.T) {
 	}
 	m.units = nil
 	m.operations = make(map[string]*protocol.OperationResult)
+	m.activeOperations = make(map[string]*operationTask)
 	for i := 0; i <= maxSnapshotOperations; i++ {
 		id := fmt.Sprintf("op/%d", i)
 		m.operations[id] = &protocol.OperationResult{ID: id, State: "running"}
+		m.activeOperations[id] = &operationTask{}
 	}
 	if result, err := m.Snapshot(); result != nil || err == nil {
 		t.Fatal("oversized operation set returned partial success")
@@ -149,6 +152,24 @@ func TestSnapshotCountsMatchConcurrentLifecycleMembers(t *testing.T) {
 		done <- nil
 	}()
 	for {
+		// Inspect the accepted snapshot and operation index at the same decision
+		// point while public start/stop calls complete on the other goroutine.
+		m.mu.Lock()
+		indexed, indexErr := m.snapshotLocked()
+		running := 0
+		for id, operation := range m.operations {
+			if operation.State == "running" {
+				running++
+				if m.activeOperations[id] == nil {
+					m.mu.Unlock()
+					t.Fatal("running operation vanished before terminal publication")
+				}
+			}
+		}
+		m.mu.Unlock()
+		if indexErr != nil || len(indexed.Operations) != running {
+			t.Fatalf("snapshot operation index omitted running work: %+v %v", indexed, indexErr)
+		}
 		snapshot, err := m.Snapshot()
 		if err != nil {
 			t.Fatal(err)
@@ -174,6 +195,48 @@ func TestSnapshotCountsMatchConcurrentLifecycleMembers(t *testing.T) {
 		default:
 		}
 	}
+}
+
+func TestSnapshotSelectsOnlySortedActiveOperations(t *testing.T) {
+	m := &Manager{operations: make(map[string]*protocol.OperationResult), activeOperations: make(map[string]*operationTask)}
+	for i := 0; i < completedOperationLimit; i++ {
+		id := fmt.Sprintf("completed-%d", i)
+		m.operations[id] = &protocol.OperationResult{ID: id, State: "succeeded"}
+	}
+	for _, id := range []string{"active-c", "active-a", "active-b"} {
+		m.operations[id] = &protocol.OperationResult{ID: id, State: "running"}
+		m.activeOperations[id] = &operationTask{}
+	}
+	got, err := m.Snapshot()
+	if err != nil || len(got.Operations) != 3 {
+		t.Fatalf("active snapshot: %+v %v", got, err)
+	}
+	for i, want := range []string{"active-a", "active-b", "active-c"} {
+		if got.Operations[i].ID != want {
+			t.Fatalf("operation %d = %s", i, got.Operations[i].ID)
+		}
+	}
+}
+
+func TestOversizedSnapshotKeepsWireError(t *testing.T) {
+	m := &Manager{units: map[string]*unitRuntime{strings.Repeat("x", maxSnapshotBytes): nil}}
+	clientConn, serverConn := net.Pipe()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	defer clientConn.Close()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer serverConn.Close()
+		protocol.ServeConn(ctx, serverConn, m, protocol.AllowAdmin)
+	}()
+	got, err := protocol.NewClient(clientConn).Snapshot(ctx)
+	var protocolError *protocol.Error
+	if got != nil || !errors.As(err, &protocolError) || protocolError.Code != protocol.CodeFailed || protocolError.Message != "coordinator snapshot exceeds 512 KiB; use individual status/operation queries" {
+		t.Fatalf("oversized snapshot response: %+v %v", got, err)
+	}
+	clientConn.Close()
+	<-done
 }
 
 func snapshotUnit(t *testing.T, snapshot *protocol.SnapshotResult, name string) *protocol.UnitSnapshot {
