@@ -366,6 +366,9 @@ func TestStatusNextAfterFireAndArmMatchesHeap(t *testing.T) {
 	if name := waitFired(t, fired); name != "cal.timer" {
 		t.Fatalf("fired %q", name)
 	}
+	// The callback announces its event before completion reschedules the arm.
+	// Join that completion before comparing two separate cached observations.
+	e.fires.Wait()
 	tomorrow := time.Date(2026, 9, 2, 15, 0, 0, 0, time.UTC)
 	waitNext(t, e, "cal.timer", tomorrow)
 	snap := e.Status("cal.timer")

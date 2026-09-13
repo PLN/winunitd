@@ -108,13 +108,25 @@ func (m *Manager) reconcileHubsLocked() []hubCleanup {
 		if keep[name] {
 			continue
 		}
-		stale = append(stale, hubCleanup{name: name, hub: rt.hub})
+		if !rt.hub.reloadClosing {
+			rt.hub.reloadClosing = true
+			stale = append(stale, hubCleanup{name: name, hub: rt.hub})
+		}
 		rt.setCleanup(cleanupWatch, true)
 		if rt.hub.cancel != nil {
 			rt.hub.cancel()
 		}
 	}
 	return stale
+}
+
+// A completed failed wait releases only reload-worker admission. The retained
+// hub and stopSet still own any unconfirmed native close; a later reload retries
+// or joins that exact close without accumulating another concurrent waiter.
+func (m *Manager) finishReloadHubCleanup(h *watchRuntime) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	h.reloadClosing = false
 }
 
 // A predicate is observed outside the mutex and applied only to its exact armed

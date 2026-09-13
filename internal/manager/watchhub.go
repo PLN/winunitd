@@ -28,6 +28,7 @@ type watchRuntime struct {
 	cancel          context.CancelFunc
 	watches         []watchIO
 	existsSatisfied bool
+	reloadClosing   bool // guarded by manager.mu; one retained reload cleanup worker
 }
 
 func (h *watchRuntime) stop() error {
@@ -153,9 +154,13 @@ func (m *Manager) disposeHub(name string, h *watchRuntime) error {
 
 func (m *Manager) syncHubsLocked() {
 	stale := m.reconcileHubsLocked()
+	if len(stale) == 0 {
+		return
+	}
 	go func() {
 		for _, h := range stale {
 			_ = m.closeHub(context.Background(), h.name, h.hub, defaultStopTimeout)
+			m.finishReloadHubCleanup(h.hub)
 		}
 	}()
 }

@@ -133,6 +133,12 @@ omission notice. Correct the reported errors and reload to see remaining errors.
 These are input/record bounds, not a guarantee of bounded filesystem latency or
 aggregate process/output memory.
 
+Reload watch cleanup admits one pending worker per retained watch group. Repeated
+reloads coalesce while that worker waits, including when the native close is
+blocked. A completed failed wait releases worker admission for a later retry;
+the watch and underlying close remain owned until cleanup is confirmed. Reloads
+with no newly admitted stale watches create no cleanup worker.
+
 Journal capture waits flush, sync and retire successfully persisted file records;
 later output reopens the same on-disk log with existing repair/rotation behavior.
 At most 1024 file records, handles and buffers can remain owned at once. A failed
