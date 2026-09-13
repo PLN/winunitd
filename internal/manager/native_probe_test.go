@@ -254,3 +254,44 @@ func TestNativeTaskInstancesPreventFalseDisappearance(t *testing.T) {
 		return m.units["bound.service"].state == core.Inactive && m.boundStopsDone == nil
 	})
 }
+
+func TestNativePausedPendingAndMissingSCMRetainDependents(t *testing.T) {
+	for _, state := range []runtime.SCMState{runtime.SCMPaused, runtime.SCMPausePending, runtime.SCMContinuePending, runtime.SCMStartPending, runtime.SCMStopPending, 0} {
+		t.Run(fmt.Sprint(state), func(t *testing.T) {
+			clock := timers.NewFake(time.Now())
+			scm := newFakeSCM("peer")
+			m := managerWithSCMClock(t, &fakeLauncher{}, scm, clock.Clock(), map[string]string{
+				"peer.service":  "[Service]\nType=scm\nServiceName=peer\n",
+				"bound.service": "[Unit]\nBindsTo=peer.service\nAfter=peer.service\n" + boundWorker,
+			})
+			if _, err := m.Start(context.Background(), "bound"); err != nil {
+				t.Fatal(err)
+			}
+			scm.set("peer", state, 42)
+			driveNativeUntil(t, clock, func() bool {
+				m.mu.Lock()
+				defer m.mu.Unlock()
+				return !m.units["peer.service"].nativeNextProbe.IsZero() && len(m.nativeProbes) == 0
+			})
+			assertState(t, m, "peer.service", core.Active)
+			assertState(t, m, "bound.service", core.Active)
+			scm.mu.Lock()
+			delete(scm.svcs, "peer")
+			scm.mu.Unlock()
+			defer scm.set("peer", runtime.SCMStopped, 0)
+			driveNativeUntil(t, clock, func() bool {
+				m.mu.Lock()
+				defer m.mu.Unlock()
+				return m.units["peer.service"].nativeProbeError != ""
+			})
+			assertState(t, m, "peer.service", core.Active)
+			assertState(t, m, "bound.service", core.Active)
+			scm.set("peer", runtime.SCMStopped, 0)
+			driveNativeUntil(t, clock, func() bool {
+				m.mu.Lock()
+				defer m.mu.Unlock()
+				return m.units["bound.service"].state == core.Inactive && m.boundStopsDone == nil
+			})
+		})
+	}
+}

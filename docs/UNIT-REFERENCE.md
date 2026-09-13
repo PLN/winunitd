@@ -139,7 +139,7 @@ and `%NAME%` are not substituted.
 | Unit: `FormatVersion` | 1 (default) or 2; selects the explicit policies above |
 | Unit: `Requires`, `Wants` | Pull dependencies into the start plan; Requires propagates start failure, Wants permits failure |
 | Unit: `After`, `Before` | Ordering only; does not pull in the named unit |
-| Unit: `PartOf` | Reverse stop/restart participation; restart restores active/activating members, leaving otherwise unselected idle members inactive |
+| Unit: `PartOf` | Reverse stop/restart participation uses the running invocation's captured membership and ordering; restart restores active/activating members with new configuration, leaving otherwise unselected idle members inactive |
 | Unit: `StartLimitIntervalSec`, `StartLimitBurst` | Defaults 10s / 5; burst 0 disables the limit; explicit start resets the budget |
 | Service: `Type` | Default simple; simple launches a process; notify waits for readiness; oneshot waits for exit; proxies described below |
 | Service: `RemainAfterExit` | oneshot only; no (default) finishes inactive after success; yes retains active state |

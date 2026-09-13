@@ -250,6 +250,12 @@ includes their reverse Requires/BindsTo/PartOf members, with reverse ordering.
 Requires or PartOf alone do not propagate an unexpected peer exit. Existing
 invocations retain their dependency policy across reload/removal.
 
+Explicit stop, restart teardown and shutdown also plan from retained invocation
+membership and ordering. Reloading away `PartOf`, `Requires` or `BindsTo` cannot
+remove a running invocation from its original stop scope. A restart's new launch
+phase uses the accepted replacement configuration. Stopped, fully released
+records use current definitions when planning a later operation.
+
 The complete captured scope suppresses recovery before native teardown. One
 owned worker and at most one pending intent per managed name reserve progress
 independently of client stop slots. Each batch uses an accepted stop-operation

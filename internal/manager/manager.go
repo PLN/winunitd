@@ -670,7 +670,7 @@ func (m *Manager) startOperation(ctx context.Context, name string, origin activa
 	var stopPlan *core.Transaction
 	if restart {
 		var intent *restartOrigin
-		stopPlan, roots, intent, err = m.planRestartLocked(g, name)
+		stopPlan, roots, intent, err = m.planRestartLocked(name)
 		if err != nil {
 			m.mu.Unlock()
 			return nil, protocol.ErrFailed(waitFailMessage(err))

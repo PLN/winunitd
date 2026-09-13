@@ -31,7 +31,11 @@ func (*restartOrigin) countsStartLimit() bool { return false }
 
 // Capture participating active/activating members before teardown. PartOf
 // members need explicit roots because PlanStart does not pull reverse edges.
-func (m *Manager) planRestartLocked(g *core.Graph, name string) (*core.Transaction, []string, *restartOrigin, error) {
+func (m *Manager) planRestartLocked(name string) (*core.Transaction, []string, *restartOrigin, error) {
+	g, err := m.stopGraphLocked()
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	stop, err := g.PlanStop(name)
 	if err != nil {
 		return nil, nil, nil, err
