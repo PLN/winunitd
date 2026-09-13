@@ -71,8 +71,9 @@ func TestServerReservedAdmission(t *testing.T) {
 	}
 	assertBusy(MethodRestart)
 	statusDone := make(chan error, 1)
-	go func() { statusDone <- call(MethodStatus) }()
-	waitEntered(MethodStatus)
+	go func() { statusDone <- call(MethodSnapshot) }()
+	waitEntered(MethodSnapshot)
+	assertBusy(MethodStatus)
 	assertBusy(MethodOperation)
 	if err := call(MethodStop); err != nil {
 		t.Fatal(err)

@@ -211,8 +211,9 @@ use the same authenticated manager pipe and authorization as other unit verbs.
 ## Control transport capacity
 
 Development builds bound each serving endpoint to 128 accepted connections,
-64 ordinary handlers, eight stop/disable-linger/cancel-operation handlers, and eight diagnostic
-handlers (status, operation, list-units and list-timers). These budgets are per
+64 ordinary handlers, eight stop/disable-linger/cancel-operation/maintenance handlers,
+and eight diagnostic handlers (status, snapshot, operation, list-units and
+list-timers). These budgets are per
 endpoint, separate from manager transaction budgets. Embedders can use
 `protocol.ServeWithLimits`; the daemon uses the defaults. The standalone
 `ServeConn` helper assumes an already-admitted connection and adds no limits.
