@@ -133,6 +133,11 @@ has been removed. Suspended creation inherits the verified broker job and joins
 the dedicated child job before resume. Helper and failed-launch cleanup remain
 owned until released. See the [headless profile implementation](R2-EVIDENCE.md#september-12-windows-owned-headless-profiles).
 
+The [concurrent local-user qualification](R4-EVIDENCE.md#concurrent-local-headless-users)
+also covers an existing and a first-created profile, actual cross-user/system
+pipe denial, target environment/HKCU and independent manager crash/revocation
+without disrupting the peer. All temporary filesystem grants were restored.
+
 Production [broker-crash recovery and final profile release](R3-EVIDENCE.md#managed-bound-dependent-cleanup)
 and [repeated S4U user-manager recovery](R2-EVIDENCE.md#system-user-host-snapshot-qualification)
 have passed. These selected native results do not close R4.5's broader mode,

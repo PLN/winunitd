@@ -18,6 +18,9 @@ limits. Retention, durable diagnostics and combined stress remain R5 work.
 R4.3 SCM readiness and combined maintenance are technically complete; the
 [Windows qualification ledger](R4-EVIDENCE.md) records the accepted native runs
 and the remaining broader identity/session/security matrix.
+[Concurrent headless user qualification](R4-EVIDENCE.md#concurrent-local-headless-users)
+adds existing/first-created profiles, actual cross-user denial and independent
+crash/revocation evidence without closing the interactive session/security gate.
 The [constrained Windows test qualification](TEST-HARDENING.md#constrained-windows-acceptance)
 completes #112; R0.4's clean-input provisioning/session harness remains open.
 Planned milestones may have no implementation issues yet; their work packages
