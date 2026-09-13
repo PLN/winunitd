@@ -13,6 +13,11 @@ joining synchronous readers. Protected-handle regressions cover stop retry and
 capture close concurrent with a pending read and process termination. These
 checks do not qualify every early launch allocation failure; R1 remains open.
 
+Control serving also joins listener closure before returning. A native accept
+wait can finish before its sibling close releases the listening handle. A
+delayed-close regression reproduces the early return and verifies the join;
+listener close failures are included in the serving result.
+
 Explicit stop, failed-state reaping, ordinary exit, replacement of an exited invocation, readiness/watchdog failure, and late launch disposal retain process ownership until cleanup succeeds. Failures remain available for stop retry and block replacement/restart. Retries join a pending adapter call after caller timeout. Windows unit and user-manager adapters close job admission, capture process handles, and wait for those handles plus an empty job list before releasing ownership. Kill/wait/query/close failures retain unfinished handles for retry.
 
 Shutdown closes start admission before its stop snapshot and includes accepted launches even before they publish a process. Shutdown context deadlines now bound operation-lock, pending process-stop, and journal waits; expiration retains pending ownership and permits shutdown retry. SCM/task stop retries also join a pending native call after deadline instead of spawning another blocked call.

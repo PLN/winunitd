@@ -5,9 +5,59 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"sync"
 	"testing"
 	"time"
 )
+
+type delayedCloseListener struct {
+	net.Listener
+	entered   chan struct{}
+	release   chan struct{}
+	acceptErr error
+}
+
+func (l *delayedCloseListener) Accept() (net.Conn, error) { return nil, l.acceptErr }
+func (l *delayedCloseListener) Close() error {
+	close(l.entered)
+	<-l.release
+	return l.Listener.Close()
+}
+
+func TestServeJoinsListenerCloseAfterAcceptFailure(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lis.Close()
+	wrapped := &delayedCloseListener{Listener: lis, entered: make(chan struct{}), release: make(chan struct{}), acceptErr: errors.New("injected accept failure")}
+	var release sync.Once
+	unblock := func() { release.Do(func() { close(wrapped.release) }) }
+	defer unblock()
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(context.Background(), wrapped, HandlerFunc(func(context.Context, string, json.RawMessage) (any, error) { return nil, nil }), AllowAdmin)
+	}()
+	select {
+	case <-wrapped.entered:
+	case <-time.After(time.Second):
+		t.Fatal("listener close was not requested")
+	}
+	select {
+	case <-done:
+		t.Fatal("Serve returned before listener close completed")
+	case <-time.After(20 * time.Millisecond):
+	}
+	unblock()
+	select {
+	case err := <-done:
+		if !errors.Is(err, wrapped.acceptErr) {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Serve did not join completed listener close")
+	}
+}
 
 type failingControlListener struct {
 	net.Listener
