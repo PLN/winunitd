@@ -22,8 +22,34 @@ func (m *Manager) Snapshot() (*protocol.SnapshotResult, error) {
 }
 
 func (m *Manager) snapshotEncoded() (*protocol.SnapshotResult, protocol.EncodedResult, error) {
+	return m.snapshotWithUsersEncoded(nil)
+}
+
+func (m *Manager) snapshotWithUsersEncoded(users *UserHost) (*protocol.SnapshotResult, protocol.EncodedResult, error) {
+	// Fixed lock order: manager, then user host. User-host decisions never acquire
+	// the manager lock or call its handlers; all external effects run after unlock.
 	m.mu.Lock()
+	if users != nil {
+		users.mu.Lock()
+	}
 	result, err := m.snapshotLocked()
+	if err == nil && users != nil {
+		result.UserHost, err = users.snapshotLocked()
+		if err == nil {
+			view := result.UserHost
+			result.Machine.UserNativeWork = view.NativeWork
+			result.Machine.Lingering = view.Lingering
+			result.Machine.LingerState, result.Machine.LingerError = view.LingerState, view.LingerError
+			for _, inst := range view.Instances {
+				if inst.State == "running" {
+					result.Machine.UserManagers++
+				}
+			}
+		}
+	}
+	if users != nil {
+		users.mu.Unlock()
+	}
 	m.mu.Unlock()
 	if err != nil {
 		return nil, protocol.EncodedResult{}, err

@@ -161,15 +161,28 @@ orders captures within that manager lifetime; it is not a lifecycle revision.
 Later completions and reloads cannot alter a published result, and editing the
 returned data cannot mutate manager state.
 
+System control also includes `userHost`: accepted instances, cleanup/recovery,
+session mappings and pending admission requests, policy revisions, linger state
+and native-work counts. Capture holds the manager lock and then the user-host
+lock in a fixed order, so machine user counts and ownership come from the same
+decision point. User-manager endpoints omit this system-owned section.
+Each user-manager attempt has a host-scoped `instanceId` and captured admission/
+linger revisions. Failed cleanup retains that identity and PID; a replacement
+gets a new ID. The host nonce distinguishes process lifetimes. These optional
+fields also appear in ordinary user-instance/recovery status.
+
 Snapshot performs no native queries or worker dispatch. It includes accepted
 native-proxy inactivity and observation errors, plus the pending query count.
-It excludes fresh journal, timer-engine, native-proxy and separate user-host
-observations; ordinary status commands provide those independent views. Its armed revision covers the timer or
+It excludes fresh journal, timer-engine and native-proxy observations; ordinary
+status commands provide those independent views. Its armed revision covers the timer or
 watch arm accepted in the manager record. Completed operation
 history remains available through `operation ID`. A snapshot exceeding 1024 units,
 128 active operations or 512 KiB fails explicitly; it never truncates a complete
 view into apparent success. Use individual status/operation queries above those
-bounds. Snapshot captures do not retain additional history in the manager.
+bounds. User-host input additionally allows at most 128 instance/linger records,
+256 entries in each accepted-session/pending-request map, and seven native-work
+slots. All user-host text is included in the same 512 KiB response allowance.
+Snapshot captures do not retain additional history in the manager.
 
 Accepted stop and restart invalidate pending activation and suppress recovery for
 their complete captured stop scope before dispatching ordered teardown workers.

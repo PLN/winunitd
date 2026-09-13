@@ -23,6 +23,9 @@ func (c *Control) Handle(ctx context.Context, method string, params json.RawMess
 		return nil, protocol.ErrFailed("nil handler")
 	}
 	switch method {
+	case protocol.MethodSnapshot:
+		_, encoded, err := c.Units.snapshotWithUsersEncoded(c.Users)
+		return encoded, err
 	case protocol.MethodMaintenance:
 		var p protocol.MaintenanceParams
 		if err := protocol.DecodeParams(params, &p); err != nil {

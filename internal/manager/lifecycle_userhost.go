@@ -95,7 +95,7 @@ func (h *UserHost) acceptUserLaunch(sid, mode string, session uint32, wanted fun
 		}
 	}
 	delay := userRecoveryDelay(previous, now)
-	inst := &userInstance{sid: sid, mode: mode, session: session, restartDelay: delay, nextStart: now.Add(delay)}
+	inst := h.newUserInstanceLocked(sid, mode, session, delay, now)
 	h.bySID[sid] = inst // shutdown retains accepted work even before process creation
 	return inst, nil
 }
@@ -180,4 +180,10 @@ func (h *UserHost) sealShutdownLocked() {
 	}
 	h.sessions = make(map[uint32]string)
 	h.sessionRequests = make(map[uint32]uint64)
+}
+
+// Caller holds h.mu. Even pre-launch token failures receive a distinct attempt ID.
+func (h *UserHost) newUserInstanceLocked(sid, mode string, session uint32, delay time.Duration, now time.Time) *userInstance {
+	h.instanceSequence++
+	return &userInstance{id: fmt.Sprintf("%s/%d", h.hostID, h.instanceSequence), admissionRevision: h.admissionRevision, lingerRevision: h.lingerRevision, sid: sid, mode: mode, session: session, restartDelay: delay, nextStart: now.Add(delay)}
 }

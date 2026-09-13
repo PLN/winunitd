@@ -166,6 +166,9 @@ type MachineStatus struct {
 // UserManagerStatus is a copied user-host decision, not a fresh kernel query.
 // Mode/session identify the selected token and do not follow later logons.
 type UserManagerStatus struct {
+	InstanceID          string `json:"instanceId,omitempty"`
+	AdmissionRevision   uint64 `json:"admissionRevision"`
+	LingerRevision      uint64 `json:"lingerRevision"`
 	SID                 string `json:"sid"`
 	Mode                string `json:"mode,omitempty"`
 	SessionID           uint32 `json:"sessionId"`
@@ -175,6 +178,7 @@ type UserManagerStatus struct {
 }
 
 type UserRecoveryStatus struct {
+	InstanceID    string `json:"instanceId,omitempty"`
 	SID           string `json:"sid"`
 	State         string `json:"state"`
 	NextAttemptAt string `json:"nextAttemptAt,omitempty"`
