@@ -401,13 +401,14 @@ func (m *Manager) maybeRestart(name string, kind core.ExitKind, svc *unit.Servic
 
 func (m *Manager) beginRestart(request recoveryRequest) {
 	name, owner := request.owner.name, request.owner
-	ctx := m.acceptRecovery(request)
-	if ctx == nil {
+	work := m.acceptRecovery(request)
+	if work == nil {
 		return
 	}
 
-	if request.delay > 0 {
-		timer := m.clock().Timer(request.delay)
+	ctx := work.Context
+	if work.delay > 0 {
+		timer := m.clock().Timer(work.delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()

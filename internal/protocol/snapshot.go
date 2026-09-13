@@ -12,6 +12,8 @@ type SnapshotResult struct {
 }
 
 type UnitSnapshot struct {
+	RestartAttempt           uint32   `json:"restartAttempt,omitempty"`
+	RestartDelaySec          float64  `json:"restartDelaySec,omitempty"`
 	Error                    string   `json:"error,omitempty"`
 	Reason                   string   `json:"reason,omitempty"`
 	NativeObservationError   string   `json:"nativeObservationError,omitempty"`

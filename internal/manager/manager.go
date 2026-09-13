@@ -536,6 +536,10 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 			st.MainPID = rt.mainPID
 		}
 		st.SubState = rt.sub.String()
+		st.RestartAttempt = rt.restartAttempt
+		if rt.sub == core.SubAutoRestart {
+			st.RestartDelaySec = rt.restartDelay.Seconds()
+		}
 		st.NativeObservationError = rt.nativeProbeError
 		st.TerminationUncertain = rt.cleanupPending()
 		st.PendingCleanup = rt.pendingCleanupNames()

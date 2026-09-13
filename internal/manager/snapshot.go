@@ -60,6 +60,7 @@ func (m *Manager) snapshotLocked() (*protocol.SnapshotResult, error) {
 		st := m.unitStatusLocked(name)
 		out.Units = append(out.Units, protocol.UnitSnapshot{
 			Error: st.Error, Reason: st.Reason,
+			RestartAttempt: st.RestartAttempt, RestartDelaySec: st.RestartDelaySec,
 			NativeObservationError: st.NativeObservationError,
 			Name:                   st.Name, LoadState: st.LoadState, ActiveState: st.ActiveState,
 			SubState: st.SubState, Enabled: st.Enabled, MainPID: st.MainPID,

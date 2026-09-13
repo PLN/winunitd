@@ -188,10 +188,12 @@ type UserRecoveryStatus struct {
 // Resource metrics are not reported. Legacy/native CPU controls and IoPriority are the
 // configured unit-file values when set (cheap; not a live Job Object query).
 type UnitStatus struct {
-	WindowsCPUWeight       uint32 `json:"windowsCPUWeight,omitempty"`
-	WindowsCPUQuota        uint32 `json:"windowsCPUQuota,omitempty"`
-	NativeObservationError string `json:"nativeObservationError,omitempty"`
-	LastOperationID        string `json:"lastOperationId,omitempty"`
+	RestartAttempt         uint32  `json:"restartAttempt,omitempty"`
+	RestartDelaySec        float64 `json:"restartDelaySec,omitempty"`
+	WindowsCPUWeight       uint32  `json:"windowsCPUWeight,omitempty"`
+	WindowsCPUQuota        uint32  `json:"windowsCPUQuota,omitempty"`
+	NativeObservationError string  `json:"nativeObservationError,omitempty"`
+	LastOperationID        string  `json:"lastOperationId,omitempty"`
 	// ConfigRevision is empty when no loaded definition is accepted. The
 	// invocation field identifies the last captured service definition, even
 	// after stop. ArmedConfigRevision identifies the installed native watch or

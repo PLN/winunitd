@@ -205,6 +205,8 @@ type ServiceSpec struct {
 	Environment            []EnvVar
 	Restart                RestartPolicy
 	RestartSec             time.Duration
+	RestartBackoff         string // fixed (default) or exponential, format 2 only
+	RestartMaxDelaySec     time.Duration
 	TimeoutStartSec        time.Duration
 	TimeoutStopSec         time.Duration
 	NotifyAccess           NotifyAccess

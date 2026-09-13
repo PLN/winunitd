@@ -36,6 +36,9 @@ type unitRuntime struct {
 	watchdog          context.CancelFunc
 	startCancel       context.CancelFunc
 	restartCancel     context.CancelFunc
+	restartAttempt    uint32 // saturating exponent step since the last explicit launch
+	restartDelay      time.Duration
+	restartGeneration uint64
 	stopping          bool
 	terminated        bool
 	cleanup           cleanupResources
@@ -120,6 +123,9 @@ func (rt *unitRuntime) sameOp(gen uint64, proc runtime.Process) bool {
 }
 
 func (rt *unitRuntime) cancelRestart() {
+	if rt != nil {
+		rt.restartDelay = 0
+	}
 	if rt == nil || rt.restartCancel == nil {
 		return
 	}
@@ -144,6 +150,7 @@ func (rt *unitRuntime) detachAsync() unitTeardown {
 	if rt == nil {
 		return unitTeardown{}
 	}
+	rt.restartDelay = 0
 	td := unitTeardown{
 		start:    rt.startCancel,
 		watchdog: rt.watchdog,
