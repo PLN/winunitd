@@ -149,6 +149,17 @@ including evicted history. Last storage-error text is limited to 4096 UTF-8 byte
 These changes do not delete historical on-disk logs or impose a total disk quota
 across all historical names. They do not make filesystem I/O latency bounded.
 
+Per-unit rotation keeps the current file and three archives, rotating before a
+record would exceed the 10 MiB current-file limit (one oversized record may exceed
+that limit). Close, archive deletion/rename and replacement-open failures report
+storage errors. Rotation stops at the failed step and retains that progress for
+retry; it does not repeat completed shifts and silently evict more history.
+Capture cleanup remains pending while rotation cannot finish. Output rejected
+during that failure contributes to loss counters. Release blocking file handles
+or repair storage, then retry cleanup; future output resumes after recovery.
+Rotation progress is in-memory, not a transactional on-disk manifest. This does
+not promise atomic multi-file rotation across daemon crash or power loss.
+
 `winctl snapshot` (also `--user`) prints a JSON copy of one manager's accepted
 unit states and active operations, captured together under its decision lock.
 It includes manager identity, capture sequence/time, machine counts, configuration
