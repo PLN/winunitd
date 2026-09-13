@@ -3,6 +3,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,18 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc/mgr"
 )
+
+func TestPolicyRollbackWithoutPrepareDoesNotInspectRegistration(t *testing.T) {
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		t.Fatal(err)
+	}
+	// Invalid registration paths would fail preflight. With no saved state,
+	// rollback has no registration work, including when preflight was rejected.
+	if err := policy([]string{"policy-rollback", `C:\Apps\Other`, `C:\Data\Other`, fmt.Sprintf("%x", nonce)}); err != nil {
+		t.Fatalf("rollback without prepare: %v", err)
+	}
+}
 
 func TestPolicyRejectsUnboundTransaction(t *testing.T) {
 	for _, token := range []string{"", "../state", "a", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"} {

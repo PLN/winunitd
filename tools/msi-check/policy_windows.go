@@ -42,17 +42,12 @@ func policy(args []string) error {
 	if op != "policy-prepare" && op != "policy-apply" && op != "policy-rollback" && op != "policy-commit" {
 		return fmt.Errorf("unknown policy operation")
 	}
-	// Reuse exact path, ACL, service identity and stopped-servicing checks.
-	// Commit follows successful StartServices and only retires saved state.
-	if err := checkRegistration([]string{"check", args[1], args[2], "policy"}, op != "policy-commit"); err != nil {
-		return err
-	}
 	base, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFilesX64, 0)
 	if err != nil {
 		return err
 	}
 	// Standard Program Files protects the parent from non-administrator writes.
-	// The product-path check above rejects redirected ancestors. Each state file
+	// Product-path validation rejects redirected ancestors. Each state file
 	// additionally has an explicit SYSTEM/Administrators-only descriptor.
 	statePath := filepath.Join(base, "winunitd-policy-"+token+".json")
 	if op == "policy-rollback" || op == "policy-commit" {
@@ -61,6 +56,12 @@ func policy(args []string) error {
 			return nil // Prepare may not have run before rollback.
 		}
 		if err != nil {
+			return err
+		}
+		// A rejected preflight may roll back while the original service is
+		// running. If prepare never saved state, there is nothing to undo.
+		// Commit follows StartServices and only retires validated saved state.
+		if err := checkRegistration([]string{"check", args[1], args[2], "policy"}, op != "policy-commit"); err != nil {
 			return err
 		}
 		if op == "policy-rollback" && saved.Exists {
@@ -79,6 +80,10 @@ func policy(args []string) error {
 			}
 		}
 		return os.Remove(statePath)
+	}
+	// Reuse exact path, ACL, service identity and stopped-servicing checks.
+	if err := checkRegistration([]string{"check", args[1], args[2], "policy"}, true); err != nil {
+		return err
 	}
 	m, err := mgr.Connect()
 	if err != nil {
