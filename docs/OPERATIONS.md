@@ -445,6 +445,24 @@ An explicit manager restart selects a fresh suitable token. An interactive
 manager may still report its original selected session after that session leaves;
 this is distinct from the current session count. Cleanup removes its record.
 
+## Timer delivery and clock domains
+
+`OnBootSec` measures elapsed time since machine boot; `OnStartupSec` measures
+elapsed time since this manager started. Adjusting the wall clock does not
+consume either delay. Windows uses uptime that includes sleep and hibernation;
+see [Windows time](https://learn.microsoft.com/en-us/windows/win32/sysinfo/windows-time).
+`OnCalendar` uses civil time, and `OnUnitActiveSec` uses the last accepted
+activation timestamp. Clock-change/resume notifications reconcile these wall
+deadlines; the scheduler also polls as a fallback.
+
+A timer can combine relative and wall triggers. Each retains its own clock
+basis: moving the wall clock across the displayed projection of a relative
+deadline cannot fire it early. A due wall trigger can activate the target while
+the relative delay remains pending; the later elapsed relative trigger remains
+eligible. Simultaneously due triggers coalesce into one activation. Recorded
+scheduled time identifies the due source rather than an obsolete projection.
+The existing start contract coalesces activation of an already active service.
+
 ## Timer storage work
 
 Timer arms load persisted state asynchronously. Status and `list-timers` report

@@ -77,6 +77,7 @@ type armed struct {
 	spec         Spec
 	rt           Runtime
 	next         time.Time
+	wallNext     time.Time // accepted wall trigger, independent of relative projection
 	ok           bool
 	gen          uint64
 	schedGen     uint64 // e.clockGen at last rescheduleLocked
@@ -304,7 +305,18 @@ func (e *Engine) popDueLocked(now time.Time) (due dueTimer, ok bool) {
 	if a := e.armed[it.name]; a != nil && a.item == it {
 		a.item = nil
 	}
-	return dueTimer{instance: e.armed[it.name], generation: it.gen, scheduled: it.when}, true
+	a := e.armed[it.name]
+	scheduled := it.when
+	if a.retry == nil {
+		scheduled = a.wallNext
+		if wait, ok := e.monotonicWaitLocked(a.spec, a.rt); ok && wait <= 0 {
+			relative := now.Add(wait)
+			if scheduled.IsZero() || relative.Before(scheduled) {
+				scheduled = relative
+			}
+		}
+	}
+	return dueTimer{instance: a, generation: it.gen, scheduled: scheduled}, true
 }
 
 func (e *Engine) consume(due dueTimer, actual time.Time) {
@@ -394,20 +406,21 @@ func (e *Engine) itemWaitLocked(a *armed, it *pqItem, now time.Time) time.Durati
 	if a.retry != nil {
 		return a.retry.after - e.clk.sinceStart()
 	}
-	if wallSensitive(a.spec) {
-		return it.when.Sub(now)
+	wait, relative := e.monotonicWaitLocked(a.spec, a.rt)
+	if !a.wallNext.IsZero() {
+		wall := a.wallNext.Sub(now)
+		if !relative || wall < wait {
+			return wall
+		}
 	}
-	return e.monotonicWaitLocked(a.spec, a.rt)
+	return wait
 }
 
 func (e *Engine) itemDueLocked(a *armed, it *pqItem, now time.Time) bool {
 	if a.retry != nil {
 		return e.clk.sinceStart() >= a.retry.after
 	}
-	if wallSensitive(a.spec) {
-		return !it.when.After(now)
-	}
-	return e.monotonicDueLocked(a.spec, a.rt)
+	return e.monotonicDueLocked(a.spec, a.rt) || (!a.wallNext.IsZero() && !a.wallNext.After(now))
 }
 
 func (e *Engine) monotonicDueLocked(spec Spec, rt Runtime) bool {
@@ -420,13 +433,10 @@ func (e *Engine) monotonicDueLocked(spec Spec, rt Runtime) bool {
 	return false
 }
 
-func (e *Engine) monotonicWaitLocked(spec Spec, rt Runtime) time.Duration {
+func (e *Engine) monotonicWaitLocked(spec Spec, rt Runtime) (time.Duration, bool) {
 	var d time.Duration
 	found := false
 	consider := func(rem time.Duration) {
-		if rem < 0 {
-			rem = 0
-		}
 		if !found || rem < d {
 			d = rem
 			found = true
@@ -438,10 +448,7 @@ func (e *Engine) monotonicWaitLocked(spec Spec, rt Runtime) time.Duration {
 	if spec.OnStartupSecSet && !rt.FiredStartup {
 		consider(spec.OnStartupSec - e.clk.sinceStart())
 	}
-	if !found {
-		return 0
-	}
-	return d
+	return d, found
 }
 
 func (e *Engine) rescheduleLocked(a *armed) {
@@ -451,6 +458,7 @@ func (e *Engine) rescheduleLocked(a *armed) {
 	a.planning = false
 	a.ok = false
 	a.next = time.Time{}
+	a.wallNext = time.Time{}
 	if a.loading || a.storageError != "" {
 		return
 	}
@@ -468,7 +476,7 @@ func (e *Engine) rescheduleLocked(a *armed) {
 	if a.retry != nil {
 		next, ok = e.clk.now().Add(max(0, a.retry.after-e.clk.sinceStart())), true
 	} else {
-		next, ok = NextDeadline(a.spec, a.rt, e.clk)
+		next, a.wallNext, ok = nextDeadline(a.spec, a.rt, e.clk)
 	}
 	a.next = next
 	a.ok = ok
