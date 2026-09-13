@@ -42,11 +42,12 @@ func (e *Engine) planCalendars() {
 		if e.onNextDeadline != nil {
 			e.onNextDeadline()
 		}
-		when, ok := NextDeadline(spec, rt, frozen)
+		when, wall, ok := nextDeadline(spec, rt, frozen)
 		e.mu.Lock()
 		if e.running && e.armed[name] == next && next.gen == gen && e.clockGen == clockGen && next.planning {
 			next.planning = false
 			next.next, next.ok, next.schedGen = when, ok, clockGen
+			next.wallNext = wall
 			if ok {
 				e.installDeadlineLocked(next, when, gen)
 			}

@@ -45,10 +45,17 @@ type Activation struct {
 // ok is false when nothing is scheduled (for example only OnUnitActiveSec
 // and the activated unit has never been active).
 func NextDeadline(spec Spec, rt Runtime, clk Clock) (time.Time, bool) {
+	next, _, ok := nextDeadline(spec, rt, clk)
+	return next, ok
+}
+
+// Keep the wall deadline separate from the projected relative deadline. A
+// clock change can cross the latter without advancing its monotonic source.
+func nextDeadline(spec Spec, rt Runtime, clk Clock) (next, wall time.Time, ok bool) {
 	now := clk.now()
 	var earliest time.Time
 	found := false
-	consider := func(t time.Time) {
+	consider := func(t time.Time, wallBased bool) {
 		if t.IsZero() {
 			return
 		}
@@ -59,13 +66,16 @@ func NextDeadline(spec Spec, rt Runtime, clk Clock) (time.Time, bool) {
 			earliest = t
 			found = true
 		}
+		if wallBased && (wall.IsZero() || t.Before(wall)) {
+			wall = t
+		}
 	}
 
 	if spec.OnBootSecSet && !rt.FiredBoot {
-		consider(bootDue(spec, clk, now))
+		consider(bootDue(spec, clk, now), false)
 	}
 	if spec.OnStartupSecSet && !rt.FiredStartup {
-		consider(startupDue(spec, clk, now))
+		consider(startupDue(spec, clk, now), false)
 	}
 	if spec.OnUnitActiveSecSet && !rt.LastUnitActive.IsZero() {
 		due := rt.LastUnitActive.Add(spec.OnUnitActiveSec)
@@ -73,19 +83,19 @@ func NextDeadline(spec Spec, rt Runtime, clk Clock) (time.Time, bool) {
 		// The due just fired is then <= LastActual; clamping it to now would
 		// re-fire the same due until launchUnit bumps last-active.
 		if rt.LastActual.IsZero() || due.After(rt.LastActual) {
-			consider(due)
+			consider(due, true)
 		}
 	}
 	for _, cal := range spec.OnCalendar {
 		if spec.Persistent {
 			if catchup, ok := persistentCatchup(cal, rt, now); ok {
-				consider(catchup)
+				consider(catchup, true)
 				continue
 			}
 		}
-		consider(cal.Next(now))
+		consider(cal.Next(now), true)
 	}
-	return earliest, found
+	return earliest, wall, found
 }
 
 func bootDue(spec Spec, clk Clock, now time.Time) time.Time {
