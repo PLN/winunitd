@@ -31,11 +31,15 @@ func (e *Engine) loadPending() {
 			continue
 		}
 		rt, err := e.store.LoadChecked(name)
+		message := ""
+		if err != nil {
+			message = err.Error()
+		}
 		e.mu.Lock()
 		if e.running && e.armed[name] == next && next.loading {
 			next.loading = false
 			if err != nil {
-				next.storageError = err.Error()
+				next.storageError = message
 			} else {
 				rt.LastUnitActive = next.rt.LastUnitActive
 				next.rt = rt
@@ -73,13 +77,17 @@ func (e *Engine) persist(event Fire, rt Runtime) bool {
 		return false
 	}
 	err := e.store.Save(event.Name, rt)
+	message := ""
+	if err != nil {
+		message = err.Error()
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if !e.running || e.armed[event.Name] != a || a.token != event.Token {
 		return false
 	}
 	if err != nil {
-		a.storageError = err.Error()
+		a.storageError = message
 		e.rescheduleLocked(a)
 		e.kickLocked()
 		return false
