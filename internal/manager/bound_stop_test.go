@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,9 +11,50 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/unit"
 )
 
 const boundWorker = "[Service]\nExecStart=C:\\Tools\\worker.exe\n"
+
+func unrelatedBoundManager() *Manager {
+	m := &Manager{units: make(map[string]*unitRuntime, maxManagedUnits)}
+	for i := 0; i < maxManagedUnits; i++ {
+		name := fmt.Sprintf("work-%d.service", i)
+		loaded := &unit.Unit{Name: name, BindsTo: []string{"other.service"}}
+		rt := &unitRuntime{unit: loaded, state: core.Active}
+		if i%2 == 0 {
+			rt.invocationUnit = &unit.Unit{Name: name, BindsTo: []string{"retained-other.service"}}
+		}
+		m.units[name] = rt
+	}
+	return m
+}
+
+func TestUnrelatedBoundExitAllocatesNothing(t *testing.T) {
+	m := unrelatedBoundManager()
+	allocations := testing.AllocsPerRun(100, func() {
+		m.mu.Lock()
+		m.queueBoundStopsLocked("unrelated.service")
+		m.mu.Unlock()
+	})
+	if allocations != 0 {
+		t.Fatalf("unrelated exit allocated %g times for %d loaded/retained units", allocations, len(m.units))
+	}
+	if len(m.boundStops) != 0 || m.boundStopsDone != nil {
+		t.Fatal("unrelated exit dispatched dependency work")
+	}
+}
+
+func BenchmarkUnrelatedBoundExit(b *testing.B) {
+	m := unrelatedBoundManager()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m.mu.Lock()
+		m.queueBoundStopsLocked("unrelated.service")
+		m.mu.Unlock()
+	}
+}
 
 func TestBoundExitStopsDependentWithoutRestartingIt(t *testing.T) {
 	m, clock := managerWithFake(t, &fakeLauncher{}, map[string]string{

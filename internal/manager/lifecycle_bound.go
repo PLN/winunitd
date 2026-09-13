@@ -25,7 +25,6 @@ func (m *Manager) queueBoundStopsLocked(peer string) {
 		return
 	}
 	var roots []string
-	var definitions []*unit.Unit
 	for name, rt := range m.units {
 		if rt == nil {
 			continue
@@ -34,13 +33,23 @@ func (m *Manager) queueBoundStopsLocked(peer string) {
 		if u == nil {
 			continue
 		}
-		definitions = append(definitions, u)
 		if name != peer && !rt.stopping && (rt.state == core.Active || rt.state == core.Activating) && containsBoundName(u.BindsTo, peer) {
 			roots = append(roots, name)
 		}
 	}
 	if len(roots) == 0 {
 		return
+	}
+	// Most lifecycle events have no bound dependents. Collect the retained
+	// policy graph only after finding work; the negative path allocates nothing
+	// for canonical dependency names, regardless of the loaded unit count.
+	definitions := make([]*unit.Unit, 0, len(m.units))
+	for _, rt := range m.units {
+		if rt != nil {
+			if u := rt.ownedUnit(); u != nil {
+				definitions = append(definitions, u)
+			}
+		}
 	}
 	sort.Strings(roots)
 	g, err := core.Build(definitions)

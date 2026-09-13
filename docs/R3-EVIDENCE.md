@@ -1,5 +1,17 @@
 # Unit semantics qualification
 
+## Unrelated dependency-event allocation
+
+Bound-stop decisions discover active dependents before collecting graph
+definitions. With 1024 loaded/retained units whose captured policies bind only
+to other peers, the regression reproduced nine allocations per unrelated exit
+before this change and now reports zero bytes/allocations. The local benchmark
+measured 43.267 microseconds per decision. Twenty race repetitions of the bound
+tests and the full uncached Windows race suite/vet passed. Positive plans still
+use captured invocation definitions, including retained reload policy, and build
+their graph under the decision lock; a reverse dependency index remains a separate
+optimization. This does not change the earlier native dependency evidence scope.
+
 ## Tracked cooperative stop
 
 September 12, 2026: PR #147 implements one `ExecStop` command with independent
