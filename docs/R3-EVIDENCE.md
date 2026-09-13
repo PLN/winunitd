@@ -1,5 +1,31 @@
 # Unit semantics qualification
 
+## Native proxy ownership diagnostics
+
+PR #190 source `71c27e917ba949a2279e1719b53049e7934841e8` passed
+[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34761515360).
+Disposable LTSC build 26100 SYSTEM qualification passed three repetitions each
+of the native SCM/task disappearance fixture and public retarget/type-change
+regressions. Eighteen real native start/external-stop/dependent-cleanup cycles
+verified captured target, Windows owner and request capabilities through status,
+list and immutable snapshot. The complete matrix took 21.847 seconds with no
+skips; fixture cleanup passed and the hosting broker remained running. Merge
+`1d07f60bb63ebc514aac7fe8048dd0e8b173373b` has the tested tree.
+
+Caller mutation of one view cannot change another view or the next capture.
+Reload retains old proxy metadata until cleanup/replacement, including changes
+between managed processes, SCM services and tasks. Diagnostics explicitly report
+no process-tree ownership, output capture, ExecStop/job-limit support or native
+definition management. Capabilities describe the adapter contract, not queried
+access rights or guaranteed request success. Proxies remain system-manager only.
+Twenty focused local race repetitions, the full uncached race suite, vet and
+Windows/Linux staticcheck passed. Raw artifacts, module hashes, CI and native
+logs are retained privately.
+
+Together with the trigger/CPU matrix below, this completes technical R3.5.
+All technical R3 packages are delivered; overall milestone closure still requires
+R2 acceptance and preservation of the combined conformance invariants.
+
 ## Dependency and native trigger conformance
 
 PR #187 source `a2ed9b4883d20ea72f5912c14810f29c70599d12` passed
@@ -34,8 +60,8 @@ twenty local race repetitions before the final native matrix. Production path
 filtering was unchanged. All fixture processes exited, linger was disabled,
 the user profile unloaded, and the original hosting broker remained running.
 
-This completes technical R3.2. R3.5 still needs exposed proxy ownership and
-capabilities; overall R3 depends on R2 acceptance.
+This completes technical R3.2. The later proxy-diagnostic qualification above
+completes technical R3.5; overall R3 depends on R2 acceptance.
 
 ## Explicit format-2 policies and migration
 
