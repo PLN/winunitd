@@ -33,7 +33,11 @@ installation, then install the MSI. Existing product directories must already be
 owned and writable only by administrators/SYSTEM; redirected directories are
 rejected. There is no automatic migration of personal application data or tasks.
 
-The beta uses ordinary automatic SCM startup. Advanced recovery/delayed-start
-settings and automated maintenance are follow-up work. Workload `Restart=` still
-works while the daemon runs. Stop terminates the process job; graceful application
-stop hooks are not implemented. See the public unit reference for limitations.
+Manual installation and MSI install/repair/upgrade select ordinary automatic SCM
+startup, three one-second restart actions with no failure-count reset, recovery
+on non-crash failures, and a three-minute preshutdown timeout. Automatic startup
+does not promise a fixed boot deadline. Workload `Restart=` is a separate policy.
+MSI rollback restores the previous startup/recovery settings after restoring the
+registration. Each transaction uses a new random identity and exclusive protected
+rollback state; failed cleanup retains that state for inspection. Automated
+maintenance remains follow-up work. See the unit reference for stop behavior.

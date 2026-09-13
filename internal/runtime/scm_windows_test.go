@@ -21,8 +21,8 @@ func TestServiceConfig(t *testing.T) {
 	if cfg.StartType != mgr.StartAutomatic {
 		t.Fatalf("StartType = %d", cfg.StartType)
 	}
-	if !cfg.DelayedAutoStart {
-		t.Fatal("DelayedAutoStart not set")
+	if cfg.DelayedAutoStart {
+		t.Fatal("ordinary automatic startup must not be delayed")
 	}
 	if cfg.ServiceStartName != "" {
 		t.Fatalf("ServiceStartName = %q (want empty LocalSystem)", cfg.ServiceStartName)

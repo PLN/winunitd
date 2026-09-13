@@ -1,6 +1,6 @@
 //go:build windows
 
-// Command msi-check is an embedded, read-only beta installer preflight.
+// Command msi-check provides embedded installer preflight and policy rollback.
 package main
 
 import (
@@ -20,13 +20,24 @@ func main() {
 	if len(os.Args) == 2 && os.Args[1] == "fail" {
 		os.Exit(1) // Explicit fault injection for the disposable installer tests.
 	}
-	if err := check(os.Args[1:]); err != nil {
+	args := os.Args[1:]
+	var err error
+	if len(args) > 0 && strings.HasPrefix(args[0], "policy-") {
+		err = policy(args)
+	} else {
+		err = check(args)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "winunitd installer:", err)
 		os.Exit(1)
 	}
 }
 
 func check(args []string) error {
+	return checkRegistration(args, true)
+}
+
+func checkRegistration(args []string, requireStopped bool) error {
 	if len(args) != 4 || args[0] != "check" {
 		return fmt.Errorf("invalid preflight arguments")
 	}
@@ -75,7 +86,7 @@ func check(args []string) error {
 	if err != nil {
 		return err
 	}
-	if status.State != svc.Stopped || status.ProcessId != 0 {
+	if requireStopped && (status.State != svc.Stopped || status.ProcessId != 0) {
 		return fmt.Errorf("stop winunitd and wait for it to exit before repair, upgrade, or uninstall")
 	}
 	return nil

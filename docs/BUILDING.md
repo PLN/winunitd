@@ -41,6 +41,12 @@ a successful MSI build alone is not a release.
 
 `dist/build-manifest.json` records the compiler, target, source revision, dirty state, module-file hashes, and each binary's SHA256/size. It contains no operator identity, hostname, absolute checkout path, or environment dump. Go's embedded module/build information provides dependency versions and sums (`go version -m`). A failed build leaves no successful manifest for that attempt. Dirty builds are allowed for development and visibly marked; they must not be promoted as release artifacts. Build from a clean checkout and do not modify sources during a qualification build.
 
+The beta MSI additionally builds a small native transaction-identity DLL using
+MinGW GCC 16.1.0, alongside the existing WiX 7/.NET 10.0.400 packaging toolchain.
+It uses only Windows MSI and BCrypt imports, changes session properties only,
+and adds no runtime requirement to the installed application. The package
+manifest records its compiler version and SHA256 separately from the Go payload.
+
 CI retains native Windows artifacts and the Linux-to-Windows build manifest for 14 days. These are unsigned CI artifacts, not installation releases or provenance attestations. Compare artifact hashes with the manifest before deploying to a test guest. Pinning the Go compiler and actions does not freeze hosted runner images or the race-test C compiler; record the actual platform when interpreting results.
 
 ## Private development CI budget

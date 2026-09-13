@@ -21,7 +21,7 @@ Initial qualification targets: Windows 11 Enterprise and Enterprise LTSC x64, an
 | Documentation | Installed license, quick start, example units in a documentation directory; examples are not enabled |
 | Machine data | `CommonAppDataFolder\winunitd\`: `units`, `enabled`, `journal`, `runtime`, `linger`, plus daemon diagnostics |
 | User data | `%LOCALAPPDATA%\winunitd\`, created by the user manager in the owning user's context |
-| Service | `winunitd`, display name `WinUnit Manager`, own process, LocalSystem, Automatic (Delayed Start) |
+| Service | `winunitd`, display name `WinUnit Manager`, own process, LocalSystem, ordinary Automatic startup with one-second recovery; shared manual/MSI policy |
 | Recovery | Restart after 1 second for first, second, and subsequent failures; include non-crash failures; retain the current infinite failure-reset policy |
 | Shutdown | 180-second preshutdown setting; a tested bounded stop before installer file changes |
 | PATH | Optional machine PATH entry for the binary directory, enabled by default; track ownership and preserve unrelated/pre-existing entries |

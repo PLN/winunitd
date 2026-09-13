@@ -73,8 +73,8 @@ The main limits are:
 - User managers and linger, notify/watchdogs, timers, resource limits, native
   event triggers, and SCM/task proxies are experimental. Interactive user
   admission is disabled by default.
-- The MSI uses ordinary automatic service startup. It does not configure
-  automatic recovery after a daemon failure.
+- Manual and MSI installation select ordinary automatic startup and one-second
+  SCM failure recovery. Startup availability still requires boot qualification.
 
 See [runtime behavior and advanced features](docs/RUNTIME-REFERENCE.md) for
 operational details and [user admission](docs/USER-ADMISSION.md) for that policy.

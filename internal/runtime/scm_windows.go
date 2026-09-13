@@ -25,7 +25,7 @@ func serviceConfig() mgr.Config {
 		DisplayName:      DisplayName,
 		Description:      "Declarative Windows unit manager and process supervisor.",
 		StartType:        mgr.StartAutomatic,
-		DelayedAutoStart: true,
+		DelayedAutoStart: false,
 		// ServiceStartName empty → LocalSystem (DESIGN.md §49).
 	}
 }
@@ -50,7 +50,17 @@ func setPreshutdownTimeout(s *mgr.Service, d time.Duration) error {
 	return windows.ChangeServiceConfig2(s.Handle, windows.SERVICE_CONFIG_PRESHUTDOWN_INFO, (*byte)(unsafe.Pointer(&info)))
 }
 
-func configureService(s *mgr.Service) error {
+// ApplyServicePolicy gives manual and MSI registrations the same boot/recovery
+// policy. The caller owns registration identity validation and rollback.
+func ApplyServicePolicy(s *mgr.Service) error {
+	cfg, err := s.Config()
+	if err != nil {
+		return fmt.Errorf("read startup policy: %w", err)
+	}
+	cfg.StartType, cfg.DelayedAutoStart = mgr.StartAutomatic, false
+	if err := s.UpdateConfig(cfg); err != nil {
+		return fmt.Errorf("set automatic startup: %w", err)
+	}
 	if err := s.SetRecoveryActions(recoveryActions(), RecoveryResetPeriodNever); err != nil {
 		return fmt.Errorf("set recovery actions: %w", err)
 	}
@@ -63,7 +73,7 @@ func configureService(s *mgr.Service) error {
 	return nil
 }
 
-// Install registers winunitd with SCM: Automatic (Delayed Start), LocalSystem,
+// Install registers winunitd with SCM: Automatic, LocalSystem,
 // restart on failure, and preshutdown notification (DESIGN.md §42, §49, §67).
 func Install(exePath, baseDir string) error {
 	if exePath == "" {
@@ -100,7 +110,7 @@ func Install(exePath, baseDir string) error {
 	}
 	defer s.Close()
 
-	if err := configureService(s); err != nil {
+	if err := ApplyServicePolicy(s); err != nil {
 		if created {
 			_ = s.Delete()
 		}

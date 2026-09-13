@@ -32,8 +32,8 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(got, runtime.ServiceName) || !strings.Contains(got, runtime.DisplayName) {
 		t.Fatalf("help missing SCM identity: %s", got)
 	}
-	if !strings.Contains(got, "Delayed Start") {
-		t.Fatalf("help missing delayed start: %s", got)
+	if !strings.Contains(got, "Automatic, restart on failure") {
+		t.Fatalf("help missing startup/recovery policy: %s", got)
 	}
 	if !strings.Contains(got, "linger") {
 		t.Fatalf("help missing linger: %s", got)
