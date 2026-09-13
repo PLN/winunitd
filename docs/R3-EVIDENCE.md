@@ -15,8 +15,14 @@ Ten local Windows race repetitions query actual process Job Object weights
 1/5/9 and hard caps 25%/100%, inspect status, and confirm process cleanup.
 The native filesystem regression verifies initial OR activation, a later rising
 edge, and retention of the armed policy after reloading an AND replacement.
-SYSTEM/headless-user qualification and exact-source hosted CI for this slice
-are still pending. These local checks do not close overall R3 acceptance.
+At source `ad5f17fbac322e19b5c2923c263c77c54d54e885`,
+[exact-source hosted CI](https://github.com/PLN/winunitd/actions/runs/34753463620)
+passed. Disposable Windows LTSC build 26100 qualification passed both native
+test groups twenty times as SYSTEM and twenty times as a headless standard user,
+with no skips. All fixture processes exited; disabling linger released the user
+profile and left no user manager or desktop helper. PR #175 merged the same
+tested tree as `d46d84a938720bb860cb401ad8dda25bdcb2f01c`. This qualifies the
+format/path/CPU slice; overall R3 acceptance remains open.
 
 ## Native proxy inactivity observation
 
