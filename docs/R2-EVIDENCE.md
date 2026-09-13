@@ -1210,6 +1210,15 @@ closes these lost-dispatch paths, not the complete timer/clock qualification gat
 
 ## September 13 snapshot encoding and operation publication
 
+Snapshot unit entries now also carry the coordinator's accepted `error` and
+`reason`, copied with invocation/configuration identities. No new observation or
+worker is involved. Start-limit, abnormal-exit and retained-cleanup regressions
+compare snapshot diagnostics with unit status; a later activation cannot mutate
+the previous snapshot. The existing 512 KiB aggregate rejection also covers
+diagnostic text. Native Windows regressions use actual exit-7 restart limiting
+and an abnormal exit. This addresses the consumer diagnostic omission in #96;
+complete lifecycle-writer acceptance remains separate.
+
 Snapshot responses reuse the result bytes encoded for the 512 KiB size check.
 The typed Snapshot API, wire fields, ordering and oversized-response error remain
 unchanged. The coordinator copies only the active operation index; completion
