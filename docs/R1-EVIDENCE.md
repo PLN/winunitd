@@ -4,6 +4,15 @@ This record supports [milestone R1](MILESTONES.md#r1--ownership-output-and-failu
 
 ## Ownership and cleanup behavior
 
+Unit stdout/stderr capture and process cleanup share one native close owner.
+An `os.File.Close` failure invalidates the Go wrapper even when the Windows
+handle remains open, so a later `ErrClosed` cannot establish native cleanup.
+The owner protects the handle while joining Go readers, then releases it
+explicitly and retains it on failure. Stop terminates pipe writers before
+joining synchronous readers. Protected-handle regressions cover stop retry and
+capture close concurrent with a pending read and process termination. These
+checks do not qualify every early launch allocation failure; R1 remains open.
+
 Explicit stop, failed-state reaping, ordinary exit, replacement of an exited invocation, readiness/watchdog failure, and late launch disposal retain process ownership until cleanup succeeds. Failures remain available for stop retry and block replacement/restart. Retries join a pending adapter call after caller timeout. Windows unit and user-manager adapters close job admission, capture process handles, and wait for those handles plus an empty job list before releasing ownership. Kill/wait/query/close failures retain unfinished handles for retry.
 
 Shutdown closes start admission before its stop snapshot and includes accepted launches even before they publish a process. Shutdown context deadlines now bound operation-lock, pending process-stop, and journal waits; expiration retains pending ownership and permits shutdown retry. SCM/task stop retries also join a pending native call after deadline instead of spawning another blocked call.
