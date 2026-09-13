@@ -637,7 +637,18 @@ func firstOccurrence(t time.Time) time.Time {
 	y, m, d := t.Date()
 	h, min, s := t.Clock()
 	for {
-		earlier := t.Add(-time.Hour)
+		start, _ := t.ZoneBounds()
+		if start.IsZero() {
+			return t
+		}
+		_, offset := t.Zone()
+		_, previousOffset := start.Add(-time.Nanosecond).Zone()
+		fold := previousOffset - offset
+		if fold <= 0 {
+			return t
+		}
+		// Offset changes need not be one hour (for example Lord Howe).
+		earlier := t.Add(-time.Duration(fold) * time.Second)
 		if earlier.Year() != y || earlier.Month() != m || earlier.Day() != d {
 			return t
 		}
