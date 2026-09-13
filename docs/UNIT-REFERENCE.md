@@ -287,6 +287,42 @@ The snapshot copies both with the same invocation/configuration identity.
 Stop, removal and shutdown cancel accepted recovery; duplicate or stale results
 cannot replace its wait, increment the step or affect a replacement invocation.
 
+## Probe health policy
+
+TCP and HTTP watchdogs observe liveness after activation. Format 2 adds:
+
+| Directive | Default and accepted values |
+| --- | --- |
+| `WatchdogGraceSec` | 0; finite nonnegative delay before probing |
+| `WatchdogTimeoutSec` | WatchdogSec; positive finite per-probe deadline |
+| `WatchdogFailureThreshold` | 1; integer 1..1000 consecutive failures |
+
+These directives require a managed process with `WatchdogMode=tcp` or `http`;
+format 1, notify-only watchdogs and external proxies reject them. Existing files
+retain the one-failure policy and interval-derived timeout. The first probe runs
+after the greater of WatchdogSec and WatchdogGraceSec; later probes run one
+WatchdogSec after the previous probe completes. Probes never overlap for an
+invocation. Stop cancels both the wait and the active network request.
+
+Status and snapshot expose `health` and `probeFailures` for the same accepted
+invocation as their lifecycle fields. Initial health is unknown. A successful
+probe reports ready and resets the consecutive failure count; a failure below
+the threshold reports degraded while the process stays active. At the threshold,
+health becomes unhealthy and the existing watchdog stop/recovery policy applies.
+HTTP success requires the configured status and completion of the bounded body
+read within the deadline. TCP success establishes only a loopback connection;
+it does not prove application readiness or authenticated operation.
+
+Reload retains the running invocation's probe settings. Fresh activation resets
+health and its failure count and adopts the accepted replacement policy. Explicit
+successful stop clears the health observation; a watchdog failure retains its
+unhealthy result until stop or replacement. Late canceled/stale probes cannot
+alter a replacement. Authenticated notify readiness reports ready separately.
+
+These liveness settings do not gate dependent startup for Type=simple. Application
+startup readiness endpoints remain a separate R3 requirement; Type=notify keeps
+its authenticated READY=1 activation contract.
+
 ## Unsupported syntax and updates
 
 `User`, `Group`, `EnvironmentFile`, `SessionMode`,

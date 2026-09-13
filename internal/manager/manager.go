@@ -540,6 +540,11 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 		if rt.sub == core.SubAutoRestart {
 			st.RestartDelaySec = rt.restartDelay.Seconds()
 		}
+		st.Health = rt.health
+		if st.Health == "" {
+			st.Health = "unknown"
+		}
+		st.ProbeFailures = rt.probeFailures
 		st.NativeObservationError = rt.nativeProbeError
 		st.TerminationUncertain = rt.cleanupPending()
 		st.PendingCleanup = rt.pendingCleanupNames()

@@ -888,6 +888,18 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		if u.SubState != "" {
 			fmt.Fprintf(c.stdout, "   Substate: %s\n", u.SubState)
 		}
+		if u.Health != "" {
+			fmt.Fprintf(c.stdout, "     Health: %s\n", u.Health)
+		}
+		if u.ProbeFailures != 0 {
+			fmt.Fprintf(c.stdout, "Probe failures: %d\n", u.ProbeFailures)
+		}
+		if u.RestartAttempt != 0 {
+			fmt.Fprintf(c.stdout, "Restart step: %d\n", u.RestartAttempt)
+		}
+		if u.RestartDelaySec != 0 {
+			fmt.Fprintf(c.stdout, "Restart delay: %gs\n", u.RestartDelaySec)
+		}
 		if u.TerminationUncertain {
 			if len(u.PendingCleanup) != 0 {
 				fmt.Fprintf(c.stdout, "PendingCleanup=%s\n", strings.Join(u.PendingCleanup, ","))

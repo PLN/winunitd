@@ -181,6 +181,7 @@ func (m *Manager) recordServiceLaunch(effect *launchEffect, native bool) {
 		return
 	}
 	rt := effect.owner.record
+	rt.health, rt.probeFailures = "unknown", 0
 	if effect.unit.Service.Type == unit.TypeOneshot {
 		rt.step(core.EventStartRequested)
 	}
@@ -396,6 +397,7 @@ func (m *Manager) acceptProcessActivation(ctx context.Context, effect *launchEff
 			return time.Time{}, false
 		}
 		rt.err = ""
+		rt.health = "ready"
 	}
 	return m.now(), true
 }

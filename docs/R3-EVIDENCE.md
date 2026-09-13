@@ -140,3 +140,24 @@ Final disable-linger released the manager, helper and user profile and prevented
 resurrection. Raw scripts, results, artifact hashes, manifest and CI identity are
 retained privately. External SCM/task disappearance and the remaining full R3
 acceptance matrix are still open; these results do not qualify MSI servicing or R7.
+
+## Capped restart backoff qualification
+
+PR #181 source `6f75e0d4078f0fa9468f0e904fc1538928cda8a7` passed
+[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34757140475)
+and merged with an identical tree. Format-2 exponential backoff has a required
+finite cap, retains invocation policy through reload, resets on a real explicit
+launch and keeps timer/watch start limits intact. Duplicate generation recovery
+cannot replace an accepted wait. Status and snapshots copy the bounded step and
+delay; stop/removal/shutdown disarm recovery.
+
+Twenty native repetitions as SYSTEM and twenty as a headless standard user on
+Windows 11 Enterprise LTSC build 26100 verified four actual exit-7 launches,
+the combined minimum backoff delay, start-limit exhaustion and consistent terminal
+snapshot/status identity. No selected test skipped. Final teardown removed the
+fixture and user manager/helper, disabled linger and unloaded the profile; the
+hosting broker and real pilot were unchanged. Raw logs, artifact/module hashes,
+CI and cleanup results remain privately retained. Ten focused race repetitions,
+the full local race suite, vet and Windows/Linux staticcheck also passed.
+This delivers recovery backoff; startup readiness and the complete health
+acceptance gate remain separate.

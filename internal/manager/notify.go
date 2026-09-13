@@ -422,20 +422,31 @@ func (m *Manager) probeWatchdogLoop(ctx context.Context, owner runtimeIdentity, 
 	if interval <= 0 {
 		return
 	}
-	timer := m.clock().Timer(interval)
+	timeout := svc.WatchdogTimeoutSec
+	if timeout <= 0 {
+		timeout = unit.WatchdogProbeTimeout(interval)
+	}
+	timer := m.clock().Timer(max(interval, svc.WatchdogGraceSec))
 	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-timer.C():
-			pctx, cancel := context.WithTimeout(ctx, unit.WatchdogProbeTimeout(interval))
+			pctx, cancel := context.WithTimeout(ctx, timeout)
 			err := svc.ProbeWatchdog(pctx)
+			if err == nil {
+				err = pctx.Err()
+			}
 			cancel()
 			if ctx.Err() != nil {
 				return
 			}
-			if err != nil {
+			accepted, unhealthy := m.acceptProbeHealth(owner, err == nil, max(1, svc.WatchdogFailureThreshold))
+			if !accepted {
+				return
+			}
+			if unhealthy {
 				m.onWatchdogTimeout(owner)
 				return
 			}

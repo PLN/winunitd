@@ -194,6 +194,8 @@ type UnitStatus struct {
 	WindowsCPUQuota        uint32  `json:"windowsCPUQuota,omitempty"`
 	NativeObservationError string  `json:"nativeObservationError,omitempty"`
 	LastOperationID        string  `json:"lastOperationId,omitempty"`
+	Health                 string  `json:"health,omitempty"`
+	ProbeFailures          int     `json:"probeFailures,omitempty"`
 	// ConfigRevision is empty when no loaded definition is accepted. The
 	// invocation field identifies the last captured service definition, even
 	// after stop. ArmedConfigRevision identifies the installed native watch or

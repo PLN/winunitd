@@ -51,6 +51,8 @@ type unitRuntime struct {
 	startTimes        []time.Time
 	nativeNextProbe   time.Time
 	nativeProbeError  string
+	health            string
+	probeFailures     int
 }
 
 // ownedUnit selects the definition that controls an existing invocation. Unit
