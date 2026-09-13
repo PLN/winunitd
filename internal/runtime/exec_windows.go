@@ -38,6 +38,7 @@ type winProc struct {
 	thread        windows.Handle
 	unassigned    bool
 	job           *UnitJob
+	launchHandles [5]windows.Handle // stdin, stdout writer, stderr writer, stdout reader, stderr reader
 	stdout        *ownedOutput
 	stderr        *ownedOutput
 	closed        bool
@@ -96,64 +97,49 @@ func failedProcessStart(p *winProc, cause error) (Process, error) {
 }
 
 func (l *winLauncher) create(spec StartSpec) (*winProc, error) {
-	job, err := OpenUnitJobWith(spec.Limits)
-	if err != nil {
-		return nil, err
-	}
+	return l.createWith(spec, OpenUnitJobWith, makeStdPipe, openNUL)
+}
 
-	stdoutR, stdoutW, err := makeStdPipe()
+func (l *winLauncher) createWith(spec StartSpec, openJob func(JobLimits) (*UnitJob, error), openPipe func() (windows.Handle, windows.Handle, error), openInput func() (windows.Handle, error)) (*winProc, error) {
+	job, err := openJob(spec.Limits)
+	p := &winProc{job: job}
 	if err != nil {
-		_ = job.Close()
-		return nil, fmt.Errorf("stdout pipe: %w", err)
+		return p, err
 	}
-	stderrR, stderrW, err := makeStdPipe()
+	stdoutR, stdoutW, err := openPipe()
+	p.launchHandles[3], p.launchHandles[1] = stdoutR, stdoutW
 	if err != nil {
-		_ = windows.CloseHandle(stdoutR)
-		_ = windows.CloseHandle(stdoutW)
-		_ = job.Close()
-		return nil, fmt.Errorf("stderr pipe: %w", err)
+		return p, fmt.Errorf("stdout pipe: %w", err)
 	}
-	stdin, err := openNUL()
+	stderrR, stderrW, err := openPipe()
+	p.launchHandles[4], p.launchHandles[2] = stderrR, stderrW
 	if err != nil {
-		_ = windows.CloseHandle(stdoutR)
-		_ = windows.CloseHandle(stdoutW)
-		_ = windows.CloseHandle(stderrR)
-		_ = windows.CloseHandle(stderrW)
-		_ = job.Close()
-		return nil, fmt.Errorf("open NUL: %w", err)
+		return p, fmt.Errorf("stderr pipe: %w", err)
 	}
-
-	cleanupHandles := func() {
-		_ = windows.CloseHandle(stdoutR)
-		_ = windows.CloseHandle(stdoutW)
-		_ = windows.CloseHandle(stderrR)
-		_ = windows.CloseHandle(stderrW)
-		_ = windows.CloseHandle(stdin)
-		_ = job.Close()
+	stdin, err := openInput()
+	p.launchHandles[0] = stdin
+	if err != nil {
+		return p, fmt.Errorf("open NUL: %w", err)
 	}
 
 	app, err := windows.UTF16PtrFromString(spec.Argv[0])
 	if err != nil {
-		cleanupHandles()
-		return nil, err
+		return p, err
 	}
 	cmdLine, err := windows.UTF16PtrFromString(windows.ComposeCommandLine(spec.Argv))
 	if err != nil {
-		cleanupHandles()
-		return nil, err
+		return p, err
 	}
 	var dirp *uint16
 	if spec.Dir != "" {
 		dirp, err = windows.UTF16PtrFromString(spec.Dir)
 		if err != nil {
-			cleanupHandles()
-			return nil, err
+			return p, err
 		}
 	}
 	block, err := envBlock(spec.Env)
 	if err != nil {
-		cleanupHandles()
-		return nil, err
+		return p, err
 	}
 	var envp *uint16
 	if len(block) > 0 {
@@ -165,8 +151,7 @@ func (l *winLauncher) create(spec StartSpec) (*winProc, error) {
 	// (overlapped AcceptEx on those sockets can then fault the child).
 	attrList, inherit, err := inheritHandleList(stdin, stdoutW, stderrW)
 	if err != nil {
-		cleanupHandles()
-		return nil, err
+		return p, err
 	}
 	defer attrList.Delete()
 
@@ -195,24 +180,16 @@ func (l *winLauncher) create(spec StartSpec) (*winProc, error) {
 	goruntime.KeepAlive(block)
 	goruntime.KeepAlive(inherit)
 	goruntime.KeepAlive(attrList)
-	_ = windows.CloseHandle(stdin)
-	_ = windows.CloseHandle(stdoutW)
-	_ = windows.CloseHandle(stderrW)
-	stdin = 0
-	stdoutW = 0
-	stderrW = 0
 	if err != nil {
-		_ = windows.CloseHandle(stdoutR)
-		_ = windows.CloseHandle(stderrR)
-		_ = job.Close()
-		return nil, fmt.Errorf("CreateProcess %s: %w", spec.Argv[0], err)
+		return p, fmt.Errorf("CreateProcess %s: %w", spec.Argv[0], err)
 	}
-
-	p := &winProc{
-		pid: int(pi.ProcessId), process: pi.Process, thread: pi.Thread,
-		job: job, unassigned: true,
-		stdout: newOwnedOutput(stdoutR, spec.Unit+"-stdout"),
-		stderr: newOwnedOutput(stderrR, spec.Unit+"-stderr"),
+	p.pid, p.process, p.thread = int(pi.ProcessId), pi.Process, pi.Thread
+	p.unassigned = true
+	p.stdout = newOwnedOutput(stdoutR, spec.Unit+"-stdout")
+	p.stderr = newOwnedOutput(stderrR, spec.Unit+"-stderr")
+	p.launchHandles[3], p.launchHandles[4] = 0, 0
+	if err := p.closeLaunchHandles(); err != nil {
+		return p, err
 	}
 	// Attach the outer job first; each unit/user job must remain a sibling
 	// under it, rather than making the daemon job a child of the first unit.
@@ -246,9 +223,9 @@ func makeStdPipe() (r, w windows.Handle, err error) {
 		return 0, 0, err
 	}
 	if err := windows.SetHandleInformation(r, windows.HANDLE_FLAG_INHERIT, 0); err != nil {
-		_ = windows.CloseHandle(r)
-		_ = windows.CloseHandle(w)
-		return 0, 0, err
+		// Transfer both allocations with the error; the launch owner retries
+		// cleanup instead of losing a handle when CloseHandle also fails.
+		return r, w, err
 	}
 	return r, w, nil
 }
@@ -394,6 +371,10 @@ func (p *winProc) Stop(timeout time.Duration) error {
 	if closed {
 		return nil
 	}
+	if p.pid == 0 {
+		// A failed bootstrap can own handles before any process exists.
+		return p.closeHandles()
+	}
 	if !p.stopConfirmed {
 		if p.unassigned && p.Alive() {
 			if err := windows.TerminateProcess(p.process, 1); err != nil {
@@ -435,6 +416,23 @@ func (p *winProc) Close() error {
 	return p.closeHandles()
 }
 
+// closeLaunchHandles is serialized by creation or stopMu. Attempt each
+// independent release and clear only successful ones. Writers precede readers.
+func (p *winProc) closeLaunchHandles() error {
+	var errs []error
+	for i, h := range p.launchHandles {
+		if h == 0 {
+			continue
+		}
+		if err := windows.CloseHandle(h); err != nil {
+			errs = append(errs, fmt.Errorf("close launch handle %d: %w", i, err))
+		} else {
+			p.launchHandles[i] = 0
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func (p *winProc) closeHandles() error {
 	p.mu.Lock()
 	if p.closed {
@@ -446,6 +444,9 @@ func (p *winProc) closeHandles() error {
 
 	// Stop/Close serialize on stopMu. Publish each released handle only after
 	// successful closure, leaving any unfinished release available for retry.
+	if err := p.closeLaunchHandles(); err != nil {
+		return err
+	}
 	if job != nil {
 		if err := job.Close(); err != nil {
 			return err
