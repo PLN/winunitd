@@ -14,6 +14,10 @@ import (
 // logon/linger operations than this limit, including work before the SID is known.
 const maxNativeUserWork = 4
 
+// Four admissions plus one each for reconciliation, policy, linger scan and
+// explicit revocation. Ordinary admissions cannot consume completion capacity.
+const maxNativeUserWorkTotal = maxNativeUserWork + 4
+
 type userWorkClass uint8
 
 const (
@@ -21,6 +25,7 @@ const (
 	userWorkReconcile
 	userWorkPolicy
 	userWorkLingerScan
+	userWorkRevocation
 )
 
 type userNativeWork struct {

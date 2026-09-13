@@ -9,7 +9,7 @@ import (
 
 // Caller holds h.mu; copying a system snapshot also holds the manager lock.
 func (h *UserHost) snapshotLocked() (*protocol.UserHostSnapshot, error) {
-	if len(h.bySID) > maxTrackedUserManagers || len(h.lingerRecords) > maxTrackedUserManagers || len(h.sessions) > runtime.MaxInteractiveSessions || len(h.sessionRequests) > runtime.MaxInteractiveSessions || len(h.nativeWork) > maxNativeUserWork+3 {
+	if len(h.bySID) > maxTrackedUserManagers || len(h.lingerRecords) > maxTrackedUserManagers || len(h.sessions) > runtime.MaxInteractiveSessions || len(h.sessionRequests) > runtime.MaxInteractiveSessions || len(h.nativeWork) > maxNativeUserWorkTotal {
 		return nil, protocol.ErrFailed("user-host snapshot exceeds admitted record bounds")
 	}
 	view := h.decisionSnapshotLocked()
