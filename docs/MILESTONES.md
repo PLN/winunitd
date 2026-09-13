@@ -117,7 +117,7 @@ Exit gate: disposable VM evidence includes genuine LocalSystem session-0 launch 
 
 Status: in progress. Dependencies for closure: R2, R3. Outcome: bounded resource use and visible recovery/storage failures.
 
-- [ ] **R5.1 Timer persistence:** implement atomic validated state replacement, pending/result activation records, corruption diagnostics, durable-write failure suspension, and explicit state-format migration.
+- [x] **R5.1 Timer persistence:** validated replacement, pending/result records, corruption diagnostics, write-failure suspension and versioned migration passed exact-source CI and eleven native cases ten times per SYSTEM/headless-user identity at `1d6719d`; [evidence and durability limits](R5-EVIDENCE.md#timer-state-replacement-and-interrupted-activation). Overall R5 retains its R2/R3 dependencies and remaining acceptance.
 - [ ] **R5.2 Delivery policy:** coalesce missed calendar occurrences; retry interrupted pending activation with documented duplicate possibility. Test clock jumps, DST, suspend/resume, boot/startup origins, and overlap with a running service.
 - [ ] **R5.3 Journaling:** qualify line/queue/total-memory/retention bounds; expose loss counters, continuation records, storage degradation, and backward-compatible journal reading. Keep stream separate from severity.
 - [ ] **R5.4 Diagnostics/API:** provide durable daemon diagnostics and Windows event resources; expose operation/invocation/configuration identity, lifecycle/health/load state, last errors, restart budget, and timer/storage state in bounded responses.
