@@ -21,10 +21,7 @@ func (s *Store) wakeCaptureWriterLocked() {
 }
 
 func (s *Store) dropCaptureLocked(work captureWrite) {
-	stats := s.dropped[work.entry.Unit]
-	stats.DroppedRecords++
-	stats.DroppedBytes += uint64(len(work.entry.Message))
-	s.dropped[work.entry.Unit] = stats
+	s.addStatsLocked(work.entry.Unit, CaptureStats{DroppedRecords: 1, DroppedBytes: uint64(len(work.entry.Message))})
 }
 
 func (s *Store) releaseCaptureLocked(work captureWrite) {

@@ -463,6 +463,9 @@ func (m *Manager) Status(name string) (*protocol.StatusResult, error) {
 	if strings.TrimSpace(name) == "" {
 		ms := m.machineLocked()
 		m.mu.Unlock()
+		stats := m.journal.TotalCaptureStats()
+		ms.LogDroppedRecords, ms.LogDroppedBytes = stats.DroppedRecords, stats.DroppedBytes
+		ms.LogStorageErrors, ms.LogLastStorageError = stats.StorageErrors, stats.LastStorageError
 		return &protocol.StatusResult{Machine: ms}, nil
 	}
 	rt, err := m.lookup(name)

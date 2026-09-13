@@ -6,6 +6,7 @@ import (
 	"container/list"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -54,6 +56,10 @@ type Store struct {
 	queueClosed   bool
 	queuedBytes   int64
 	dropped       map[string]CaptureStats
+	statsOrder    list.List
+	retainedNames map[string]bool
+	totalStats    CaptureStats
+	writeSequence atomic.Uint64
 	syncPending   map[string]*journalSync
 	syncSlots     chan struct{}
 	querySlots    chan struct{}
@@ -63,10 +69,15 @@ type Store struct {
 	// before Sync; onScan fires once per decoded line during the unlocked
 	// scan (write lock must not be held); onEntryID fires when a line's
 	// cursor id is computed.
-	onOpen    func()
-	onSync    func()
-	onScan    func()
-	onEntryID func()
+	// onClose injects retirement failure before native Close; onSynced pauses
+	// completed sync publication; onSyncJoin observes a generation-stale join.
+	onOpen     func()
+	onSync     func()
+	onScan     func()
+	onEntryID  func()
+	onClose    func() error
+	onSynced   func()
+	onSyncJoin func()
 }
 
 // Entry is one journal fragment. v=2 adds Severity, Session, and UserSID.
@@ -111,6 +122,7 @@ type unitFile struct {
 	size       int64
 	timer      *time.Timer
 	closed     bool
+	retired    bool
 	writeErr   error
 	retryDelay time.Duration
 	retryAt    time.Time
@@ -347,25 +359,33 @@ func (s *Store) append(e Entry) error {
 	}
 	raw = append(raw, '\n')
 
-	f := s.file(e.Unit)
-	if f == nil {
-		return fmt.Errorf("journal closed")
+	for {
+		f, err := s.file(e.Unit)
+		if err != nil {
+			return err
+		}
+		err = f.write(raw, len(e.Message))
+		if !errors.Is(err, errFileRetired) {
+			return err
+		}
 	}
-	return f.write(raw, len(e.Message))
 }
 
-func (s *Store) file(unit string) *unitFile {
+func (s *Store) file(unit string) (*unitFile, error) {
 	unit = canonicalUnit(unit)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return nil, fmt.Errorf("journal closed")
 	}
 	if s.files == nil {
 		s.files = make(map[string]*unitFile)
 	}
 	f := s.files[unit]
 	if f == nil {
+		if len(s.files) >= maxUnitFiles {
+			return nil, errFileCapacity
+		}
 		f = &unitFile{
 			unit:  unit,
 			path:  s.path(unit),
@@ -373,12 +393,15 @@ func (s *Store) file(unit string) *unitFile {
 		}
 		s.files[unit] = f
 	}
-	return f
+	return f, nil
 }
 
 func (u *unitFile) write(raw []byte, messageBytes int) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	if u.retired {
+		return errFileRetired
+	}
 	if u.closed {
 		return fmt.Errorf("journal file closed")
 	}
@@ -409,6 +432,7 @@ func (u *unitFile) write(raw []byte, messageBytes int) error {
 		return err
 	}
 	u.size += int64(len(raw))
+	u.store.writeSequence.Add(1)
 	u.scheduleFlushLocked()
 	return nil
 }
@@ -540,10 +564,7 @@ func (u *unitFile) close() error {
 	if err != nil && u.w != nil {
 		records, messageBytes := u.w.pendingLoss()
 		u.store.queueMu.Lock()
-		stats := u.store.dropped[u.unit]
-		stats.DroppedRecords += records
-		stats.DroppedBytes += messageBytes
-		u.store.dropped[u.unit] = stats
+		u.store.addStatsLocked(u.unit, CaptureStats{DroppedRecords: records, DroppedBytes: messageBytes})
 		u.store.queueMu.Unlock()
 	}
 	if u.f != nil {

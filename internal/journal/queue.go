@@ -23,52 +23,70 @@ type captureWrite struct {
 }
 
 type journalSync struct {
-	done chan struct{}
-	err  error
+	done       chan struct{}
+	err        error
+	generation uint64
 }
 
 // Coalesce concurrent syncs for a unit and bound blocked sync workers globally.
 func (s *Store) syncUnitContext(ctx context.Context, unit string) bool {
 	unit = canonicalUnit(unit)
-	s.queueMu.Lock()
-	pending := s.syncPending[unit]
-	s.queueMu.Unlock()
-	if pending == nil {
+	wanted := s.writeSequence.Load()
+	for {
+		s.queueMu.Lock()
+		pending := s.syncPending[unit]
+		s.queueMu.Unlock()
+		if pending == nil {
+			select {
+			case s.syncSlots <- struct{}{}:
+			case <-ctx.Done():
+				return false
+			}
+			s.queueMu.Lock()
+			pending = s.syncPending[unit]
+			if pending != nil {
+				<-s.syncSlots
+			} else {
+				pending = &journalSync{done: make(chan struct{}), generation: s.writeSequence.Load()}
+				s.syncPending[unit] = pending
+				go func(p *journalSync) {
+					p.err = s.syncAndRetireUnit(unit)
+					s.storageError(unit, p.err)
+					if s.onSynced != nil {
+						s.onSynced()
+					}
+					s.queueMu.Lock()
+					delete(s.syncPending, unit)
+					s.queueMu.Unlock()
+					close(p.done)
+					<-s.syncSlots
+				}(pending)
+			}
+			s.queueMu.Unlock()
+		}
+		if pending.generation < wanted && s.onSyncJoin != nil {
+			s.onSyncJoin()
+		}
 		select {
-		case s.syncSlots <- struct{}{}:
+		case <-pending.done:
+			if pending.err != nil {
+				return false
+			}
+			if pending.generation >= wanted || s.fileExisting(unit) == nil {
+				return true
+			}
+			// A new capture may have written after the shared sync began. Join it
+			// for ownership, then start a sync that covers this caller's writes.
 		case <-ctx.Done():
 			return false
 		}
-		s.queueMu.Lock()
-		pending = s.syncPending[unit]
-		if pending != nil {
-			<-s.syncSlots
-		} else {
-			pending = &journalSync{done: make(chan struct{})}
-			s.syncPending[unit] = pending
-			go func(p *journalSync) {
-				p.err = s.syncUnit(unit)
-				s.storageError(unit, p.err)
-				s.queueMu.Lock()
-				delete(s.syncPending, unit)
-				s.queueMu.Unlock()
-				close(p.done)
-				<-s.syncSlots
-			}(pending)
-		}
-		s.queueMu.Unlock()
-	}
-	select {
-	case <-pending.done:
-		return pending.err == nil
-	case <-ctx.Done():
-		return false
 	}
 }
 
 // CaptureStats counts fragments rejected by queue admission or a write error.
 // Bytes count normalized UTF-8 message bytes, excluding line endings/metadata.
-// Counters are cumulative for this store lifetime across both unit streams.
+// Counters cover both streams. Loaded names are retained by RetainNames; other
+// names share bounded history. TotalCaptureStats always covers the store lifetime.
 // Unwritten records retained after a flush failure are counted only if close
 // abandons them. Sync failures and external file damage can lose additional data.
 type CaptureStats struct {
@@ -84,10 +102,7 @@ func (s *Store) storageError(unit string, err error) {
 	}
 	s.queueMu.Lock()
 	defer s.queueMu.Unlock()
-	stats := s.dropped[unit]
-	stats.StorageErrors++
-	stats.LastStorageError = err.Error()
-	s.dropped[unit] = stats
+	s.addStatsLocked(unit, CaptureStats{StorageErrors: 1, LastStorageError: err.Error()})
 }
 
 func (s *Store) CaptureStats(unit string) CaptureStats {
