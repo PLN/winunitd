@@ -28,6 +28,10 @@ retirement observes that error before publishing counters, so a delayed native
 error cannot hold the queue lock needed by retention metadata or rejected-
 transition diagnostics. Its retained sync attempt still owns failed retirement
 and can be retried after error observation completes.
+Timer state load/save likewise observes storage errors before the engine mutex;
+the accepted arm/token is checked again afterward. Delayed error formatting
+cannot block disarm, independent rearm or status, and stale failures cannot
+publish into another arm.
 
 ## Current authority and migration boundary
 
