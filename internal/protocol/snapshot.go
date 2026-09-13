@@ -12,6 +12,7 @@ type SnapshotResult struct {
 }
 
 type UnitSnapshot struct {
+	NativeObservationError   string   `json:"nativeObservationError,omitempty"`
 	Name                     string   `json:"name"`
 	LoadState                string   `json:"loadState"`
 	ActiveState              string   `json:"activeState"`

@@ -823,6 +823,9 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		fmt.Fprintf(c.stdout, "         %d active\n", m.UnitsActive)
 		fmt.Fprintf(c.stdout, "         %d failed\n", m.UnitsFailed)
 		fmt.Fprintf(c.stdout, "  Timers: %d loaded\n", m.TimersLoaded)
+		if m.NativeProbes > 0 {
+			fmt.Fprintf(c.stdout, "  Native proxy queries: %d pending\n", m.NativeProbes)
+		}
 		if m.LogDroppedRecords != 0 || m.LogStorageErrors != 0 {
 			fmt.Fprintf(c.stdout, "  Journal: %d dropped records, %d dropped bytes, %d storage errors (manager lifetime)\n", m.LogDroppedRecords, m.LogDroppedBytes, m.LogStorageErrors)
 			if m.LogLastStorageError != "" {
@@ -873,6 +876,9 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		fmt.Fprintf(c.stdout, "● %s\n", title)
 		fmt.Fprintf(c.stdout, "     Loaded: %s (%s; %s)\n", u.LoadState, u.Path, enabled)
 		fmt.Fprintf(c.stdout, "     Active: %s\n", u.ActiveState)
+		if u.NativeObservationError != "" {
+			fmt.Fprintf(c.stdout, "Native observation: %s\n", u.NativeObservationError)
+		}
 		if u.SubState != "" {
 			fmt.Fprintf(c.stdout, "   Substate: %s\n", u.SubState)
 		}

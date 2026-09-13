@@ -47,6 +47,9 @@ func (m *Manager) applyStartCompletionLocked(event startCompletion) {
 	m.applyStartOutcomeLocked(event.name, state, event.err)
 	if event.err == nil {
 		m.clearErrLocked(event.name)
+		if u := planned.record.ownedUnit(); scmServiceName(u) != "" || scheduledTaskName(u) != "" {
+			m.startNativeProbesLocked()
+		}
 	}
 	m.reapFailedLocked()
 }
@@ -553,6 +556,7 @@ func (m *Manager) acceptNativeStart(ctx context.Context, owner runtimeIdentity, 
 			return time.Time{}, false
 		}
 		owner.record.err = ""
+		m.startNativeProbesLocked()
 	}
 	return m.now(), true
 }

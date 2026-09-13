@@ -74,6 +74,13 @@ the launcher. Close joins main captures before closing the store.
 
 ## Invariants and regression evidence
 
+`lifecycle_native.go` owns background proxy observations. Admission captures the
+runtime, generation, stop epoch and native target; queries execute outside the
+decision lock in at most four retained slots. Completion alone publishes bounded
+query diagnostics or confirmed inactivity and dependent-stop intent. Record
+operation counts retain outstanding queries through reload; close joins them.
+No status-time query is replayed into lifecycle state.
+
 All test paths below are relative to internal/manager unless noted. These tests
 protect existing behavior during migration; they do not substitute for the
 remaining SYSTEM/session and VM qualification.

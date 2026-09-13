@@ -1,5 +1,21 @@
 # Unit semantics qualification
 
+## Native proxy inactivity observation
+
+Background SCM/task observations now deliver exact record/generation/stop-epoch
+results through one coordinator handler. Four retained query slots and rotating
+admission preserve bounded work; close joins blocked native calls. Only confirmed
+stopped/idle states stop BindsTo dependents. Query errors remain unknown and have
+bounded diagnostics; fresh native status remains an independent observation.
+
+Regressions cover captured native targets and dependent policies after reload,
+delayed results after replacement, blocked-query capacity and close retries,
+progress beside a blocked query, error recovery and task-instance disambiguation.
+The local Windows task fixture passed three real external-stop/dependent-cleanup
+cycles at about one second each. Local SCM fixture creation was skipped for lack
+of service-registration access; SYSTEM qualification remains required. This slice
+does not close missing-target/paused-state policy or the complete R3 acceptance.
+
 ## Unrelated dependency-event allocation
 
 Bound-stop decisions discover active dependents before collecting graph

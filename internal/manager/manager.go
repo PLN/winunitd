@@ -63,6 +63,11 @@ type Manager struct {
 	snapshotSequence     uint64
 	boundStops           map[string]boundStopMember
 	boundStopsDone       chan struct{}
+	nativeProbes         map[*unitRuntime]*nativeProbe
+	nativeProbesDone     chan struct{}
+	nativeProbesWake     chan struct{}
+	nativeProbesCancel   context.CancelFunc
+	nativeProbeCursor    string
 }
 
 // New creates a manager. Reload must be called to load units.
@@ -188,6 +193,9 @@ func (m *Manager) CloseContext(ctx context.Context) error {
 	}
 	m.mu.Lock()
 	m.closed = true
+	if m.nativeProbesCancel != nil {
+		m.nativeProbesCancel()
+	}
 	m.disarmAllTimersLocked()
 	m.cancelOperationsLocked()
 	m.signalStartCapacityLocked()
@@ -206,8 +214,12 @@ func (m *Manager) CloseContext(ctx context.Context) error {
 
 func (m *Manager) closePass() error {
 	m.mu.Lock()
+	nativeProbesDone := m.nativeProbesDone
 	boundStopsDone := m.boundStopsDone
 	m.mu.Unlock()
+	if nativeProbesDone != nil {
+		<-nativeProbesDone
+	}
 	if boundStopsDone != nil {
 		<-boundStopsDone
 	}
@@ -486,7 +498,7 @@ func (m *Manager) Status(name string) (*protocol.StatusResult, error) {
 }
 
 func (m *Manager) machineLocked() *protocol.MachineStatus {
-	ms := &protocol.MachineStatus{State: "running", ConfigRevision: m.configRevision}
+	ms := &protocol.MachineStatus{State: "running", ConfigRevision: m.configRevision, NativeProbes: len(m.nativeProbes)}
 	for name, rt := range m.units {
 		ms.UnitsLoaded++
 		if rt != nil && rt.unit != nil && rt.unit.Kind == unit.KindTimer {
@@ -524,6 +536,7 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 			st.MainPID = rt.mainPID
 		}
 		st.SubState = rt.sub.String()
+		st.NativeObservationError = rt.nativeProbeError
 		st.TerminationUncertain = rt.cleanupPending()
 		st.PendingCleanup = rt.pendingCleanupNames()
 		st.LastOperationID = rt.lastOperationID
