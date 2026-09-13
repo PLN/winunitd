@@ -91,13 +91,20 @@ func New(cfg Config) (*Manager, error) {
 	if tasks == nil {
 		tasks = runtime.DefaultTaskScheduler()
 	}
-	js, err := journal.Open(cfg.JournalDir())
+	openJournal := cfg.JournalOpen
+	if openJournal == nil {
+		openJournal = journal.Open
+	}
+	js, err := openJournal(cfg.JournalDir())
 	if err != nil {
 		return nil, err
 	}
+	if js == nil {
+		return nil, fmt.Errorf("journal opener returned no store")
+	}
 	store, err := timers.OpenStore(cfg.TimerStateDir())
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(err, js.Close())
 	}
 	clk := cfg.Clock
 	if clk.Now == nil || clk.SinceBoot == nil || clk.Startup.IsZero() || clk.NewTimer == nil || clk.SinceStart == nil {
