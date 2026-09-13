@@ -593,11 +593,8 @@ func TestWindowsRestartAlwaysRelaunchesAfterExit0(t *testing.T) {
 }
 
 func TestWindowsRestartOnFailureDoesNotRelaunchAfter0(t *testing.T) {
-	_, count := startWindowsRestartUnit(t, "on-failure", 0, "exit")
-	time.Sleep(400 * time.Millisecond)
-	if n := helperCountLines(count); n != 1 {
-		t.Fatalf("starts = %d, want 1", n)
-	}
+	m, count := startWindowsRestartUnit(t, "on-failure", 0, "exit")
+	assertWindowsNoRestartAfterExit(t, m, count)
 }
 
 func TestWindowsRestartOnFailureRelaunchesAfterNonZero(t *testing.T) {
@@ -607,7 +604,20 @@ func TestWindowsRestartOnFailureRelaunchesAfterNonZero(t *testing.T) {
 }
 
 func TestWindowsRestartNoNeverRelaunches(t *testing.T) {
-	_, count := startWindowsRestartUnit(t, "no", 2, "exit")
+	m, count := startWindowsRestartUnit(t, "no", 2, "exit")
+	assertWindowsNoRestartAfterExit(t, m, count)
+}
+
+func assertWindowsNoRestartAfterExit(t *testing.T, m *Manager, count string) {
+	t.Helper()
+	// Type=simple start returns after process creation, before the child has
+	// necessarily run. Begin the native absence window after its counted exit.
+	waitWindowsCount(t, count, 1, 5*time.Second)
+	waitCond(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.procOfLocked("foo.service") == nil
+	})
 	time.Sleep(400 * time.Millisecond)
 	if n := helperCountLines(count); n != 1 {
 		t.Fatalf("starts = %d, want 1", n)
