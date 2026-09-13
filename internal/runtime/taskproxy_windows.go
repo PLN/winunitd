@@ -338,22 +338,22 @@ type iDispatchVtbl struct {
 type iTaskService struct{ vtbl *iTaskServiceVtbl }
 type iTaskServiceVtbl struct {
 	iDispatchVtbl
-	GetFolder           uintptr
-	GetRunningTasks     uintptr
-	NewTask             uintptr
-	Connect             uintptr
-	get_Connected       uintptr
-	get_TargetServer    uintptr
-	get_ConnectedUser   uintptr
-	get_ConnectedDomain uintptr
-	get_HighestVersion  uintptr
+	GetFolder       uintptr
+	GetRunningTasks uintptr
+	NewTask         uintptr
+	Connect         uintptr
+	_               uintptr // get_Connected (reserved COM slot)
+	_               uintptr // get_TargetServer (reserved COM slot)
+	_               uintptr // get_ConnectedUser (reserved COM slot)
+	_               uintptr // get_ConnectedDomain (reserved COM slot)
+	_               uintptr // get_HighestVersion (reserved COM slot)
 }
 
 type iTaskFolder struct{ vtbl *iTaskFolderVtbl }
 type iTaskFolderVtbl struct {
 	iDispatchVtbl
-	get_Name               uintptr
-	get_Path               uintptr
+	_                      uintptr // get_Name (reserved COM slot)
+	_                      uintptr // get_Path (reserved COM slot)
 	GetFolder              uintptr
 	GetFolders             uintptr
 	CreateFolder           uintptr
@@ -370,20 +370,20 @@ type iTaskFolderVtbl struct {
 type iRegisteredTask struct{ vtbl *iRegisteredTaskVtbl }
 type iRegisteredTaskVtbl struct {
 	iDispatchVtbl
-	get_Name               uintptr
-	get_Path               uintptr
-	get_State              uintptr
-	get_Enabled            uintptr
-	put_Enabled            uintptr
-	Run                    uintptr
-	RunEx                  uintptr
-	GetInstances           uintptr
-	get_LastRunTime        uintptr
-	get_LastTaskResult     uintptr
-	get_NumberOfMissedRuns uintptr
-	get_NextRunTime        uintptr
-	get_Definition         uintptr
-	get_Xml                uintptr
+	_            uintptr // get_Name (reserved COM slot)
+	_            uintptr // get_Path (reserved COM slot)
+	get_State    uintptr
+	_            uintptr // get_Enabled (reserved COM slot)
+	_            uintptr // put_Enabled (reserved COM slot)
+	Run          uintptr
+	RunEx        uintptr
+	GetInstances uintptr
+	_            uintptr // get_LastRunTime (reserved COM slot)
+	_            uintptr // get_LastTaskResult (reserved COM slot)
+	_            uintptr // get_NumberOfMissedRuns (reserved COM slot)
+	_            uintptr // get_NextRunTime (reserved COM slot)
+	_            uintptr // get_Definition (reserved COM slot)
+	_            uintptr // get_Xml (reserved COM slot)
 	// put_Xml is not in the IRegisteredTask vtable (Windows SDK taskschd.h).
 	// An extra slot here made Stop invoke GetRunTimes with NULL SYSTEMTIME
 	// pointers, which returns E_POINTER ("Invalid pointer").
@@ -396,22 +396,22 @@ type iRegisteredTaskVtbl struct {
 type iRunningTaskCollection struct{ vtbl *iRunningTaskCollectionVtbl }
 type iRunningTaskCollectionVtbl struct {
 	iDispatchVtbl
-	get_Count    uintptr
-	get_Item     uintptr
-	get__NewEnum uintptr
+	get_Count uintptr
+	get_Item  uintptr
+	_         uintptr // get__NewEnum (reserved COM slot)
 }
 
 type iRunningTask struct{ vtbl *iRunningTaskVtbl }
 type iRunningTaskVtbl struct {
 	iDispatchVtbl
-	get_Name          uintptr
-	get_InstanceGuid  uintptr
-	get_Path          uintptr
-	get_State         uintptr
-	get_CurrentAction uintptr
-	Stop              uintptr
-	Refresh           uintptr
-	get_EnginePID     uintptr
+	_             uintptr // get_Name (reserved COM slot)
+	_             uintptr // get_InstanceGuid (reserved COM slot)
+	_             uintptr // get_Path (reserved COM slot)
+	_             uintptr // get_State (reserved COM slot)
+	_             uintptr // get_CurrentAction (reserved COM slot)
+	Stop          uintptr
+	Refresh       uintptr
+	get_EnginePID uintptr
 }
 
 func (o *iTaskService) Release() {
@@ -819,3 +819,5 @@ func xmlEscape(s string) string {
 	s = strings.ReplaceAll(s, `"`, "&quot;")
 	return s
 }
+
+const defaultTaskPoll = 100 * time.Millisecond

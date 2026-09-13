@@ -61,12 +61,3 @@ func ParseCredentialURI(raw string) (string, error) {
 	}
 	return scheme + "://" + name, nil
 }
-
-func credentialURIParts(raw string) (scheme, name string, err error) {
-	canon, err := ParseCredentialURI(raw)
-	if err != nil || canon == "" {
-		return "", "", err
-	}
-	scheme, name, _ = strings.Cut(canon, "://")
-	return scheme, name, nil
-}

@@ -54,7 +54,7 @@ func (m *Manager) Enable(name string) (*protocol.EnableResult, error) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	rt, err = m.lookup(name)
+	_, err = m.lookup(name)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +102,7 @@ func (m *Manager) Disable(name string) (*protocol.EnableResult, error) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	rt, err = m.lookup(name)
+	_, err = m.lookup(name)
 	if err != nil {
 		return nil, err
 	}

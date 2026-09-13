@@ -1,3 +1,5 @@
+//lint:file-ignore SA4023 Non-Windows native API stubs always return errors; shared callers must check Windows results.
+
 package main
 
 import (

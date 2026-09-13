@@ -531,7 +531,6 @@ func intPtr(n int) *int { return &n }
 type scriptedLauncher struct {
 	mu           sync.Mutex
 	specs        []runtime.StartSpec
-	at           []time.Time
 	exitAll      *int
 	exitU32      *uint32
 	exitNth      map[int]int
@@ -553,7 +552,6 @@ func (s *scriptedLauncher) Start(ctx context.Context, spec runtime.StartSpec) (r
 	s.mu.Lock()
 	idx := len(s.specs)
 	s.specs = append(s.specs, spec)
-	s.at = append(s.at, time.Now())
 	code, auto := s.codeForLocked(idx)
 	s.mu.Unlock()
 
@@ -625,14 +623,6 @@ func (s *scriptedLauncher) nstarts() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.specs)
-}
-
-func (s *scriptedLauncher) startTimes() []time.Time {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]time.Time, len(s.at))
-	copy(out, s.at)
-	return out
 }
 
 func (s *scriptedLauncher) units() []string {

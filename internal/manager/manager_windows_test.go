@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -179,6 +180,7 @@ func TestMain(m *testing.M) {
 				b[i] = 1
 			}
 			held = append(held, b)
+			goruntime.KeepAlive(held) // Retain every allocation until the memory-limit job kills us.
 		}
 	case "spawn-hold":
 		recordHelperCount()

@@ -67,8 +67,6 @@ func (s TaskState) String() string {
 	}
 }
 
-const defaultTaskPoll = 100 * time.Millisecond
-
 func taskWaitTimeout(timeout time.Duration) time.Duration {
 	if timeout > 0 {
 		return timeout

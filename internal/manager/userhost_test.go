@@ -21,10 +21,9 @@ const (
 )
 
 type fakeUserMgr struct {
-	sid    string
-	alive  atomic.Bool
-	kills  atomic.Int32
-	starts *atomic.Int32
+	sid   string
+	alive atomic.Bool
+	kills atomic.Int32
 }
 
 type gatedUserLiveness struct {
@@ -334,15 +333,6 @@ func TestUserHostListenLogonLogoff(t *testing.T) {
 		t.Fatalf("starts = %d", starts.Load())
 	}
 	waitCond(t, func() bool { return !h.Alive(testSIDA) })
-}
-
-func TestFailClosedErrorIsNotPassword(t *testing.T) {
-	t.Parallel()
-	err := runtime.ErrNoUserToken
-	if errors.Is(err, nil) {
-		t.Fatal("nil")
-	}
-	_ = err
 }
 
 type failingUserMgr struct {

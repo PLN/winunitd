@@ -307,7 +307,6 @@ func (p *slowStopProc) Close() error {
 
 type gatedStartLauncher struct {
 	fakeLauncher
-	mu       sync.Mutex
 	gate     string
 	blocked  chan struct{}
 	releaseC chan struct{}

@@ -278,29 +278,6 @@ func openNULAccess(access uint32) (windows.Handle, error) {
 	)
 }
 
-// duplicateInheritable copies h into this process with HANDLE_FLAG_INHERIT set.
-// Go's StartProcess does this before PROC_THREAD_ATTRIBUTE_HANDLE_LIST so the
-// listed handles are independently inheritable copies, not the caller's originals.
-func duplicateInheritable(h windows.Handle) (windows.Handle, error) {
-	if h == 0 || h == windows.InvalidHandle {
-		return 0, nil
-	}
-	var dup windows.Handle
-	err := windows.DuplicateHandle(
-		windows.CurrentProcess(),
-		h,
-		windows.CurrentProcess(),
-		&dup,
-		0,
-		true,
-		windows.DUPLICATE_SAME_ACCESS,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return dup, nil
-}
-
 // inheritHandleList builds PROC_THREAD_ATTRIBUTE_HANDLE_LIST so only these
 // handles are inherited. Callers must KeepAlive inherit until CreateProcess
 // returns, then attrList.Delete(). Two attribute slots match Go's StartProcess

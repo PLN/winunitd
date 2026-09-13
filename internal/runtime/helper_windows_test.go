@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	goruntime "runtime"
 	"strings"
 	"testing"
 	"time"
@@ -106,6 +107,7 @@ func runAllocUntilKilled() {
 			b[i] = 1
 		}
 		held = append(held, b)
+		goruntime.KeepAlive(held) // Retain every allocation until the memory-limit job kills us.
 	}
 }
 
