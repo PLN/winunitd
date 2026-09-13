@@ -120,7 +120,9 @@ func TestManagerAggregateCapturePressure(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, exe, "-test.run=^TestManagerAggregateCapturePressure$", "-test.v")
-		cmd.Env = append(os.Environ(), "WINUNITD_PRESSURE_MANAGER=1")
+		// Use the same constrained Go scheduler on large development hosts and
+		// hosted workers. Native I/O and all six workload processes still overlap.
+		cmd.Env = append(os.Environ(), "WINUNITD_PRESSURE_MANAGER=1", "GOMAXPROCS=2")
 		output, err := cmd.CombinedOutput()
 		t.Logf("isolated manager pressure: %s", output)
 		if err != nil {
@@ -291,11 +293,25 @@ func runManagerPressureCycle(t *testing.T) pressureMemory {
 		t.Fatalf("manager resource budget: baseline=%+v peak=%+v", baseline, peak)
 	}
 	unblock()
+	// Releasing storage does not synchronously persist the queued backlog.
+	// Each stop retains its one-second budget; retry retained cleanup within a
+	// separate bounded recovery phase instead of assuming one retry can drain it.
+	recoveryStart := time.Now()
+	recoveryDeadline := recoveryStart.Add(20 * time.Second)
 	for _, name := range names {
-		if _, err := m.Stop(name); err != nil {
-			t.Fatalf("cleanup retry: %v", err)
+		for {
+			if _, err := m.Stop(name); err == nil {
+				break
+			} else if time.Now().After(recoveryDeadline) {
+				t.Fatalf("storage recovery did not complete: %v", err)
+			}
+			status, err := m.Status(name)
+			if err != nil || status.Unit.MainPID != 0 || !status.Unit.TerminationUncertain {
+				t.Fatalf("lost cleanup during storage recovery: %+v, %v", status, err)
+			}
 		}
 	}
+	recoveryDuration := time.Since(recoveryStart)
 	logs, err := m.Logs(protocol.LogsParams{Unit: quiet})
 	if err != nil || len(logs.Entries) != 1 || logs.Entries[0].Message != "quiet manager pressure" {
 		t.Fatalf("quiet output after recovery: %+v, %v", logs, err)
@@ -314,12 +330,12 @@ func runManagerPressureCycle(t *testing.T) pressureMemory {
 		t.Fatal(err)
 	}
 	result := struct {
-		Baseline, Peak, After pressureMemory
-		QueueBytes            int64
-		QueueRecords          int
-		DroppedBytes          uint64
-		MaxStatusMS, StopMS   float64
-	}{baseline, peak, after, queue.Bytes, queue.Records, dropped, float64(maxStatus) / float64(time.Millisecond), float64(stopDuration) / float64(time.Millisecond)}
+		Baseline, Peak, After           pressureMemory
+		QueueBytes                      int64
+		QueueRecords                    int
+		DroppedBytes                    uint64
+		MaxStatusMS, StopMS, RecoveryMS float64
+	}{baseline, peak, after, queue.Bytes, queue.Records, dropped, float64(maxStatus) / float64(time.Millisecond), float64(stopDuration) / float64(time.Millisecond), float64(recoveryDuration) / float64(time.Millisecond)}
 	encoded, _ := json.Marshal(result)
 	t.Logf("manager pressure measurements: %s", encoded)
 	if after.Goroutines > baseline.Goroutines+16 {
