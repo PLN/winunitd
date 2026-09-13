@@ -19,7 +19,7 @@ observations are retained privately.
 Four blocked ordinary token queries could previously prevent disable-linger.
 Revocation now has one independent, tracked native slot, and a second request
 receives the RPC `busy` code. The control regression fills all eight native-work
-classes, checks a coherent snapshot and completes grant/process cleanup while
+slots, checks a coherent snapshot and completes grant/process cleanup while
 ordinary observations remain blocked. Store I/O remains serialized; a reservation
 cannot interrupt a blocked account lookup or filesystem call.
 
