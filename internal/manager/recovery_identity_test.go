@@ -174,12 +174,14 @@ func TestRecoveryRevalidatesAfterWaitingForUnitGate(t *testing.T) {
 	if err := m.launchUnitOp(context.Background(), name, false); err == nil {
 		t.Fatal("fresh adapter start did not hit injected failure")
 	}
-	release()
+	// Cancellation must release the obsolete wait even while the newer native
+	// operation still holds the gate; otherwise churn retains stale workers.
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("superseded recovery did not return")
+		t.Fatal("superseded recovery retained a blocked unit-gate waiter")
 	}
+	release()
 	if launch.calls.Load() != 2 {
 		t.Fatal("old recovery launched after a newer failed start")
 	}

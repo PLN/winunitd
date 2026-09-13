@@ -517,6 +517,7 @@ func (m *Manager) applyHubCleanup(event hubCleanup) {
 type acceptedRecovery struct {
 	context.Context
 	delay time.Duration
+	owner runtimeIdentity
 }
 
 func (m *Manager) acceptRecovery(request recoveryRequest) *acceptedRecovery {
@@ -556,7 +557,7 @@ func (m *Manager) acceptRecovery(request recoveryRequest) *acceptedRecovery {
 		rt.restartAttempt++
 	}
 	rt.restartDelay = delay
-	return &acceptedRecovery{Context: ctx, delay: delay}
+	return &acceptedRecovery{Context: ctx, delay: delay, owner: owner}
 }
 
 func (m *Manager) acceptWatchdog(name string, gen uint64, cancel context.CancelFunc) (runtimeIdentity, context.CancelFunc, bool) {
