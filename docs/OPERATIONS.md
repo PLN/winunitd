@@ -157,9 +157,10 @@ orders captures within that manager lifetime; it is not a lifecycle revision.
 Later completions and reloads cannot alter a published result, and editing the
 returned data cannot mutate manager state.
 
-Snapshot performs no native queries or worker dispatch. It excludes journal,
-timer-engine, native-proxy and separate user-host observations; ordinary status
-commands provide those independent views. Its armed revision covers the timer or
+Snapshot performs no native queries or worker dispatch. It includes accepted
+native-proxy inactivity and observation errors, plus the pending query count.
+It excludes fresh journal, timer-engine, native-proxy and separate user-host
+observations; ordinary status commands provide those independent views. Its armed revision covers the timer or
 watch arm accepted in the manager record. Completed operation
 history remains available through `operation ID`. A snapshot exceeding 1024 units,
 128 active operations or 512 KiB fails explicitly; it never truncates a complete
@@ -256,8 +257,23 @@ The peer's own restart policy remains effective unless a dependency cycle puts
 it in the captured stop scope. Restarting a peer does not automatically restart
 its stopped dependents. Combined `BindsTo` and `After` require the peer to be
 active before launching: a successful repeatable oneshot that is already inactive
-does not satisfy that condition. External SCM/task liveness remains an observation
-domain; continuous disappearance propagation for those proxies is not implemented.
+does not satisfy that condition.
+
+Active native proxies are observed in the background with a one-second polling
+interval, at most four outstanding queries, and rotating name order. A confirmed
+SCM stopped state or ready/disabled task with no running instances publishes
+inactivity and stops bound dependents using their captured policy. Native recovery
+remains with SCM/Task Scheduler; this observation does not restart the proxy or its
+dependents. Paused/pending SCM states, queued tasks and query failures do not prove
+termination. Missing/inaccessible targets remain unknown and require diagnosis.
+
+`nativeObservationError` retains up to 4096 bytes per unit and clears on successful
+observation or a new invocation. Machine `nativeProbes` counts outstanding queries.
+Queries run outside decision locks and command slots; a blocked query does not
+block another while capacity remains. Four blocked native calls suspend further
+observations without creating additional workers. The one-second interval is not
+a deadline guarantee. Stop/reload invalidate late results; close retains and joins
+unfinished queries, returning a deadline error when they cannot finish in time.
 
 ## Global maintenance
 

@@ -185,6 +185,8 @@ func (m *Manager) recordServiceLaunch(effect *launchEffect, native bool) {
 	if native {
 		rt.invocationUnit = effect.unit
 		rt.invocationRevision = effect.revision
+		rt.nativeProbeError = ""
+		rt.nativeNextProbe = time.Time{}
 	}
 	m.recordStartLocked(rt)
 }

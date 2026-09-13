@@ -46,6 +46,8 @@ type unitRuntime struct {
 	timer             *timerArm
 	err               string
 	startTimes        []time.Time
+	nativeNextProbe   time.Time
+	nativeProbeError  string
 }
 
 // ownedUnit selects the definition that controls an existing invocation. Unit
