@@ -301,9 +301,8 @@ type LogsParams struct {
 
 // LogsResult is a snapshot of stored journal entries (DESIGN.md §22).
 // Cursor is passed back on the next page when More is true, or the next
-// poll when following. LogEntry is the
-// v=2 journal record (severity / session / user SID may be empty on
-// historical v=1 lines).
+// poll when following. Historical v1 entries may lack severity/session/user SID;
+// current raw captures also have unknown severity, independently of stream.
 type LogsResult struct {
 	Unit    string     `json:"unit"`
 	Entries []LogEntry `json:"entries"`

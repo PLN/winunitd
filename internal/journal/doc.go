@@ -2,11 +2,12 @@
 //
 // stdout/stderr from CreateProcess are appended as JSON lines under
 // <base-dir>\journal\<encoded-unit>.log so they survive daemon-reload.
-// Writers emit v=3 (timestamp, unit, pid, stream, message, invocationId,
+// Writers emit v=4 (timestamp, unit, pid, stream, message, invocationId,
 // severity, session, userSid, continuation, partial). Captured messages are
 // bounded to 64 KiB of UTF-8 per fragment; JSON escaping may expand records.
-// Readers accept mixed v=1/v=2/v=3 files: v=1 lines
-// decode with empty severity/session/userSid. Old files are not rewritten.
+// Readers accept mixed v=1/v=2/v=3/v=4 files: v=1 lines decode with empty
+// severity/session/userSid. V4 capture leaves severity unknown independently
+// of stream; explicit diagnostics keep their level. Old files are not rewritten.
 // The file name and per-unit mutex key use the lower-case unit name
 // (DESIGN.md §36) with a reversible percent-encoding so Windows-forbidden
 // characters and reserved device basenames cannot collide. Read/Query

@@ -72,7 +72,7 @@ func TestEncodeDecodeCurrentVersion(t *testing.T) {
 	if rec2["v"] != float64(FormatVersion) {
 		t.Fatalf("v = %v", rec2["v"])
 	}
-	if rec2["severity"] != SeverityErr {
+	if rec2["severity"] != "" {
 		t.Fatalf("stderr severity = %v", rec2["severity"])
 	}
 	if rec2["session"] != "" || rec2["userSid"] != "" {
@@ -89,7 +89,7 @@ func TestEncodeDecodeCurrentVersion(t *testing.T) {
 	if got[0].Severity != SeverityInfo || got[0].Session != "3" || got[0].UserSID != "S-1-5-21-1-2-3-1001" {
 		t.Fatalf("round-trip first = %+v", got[0])
 	}
-	if got[1].Severity != SeverityErr || got[1].Session != "" || got[1].UserSID != "" {
+	if got[1].Severity != "" || got[1].Session != "" || got[1].UserSID != "" {
 		t.Fatalf("round-trip second = %+v", got[1])
 	}
 }
@@ -159,28 +159,15 @@ func TestMixedV1V2Read(t *testing.T) {
 	}
 }
 
-func TestSeverityFromStream(t *testing.T) {
+func TestExplicitSeverityIsIndependentOfStream(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		stream, want string
-	}{
-		{"stdout", SeverityInfo},
-		{"stderr", SeverityErr},
-		{"", ""},
-		{"other", ""},
-	}
-	for _, tc := range cases {
-		if got := SeverityFromStream(tc.stream); got != tc.want {
-			t.Errorf("SeverityFromStream(%q) = %q, want %q", tc.stream, got, tc.want)
-		}
-	}
 
 	s := testStore(t)
 	s.append(Entry{Timestamp: time.Now().UTC(), Unit: "foo.service", Stream: "stdout", Message: "out"})
 	s.append(Entry{Timestamp: time.Now().UTC(), Unit: "foo.service", Stream: "stderr", Message: "err"})
 	s.append(Entry{Timestamp: time.Now().UTC(), Unit: "foo.service", Stream: "stdout", Message: "override", Severity: "debug"})
 	got := waitEntries(t, s, "foo.service", 3)
-	if got[0].Severity != SeverityInfo || got[1].Severity != SeverityErr || got[2].Severity != "debug" {
+	if got[0].Severity != "" || got[1].Severity != "" || got[2].Severity != "debug" {
 		t.Fatalf("stored severity = %+v", got)
 	}
 }
@@ -201,7 +188,7 @@ func TestOriginSIDAndSession(t *testing.T) {
 	if got[0].Session != "3" || got[0].UserSID != "S-1-5-21-1-2-3-1001" {
 		t.Fatalf("origin = %+v", got[0])
 	}
-	if got[0].Severity != SeverityInfo {
+	if got[0].Severity != "" {
 		t.Fatalf("stdout severity = %q", got[0].Severity)
 	}
 
@@ -233,7 +220,7 @@ func TestOriginSIDAndSession(t *testing.T) {
 		if got[i].Session != o.Session || got[i].UserSID != o.UserSID {
 			t.Fatalf("case %d = %+v, want session %q sid %q", i, got[i], o.Session, o.UserSID)
 		}
-		if got[i].Severity != SeverityErr {
+		if got[i].Severity != "" {
 			t.Fatalf("case %d severity = %q", i, got[i].Severity)
 		}
 	}
