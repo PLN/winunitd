@@ -27,6 +27,10 @@ type Listener interface {
 // with an error still belongs to the caller and must be closed.
 type ListenFunc func(unitID string) (Listener, error)
 
+// Per-listener admission bounds authorized idle clients as well as readers
+// blocked while sending the acceptance banner.
+const maxNotifyConnections = 64
+
 type wrapConn struct {
 	net.Conn
 	pid int
@@ -70,6 +74,7 @@ func (l *tcpListener) Close() error {
 // parsed messages. access, if non-nil, may reject a connection (NotifyAccess).
 // Cancellation closes the listener and accepted connections so idle clients
 // cannot prevent shutdown. Returning also cancels outstanding client reads.
+// Excess connections close before authorization and receive no acceptance banner.
 func ServeAccept(ctx context.Context, lis Listener, access func(pid int) bool, emit func(Message)) {
 	if lis == nil || emit == nil {
 		return
@@ -83,6 +88,7 @@ func ServeAccept(ctx context.Context, lis Listener, access func(pid int) bool, e
 	defer cancel()
 	stopListener := context.AfterFunc(ctx, func() { _ = lis.Close() })
 	defer stopListener()
+	slots := make(chan struct{}, maxNotifyConnections)
 	for {
 		if ctx != nil && ctx.Err() != nil {
 			return
@@ -91,13 +97,21 @@ func ServeAccept(ctx context.Context, lis Listener, access func(pid int) bool, e
 		if err != nil {
 			return
 		}
+		select {
+		case slots <- struct{}{}:
+		default:
+			_ = c.Close()
+			continue
+		}
 		if access != nil && !access(c.ClientPID()) {
 			_ = c.Close()
+			<-slots
 			continue
 		}
 		wg.Add(1)
 		go func(c Conn) {
 			defer wg.Done()
+			defer func() { <-slots }()
 			defer c.Close()
 			stopRead := context.AfterFunc(ctx, func() { _ = c.Close() })
 			defer stopRead()
