@@ -14,25 +14,40 @@ type SnapshotResult struct {
 }
 
 type UnitSnapshot struct {
-	RestartAttempt           uint32   `json:"restartAttempt,omitempty"`
-	RestartDelaySec          float64  `json:"restartDelaySec,omitempty"`
-	Health                   string   `json:"health,omitempty"`
-	ProbeFailures            int      `json:"probeFailures,omitempty"`
-	Error                    string   `json:"error,omitempty"`
-	Reason                   string   `json:"reason,omitempty"`
-	NativeObservationError   string   `json:"nativeObservationError,omitempty"`
-	Name                     string   `json:"name"`
-	LoadState                string   `json:"loadState"`
-	ActiveState              string   `json:"activeState"`
-	SubState                 string   `json:"subState,omitempty"`
-	Enabled                  bool     `json:"enabled"`
-	MainPID                  int      `json:"mainPid,omitempty"`
-	InvocationID             string   `json:"invocationId,omitempty"`
-	ConfigRevision           string   `json:"configRevision,omitempty"`
-	InvocationConfigRevision string   `json:"invocationConfigRevision,omitempty"`
-	ArmedConfigRevision      string   `json:"armedConfigRevision,omitempty"`
-	LastOperationID          string   `json:"lastOperationId,omitempty"`
-	PendingCleanup           []string `json:"pendingCleanup,omitempty"`
+	NativeProxy              *NativeProxyStatus `json:"nativeProxy,omitempty"`
+	RestartAttempt           uint32             `json:"restartAttempt,omitempty"`
+	RestartDelaySec          float64            `json:"restartDelaySec,omitempty"`
+	Health                   string             `json:"health,omitempty"`
+	ProbeFailures            int                `json:"probeFailures,omitempty"`
+	Error                    string             `json:"error,omitempty"`
+	Reason                   string             `json:"reason,omitempty"`
+	NativeObservationError   string             `json:"nativeObservationError,omitempty"`
+	Name                     string             `json:"name"`
+	LoadState                string             `json:"loadState"`
+	ActiveState              string             `json:"activeState"`
+	SubState                 string             `json:"subState,omitempty"`
+	Enabled                  bool               `json:"enabled"`
+	MainPID                  int                `json:"mainPid,omitempty"`
+	InvocationID             string             `json:"invocationId,omitempty"`
+	ConfigRevision           string             `json:"configRevision,omitempty"`
+	InvocationConfigRevision string             `json:"invocationConfigRevision,omitempty"`
+	ArmedConfigRevision      string             `json:"armedConfigRevision,omitempty"`
+	LastOperationID          string             `json:"lastOperationId,omitempty"`
+	PendingCleanup           []string           `json:"pendingCleanup,omitempty"`
+}
+
+// NativeProxyStatus describes the captured adapter contract, not queried native
+// permissions or liveness. Requests can still fail in the owning Windows API.
+type NativeProxyStatus struct {
+	Kind              string   `json:"kind"`
+	Target            string   `json:"target"`
+	Owner             string   `json:"owner"`
+	Capabilities      []string `json:"capabilities"`
+	OwnsProcessTree   bool     `json:"ownsProcessTree"`
+	CapturesOutput    bool     `json:"capturesOutput"`
+	SupportsExecStop  bool     `json:"supportsExecStop"`
+	SupportsJobLimits bool     `json:"supportsJobLimits"`
+	ManagesDefinition bool     `json:"managesDefinition"`
 }
 
 // UserHostSnapshot contains accepted ownership, not queried process liveness.

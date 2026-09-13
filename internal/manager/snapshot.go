@@ -85,7 +85,8 @@ func (m *Manager) snapshotLocked() (*protocol.SnapshotResult, error) {
 	for _, name := range m.names() {
 		st := m.unitStatusLocked(name)
 		out.Units = append(out.Units, protocol.UnitSnapshot{
-			Error: st.Error, Reason: st.Reason,
+			NativeProxy: st.NativeProxy,
+			Error:       st.Error, Reason: st.Reason,
 			RestartAttempt: st.RestartAttempt, RestartDelaySec: st.RestartDelaySec,
 			Health: st.Health, ProbeFailures: st.ProbeFailures,
 			NativeObservationError: st.NativeObservationError,

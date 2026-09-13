@@ -915,6 +915,11 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		if u.InvocationID != "" {
 			fmt.Fprintf(c.stdout, "InvocationID=%s\n", u.InvocationID)
 		}
+		if p := u.NativeProxy; p != nil {
+			fmt.Fprintf(c.stdout, "NativeProxy=%s Target=%s Owner=%s\n", p.Kind, p.Target, p.Owner)
+			fmt.Fprintf(c.stdout, "Capabilities=%s\n", strings.Join(p.Capabilities, ","))
+			fmt.Fprintf(c.stdout, "OwnsProcessTree=%t CapturesOutput=%t SupportsExecStop=%t SupportsJobLimits=%t ManagesDefinition=%t\n", p.OwnsProcessTree, p.CapturesOutput, p.SupportsExecStop, p.SupportsJobLimits, p.ManagesDefinition)
+		}
 		if u.ConfigRevision != "" {
 			fmt.Fprintf(c.stdout, "ConfigRevision=%s\n", u.ConfigRevision)
 		}

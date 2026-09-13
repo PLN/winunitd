@@ -219,6 +219,22 @@ outside the core beta guarantee; passing `verify` is not a qualification claim.
 | Registry: `RegistryChanged` | Repeatable registry key/subtree triggers; HKLM for system scope, HKCU also available to user scope |
 | EventLog: `EventLogTrigger` | Repeatable Channel:EventID=number; user scope rejects System/Security |
 
+Status, list and snapshot include `nativeProxy` for SCM/task services. It reports
+the captured `kind`, `target` and Windows `owner` (`windows-scm` or
+`windows-task-scheduler`), plus `query-state`, `request-start`, `request-stop`
+and `request-restart` capabilities. These describe the adapter contract, not
+current access rights or a promise that Windows will accept a request. Native
+proxies are supported only by the system manager. Restart composes stop/start;
+native process supervision and native recovery policy remain with Windows.
+
+`ownsProcessTree`, `capturesOutput`, `supportsExecStop`, `supportsJobLimits` and
+`managesDefinition` are explicitly false. winunitd does not install the native
+service/task definition or place its processes in a managed workload job.
+Configured native targets remain attached to their captured invocation after
+reload, removal or failed cleanup; a fresh invocation adopts the new definition.
+Snapshots copy this metadata without querying native liveness. Normal status
+may separately overlay a current native state/PID or query error.
+
 Timers require at least one trigger. Path/registry/eventlog units always activate
 the neighboring same-basename `.service`; they do not accept `Unit=`. Empty
 trigger assignments are not list-reset syntax. Paths are non-recursive watches.
