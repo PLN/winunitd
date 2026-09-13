@@ -1,5 +1,64 @@
 # R2 initial evidence
 
+## Nonblocking lifecycle diagnostics and error observations
+
+These September 13 candidates passed exact-source Windows/Linux CI and isolated
+LTSC build 26100 qualification. Each selected case ran ten times per SYSTEM and
+headless standard-user identity, with no skips. Both fixtures removed their units,
+linger grants and helper/user-manager processes and confirmed profile release.
+Binary/source hashes, raw logs and cleanup observations are retained privately.
+
+| Change | Tested source and CI | Cases per identity; SYSTEM/user seconds | Equal-tree merge |
+| --- | --- | --- | --- |
+| PR #202: bounded transition diagnostics | `2d0f6f3dc45eff130fc23415d35c5d51d933b7e3`, [CI](https://github.com/PLN/winunitd/actions/runs/34765837025) | 6; 5.603/2.527 | `de0c901c97f00228dab60efa17abd59b38620530` |
+| PR #203: adapter error observations | `dd515c8bf09dbb8ca7a0682132920c520fa0a583`, [CI](https://github.com/PLN/winunitd/actions/runs/34766883282) | 10; 2.569/1.121 | `726c3a7444c6d2abbdb93c2cf8d342d3b6471233` |
+
+Illegal transitions previously called the console logger while holding the
+lifecycle mutex. Rejected transitions now preserve the accepted state and enqueue
+a `daemon`/`err` journal record carrying invocation and manager-origin identity.
+Messages are capped at 4096 UTF-8 bytes, with truncation marked. A shared diagnostic
+group uses the existing 4 MiB/12,288-record allowance and aggregate journal budgets;
+storage pressure reports loss through the existing counters. No additional writer
+class is created, and accepted records remain owned through journal close.
+
+Four manager and two journal cases cover blocked console output, independent
+snapshot/start/stop progress, persisted diagnostics, storage-stall pressure,
+UTF-8 truncation and immutable invocation/origin identity. Concurrent origin
+publication no longer acquires the storage mutex. This qualifies transition
+diagnostics; broader daemon messages and Windows event resources remain R5 work.
+
+Adapter error formatting and start-error classification could also block the
+decision mutex. Observations now happen before serialization, and acceptance
+rechecks identity and cancellation afterward. Operation completion freezes
+protocol classification before locking and joins manager-owned cancellation
+causes at publication. Both new public lifecycle regressions fail on previous
+main and pass with the fix. Companion cases cover failed/partial launch, late
+stop outcomes, readiness/watchdog/exit cleanup, retained operation deadlines,
+completed dependencies and linger-token recovery. Delayed adapters run under real
+identities; this does not claim new S4U or process-launch mechanism qualification.
+
+The full lifecycle writer, worker-class and invariant audits remain R2 gates.
+
+## Canceled recovery worker acceptance
+
+PR #204 source `6591e9ac16f49a8c1a96bd68a19c5c433db4564a` passed
+[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34767502672) and
+eight cases ten times per SYSTEM/headless standard-user identity on isolated LTSC
+build 26100, in 9.957/9.123 seconds. No cases skipped; process/linger/profile cleanup
+passed. Merge `8a39dff81c4f5637208101ada5d9edab0b75e97c` has the tested tree.
+
+A newer explicit attempt could cancel recovery while keeping the unit gate,
+leaving the obsolete recovery worker blocked. The strengthened existing regression
+fails on the old implementation with the gate still held. Recovery now acquires
+the gate using its accepted cancellation context and exits without waiting for
+the newer native operation. Initial launch failures also admit recovery before
+spawning, so duplicate requests allocate no worker.
+
+Six delayed-adapter cases cover stale recreated/replacement identity, gate
+cancellation, captured backoff, stop/removal and start-limit exhaustion. Two cases
+exercise actual native failure/backoff limits and fresh invocation identity on
+restart. Full writer/worker-class acceptance remains separate.
+
 ## User policy and cleanup admission acceptance
 
 The following September 13 candidates passed exact-source Windows/Linux CI and
