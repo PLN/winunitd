@@ -138,8 +138,9 @@ user snapshot observation, and pending timer recovery after broker crash in
 2.689 seconds with the same activation identity and no replay on a second restart.
 Final disable-linger released the manager, helper and user profile and prevented
 resurrection. Raw scripts, results, artifact hashes, manifest and CI identity are
-retained privately. External SCM/task disappearance and the remaining full R3
-acceptance matrix are still open; these results do not qualify MSI servicing or R7.
+retained privately. External SCM/task disappearance was subsequently qualified
+in the native proxy section above. The remaining full R3 acceptance matrix stays
+open; these results do not qualify MSI servicing or R7.
 
 ## Capped restart backoff qualification
 
@@ -159,5 +160,50 @@ fixture and user manager/helper, disabled linger and unloaded the profile; the
 hosting broker and real pilot were unchanged. Raw logs, artifact/module hashes,
 CI and cleanup results remain privately retained. Ten focused race repetitions,
 the full local race suite, vet and Windows/Linux staticcheck also passed.
-This delivers recovery backoff; startup readiness and the complete health
-acceptance gate remain separate.
+This delivers recovery backoff. The combined readiness/health acceptance below
+subsequently qualified it alongside the new startup and liveness policies.
+
+## Startup readiness and health acceptance
+
+PR #182 source `16b781f2481b20c996bb161326e83d17a5cb0f28` passed
+[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34758052219)
+and twenty native health-sequence repetitions per SYSTEM/headless-user identity.
+Grace, per-probe deadlines and consecutive-failure thresholds preserve a live
+process across transient failures. Successful probes reset the count; threshold
+exhaustion uses existing owned cleanup and recovery. HTTP body errors and
+deadlines cannot report success. Reload and stale-result tests retain policy.
+
+PR #183 source `c93341bbd180a1c5ef30aac49424a78d19de9e6e` adds separate loopback
+HTTP/TCP startup probes for format-2 simple services. Activation and dependent
+ordering wait for success within the shared creation/readiness deadline. Stop,
+process exit and timeout retain truthful cleanup; watchdog starts after activation.
+Endpoint responses do not establish listener ownership, authentication or version.
+The [configuration contract](UNIT-REFERENCE.md#startup-readiness-probes) records
+the defaults, supported combinations and limits.
+
+[Exact-source CI](https://github.com/PLN/winunitd/actions/runs/34758620683)
+passed. The combined matrix below passed on Windows 11 Enterprise LTSC build
+26100 as genuine SYSTEM and as a headless nonadministrator user. Every row ran
+ten times per identity; no selected test skipped.
+
+| Native case | Behavior checked | SYSTEM / user repetitions |
+| --- | --- | --- |
+| `TestWindowsFormat2NativeCPUControls` | Actual Job Object weights and hard caps | 10 / 10 |
+| `TestWindowsFormat2PathORRetainsArmedPolicy` | OR activation, rising edge and captured reload policy | 10 / 10 |
+| `TestWindowsRestartBackoffRespectsNativeFailureLimit` | Four exit-7 launches, capped delay and start limit | 10 / 10 |
+| `TestWindowsProbeHealthRetainsTransientFailure` | 503/200/503/503 health, live process before threshold and cleanup | 10 / 10 |
+| `TestWindowsHTTPReadinessActivationAndCleanup` | Success, aggregate timeout, explicit stop and process cleanup | 10 / 10 |
+| `TestWindowsTCPReadinessAcceptsLoopbackConnection` | Accepted TCP readiness and process cleanup | 10 / 10 |
+
+The matrix took 14.287 seconds as SYSTEM and 13.147 seconds as the headless user.
+Final teardown removed the fixture, disabled linger, released the user manager
+and helper, and unloaded its profile; the hosting broker stayed running. Both PRs
+merged with their exact tested trees. Artifact/module hashes, CI identity, native
+logs, pass counts and cleanup observations remain privately retained.
+
+Ten focused local race repetitions, the full uncached race suite, vet and both
+platform staticchecks passed. Portable regressions cover dependent ordering,
+stop/deadline/process-exit races, captured reload policy, stale observations,
+hung HTTP bodies and duplicate recovery acceptance. This delivers the R3.4
+technical slice. Overall R3 still depends on R2 and remaining dependency/native
+acceptance. MSI handoff, broader Windows/session support and R7 remain separate.

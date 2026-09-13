@@ -199,7 +199,7 @@ outside the core beta guarantee; passing `verify` is not a qualification claim.
 
 | Section / directives | Current behavior / limitation |
 | --- | --- |
-| Unit: `BindsTo` | Managed peer exit/failure stops bound dependents using captured invocation policy; with `After`, activation requires an active peer. External SCM/task disappearance observation remains outside this guarantee |
+| Unit: `BindsTo` | Managed peer exit/failure and confirmed SCM/task inactivity stop bound dependents using captured invocation policy; with `After`, activation requires an active peer. Native query failures remain unknown, with visible diagnostics; they do not prove inactivity |
 | Unit: `RequiresInteractiveSession` | Default no; skip without a suitable session; user/session modes remain experimental until focused qualification |
 | Service: `NotifyAccess` | main only; default main |
 | Service: `WatchdogSec`, `WatchdogMode` | Positive duration enables watchdog; mode notify (default), tcp, or http |
