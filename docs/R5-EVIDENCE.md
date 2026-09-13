@@ -1,5 +1,65 @@
 # Durable timers and diagnostics qualification
 
+## Timer delivery acceptance
+
+R5.2 technical acceptance is complete as of September 13, 2026. The R2/R3
+dependencies are satisfied. R5.3-R5.5 and the complete R5 gate remain open.
+The [delivery contract](OPERATIONS.md#timer-delivery-and-clock-domains) documents
+relative and wall-clock origins, civil-time gaps/folds and active-service overlap;
+the [persistence evidence](#timer-state-replacement-and-interrupted-activation)
+establishes coalescing, interrupted activation retry and its duplicate possibility.
+
+Two defects found during this qualification are fixed:
+
+- [PR #209](https://github.com/PLN/winunitd/pull/209) keeps mixed timer clock
+  domains independent. A forward wall jump previously fired an unelapsed
+  boot/startup deadline, or recorded the wrong scheduled source. Four early-fire
+  and two source-stamp regression cases reproduce on the previous implementation.
+  Wall-clock delivery now leaves a later relative deadline unconsumed.
+- [PR #210](https://github.com/PLN/winunitd/pull/210) selects the first civil-time
+  occurrence using the actual timezone offset change. A one-hour assumption
+  previously selected the second occurrence during Lord Howe's 30-minute fold;
+  the permanent engine regression reproduces that error.
+
+| Source | Exact-source CI | Native cases per identity | Repetitions | SYSTEM / headless standard-user time | Equal-tree merge |
+| --- | --- | --- | --- | --- | --- |
+| `6311cb1429bc3d02f990820fbd8cfb4eb2a3167b` | [34770433652](https://github.com/PLN/winunitd/actions/runs/34770433652) | 68 | 3 | 10.468s / 8.362s | `ea2a9da7457e8db80228bf614d495ec1ba2bf2d4` |
+| `15942407303668886da884582131fb7bcabe546a` | [34771224682](https://github.com/PLN/winunitd/actions/runs/34771224682) | 90 | 3 | 13.305s / 10.006s | `469ab7075cf32f6f2dc83b1a93dc44c9fed7d15d` |
+
+The final disposable Windows 11 Enterprise LTSC build 26100 matrix contains
+56 manager, four journal, 26 timer and four notification tests, including the
+earlier coordinator/storage/admission regressions. Every selected case passed
+three times per identity without skips. Four native test-binary hashes, clean
+source, module/toolchain identity and successful hosted Windows/Linux CI were
+verified. Native binaries are non-race builds; race coverage is separate. Full
+logs and manifests are retained privately. Final teardown removed the fixture,
+disabled linger, unloaded the profile and left no fixture, user-manager or helper
+process. The hosting broker remained running.
+
+| Delivery requirement | Qualified behavior |
+| --- | --- |
+| Boot/startup origins | `TestWindowsOnBootSecVsOnStartupSec` proves an elapsed boot deadline fires while a ten-second startup deadline stays pending during the 400ms observation; `TestWindowsTimerOneshotOnStartupSec` separately proves actual 200ms startup delivery. Fake-clock origin and enabled-boot/reload cases also pass. |
+| Clock jumps and mixed sources | Forward/backward calendar reconciliation, explicit clock notification, relative deadlines retained across wall jumps, and consumption of only the due source pass. Retry waits retain their elapsed-time budget and cannot cross a replacement arm. |
+| DST | `TestEngineCalendarDeliversDSTGapAndFoldOnce` covers New York, Berlin and Lord Howe: first valid time after a gap on the same date, first fold occurrence only, no second copy, and next-day delivery. |
+| Suspend/resume policy | `TestEngineResumeReconcilesAllClockDomains` delivers boot, startup, last-activation and calendar deadlines once after simulated resume; repeated notification does not redeliver. Existing last-activation suspend coverage also passes. |
+| Persistent catch-up and overlap | `TestPersistentCalendarCatchupCoalescesWithActiveService` coalesces an initial 72-hour gap and a later 72-hour simulated resume while retaining the active service invocation and one launch. Each catch-up records a new completed activation identity and current time. |
+| Crash recovery | Pending-intent retry, failed result publication, missed-calendar coalescing and month-end recovery pass again in the final matrix. The earlier file/process-crash qualification below remains applicable. Execution before durable result publication can repeat work; persistent workloads must be idempotent. |
+
+The qualification clock was corrected as part of PR #210: pending waits use
+elapsed uptime, wall jumps preserve remaining wait, simulated resume advances
+Windows uptime, and a maximum-duration wait does not overflow. Both prior clock
+model defects reproduce independently. Standalone test binaries embed timezone
+data. Resume evidence establishes scheduler policy using controlled clocks under
+both native identities; it does not claim an actual physical sleep/hibernate test
+or qualify platform wake-notification delivery. The boot/startup tests above use
+the real Windows clock and process launcher.
+
+Final full uncached race tests passed (manager 63.049s, journal 41.112s, timers
+3.253s), as did vet and Windows/Linux staticcheck. Twenty final DST/resume
+repetitions passed in 2.021s. Earlier twenty complete timer-package and manager
+clock matrices passed in 12.311s and 4.966s; the mixed-clock source also passed its
+full race suite and twenty new regression repetitions. No timeout was relaxed.
+
 ## Journal rotation failure and retry
 
 PR #192 source `7c114fb04d653dc5ae8bc254dc71359a136ebd48` passed
@@ -77,5 +137,6 @@ publication, so persistent workloads must be idempotent.
 This delivers the R5.1 technical slice and issue #99's crash/failure-injection
 scope. The evidence covers process crashes and the tested local filesystem; it
 does not establish universal power-loss durability for controllers or remote
-filesystems. Complete clock/DST/resume, journaling retention, diagnostics, stress,
-installer state rollback and overall R2/R3/R5 acceptance remain separate gates.
+filesystems. The delivery policy is now qualified above. Journaling retention,
+diagnostics, stress, installer state rollback and overall R5 acceptance remain
+separate gates; R2/R3 technical acceptance is complete.

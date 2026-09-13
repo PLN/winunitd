@@ -11,6 +11,10 @@ implied by this tracking update.
 GitHub milestones mirror [repository acceptance gates](MILESTONES.md). R2/R3
 technical acceptance is complete; R0/R1/R4-R6 remain in progress and R7-R8 remain
 planned. The packaging spike is already delivered.
+R5.1 timer persistence and R5.2 delivery policy are technically complete;
+[timer evidence](R5-EVIDENCE.md#timer-delivery-acceptance) records the final
+90-case native matrix, mixed-clock and half-hour DST fixes, and resume-model
+limits. Retention, durable diagnostics and combined stress remain R5 work.
 Planned milestones may have no implementation issues yet; their work packages
 remain in MILESTONES.md. There are no promised due dates.
 
