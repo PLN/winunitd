@@ -62,6 +62,7 @@ func TestWindowsNativeProxyDisappearance(t *testing.T) {
 				if _, err := m.Start(context.Background(), "bound"); err != nil {
 					t.Fatal(err)
 				}
+				assertProxyViews(t, m, "peer.service", kind, name)
 				m.mu.Lock()
 				p := m.units["bound.service"].proc
 				m.mu.Unlock()

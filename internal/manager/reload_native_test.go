@@ -109,6 +109,7 @@ func TestReloadRetargetKeepsNativeOwnership(t *testing.T) {
 			if _, err := m.Start(context.Background(), "worker"); err != nil {
 				t.Fatal(err)
 			}
+			assertProxyViews(t, m, "worker.service", kind, "example-old")
 			writeUnit(t, m.cfg.UnitsDir(), "worker.service", definition("example-new"))
 			if _, err := m.Reload(); err != nil {
 				t.Fatal(err)
@@ -117,6 +118,7 @@ func TestReloadRetargetKeepsNativeOwnership(t *testing.T) {
 			if err != nil || status.Unit.ActiveState != "active" {
 				t.Fatalf("reload redirected status away from the owned resource: %+v, %v", status, err)
 			}
+			assertProxyViews(t, m, "worker.service", kind, "example-old")
 			if _, err := m.Stop("worker"); err != nil {
 				t.Fatal(err)
 			}
@@ -129,6 +131,7 @@ func TestReloadRetargetKeepsNativeOwnership(t *testing.T) {
 			if active("example-old") || !active("example-new") {
 				t.Fatal("fresh start did not adopt the new definition")
 			}
+			assertProxyViews(t, m, "worker.service", kind, "example-new")
 		})
 	}
 }
@@ -178,6 +181,7 @@ func TestReloadServiceTypeKeepsOwnership(t *testing.T) {
 					if !found {
 						t.Fatal("worker missing from list")
 					}
+					assertProxyViews(t, m, "worker.service", oldKind, "example-worker")
 					if shutdown {
 						if err := m.Shutdown(context.Background()); err != nil {
 							t.Fatal(err)
@@ -207,6 +211,7 @@ func TestReloadServiceTypeKeepsOwnership(t *testing.T) {
 						if newKind == "process" && len(launch.specs()) != 1 {
 							t.Fatal("fresh start did not launch process")
 						}
+						assertProxyViews(t, m, "worker.service", newKind, "example-worker")
 					}
 				})
 			}

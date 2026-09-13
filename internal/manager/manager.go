@@ -577,6 +577,7 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 		}
 		if u := rt.ownedUnit(); u != nil && u.Service != nil {
 			svc := u.Service
+			st.NativeProxy = nativeProxyStatus(svc)
 			st.WindowsCPUWeight = svc.WindowsCPUWeight
 			st.WindowsCPUQuota = svc.WindowsCPUQuota
 			if svc.CPUWeightSet {
