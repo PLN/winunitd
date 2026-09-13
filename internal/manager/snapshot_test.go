@@ -10,8 +10,59 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/protocol"
 )
+
+func TestSnapshotRetainsTerminalFailureDiagnostics(t *testing.T) {
+	for _, limited := range []bool{true, false} {
+		t.Run(fmt.Sprint("start-limit=", limited), func(t *testing.T) {
+			code := uint32(0xC0000005)
+			launch := &scriptedLauncher{exitU32: &code, holdAutoExit: true}
+			body := "[Unit]\nStartLimitIntervalSec=60s\nStartLimitBurst=3\n[Service]\nExecStart=C:\\Tools\\worker.exe\nRestartSec=2s\n"
+			if limited {
+				code = 7
+				body += "Restart=on-failure\n"
+			}
+			m, clock := managerWithFake(t, launch, map[string]string{"work.service": body})
+			wantReason := core.ReasonSignalEquivalent
+			if limited {
+				crashToStartLimit(t, m, clock, launch, "work.service", 3, 2*time.Second)
+				wantReason = core.ReasonStartLimit
+			} else {
+				if _, err := m.Start(context.Background(), "work"); err != nil {
+					t.Fatal(err)
+				}
+				launch.releaseExits()
+				waitState(t, m, "work.service", core.Failed)
+			}
+			status, err := m.Status("work")
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := m.Snapshot()
+			if err != nil {
+				t.Fatal(err)
+			}
+			u := snapshotUnit(t, snapshot, "work.service")
+			if u.Error == "" || u.Error != status.Unit.Error || u.Reason != wantReason || u.Reason != status.Unit.Reason || u.InvocationID != status.Unit.InvocationID || u.InvocationConfigRevision != status.Unit.InvocationConfigRevision || u.ConfigRevision != status.Unit.ConfigRevision || len(u.PendingCleanup) != 0 {
+				t.Fatalf("snapshot/status failure mismatch: snapshot=%+v status=%+v", u, status.Unit)
+			}
+			oldError := u.Error
+			if _, err := m.Start(context.Background(), "work"); err != nil {
+				t.Fatal(err)
+			}
+			after, err := m.Snapshot()
+			if err != nil {
+				t.Fatal(err)
+			}
+			current := snapshotUnit(t, after, "work.service")
+			if current.Error != "" || current.Reason != "" || u.Error != oldError || u.Reason != wantReason {
+				t.Fatal("new activation retained old diagnostics or mutated published snapshot")
+			}
+		})
+	}
+}
 
 func TestSnapshotKeepsAcceptedOperationAndUnitTogether(t *testing.T) {
 	l := &lateOperationLauncher{entered: make(chan struct{}), release: make(chan struct{})}
@@ -67,6 +118,10 @@ func TestSnapshotCopiesCleanupAndRetainsOwnedPID(t *testing.T) {
 	if err != nil || len(snapshotUnit(t, snapshot, "work.service").PendingCleanup) != 1 || snapshotUnit(t, snapshot, "work.service").MainPID == 0 {
 		t.Fatalf("retained resource snapshot: %+v %v", snapshot, err)
 	}
+	status, err := m.Status("work")
+	if err != nil || snapshotUnit(t, snapshot, "work.service").Error == "" || snapshotUnit(t, snapshot, "work.service").Error != status.Unit.Error || snapshotUnit(t, snapshot, "work.service").Reason != status.Unit.Reason {
+		t.Fatalf("pending cleanup diagnostics differ from accepted status: %+v %v", status, err)
+	}
 	snapshotUnit(t, snapshot, "work.service").PendingCleanup[0] = "changed"
 	snapshotUnit(t, snapshot, "work.service").Name = "changed"
 	current, err := m.Snapshot()
@@ -94,6 +149,10 @@ func TestSnapshotRejectsOversizedViewsWithoutPartialResults(t *testing.T) {
 	m.units = map[string]*unitRuntime{strings.Repeat("x", maxSnapshotBytes): nil}
 	if result, err := m.Snapshot(); result != nil || err == nil {
 		t.Fatal("oversized text returned an unencodable response")
+	}
+	m.units = map[string]*unitRuntime{"work.service": {err: strings.Repeat("x", maxSnapshotBytes)}}
+	if result, err := m.Snapshot(); result != nil || err == nil {
+		t.Fatal("oversized diagnostics escaped the aggregate response bound")
 	}
 	m.units = nil
 	m.operations = make(map[string]*protocol.OperationResult)

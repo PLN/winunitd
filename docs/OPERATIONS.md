@@ -152,7 +152,11 @@ across all historical names. They do not make filesystem I/O latency bounded.
 `winctl snapshot` (also `--user`) prints a JSON copy of one manager's accepted
 unit states and active operations, captured together under its decision lock.
 It includes manager identity, capture sequence/time, machine counts, configuration
-and invocation identities, owned PIDs, cleanup classes and operation IDs. Sequence
+and invocation identities, owned PIDs, cleanup classes and operation IDs. Each
+unit also carries its accepted `error` and `reason`, matching unit status for
+that invocation/revision. These diagnostics persist after an operation leaves
+the active list. `pendingCleanup` remains separate: failure does not imply that
+owned resources have been released. Sequence
 orders captures within that manager lifetime; it is not a lifecycle revision.
 Later completions and reloads cannot alter a published result, and editing the
 returned data cannot mutate manager state.
