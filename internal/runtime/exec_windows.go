@@ -101,6 +101,10 @@ func (l *winLauncher) create(spec StartSpec) (*winProc, error) {
 }
 
 func (l *winLauncher) createWith(spec StartSpec, openJob func(JobLimits) (*UnitJob, error), openPipe func() (windows.Handle, windows.Handle, error), openInput func() (windows.Handle, error)) (*winProc, error) {
+	return l.createWithSetup(spec, openJob, openPipe, openInput, processSetup{})
+}
+
+func (l *winLauncher) createWithSetup(spec StartSpec, openJob func(JobLimits) (*UnitJob, error), openPipe func() (windows.Handle, windows.Handle, error), openInput func() (windows.Handle, error), setup processSetup) (*winProc, error) {
 	job, err := openJob(spec.Limits)
 	p := &winProc{job: job}
 	if err != nil {
@@ -191,28 +195,60 @@ func (l *winLauncher) createWith(spec StartSpec, openJob func(JobLimits) (*UnitJ
 	if err := p.closeLaunchHandles(); err != nil {
 		return p, err
 	}
-	// Attach the outer job first; each unit/user job must remain a sibling
-	// under it, rather than making the daemon job a child of the first unit.
-	if err := assignDaemonProcess(l.daemon, pi.Process); err != nil {
+	if err := l.finishProcessSetup(p, spec, setup); err != nil {
 		return p, err
 	}
-	if err := job.Assign(pi.Process); err != nil {
-		return p, err
+	return p, nil
+}
+
+// Each launch has its own native setup operations. Tests can inject a failure at
+// one boundary while retaining a real suspended process and real cleanup calls.
+type processSetup struct {
+	assignDaemon func(*DaemonJob, windows.Handle) error
+	assignUnit   func(*UnitJob, windows.Handle) error
+	priority     func(windows.Handle, uint32) error
+	resume       func(windows.Handle) (uint32, error)
+	closeThread  func(windows.Handle) error
+}
+
+func (l *winLauncher) finishProcessSetup(p *winProc, spec StartSpec, setup processSetup) error {
+	if setup.assignDaemon == nil {
+		setup.assignDaemon = assignDaemonProcess
+	}
+	if setup.assignUnit == nil {
+		setup.assignUnit = (*UnitJob).Assign
+	}
+	if setup.priority == nil {
+		setup.priority = setProcessIoPriority
+	}
+	if setup.resume == nil {
+		setup.resume = windows.ResumeThread
+	}
+	if setup.closeThread == nil {
+		setup.closeThread = windows.CloseHandle
+	}
+	// Attach the outer job first; each unit/user job must remain a sibling
+	// under it, rather than making the daemon job a child of the first unit.
+	if err := setup.assignDaemon(l.daemon, p.process); err != nil {
+		return err
+	}
+	if err := setup.assignUnit(p.job, p.process); err != nil {
+		return err
 	}
 	p.unassigned = false
 	if spec.Limits.IoPrioritySet {
-		if err := setProcessIoPriority(pi.Process, spec.Limits.IoPriority); err != nil {
-			return p, err
+		if err := setup.priority(p.process, spec.Limits.IoPriority); err != nil {
+			return err
 		}
 	}
-	if _, err := windows.ResumeThread(pi.Thread); err != nil {
-		return p, fmt.Errorf("ResumeThread: %w", err)
+	if _, err := setup.resume(p.thread); err != nil {
+		return fmt.Errorf("ResumeThread: %w", err)
 	}
-	if err := windows.CloseHandle(pi.Thread); err != nil {
-		return p, fmt.Errorf("close initial thread: %w", err)
+	if err := setup.closeThread(p.thread); err != nil {
+		return fmt.Errorf("close initial thread: %w", err)
 	}
 	p.thread = 0
-	return p, nil
+	return nil
 }
 
 func makeStdPipe() (r, w windows.Handle, err error) {
