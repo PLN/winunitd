@@ -185,9 +185,11 @@ type UserRecoveryStatus struct {
 // accepted owned process until cleanup releases it; it is not a fresh liveness
 // query. Native proxies report their separate query result. InvocationID is the
 // last unit-start UUID.
-// Resource metrics are not reported. CPUWeight/CPUQuota/IoPriority are the
+// Resource metrics are not reported. Legacy/native CPU controls and IoPriority are the
 // configured unit-file values when set (cheap; not a live Job Object query).
 type UnitStatus struct {
+	WindowsCPUWeight       uint32 `json:"windowsCPUWeight,omitempty"`
+	WindowsCPUQuota        uint32 `json:"windowsCPUQuota,omitempty"`
 	NativeObservationError string `json:"nativeObservationError,omitempty"`
 	LastOperationID        string `json:"lastOperationId,omitempty"`
 	// ConfigRevision is empty when no loaded definition is accepted. The

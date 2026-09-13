@@ -74,6 +74,12 @@ func JobLimitsFromSpec(svc *unit.ServiceSpec) JobLimits {
 	if svc.CPUQuotaSet {
 		lim.CPURate = unit.WindowsCPURate(svc.CPUQuota)
 	}
+	if svc.WindowsCPUWeight != 0 {
+		lim.CPUWeight = svc.WindowsCPUWeight
+	}
+	if svc.WindowsCPUQuota != 0 {
+		lim.CPURate = unit.WindowsCPURate(svc.WindowsCPUQuota)
+	}
 	if svc.IoPrioritySet {
 		lim.IoPriority = svc.IoPriority.WindowsIoPriority()
 		lim.IoPrioritySet = true

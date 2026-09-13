@@ -1,5 +1,23 @@
 # Unit semantics qualification
 
+## Explicit format-2 policies and migration
+
+The versioned [unit reference](UNIT-REFERENCE.md#format-selection-and-migration)
+specifies the default legacy boundary, format-2 OR/explicit-AND path predicates,
+native Windows CPU names and ranges, and literal executable argument rules.
+`winctl migrate` produces a validated preview or exclusively creates a new file;
+it preserves effective legacy path and CPU policy without rewriting installed
+units. Unsupported versions and ambiguous combinations are rejected.
+
+Required regressions cover conversion, invalid/bounded input and output,
+idempotence, exclusive destination creation, and legacy/new parser behavior.
+Ten local Windows race repetitions query actual process Job Object weights
+1/5/9 and hard caps 25%/100%, inspect status, and confirm process cleanup.
+The native filesystem regression verifies initial OR activation, a later rising
+edge, and retention of the armed policy after reloading an AND replacement.
+SYSTEM/headless-user qualification and exact-source hosted CI for this slice
+are still pending. These local checks do not close overall R3 acceptance.
+
 ## Native proxy inactivity observation
 
 Background SCM/task observations now deliver exact record/generation/stop-epoch

@@ -1,9 +1,49 @@
-# Unit reference for the public beta
+# Unit reference
 
 This documents the implemented format. It takes precedence over proposed syntax
 in Design v2. Existing core directives and argument parsing are compatibility
-commitments across the beta series. Files currently have no version marker;
-future incompatible semantics require an explicit migration boundary.
+commitments for unversioned files. `[Unit] FormatVersion=2` explicitly selects
+the path and Windows CPU policies below. Omitted `FormatVersion` and explicit
+`FormatVersion=1` retain the legacy policies. Unknown versions and duplicate
+version markers are errors, including repeated identical markers.
+
+## Format selection and migration
+
+| Policy | Unversioned / format 1 | Format 2 |
+| --- | --- | --- |
+| Repeated `PathExists` | All paths must exist (AND) | Any path may exist (OR) |
+| Explicit all-path predicate | `PathExists` | `PathExistsAll` |
+| CPU weight | `CPUWeight=1..10000`, mapped to native 1..9 | `WindowsCPUWeight=1..9`, exact native weight |
+| CPU quota | `CPUQuota=1%..100%` | `WindowsCPUQuota=1%..100%`, exact native hard cap |
+| Literal executable with repeated `ExecStartArg` / `ExecStopArg` | Spaced path must exist during verification | No filesystem-based argument disambiguation |
+
+Do not mix `PathExists` and `PathExistsAll` in one file. Format 2 rejects the
+legacy CPU names even when empty; format 1 rejects the new CPU names and
+`PathExistsAll`. Weight and quota remain mutually exclusive. Neither format
+changes the oneshot completion policy described below.
+
+Preview a conversion before replacing an installed file:
+
+```powershell
+winctl migrate --file .\app.service
+winctl migrate --file .\app.service --output .\converted\app.service
+winctl verify --file .\converted\app.service
+```
+
+The first command prints the converted file to stdout and changes to stderr.
+`--output` creates a new file exclusively and refuses an existing destination.
+The source stays unchanged; migration does not connect to a manager or reload
+units. Review and install the converted file, then reload explicitly. Active
+invocations and armed path watches keep their captured policy until stopped;
+the next activation uses the accepted replacement.
+
+Conversion preserves the effective legacy CPU mapping and renames `PathExists`
+to `PathExistsAll` to retain AND behavior. It removes overridden or ineffective
+CPU assignments, preserves comments and unrelated directives in order, and
+validates the result within the 64 KiB file limit. Changed continued assignments
+are flattened; converted legacy files use UTF-8/LF. An already valid format-2
+file is returned unchanged. Invalid input produces no output file. A write
+failure leaves the newly created destination for inspection and reports failure.
 
 ## File grammar
 
@@ -76,8 +116,9 @@ string; an empty argument is allowed, an empty executable is not.
 Repeated `ExecStartArg=` appends one literal trimmed argument per line, including
 an empty argument for an empty value. Quotes on those lines are literal. When
 used with a non-JSON `ExecStart`, that value is the entire unquoted executable
-path, with no inline arguments. A path containing spaces must exist when verified
-in this form; use JSON to avoid that filesystem-dependent ambiguity. JSON argv
+path, with no inline arguments. In format 1, a path containing spaces must exist
+when verified in this form; format 2 treats it literally without an existence
+check. JSON avoids that format-1 filesystem-dependent ambiguity. JSON argv
 may also be followed by `ExecStartArg` entries. Repeating `ExecStart` replaces its
 base value but does not clear the accumulated extra arguments.
 
@@ -95,6 +136,7 @@ and `%NAME%` are not substituted.
 | Section / directive | Behavior and default |
 | --- | --- |
 | Unit: `Description` | Display text; empty by default |
+| Unit: `FormatVersion` | 1 (default) or 2; selects the explicit policies above |
 | Unit: `Requires`, `Wants` | Pull dependencies into the start plan; Requires propagates start failure, Wants permits failure |
 | Unit: `After`, `Before` | Ordering only; does not pull in the named unit |
 | Unit: `PartOf` | Reverse stop/restart participation; restart restores active/activating members, leaving otherwise unselected idle members inactive |
@@ -144,7 +186,7 @@ with `yes`, it runs when the retained active unit is stopped.
 
 This changes the pre-feature beta default directly: omitted `RemainAfterExit`
 now means `no`. Use `yes` when completed work should remain active. There is no
-format-version switch or automatic unit rewrite. Other service types reject this
+format-version switch for this completion policy or automatic unit rewrite. Other service types reject this
 directive. Existing `Restart=always` behavior for oneshots remains supported;
 use `Restart=no` for on-demand maintenance that must not retry automatically.
 
@@ -162,7 +204,8 @@ outside the core beta guarantee; passing `verify` is not a qualification claim.
 | Service: `WatchdogEndpoint`, `WatchdogExpectedStatus` | TCP/HTTP loopback endpoint only; HTTP expected status defaults to 200 |
 | Service: `MemoryMax`, `ProcessLimit` | Job-wide memory commit cap (K/M/G sizes) and positive process count |
 | Service: `PriorityClass` | idle, below-normal, normal, above-normal, high; realtime rejected |
-| Service: `CPUWeight`, `CPUQuota` | Weight 1-10000 maps to Windows 1-9; quota 1%-100% is total-machine CPU; mutually exclusive |
+| Service: `CPUWeight`, `CPUQuota` | Format 1 only: weight 1-10000 maps to Windows 1-9; quota 1%-100%; mutually exclusive |
+| Service: `WindowsCPUWeight`, `WindowsCPUQuota` | Format 2 only: native weight 1-9 or integer quota 1%-100%; mutually exclusive; rejected for external proxies |
 | Service: `IoPriority` | idle, low, normal, high; failure applying it fails activation |
 | Service: `ServiceName` | Required by Type=scm; proxy for an existing system service, not its installation |
 | Service: `TaskName` | Required by Type=scheduled-task; proxy for an existing task, not its definition |
@@ -170,7 +213,7 @@ outside the core beta guarantee; passing `verify` is not a qualification claim.
 | Timer: `OnCalendar` | Repeatable calendar expressions, e.g. daily, Mon..Fri 03:00, or *-*-* 12:30:00 |
 | Timer: `Persistent` | Default no; persisted scheduling is experimental and not crash-safe delivery |
 | Timer: `Unit` | Activated unit; defaults to same basename .service |
-| Path: `PathChanged`, `PathExists` | Repeatable absolute paths; Changed is OR, Exists is AND; mixed modes can each activate |
+| Path: `PathChanged`, `PathExists`, `PathExistsAll` | Repeatable absolute paths; Changed is OR; Exists is AND in format 1 and OR in format 2; ExistsAll is format-2 AND; Changed and existence predicates can each activate |
 | Registry: `RegistryChanged` | Repeatable registry key/subtree triggers; HKLM for system scope, HKCU also available to user scope |
 | EventLog: `EventLogTrigger` | Repeatable Channel:EventID=number; user scope rejects System/Security |
 
@@ -178,6 +221,20 @@ Timers require at least one trigger. Path/registry/eventlog units always activat
 the neighboring same-basename `.service`; they do not accept `Unit=`. Empty
 trigger assignments are not list-reset syntax. Paths are non-recursive watches.
 Do not rely on persistent timers for lossless or exactly-once job delivery.
+
+Existence predicates activate at initial arm when satisfied and on an observed
+false-to-true transition. Further notifications do not restart an active
+companion. Separate file changes may be coalesced by Windows; this is a current
+predicate, not a durable event queue.
+
+Native CPU weight is a relative scheduling weight, not a reservation. Windows
+uses weight 5 by default. A quota sets `CpuRate` to the percentage multiplied by
+100 with the hard-cap flag. In a nested job with a CPU-controlled parent, the
+quota is relative to that parent's allocation; otherwise it is relative to the
+machine's CPU capacity. See Microsoft's
+[Job Object CPU rate control reference](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_cpu_rate_control_information).
+Status reports format-2 settings as `windowsCPUWeight` and `windowsCPUQuota`
+(integer percent), using the live invocation's captured settings when present.
 
 Proxies are system-manager only, do not own native process trees, and do not
 continuously observe the native service/task after startup. Some process-only
