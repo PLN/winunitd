@@ -62,3 +62,22 @@ and close both before worker dispatch and during blocked cleanup. The full
 uncached Windows race suite and vet pass. These are manager regression results;
 native artifact qualification and external SCM/task disappearance observation
 remain separate. This does not close the full R3.2/R3 milestone.
+
+The immutable Windows artifact at `e0a9ab78466096ea50f96365697201856e3676dd`
+subsequently passed ten native dependency cases on the disposable Enterprise LTSC
+baseline, split equally between genuine SYSTEM and a headless standard user.
+[Exact-source CI](https://github.com/PLN/winunitd/actions/runs/34725134485)
+passed before qualification and PR #157 merged the identical runtime tree.
+Peer exit stopped the bound dependent while the peer recovered and a Requires-only
+dependent stayed active. Reload preserved the running invocation's old binding;
+a replacement invocation used the new unbound policy. Both scopes also verified
+that repeatable oneshot completion stops its dependent, while retained completion
+keeps it active. The peer recovery/observation cases completed in 1.055–1.088 seconds.
+
+The same candidate passed eight cooperative/forced/oneshot stop cases, accepted
+user snapshot observation, and pending timer recovery after broker crash in
+2.689 seconds with the same activation identity and no replay on a second restart.
+Final disable-linger released the manager, helper and user profile and prevented
+resurrection. Raw scripts, results, artifact hashes, manifest and CI identity are
+retained privately. External SCM/task disappearance and the remaining full R3
+acceptance matrix are still open; these results do not qualify MSI servicing or R7.
