@@ -29,6 +29,8 @@ Notification
 [endpoints now follow invocation identity](R4-EVIDENCE.md#notification-isolation-across-managers-and-restarts);
 equal unit names under two standard users and SYSTEM, plus user-manager
 replacement and stale endpoint removal, passed native qualification.
+[User control during pending boot](R4-EVIDENCE.md#user-control-during-pending-boot)
+also passed native status/stop qualification under both standard users.
 The [constrained Windows test qualification](TEST-HARDENING.md#constrained-windows-acceptance)
 completes #112; R0.4's clean-input provisioning/session harness remains open.
 Planned milestones may have no implementation issues yet; their work packages

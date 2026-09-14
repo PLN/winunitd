@@ -134,18 +134,64 @@ race-enabled repeats with `GOMAXPROCS=1` and the full CI retry. The first lab
 fixture queried user control before READY during enabled-unit boot, when that
 listener was not yet available. It restored the guest but did not qualify the
 restart case. The accepted fixture sends READY before those control queries.
-User control availability during pending boot remains a separate follow-up.
+User control availability during pending boot is qualified [below](#user-control-during-pending-boot).
 
 This closes the reproduced notification-name collision and its stated restart
 cases. It does not close the remaining interactive/session matrix or R4 gate.
 Exact artifacts, scripts, observations and restoration evidence remain private.
+
+## User control during pending boot
+
+Source `fdf9d2f6ffabde1e836b079289a02b75071535be` passed
+[CI 34817416447](https://github.com/PLN/winunitd/actions/runs/34817416447).
+[PR #222](https://github.com/PLN/winunitd/pull/222) merged as
+`503f9beee972256ebf07257a119d0679e8876fca`; both trees are
+`7c6ddceb447eeb101cb53233f8e8d40d4eb6e1b2`.
+
+The user entry point previously waited for default/graphical-session boot
+activation before opening control. A notify unit could hide status and stop
+through its startup wait, or wait on its own unavailable control endpoint
+before READY. User control now opens and serves before activation, matching
+the SYSTEM path. Failure to bind prevents boot; a later listener failure
+cancels pending boot work.
+
+The local native regression reproduces the missing control pipe before the
+fix and verifies activating status plus completed native stop afterward. An
+occupied-endpoint regression verifies that no enabled workload starts when
+control cannot bind. Both passed five race-enabled repetitions, followed by
+the full local race suite and exact-source hosted CI.
+
+The verified immutable Windows artifact ran through the real SYSTEM broker
+on disposable Enterprise LTSC build 26100. Both genuine standard-user S4U
+managers recovered enabled notify workloads that queried their own control
+endpoint before READY. The equivalent preceding-source fixture could not
+complete this step. Each replacement also booted a second workload that
+never sent READY:
+
+| Pending boot case | Native observation |
+| --- | --- |
+| First standard user | Own control call succeeded before READY; status identified the activating native PID/invocation. Stop completed in 0.032s. |
+| Second standard user | The same checks passed; stop completed in 0.028s. |
+| Both completed stops | Native workload processes exited; units became inactive with no main PID or uncertain termination. Pending unit files and enablement records were removed. |
+
+Five notifying and two pending workload invocations, with 41 ordered ownership
+snapshots, also covered same-name notification isolation across SYSTEM/users,
+stale endpoint removal, unaffected peer/SYSTEM identities, access/environment
+checks, independent revocation and no resurrection. Final cleanup released
+all fixture processes/profiles/grants, removed the temporary account/profile,
+restored all five filesystem security descriptors and restored the original
+broker. Raw artifacts, scripts, observations and restoration evidence are
+retained privately.
+
+These are native headless boot/control/stop observations. Real interactive
+transitions, the rest of the session/profile matrix and the R4 gate remain open.
 
 ## Current implementation and remaining identity matrix
 
 | Work package | Delivered behavior and evidence | Remaining qualification |
 | --- | --- | --- |
 | R4.1 Launch context | Interactive `CreateProcessAsUser` launch disables handle inheritance, obtains the target environment/known folders and retains a Windows-owned profile handle. Suspended creation and job ownership precede execution. Earlier genuine SYSTEM-to-interactive launch/crash/logoff observations are recorded in the [admission contract](USER-ADMISSION.md#implementation-evidence-and-limits). | Complete environment/profile and session matrix, including unsupported/redirected/unavailable profiles and cross-session security boundaries. |
-| R4.2 User host | Protected explicit/delegated admission, per-SID overrides, session reconciliation, fresh-token recovery, bounded backoff and cancellation are implemented. [Policy/admission qualification](R2-EVIDENCE.md#user-policy-and-cleanup-admission-acceptance), [real S4U snapshot/recovery](R2-EVIDENCE.md#system-user-host-snapshot-qualification), [two concurrent headless users](#concurrent-local-headless-users) and [cross-manager notification isolation](#notification-isolation-across-managers-and-restarts) cover their stated scopes. Dedicated admission administration commands and installer controls remain separate work; protected file administration is available. | Multiple sessions for one SID, concurrent interactive users, rapid real transitions, policy changes during native launch and shutdown, and consolidated no-resurrection evidence. |
+| R4.2 User host | Protected explicit/delegated admission, per-SID overrides, session reconciliation, fresh-token recovery, bounded backoff and cancellation are implemented. [Policy/admission qualification](R2-EVIDENCE.md#user-policy-and-cleanup-admission-acceptance), [real S4U snapshot/recovery](R2-EVIDENCE.md#system-user-host-snapshot-qualification), [two concurrent headless users](#concurrent-local-headless-users), [cross-manager notification isolation](#notification-isolation-across-managers-and-restarts) and [control during pending boot](#user-control-during-pending-boot) cover their stated scopes. Dedicated admission administration commands and installer controls remain separate work; protected file administration is available. | Multiple sessions for one SID, concurrent interactive users, rapid real transitions, policy changes during native launch and shutdown, and consolidated no-resurrection evidence. |
 | R4.4 Security | Protected policy and pipe checks, bounded impersonation workers and reparse-point rejection are implemented. [Pipe failure handling](R2-EVIDENCE.md#september-12-pipe-impersonation-failure-handling), native launch regressions and [genuine cross-user/system pipe denial](#concurrent-local-headless-users) cover selected paths. | Interactive/filtered-token cases, privileged paths/reparse attacks and inherited-handle checks under the required identities. Same-caller or delayed-adapter tests alone do not establish those boundaries. |
 | R4.5 Linger | Headless local-account S4U launch uses `CreateProcessWithTokenW(LOGON_WITH_PROFILE)` and an exclusive private desktop helper. Windows owns profile lifetime; the old manual `LoadUserProfile` path is removed. [Production crash/recovery](R3-EVIDENCE.md#managed-bound-dependent-cleanup), [user-manager replacements](R2-EVIDENCE.md#system-user-host-snapshot-qualification) and [concurrent existing/first-created profiles](#concurrent-local-headless-users) verify profile/process cleanup in their scenarios. | Complete explicit mode/profile/session matrix and credential limitations. These observations do not qualify network authentication or domain/cloud/roaming profiles. Unqualified credential-store modes remain outside supported claims. |
 
