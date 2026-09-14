@@ -183,15 +183,53 @@ restored all five filesystem security descriptors and restored the original
 broker. Raw artifacts, scripts, observations and restoration evidence are
 retained privately.
 
-These are native headless boot/control/stop observations. Real interactive
-transitions, the rest of the session/profile matrix and the R4 gate remain open.
+These are native headless boot/control/stop observations. Interactive
+transitions are qualified below; the rest of the session/profile matrix and
+the R4 gate remain open.
+
+## Repeated real interactive transitions
+
+The same verified immutable `fdf9d2f` Windows artifact and successful
+[CI 34817416447](https://github.com/PLN/winunitd/actions/runs/34817416447)
+ran a separate disposable Enterprise LTSC build 26100 qualification through
+the real SYSTEM broker. Source, merge and equal-tree identities are recorded
+[above](#user-control-during-pending-boot). A fresh local standard account
+logged on through Windows; no simulated session events or headless token
+launches substituted for these transitions.
+
+Four genuine logons produced seven workload invocations and 122 ordered
+ownership snapshots. Every observed workload verified its native owner,
+nonadministrator token, nonzero session, native logon SID, target environment
+and Windows known folders, writable HKCU, and its own activating status before
+READY. Initial watchdog traffic continued beyond the 15-second interval.
+
+| Case | Native observation |
+| --- | --- |
+| Three real logoff/logon cycles | Enabled workload recovery took 6.004s, 4.986s and 5.540s. Each cycle produced a new Windows logon SID, manager instance and workload invocation under the same broker. Both old processes exited; sampled ownership never exceeded one manager. |
+| Admission revoke/re-enable | Revocation removed the user process tree while the Windows session/profile remained. Re-enabling admission launched a fresh manager and invocation in that same logon. |
+| Manager crash with pending notify boot | The replacement enabled workload exposed its activating status through its own control pipe while withholding READY. |
+| SCM stop during pending readiness | The service stopped in 0.805s and both pending native processes exited. Restart created a new broker identity and recovered enabled work in the existing Windows logon. |
+| Final logoff and restoration | The profile unloaded, no manager returned during the following 12-second observation, and all fixture processes, enablement, units, account and profile were removed. Original sign-in settings, admission, payload/SCM state and five filesystem security descriptors were restored. No linger grants remained. |
+
+Three incomplete fixture attempts remain in the private evidence: querying
+control before delayed automatic service startup, incorrect snapshot schema/
+zero-count assumptions, and a logon-SID query through a managed API that omits
+logon IDs. Each restored the guest. The accepted fixture waits for SCM Running,
+validates the applicable snapshot schema and obtains the logon SID natively.
+Exact scripts, artifacts, probes, snapshots and restoration results are retained.
+
+This qualifies repeated single-user interactive transitions, admission changes
+in a settled session and shutdown during workload readiness. It does not prove
+policy/shutdown races inside native manager creation, multiple sessions for one
+SID, concurrent interactive users, or unsupported/redirected/unavailable profile
+behavior. Those cases and the broader R4 gate remain open.
 
 ## Current implementation and remaining identity matrix
 
 | Work package | Delivered behavior and evidence | Remaining qualification |
 | --- | --- | --- |
 | R4.1 Launch context | Interactive `CreateProcessAsUser` launch disables handle inheritance, obtains the target environment/known folders and retains a Windows-owned profile handle. Suspended creation and job ownership precede execution. Earlier genuine SYSTEM-to-interactive launch/crash/logoff observations are recorded in the [admission contract](USER-ADMISSION.md#implementation-evidence-and-limits). | Complete environment/profile and session matrix, including unsupported/redirected/unavailable profiles and cross-session security boundaries. |
-| R4.2 User host | Protected explicit/delegated admission, per-SID overrides, session reconciliation, fresh-token recovery, bounded backoff and cancellation are implemented. [Policy/admission qualification](R2-EVIDENCE.md#user-policy-and-cleanup-admission-acceptance), [real S4U snapshot/recovery](R2-EVIDENCE.md#system-user-host-snapshot-qualification), [two concurrent headless users](#concurrent-local-headless-users), [cross-manager notification isolation](#notification-isolation-across-managers-and-restarts) and [control during pending boot](#user-control-during-pending-boot) cover their stated scopes. Dedicated admission administration commands and installer controls remain separate work; protected file administration is available. | Multiple sessions for one SID, concurrent interactive users, rapid real transitions, policy changes during native launch and shutdown, and consolidated no-resurrection evidence. |
+| R4.2 User host | Protected explicit/delegated admission, per-SID overrides, session reconciliation, fresh-token recovery, bounded backoff and cancellation are implemented. [Policy/admission qualification](R2-EVIDENCE.md#user-policy-and-cleanup-admission-acceptance), [real S4U snapshot/recovery](R2-EVIDENCE.md#system-user-host-snapshot-qualification), [two concurrent headless users](#concurrent-local-headless-users), [cross-manager notification isolation](#notification-isolation-across-managers-and-restarts), [control during pending boot](#user-control-during-pending-boot) and [repeated real interactive transitions](#repeated-real-interactive-transitions) cover their stated scopes. Dedicated admission administration commands and installer controls remain separate work; protected file administration is available. | Multiple sessions for one SID, concurrent interactive users, policy/shutdown races during native manager creation, and consolidated no-resurrection evidence across the remaining cases. |
 | R4.4 Security | Protected policy and pipe checks, bounded impersonation workers and reparse-point rejection are implemented. [Pipe failure handling](R2-EVIDENCE.md#september-12-pipe-impersonation-failure-handling), native launch regressions and [genuine cross-user/system pipe denial](#concurrent-local-headless-users) cover selected paths. | Interactive/filtered-token cases, privileged paths/reparse attacks and inherited-handle checks under the required identities. Same-caller or delayed-adapter tests alone do not establish those boundaries. |
 | R4.5 Linger | Headless local-account S4U launch uses `CreateProcessWithTokenW(LOGON_WITH_PROFILE)` and an exclusive private desktop helper. Windows owns profile lifetime; the old manual `LoadUserProfile` path is removed. [Production crash/recovery](R3-EVIDENCE.md#managed-bound-dependent-cleanup), [user-manager replacements](R2-EVIDENCE.md#system-user-host-snapshot-qualification) and [concurrent existing/first-created profiles](#concurrent-local-headless-users) verify profile/process cleanup in their scenarios. | Complete explicit mode/profile/session matrix and credential limitations. These observations do not qualify network authentication or domain/cloud/roaming profiles. Unqualified credential-store modes remain outside supported claims. |
 
