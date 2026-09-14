@@ -6,7 +6,7 @@ feedback while continuing the R0-R8 design and qualification work. Exhaustive
 Windows qualification and the seven-day soak remain separate acceptance
 requirements; beta publication does not close them.
 
-Status updated September 13, 2026. Implements [ROADMAP.md](../ROADMAP.md) and [Design v2](../DESIGN.md).
+Status updated September 14, 2026. Implements [ROADMAP.md](../ROADMAP.md) and [Design v2](../DESIGN.md).
 R2 and R3 have completed their technical acceptance. R0, R1 and R4-R6 remain
 **in progress**; R7-R8 remain planned. The packaging spike and public beta are
 already delivered. [Post-beta tracking](POST-BETA-TRACKING.md)
@@ -105,7 +105,7 @@ Status: in progress. Dependencies for closure: R2, R3. Outcome: bounded resource
 - [x] **R5.2 Delivery policy:** missed-calendar coalescing, interrupted retry with documented duplicate possibility, wall jumps, three-zone DST gaps/folds, simulated resume, real Windows boot/startup origins and active-service overlap passed the final 90-case matrix three times per SYSTEM/headless-user identity at `1594240`; [acceptance evidence and clock-model scope](R5-EVIDENCE.md#timer-delivery-acceptance). Mixed clock domains and half-hour folds are fixed. Physical sleep/hibernate notification delivery is not claimed by this policy qualification.
 - [x] **R5.3 Journaling:** line/queue/memory/file/retention bounds, visible loss/storage/eviction counters, continuation records and compatible mixed-version reading are qualified. Journal v4 preserves stream separately from unknown raw severity. The final 59-case matrix passed three times per constrained SYSTEM/headless-user identity at `a576ef2`; [acceptance, prior pressure measurements and limits](R5-EVIDENCE.md#journaling-acceptance). Combined operational stress remains R5.5.
 - [ ] **R5.4 Diagnostics/API:** provide durable daemon diagnostics and Windows event resources; expose operation/invocation/configuration identity, lifecycle/health/load state, last errors, restart budget, and timer/storage state in bounded responses.
-- [ ] **R5.5 Stress/fault tests:** combine burst triggers, slow readers, full disk, interrupted writes, large output, and repeated process failures under documented resource budgets.
+- [x] **R5.5 Stress/fault tests:** combined native path bursts, slow readers, injected partial writes, actual disk exhaustion, large output and repeated process failures passed nine cycles per fault variant per SYSTEM/headless-user identity at `3605c2c`. Status/stop/recovery and sampled memory/worker bounds passed; [measured budgets and scope](R5-EVIDENCE.md#combined-operational-stress-acceptance). R5.4 and overall R5 remain open.
 
 Exit gate: fault injection never silently treats corrupt persistence as an empty successful state; pending activations recover according to the documented policy. Bounded logging continues to drain children under storage failure, loss is observable, and control remains responsive under stress. Artifact evidence states numeric budgets and measured results. Event messages render on a clean Windows installation.
 

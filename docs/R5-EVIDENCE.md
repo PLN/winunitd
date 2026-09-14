@@ -1,10 +1,78 @@
 # Durable timers and diagnostics qualification
 
+## Combined operational stress acceptance
+
+R5.5 technical acceptance is complete as of September 14, 2026.
+[PR #218](https://github.com/PLN/winunitd/pull/218), source
+`3605c2c7978c4b10076558a76e5453fd051e60bc`, passed
+[exact-source Windows/Linux CI](https://github.com/PLN/winunitd/actions/runs/34813927032).
+Merge `136909debd9b9aa3d79b07fe18ab3d42b1225cbd` has the identical tested tree.
+R5.4 diagnostics/event resources and overall R5 remain open.
+
+Windows 11 Enterprise LTSC 26100.9168 qualification ran 19 selected tests three
+times per SYSTEM and headless standard-user identity, without skips. Each
+identity completed nine injected-fault and nine actual disk-full combined
+cycles, plus three standalone volume exhaustion/recovery cases. The suites took
+55.701 and 53.236 seconds. One logical CPU and test parallelism one were enforced;
+the outer runner used `GOMAXPROCS=1`, and each isolated combined manager process
+used `GOMAXPROCS=2` on that same CPU.
+
+The two combined cases, `TestManagerCombinedOperationalPressure` and
+`TestManagerCombinedDisposableDiskPressure`, overlap five noisy native children
+and one quiet child with a stalled writer, four retained slow journal scans,
+128 excess reader requests, 128 native path writes and four exit-7 processes.
+The noisy children emit 42.5 MiB across stdout/stderr, including unterminated
+fragments. Path notifications may coalesce; the companion still reaches its
+four-start limit and does not resurrect after disarming/stopping. Canceled
+readers retain bounded scan admission until the underlying scans return.
+
+The injected writer persists a 37-byte prefix and then returns disk-full errors.
+The native variant fills a separately validated volume of 65,990,656 bytes. Both
+retain cleanup ownership during failed persistence, account for dropped output,
+recover the intact first 64 KiB fragment, and resume quiet logging and reads.
+Storage is deliberately lossy under pressure; quiet output lost to actual disk
+exhaustion must have loss/error counters and a successful new capture after repair.
+
+| Measurement | Enforced fixture budget | SYSTEM maximum | Standard-user maximum |
+| --- | --- | --- | --- |
+| Manager status call | 1,000 ms | 11.691 ms | 27.419 ms |
+| Six concurrent stops while storage stalls | 5,000 ms | 1,053.758 ms | 1,064.887 ms |
+| Cleanup after restored storage | 20,000 ms | 205.930 ms | 254.639 ms |
+| Queue bytes / records | 16 MiB / 16,384 | 14,639,191 / 16,384 | 14,639,191 / 16,384 |
+| Heap increase over cycle baseline | 128 MiB | 39,151,992 bytes | 39,553,432 bytes |
+| Private committed increase | 128 MiB native; 768 MiB with race instrumentation | 45,391,872 bytes | 44,142,592 bytes |
+| Goroutine / handle / thread increase | 256 / 256 / 64 | 82 / 205 / 24 | 76 / 203 / 24 |
+
+Each invocation retains at most 4 MiB of queued data. Sampled resident maxima
+were 63,680,512 and 56,672,256 bytes, reported separately from heap/private commit.
+All manager subprocesses returned to three goroutines; repeated cycles stayed
+within 32 additional cached handles and four threads relative to the first
+completed cycle. These are sampled measurements and assertions for this fixture,
+not universal process-memory bounds. Status timings call the manager API directly;
+the separate control/maintenance saturation evidence remains applicable.
+
+The volume fixture truncates and flushes its owned filler, then verifies returned
+capacity before timing recovery. Earlier attempts showed zero available bytes
+for over 30 seconds after deletion alone; Windows may defer deletion until the
+[last file handle closes](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-deletefilew).
+Those failed attempts remain retained and are not acceptance evidence. No runtime
+timeout was relaxed and no runtime code changed.
+
+Final journal race tests passed locally in 64.469 seconds. Repeated local
+aggregate/combined pressure tests and the full Windows race suite also passed;
+final-source CI includes Windows/Linux race suites, vet, staticcheck,
+vulnerability checks and builds. Four exact-source test binaries and module
+hashes were verified. Fixture processes, profile and linger ownership were
+released, the disposable VHD detached, and the original hosting broker stayed
+running. Raw logs, measurements, artifact identities and cleanup records remain
+private. The binaries embed the candidate manager; this does not qualify a new
+broker installation, MSI servicing, physical power-loss durability or the pilot.
+
 ## Journaling acceptance
 
 R5.3 technical acceptance is complete as of September 13, 2026. The R2/R3
-dependencies are satisfied. R5.4 durable daemon diagnostics/event resources and
-R5.5 combined operational stress remain open; this does not close overall R5.
+dependencies are satisfied. R5.4 durable daemon diagnostics/event resources
+remain open; combined operational stress is accepted above. Overall R5 is open.
 
 The final changes qualify total historical retention and separate captured
 stream identity from severity:
@@ -47,12 +115,12 @@ repair. An overlarge initial index rejects writes visibly. Active or uncertain
 file owners are never evicted for space. Rotation progress is retained in memory,
 not an atomic multi-file power-loss transaction. Earlier resource measurements
 are sampled maxima for the documented fixture, not universal process-memory
-bounds. Full combined trigger/reader/disk/crash stress remains R5.5.
+bounds. Combined trigger/reader/disk/crash stress is accepted above under R5.5.
 
 ## Timer delivery acceptance
 
 R5.2 technical acceptance is complete as of September 13, 2026. The R2/R3
-dependencies are satisfied. R5.3 is accepted above; R5.4-R5.5 and the complete
+dependencies are satisfied. R5.3 and R5.5 are accepted above; R5.4 and the complete
 R5 gate remain open.
 The [delivery contract](OPERATIONS.md#timer-delivery-and-clock-domains) documents
 relative and wall-clock origins, civil-time gaps/folds and active-service overlap;
@@ -188,5 +256,5 @@ This delivers the R5.1 technical slice and issue #99's crash/failure-injection
 scope. The evidence covers process crashes and the tested local filesystem; it
 does not establish universal power-loss durability for controllers or remote
 filesystems. Delivery policy and journaling are now qualified above. Diagnostics,
-stress, installer state rollback and overall R5 acceptance remain
+installer state rollback and overall R5 acceptance remain
 separate gates; R2/R3 technical acceptance is complete.
