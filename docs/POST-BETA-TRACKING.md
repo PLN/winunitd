@@ -31,6 +31,10 @@ equal unit names under two standard users and SYSTEM, plus user-manager
 replacement and stale endpoint removal, passed native qualification.
 [User control during pending boot](R4-EVIDENCE.md#user-control-during-pending-boot)
 also passed native status/stop qualification under both standard users.
+[Repeated real interactive transitions](R4-EVIDENCE.md#repeated-real-interactive-transitions)
+add three logoff/logon cycles, admission revoke/re-enable and SCM stop during
+pending readiness. Multiple-session/user, native-launch race and profile cases
+remain open.
 The [constrained Windows test qualification](TEST-HARDENING.md#constrained-windows-acceptance)
 completes #112; R0.4's clean-input provisioning/session harness remains open.
 Planned milestones may have no implementation issues yet; their work packages
