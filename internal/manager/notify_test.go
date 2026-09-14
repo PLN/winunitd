@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/journal"
 	"github.com/PLN/winunitd/internal/notify"
 	"github.com/PLN/winunitd/internal/timers"
 	"github.com/PLN/winunitd/internal/unit"
@@ -364,6 +365,10 @@ WatchdogSec=30s
 		prefix := `\\.\pipe\winunitd\notify\`
 		if !strings.HasPrefix(pipe, prefix) {
 			t.Fatalf("Windows notify pipe = %q, want prefix %s", pipe, prefix)
+		}
+		invocation, ok := notify.LookupEnv(launch.specs()[0].Env, journal.EnvInvocationID)
+		if !ok || !journal.ValidInvocationID(invocation) || pipe != notify.PipeName(invocation) {
+			t.Fatal("notification address does not belong to the injected invocation")
 		}
 	} else if strings.HasPrefix(pipe, `\\.\pipe\`) {
 		t.Fatalf("Linux fake listener must not be a Windows pipe name: %q", pipe)
