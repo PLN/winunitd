@@ -22,6 +22,14 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if path := os.Getenv("WINUNITD_USER_PENDING_NOTIFY"); path != "" {
+		if err := os.WriteFile(path, []byte(fmt.Sprint(os.Getpid())), 0o600); err != nil {
+			os.Exit(1)
+		}
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
 	if path := os.Getenv("WINUNITD_USER_ONESHOT"); path != "" {
 		f, err := os.Create(path)
 		if err != nil {
