@@ -219,17 +219,60 @@ validates the applicable snapshot schema and obtains the logon SID natively.
 Exact scripts, artifacts, probes, snapshots and restoration results are retained.
 
 This qualifies repeated single-user interactive transitions, admission changes
-in a settled session and shutdown during workload readiness. It does not prove
-policy/shutdown races inside native manager creation, multiple sessions for one
-SID, concurrent interactive users, or unsupported/redirected/unavailable profile
-behavior. Those cases and the broader R4 gate remain open.
+in a settled session and shutdown during workload readiness. Multiple-session
+and concurrent-user cases are qualified below. Policy/shutdown races inside
+native manager creation and unsupported/redirected/unavailable profile behavior
+remain open.
+
+## Multiple real sessions and concurrent interactive users
+
+The same verified immutable `fdf9d2f` artifact and successful
+[CI 34817416447](https://github.com/PLN/winunitd/actions/runs/34817416447)
+passed a separate disposable Windows Server 2025 Desktop Experience build
+26100.32230 qualification with RD Session Host. The baseline passed native
+SYSTEM service, reboot and SCM-stop smoke before the session fixture. This
+adds R4 identity evidence; it does not expand the R6 installer OS matrix.
+
+Two fresh local standard accounts established four genuine Windows logons
+through certificate-pinned RDP connections. Native WTS tokens established each
+session's account SID, distinct logon SID and nonadministrator identity. Six
+notify workload invocations and 82 ordered broker snapshots verified manager
+and workload ownership, target profile/environment/known folders, writable
+HKCU, and activating status through the user's own control pipe before READY.
+Both users ran the same unit name with simultaneous watchdog traffic; initial,
+owner-session replacement and SCM-recovered workloads remained healthy beyond
+the 15-second watchdog interval.
+
+| Case | Native observation |
+| --- | --- |
+| Two sessions for one SID plus a second user | Three active Windows sessions with distinct logon SIDs retained exactly one manager per account. Adding the second session preserved the first account's manager and workload invocation. |
+| Disconnect and reconnect | The original Windows session became disconnected and then active with its logon SID, manager and invocation unchanged. Disconnecting the later non-owning session likewise preserved both users' work. |
+| Non-owning session logoff | Real logoff removed that session; the account's owning session and both users' manager/workload identities remained unchanged. |
+| Owning session logoff | After a new second session was established, logging off the manager's owning session produced a fresh manager and invocation in the surviving native logon in 6.036s. Both old processes exited; the other user's identities remained unchanged. |
+| Admission revoke/re-enable | Revocation removed the first user's managed processes without removing its Windows logon/profile or disturbing the second user. No manager returned during a further 16-second check. Re-enabling admission recovered work in the existing logon. |
+| Both-user SCM stop/restart | Stop completed in 0.270s; all four manager/workload processes exited. A fresh broker recovered enabled work for both existing Windows logons with new invocation identities. |
+| Final logoff and restoration | Both profiles unloaded and no manager returned during 16 seconds with the broker still running. Fixture accounts/profiles, units/enablement, credentials, client processes and scheduled tasks were removed. Admission, filesystem security descriptors, RDP/firewall settings, client network mode and both broker baselines were restored and verified. No linger grants or default routes remained. |
+
+Incomplete driver checks are retained with their corrections: a directly
+launched client inherited guest-agent output handles, an initial cardinality
+check kept a one-session default, and PowerShell unwrapped a single-item client
+selection. The owned client was disconnected before its completed execution
+and lock were released; later clients used isolated SYSTEM scheduled tasks.
+Corrected native checks passed before the fixture continued. Exact artifacts,
+client provenance, scripts, native probes, ordered snapshots and restoration
+results remain private.
+
+This qualifies the stated real multi-session and concurrent-user transitions.
+Policy/shutdown races inside native manager creation, the unsupported/redirected/
+unavailable profile matrix and the remaining security/linger checks still keep
+the broader R4 gate open.
 
 ## Current implementation and remaining identity matrix
 
 | Work package | Delivered behavior and evidence | Remaining qualification |
 | --- | --- | --- |
 | R4.1 Launch context | Interactive `CreateProcessAsUser` launch disables handle inheritance, obtains the target environment/known folders and retains a Windows-owned profile handle. Suspended creation and job ownership precede execution. Earlier genuine SYSTEM-to-interactive launch/crash/logoff observations are recorded in the [admission contract](USER-ADMISSION.md#implementation-evidence-and-limits). | Complete environment/profile and session matrix, including unsupported/redirected/unavailable profiles and cross-session security boundaries. |
-| R4.2 User host | Protected explicit/delegated admission, per-SID overrides, session reconciliation, fresh-token recovery, bounded backoff and cancellation are implemented. [Policy/admission qualification](R2-EVIDENCE.md#user-policy-and-cleanup-admission-acceptance), [real S4U snapshot/recovery](R2-EVIDENCE.md#system-user-host-snapshot-qualification), [two concurrent headless users](#concurrent-local-headless-users), [cross-manager notification isolation](#notification-isolation-across-managers-and-restarts), [control during pending boot](#user-control-during-pending-boot) and [repeated real interactive transitions](#repeated-real-interactive-transitions) cover their stated scopes. Dedicated admission administration commands and installer controls remain separate work; protected file administration is available. | Multiple sessions for one SID, concurrent interactive users, policy/shutdown races during native manager creation, and consolidated no-resurrection evidence across the remaining cases. |
+| R4.2 User host | Protected explicit/delegated admission, per-SID overrides, session reconciliation, fresh-token recovery, bounded backoff and cancellation are implemented. [Policy/admission qualification](R2-EVIDENCE.md#user-policy-and-cleanup-admission-acceptance), [real S4U snapshot/recovery](R2-EVIDENCE.md#system-user-host-snapshot-qualification), [two concurrent headless users](#concurrent-local-headless-users), [cross-manager notification isolation](#notification-isolation-across-managers-and-restarts), [control during pending boot](#user-control-during-pending-boot), [repeated real interactive transitions](#repeated-real-interactive-transitions) and [multiple real sessions/concurrent users](#multiple-real-sessions-and-concurrent-interactive-users) cover their stated scopes. Dedicated admission administration commands and installer controls remain separate work; protected file administration is available. | Policy/shutdown races during native manager creation and consolidated no-resurrection evidence across the remaining cases. |
 | R4.4 Security | Protected policy and pipe checks, bounded impersonation workers and reparse-point rejection are implemented. [Pipe failure handling](R2-EVIDENCE.md#september-12-pipe-impersonation-failure-handling), native launch regressions and [genuine cross-user/system pipe denial](#concurrent-local-headless-users) cover selected paths. | Interactive/filtered-token cases, privileged paths/reparse attacks and inherited-handle checks under the required identities. Same-caller or delayed-adapter tests alone do not establish those boundaries. |
 | R4.5 Linger | Headless local-account S4U launch uses `CreateProcessWithTokenW(LOGON_WITH_PROFILE)` and an exclusive private desktop helper. Windows owns profile lifetime; the old manual `LoadUserProfile` path is removed. [Production crash/recovery](R3-EVIDENCE.md#managed-bound-dependent-cleanup), [user-manager replacements](R2-EVIDENCE.md#system-user-host-snapshot-qualification) and [concurrent existing/first-created profiles](#concurrent-local-headless-users) verify profile/process cleanup in their scenarios. | Complete explicit mode/profile/session matrix and credential limitations. These observations do not qualify network authentication or domain/cloud/roaming profiles. Unqualified credential-store modes remain outside supported claims. |
 
