@@ -214,6 +214,12 @@ known-folder resolution. It does not inherit broker handles; Windows supplies
 default standard streams. Cross-session and profile-lifetime qualification remain
 under R4; these implementation details do not qualify headless linger.
 
+The user control listener opens before default and graphical-session target
+activation. Pending notify readiness leaves `status` and `stop` available,
+including control calls from the starting workload. Failure to open that
+listener prevents boot activation; a later listener failure cancels pending
+boot work.
+
 Each user manager watches WTS for its SID and starts builtin `graphical-session.target` while that SID has a suitable interactive session (Inactive when none, including linger-without-session). `RequiresInteractiveSession=yes` skips that unit when no suitable interactive session exists (SessionMode is not implemented).
 
 Administrators can `winctl enable-linger <user>` on the system pipe (not `--user`). Linger state is a tiny record at `<base-dir>\linger\<SID>` (not an NTFS symlink). At boot, lingering user managers start with no session. Last logoff does not kill a lingering manager; `disable-linger` kills it if no session remains. Non-admin enable-linger fails closed.

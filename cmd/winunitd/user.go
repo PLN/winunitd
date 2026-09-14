@@ -88,13 +88,6 @@ func serveUser(ctx context.Context, sid, baseDir string, stderr io.Writer) (serv
 		fmt.Fprintf(stderr, "winunitd: ordering cycle: %s\n", rel.Cycle)
 	}
 
-	if _, err := m.Boot(ctx); err != nil {
-		fmt.Fprintf(stderr, "winunitd: start %s: %v\n", manager.DefaultTarget, err)
-	}
-	if err := m.SyncGraphicalSession(ctx); err != nil {
-		fmt.Fprintf(stderr, "winunitd: %s: %v\n", manager.GraphicalSessionTarget, err)
-	}
-
 	lis, err := listenUserControl(sid)
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
@@ -102,9 +95,24 @@ func serveUser(ctx context.Context, sid, baseDir string, stderr io.Writer) (serv
 	defer lis.Close()
 	fmt.Fprintf(stderr, "winunitd: user manager %s loaded %d units, listening on %s\n", sid, rel.Loaded, lis.Addr())
 
+	serverErr := make(chan error, 1)
+	go func() {
+		err := protocol.Serve(ctx, lis, m, protocol.UserAuthorizer(sid))
+		cancel() // listener failure also cancels unfinished boot work
+		serverErr <- err
+	}()
+	// As in the SYSTEM manager, pending readiness must not hide status/stop
+	// or prevent a boot workload from consulting its own control endpoint.
+	if _, err := m.Boot(ctx); err != nil {
+		fmt.Fprintf(stderr, "winunitd: start %s: %v\n", manager.DefaultTarget, err)
+	}
+	if err := m.SyncGraphicalSession(ctx); err != nil {
+		fmt.Fprintf(stderr, "winunitd: %s: %v\n", manager.GraphicalSessionTarget, err)
+	}
+
 	ch := make(chan runtime.SessionChange, 32)
 	go runtime.WatchSessions(ctx, ch)
 	go m.WatchGraphicalSession(ctx, ch)
 
-	return protocol.Serve(ctx, lis, m, protocol.UserAuthorizer(sid))
+	return <-serverErr
 }
