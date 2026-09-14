@@ -103,6 +103,14 @@ func runDisposableVolumeRecovery(t *testing.T, root string, total uint64) {
 	if stats := s.CaptureStats(name); stats.DroppedRecords != 1 || stats.StorageErrors == 0 {
 		t.Fatalf("missing pressure accounting: %+v", stats)
 	}
+	// Deletion alone may defer space reclamation while Windows retains another
+	// handle. Truncate and flush our own file before measuring recovery.
+	if err := filler.Truncate(0); err != nil {
+		t.Fatal(err)
+	}
+	if err := filler.Sync(); err != nil {
+		t.Fatal(err)
+	}
 	if err := filler.Close(); err != nil {
 		t.Fatal(err)
 	}

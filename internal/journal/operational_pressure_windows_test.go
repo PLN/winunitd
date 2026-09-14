@@ -94,15 +94,21 @@ func (p *operationalPressure) fillVolume(t *testing.T) {
 	var once sync.Once
 	p.repair = func() {
 		once.Do(func() {
+			// Release allocation through the owned handle. Delete alone may
+			// defer reclamation until another Windows handle closes.
+			if err := filler.Truncate(0); err != nil {
+				t.Error(err)
+			}
+			if err := filler.Sync(); err != nil {
+				t.Error(err)
+			}
 			if err := filler.Close(); err != nil {
 				t.Error(err)
 			}
 			if err := os.Remove(filler.Name()); err != nil {
 				t.Error(err)
 			}
-			// Deletion can remain pending while Windows still owns an open
-			// handle (for example an on-access scanner). Establish restored
-			// capacity before measuring the manager's recovery deadline.
+			// Establish restored capacity before measuring manager recovery.
 			native, err := windows.UTF16PtrFromString(root)
 			if err != nil {
 				t.Error(err)

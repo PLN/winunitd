@@ -353,9 +353,6 @@ func runManagerPressureScenario(t *testing.T, combined, nativeDisk bool) pressur
 	if maxStatus > time.Second || stopDuration > 5*time.Second {
 		t.Fatalf("control stalled: status=%v stop=%v", maxStatus, stopDuration)
 	}
-	if peak.HeapBytes > baseline.HeapBytes+(128<<20) || peak.PrivateBytes > baseline.PrivateBytes+pressurePrivateBudget || peak.Goroutines > baseline.Goroutines+256 || peak.Handles > baseline.Handles+256 || peak.Threads > baseline.Threads+64 {
-		t.Fatalf("manager resource budget: baseline=%+v peak=%+v", baseline, peak)
-	}
 	unblock()
 	if operational != nil {
 		wait(func() bool { return store.CaptureStats(names[0]).StorageErrors > 0 })
@@ -424,6 +421,9 @@ func runManagerPressureScenario(t *testing.T, combined, nativeDisk bool) pressur
 	}{baseline, peak, after, queue.Bytes, queue.Records, dropped, float64(maxStatus) / float64(time.Millisecond), float64(stopDuration) / float64(time.Millisecond), float64(recoveryDuration) / float64(time.Millisecond)}
 	encoded, _ := json.Marshal(result)
 	t.Logf("manager pressure measurements: %s", encoded)
+	if peak.HeapBytes > baseline.HeapBytes+(128<<20) || peak.PrivateBytes > baseline.PrivateBytes+pressurePrivateBudget || peak.Goroutines > baseline.Goroutines+256 || peak.Handles > baseline.Handles+256 || peak.Threads > baseline.Threads+64 {
+		t.Fatalf("manager resource budget: baseline=%+v peak=%+v", baseline, peak)
+	}
 	if after.Goroutines > baseline.Goroutines+16 {
 		t.Fatalf("cleanup did not release workers: baseline=%+v after=%+v", baseline, after)
 	}
