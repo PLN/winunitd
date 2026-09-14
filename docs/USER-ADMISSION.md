@@ -57,7 +57,10 @@ Do not silently preserve all-user alpha behavior by populating an allowlist or s
 The broker retains at most 128 user-manager instances, including failed launches
 and uncertain cleanup. New users are rejected as busy at capacity; successful
 cleanup releases the slot. Existing users can still be stopped and reconciled.
-Interactive mappings and pending session requests are each capped at 4096.
+Interactive mappings, pending requests and retained session observations are
+each capped at 4096. Failed token/profile lookups consume observation capacity
+even when no SID can be admitted; logoff or an authoritative enumeration that
+removes the session releases it.
 The native WTS enumerator also rejects snapshots above 4096 entries. Oversized
 snapshots are errors and preserve previous ownership; they are never truncated
 and interpreted as logoffs.
@@ -70,6 +73,12 @@ per retained SID. A timed-out native stop remains owned per process, so the
 limits are implementation bounds; configurable quotas remain future work.
 
 ## User-manager recovery
+
+Failures before identity admission appear in the system snapshot's
+`userHost.sessionFailures`, independently of per-SID manager recovery. They
+identify token/profile lookup, invalid identity or delegated admission probing
+without granting ownership. [Snapshot limits and clearing rules](OPERATIONS.md#immutable-decision-snapshots)
+describe the bounded details and how recovery removes obsolete errors.
 
 Launch failures and rapid manager exits use per-SID exponential delays of 1, 2,
 4, 8, 16, 32 and at most 60 seconds. A minute of successful runtime resets the

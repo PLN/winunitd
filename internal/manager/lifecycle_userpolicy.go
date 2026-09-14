@@ -26,6 +26,9 @@ func (h *UserHost) acceptSessionRequest(sessionID uint32) (uint64, *userNativeWo
 	if h.closed {
 		return 0, nil, nil
 	}
+	if _, known := h.sessionObservations[sessionID]; !known && len(h.sessionObservations) >= runtime.MaxInteractiveSessions {
+		return 0, nil, fmt.Errorf("observed session admission exceeds limit %d", runtime.MaxInteractiveSessions)
+	}
 	if _, known := h.sessions[sessionID]; !known && len(h.sessions) >= runtime.MaxInteractiveSessions {
 		return 0, nil, fmt.Errorf("session admission exceeds limit %d", runtime.MaxInteractiveSessions)
 	}
@@ -40,6 +43,9 @@ func (h *UserHost) acceptSessionRequest(sessionID uint32) (uint64, *userNativeWo
 		return 0, nil, fmt.Errorf("session %d admission: %w", sessionID, err)
 	}
 	h.sessionRequests[sessionID] = request
+	if _, known := h.sessionObservations[sessionID]; !known {
+		h.sessionObservations[sessionID] = userSessionObservation{}
+	}
 	return request, work, nil
 }
 
@@ -71,6 +77,7 @@ func (h *UserHost) recordLogoff(sessionID uint32) string {
 	sid := h.sessions[sessionID]
 	delete(h.sessionRequests, sessionID)
 	delete(h.sessions, sessionID)
+	delete(h.sessionObservations, sessionID)
 	return sid
 }
 
@@ -85,6 +92,9 @@ func (h *UserHost) acceptAdmissionPolicy(p UserAdmission) ([]string, error) {
 	if !reflect.DeepEqual(p, h.admission) {
 		h.admission = p
 		h.admissionRevision++
+		for id := range h.sessionObservations {
+			h.sessionObservations[id] = userSessionObservation{}
+		}
 	}
 	var revoked []string
 	for sid := range h.bySID {

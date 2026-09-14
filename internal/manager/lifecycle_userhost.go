@@ -50,6 +50,16 @@ func (h *UserHost) acceptUserSessions(ids []uint32, epoch, revision uint64) (map
 			delete(h.sessionRequests, id)
 		}
 	}
+	for id := range h.sessionObservations {
+		if _, present := requests[id]; !present {
+			delete(h.sessionObservations, id)
+		}
+	}
+	for id := range requests {
+		if _, known := h.sessionObservations[id]; !known {
+			h.sessionObservations[id] = userSessionObservation{}
+		}
+	}
 	// Include retained failed cleanup so a later pass retries it even though
 	// the original session mapping was already removed.
 	sids := make([]string, 0, len(h.bySID))
@@ -182,6 +192,7 @@ func (h *UserHost) sealShutdownLocked() {
 	}
 	h.sessions = make(map[uint32]string)
 	h.sessionRequests = make(map[uint32]uint64)
+	h.sessionObservations = make(map[uint32]userSessionObservation)
 }
 
 // Caller holds h.mu. Even pre-launch token failures receive a distinct attempt ID.
