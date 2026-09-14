@@ -36,7 +36,10 @@ add three logoff/logon cycles, admission revoke/re-enable and SCM stop during
 pending readiness. [Multiple real sessions and concurrent interactive users](R4-EVIDENCE.md#multiple-real-sessions-and-concurrent-interactive-users)
 also passed one-manager-per-SID, disconnect/logoff, owner-session recovery and
 both-user SCM recovery checks. Admission changes preserved the other user's
-work. Native-launch race and profile cases remain open.
+work. [Selected profile failures and redirection](R4-EVIDENCE.md#interactive-profile-failures-and-redirection)
+now verify visible session failures, hive recovery, local known-folder overrides
+and delegated UNC/reparse rejection without disturbing a peer. Native-launch
+races and the remaining security/linger matrix keep R4 open.
 The [constrained Windows test qualification](TEST-HARDENING.md#constrained-windows-acceptance)
 completes #112; R0.4's clean-input provisioning/session harness remains open.
 Planned milestones may have no implementation issues yet; their work packages
