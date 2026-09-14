@@ -1,5 +1,61 @@
 package journal
 
+import (
+	"io"
+	"sync"
+)
+
+// OpenOperationalPressureTestStore prepares independently stalled readers.
+// ArmOperationalPressureFault adds the write fault after manager admission.
+func OpenOperationalPressureTestStore(dir string, onScan func()) (*Store, error) {
+	s, err := Open(dir)
+	if err != nil {
+		return nil, err
+	}
+	if err = s.append(Entry{Unit: "reader.service", Message: "before fault"}); err == nil {
+		err = s.syncUnit("reader.service")
+	}
+	if err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	s.onScan = onScan
+	return s, nil
+}
+
+func (s *Store) ArmOperationalPressureFault(onWrite func(), nativeDisk bool) (func(), error) {
+	const name = "pressure-0.service"
+	if err := s.append(Entry{Unit: name, Message: "before fault"}); err != nil {
+		return nil, err
+	}
+	if err := s.syncUnit(name); err != nil {
+		return nil, err
+	}
+	u := s.fileExisting(name)
+	u.mu.Lock()
+	if nativeDisk {
+		u.w = &recordBuffer{writer: &pressureWriteGate{writer: u.f, enter: onWrite}}
+		u.mu.Unlock()
+		return func() {}, nil
+	}
+	w := &recoveringWriter{file: u.f, remaining: 37}
+	w.fail.Store(true)
+	u.w = &recordBuffer{writer: &pressureWriteGate{writer: w, enter: onWrite}}
+	u.mu.Unlock()
+	return func() { w.fail.Store(false) }, nil
+}
+
+type pressureWriteGate struct {
+	writer io.Writer
+	enter  func()
+	once   sync.Once
+}
+
+func (w *pressureWriteGate) Write(p []byte) (int, error) {
+	w.once.Do(w.enter)
+	return w.writer.Write(p)
+}
+
 func OpenRetentionTestStore(dir string, maxFiles int) (*Store, error) {
 	s, err := Open(dir)
 	if err == nil {

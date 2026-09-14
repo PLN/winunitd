@@ -16,6 +16,13 @@ import (
 // This opt-in test fills only a separately prepared, tiny disposable volume.
 // Ordinary test runs skip it; a skip is not disk-pressure qualification.
 func TestDisposableVolumeDiskFullRecovery(t *testing.T) {
+	root, total := DisposableTestVolume(t)
+	runDisposableVolumeRecovery(t, root, total)
+}
+
+// DisposableTestVolume is exported only to the external journal test package.
+func DisposableTestVolume(t *testing.T) (string, uint64) {
+	t.Helper()
 	root := os.Getenv("WINUNITD_TEST_JOURNAL_VOLUME")
 	if root == "" {
 		t.Skip("requires an explicitly prepared disposable volume")
@@ -39,6 +46,10 @@ func TestDisposableVolumeDiskFullRecovery(t *testing.T) {
 	if windows.UTF16ToString(label[:]) != "winunitd-test" || total < 16<<20 || total > 128<<20 {
 		t.Fatal("fixture requires a 16-128 MiB volume labeled winunitd-test")
 	}
+	return root, total
+}
+
+func runDisposableVolumeRecovery(t *testing.T, root string, total uint64) {
 	dir, err := os.MkdirTemp(root, "winunitd-diskfull-")
 	if err != nil {
 		t.Fatal(err)
@@ -91,6 +102,14 @@ func TestDisposableVolumeDiskFullRecovery(t *testing.T) {
 	}
 	if stats := s.CaptureStats(name); stats.DroppedRecords != 1 || stats.StorageErrors == 0 {
 		t.Fatalf("missing pressure accounting: %+v", stats)
+	}
+	// Deletion alone may defer space reclamation while Windows retains another
+	// handle. Truncate and flush our own file before measuring recovery.
+	if err := filler.Truncate(0); err != nil {
+		t.Fatal(err)
+	}
+	if err := filler.Sync(); err != nil {
+		t.Fatal(err)
 	}
 	if err := filler.Close(); err != nil {
 		t.Fatal(err)

@@ -28,6 +28,24 @@ func TestManagerPressureChild(t *testing.T) {
 	if mode == "" {
 		t.Skip("isolated child helper")
 	}
+	if mode == "crash" {
+		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("crash-%d", os.Getpid())), []byte("exit 7"), 0600); err != nil {
+			os.Exit(6)
+		}
+		os.Exit(7)
+	}
+	if os.Getenv("WINUNITD_PRESSURE_GATE") == "1" {
+		deadline := time.Now().Add(20 * time.Second)
+		for {
+			if _, err := os.Stat(filepath.Join(root, "output-go")); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				os.Exit(8)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
 	if mode == "quiet" {
 		if _, err := io.WriteString(os.Stdout, "quiet manager pressure\n"); err != nil {
 			os.Exit(2)
@@ -147,6 +165,10 @@ func TestManagerAggregateCapturePressure(t *testing.T) {
 }
 
 func runManagerPressureCycle(t *testing.T) pressureMemory {
+	return runManagerPressureScenario(t, false, false)
+}
+
+func runManagerPressureScenario(t *testing.T, combined, nativeDisk bool) pressureMemory {
 	base := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(base, "units"), 0700); err != nil {
 		t.Fatal(err)
@@ -165,6 +187,9 @@ func runManagerPressureCycle(t *testing.T) pressureMemory {
 			name, mode = "pressure-quiet.service", "quiet"
 		}
 		body := fmt.Sprintf("[Service]\nExecStart=%s\nExecStartArg=-test.run=^TestManagerPressureChild$\nEnvironment=WINUNITD_PRESSURE_MODE=%s\nEnvironment=\"WINUNITD_PRESSURE_ROOT=%s\"\nEnvironment=WINUNITD_PRESSURE_NAME=%s\nTimeoutStartSec=20s\nTimeoutStopSec=1s\n", exe, mode, base, name)
+		if combined {
+			body += "Environment=WINUNITD_PRESSURE_GATE=1\n"
+		}
 		if err := os.WriteFile(filepath.Join(base, "units", name), []byte(body), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -173,10 +198,25 @@ func runManagerPressureCycle(t *testing.T) pressureMemory {
 	blocked, release := make(chan struct{}), make(chan struct{})
 	var entered, released sync.Once
 	unblock := func() { released.Do(func() { close(release) }) }
+	var operational *operationalPressure
+	if combined {
+		operational = prepareOperationalPressure(t, base, exe)
+		if nativeDisk {
+			operational.prepareVolume(t)
+		}
+	}
 	var store *journal.Store
+	stall := func() { entered.Do(func() { close(blocked); <-release }) }
 	m, err := manager.New(manager.Config{BaseDir: base, JournalOpen: func(dir string) (*journal.Store, error) {
 		var openErr error
-		store, openErr = journal.OpenPressureTestStore(dir, func() { entered.Do(func() { close(blocked); <-release }) })
+		if operational != nil {
+			if operational.journalDir != "" {
+				dir = operational.journalDir
+			}
+			store, openErr = journal.OpenOperationalPressureTestStore(dir, operational.scan)
+		} else {
+			store, openErr = journal.OpenPressureTestStore(dir, stall)
+		}
 		return store, openErr
 	}})
 	if err != nil {
@@ -184,6 +224,9 @@ func runManagerPressureCycle(t *testing.T) pressureMemory {
 	}
 	t.Cleanup(func() {
 		unblock()
+		if operational != nil {
+			operational.release()
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		if err := m.Shutdown(ctx); err != nil {
@@ -200,6 +243,9 @@ func runManagerPressureCycle(t *testing.T) pressureMemory {
 	baseline, err := samplePressureMemory()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if operational != nil {
+		operational.startReaders(t, store)
 	}
 	peak := baseline
 	var maxStatus time.Duration
@@ -236,6 +282,18 @@ func runManagerPressureCycle(t *testing.T) pressureMemory {
 			t.Fatal(err)
 		}
 	}
+	if operational != nil {
+		operational.repair, err = store.ArmOperationalPressureFault(stall, nativeDisk)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if nativeDisk {
+			operational.fillVolume(t)
+		}
+		if err := os.WriteFile(filepath.Join(base, "output-go"), []byte("go"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	wait(func() bool {
 		for _, name := range names[:5] {
 			if _, err := os.Stat(filepath.Join(base, name+".ready")); err != nil {
@@ -244,11 +302,14 @@ func runManagerPressureCycle(t *testing.T) pressureMemory {
 		}
 		return true
 	})
-	select {
-	case <-blocked:
-	default:
-		t.Fatal("storage did not stall")
-	}
+	wait(func() bool {
+		select {
+		case <-blocked:
+			return true
+		default:
+			return false
+		}
+	})
 	quiet := names[5]
 	if _, err := m.Start(context.Background(), quiet); err != nil {
 		t.Fatal(err)
@@ -270,6 +331,9 @@ func runManagerPressureCycle(t *testing.T) pressureMemory {
 	if dropped == 0 || store.CaptureStats(quiet).DroppedRecords != 0 {
 		t.Fatal("loss accounting or quiet fairness failed")
 	}
+	if operational != nil {
+		operational.burstAndFail(t, m, wait)
+	}
 	stops := make(chan error, len(names))
 	stopStart := time.Now()
 	for _, name := range names {
@@ -289,10 +353,11 @@ func runManagerPressureCycle(t *testing.T) pressureMemory {
 	if maxStatus > time.Second || stopDuration > 5*time.Second {
 		t.Fatalf("control stalled: status=%v stop=%v", maxStatus, stopDuration)
 	}
-	if peak.HeapBytes > baseline.HeapBytes+(128<<20) || peak.PrivateBytes > baseline.PrivateBytes+pressurePrivateBudget || peak.Goroutines > baseline.Goroutines+256 || peak.Handles > baseline.Handles+256 || peak.Threads > baseline.Threads+64 {
-		t.Fatalf("manager resource budget: baseline=%+v peak=%+v", baseline, peak)
-	}
 	unblock()
+	if operational != nil {
+		wait(func() bool { return store.CaptureStats(names[0]).StorageErrors > 0 })
+		operational.release()
+	}
 	// Releasing storage does not synchronously persist the queued backlog.
 	// Each stop retains its one-second budget; retry retained cleanup within a
 	// separate bounded recovery phase instead of assuming one retry can drain it.
@@ -312,7 +377,25 @@ func runManagerPressureCycle(t *testing.T) pressureMemory {
 		}
 	}
 	recoveryDuration := time.Since(recoveryStart)
+	if operational != nil {
+		operational.verifyRecovery(t, store, m, wait)
+	}
 	logs, err := m.Logs(protocol.LogsParams{Unit: quiet})
+	if nativeDisk && err == nil && len(logs.Entries) == 0 {
+		if store.CaptureStats(quiet).DroppedRecords == 0 || store.CaptureStats(quiet).StorageErrors == 0 {
+			t.Fatal("native disk-full loss was not reported for quiet output")
+		}
+		if _, err := m.Start(context.Background(), quiet); err != nil {
+			t.Fatal(err)
+		}
+		wait(func() bool {
+			logs, err = m.Logs(protocol.LogsParams{Unit: quiet})
+			return err == nil && len(logs.Entries) == 1
+		})
+		if _, err := m.Stop(quiet); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err != nil || len(logs.Entries) != 1 || logs.Entries[0].Message != "quiet manager pressure" {
 		t.Fatalf("quiet output after recovery: %+v, %v", logs, err)
 	}
@@ -338,6 +421,9 @@ func runManagerPressureCycle(t *testing.T) pressureMemory {
 	}{baseline, peak, after, queue.Bytes, queue.Records, dropped, float64(maxStatus) / float64(time.Millisecond), float64(stopDuration) / float64(time.Millisecond), float64(recoveryDuration) / float64(time.Millisecond)}
 	encoded, _ := json.Marshal(result)
 	t.Logf("manager pressure measurements: %s", encoded)
+	if peak.HeapBytes > baseline.HeapBytes+(128<<20) || peak.PrivateBytes > baseline.PrivateBytes+pressurePrivateBudget || peak.Goroutines > baseline.Goroutines+256 || peak.Handles > baseline.Handles+256 || peak.Threads > baseline.Threads+64 {
+		t.Fatalf("manager resource budget: baseline=%+v peak=%+v", baseline, peak)
+	}
 	if after.Goroutines > baseline.Goroutines+16 {
 		t.Fatalf("cleanup did not release workers: baseline=%+v after=%+v", baseline, after)
 	}
