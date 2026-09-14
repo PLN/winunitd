@@ -135,7 +135,7 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 	var nrt *notifyRuntime
 	if svc.NeedsNotifyPipe() {
 		var err error
-		nrt, err = m.openNotify(name)
+		nrt, err = m.openNotify(name, inv)
 		if err != nil {
 			return errors.Join(err, m.disposeNotify(nrt))
 		}

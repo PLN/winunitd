@@ -58,8 +58,8 @@ type Config struct {
 	// RequiresInteractiveSession=yes units skip when headless, and so
 	// graphical-session.target can be driven from SIDHasInteractiveSession.
 	HasInteractiveSession func() bool
-	// NotifyListen opens the per-unit notify pipe. Nil uses notify.Listen
-	// (named pipe on Windows, fake TCP on Linux).
+	// NotifyListen receives the invocation ID and opens its notify pipe.
+	// Nil uses notify.Listen (named pipe on Windows, fake TCP on Linux).
 	NotifyListen notify.ListenFunc
 	// NotifySID is the unit-process user SID for the notify pipe DACL.
 	// Empty uses the current process user on Windows.

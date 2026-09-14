@@ -32,7 +32,7 @@ type notifyRuntime struct {
 	closed    bool
 }
 
-func (m *Manager) openNotify(name string) (*notifyRuntime, error) {
+func (m *Manager) openNotify(name, invocation string) (*notifyRuntime, error) {
 	listen := m.cfg.NotifyListen
 	if listen == nil {
 		sid := m.cfg.NotifySID
@@ -40,7 +40,9 @@ func (m *Manager) openNotify(name string) (*notifyRuntime, error) {
 			return notify.Listen(id, sid)
 		}
 	}
-	lis, err := listen(name)
+	// The logical unit name is shared across managers and across restarts.
+	// Bind the address to this invocation; keep name only for owned cleanup.
+	lis, err := listen(invocation)
 	if err != nil {
 		if lis != nil {
 			return &notifyRuntime{name: name, lis: &notifyCloseListener{Listener: lis}}, err

@@ -1,10 +1,10 @@
 // Package notify is the native readiness/watchdog protocol (DESIGN.md §9,
 // §19.1, §79–80).
 //
-// Units send sd_notify-shaped newline KEY=VALUE messages on a per-unit
+// Units send sd_notify-shaped newline KEY=VALUE messages on a per-invocation
 // named pipe:
 //
-//	\\.\pipe\winunitd\notify\<unit-id>
+//	\\.\pipe\winunitd\notify\<invocation-id>
 //
 // Before writing, clients read the server's "WINUNITD-NOTIFY/1\n" acceptance
 // banner. This prevents a short-lived Windows client from disconnecting before
@@ -17,8 +17,9 @@
 //	WINUNIT_NOTIFY_PIPE
 //	WINUNIT_WATCHDOG_USEC
 //
-// WINUNIT_INVOCATION_ID is injected by the manager on each start; the
-// notify pipe name stays the unit name.
+// WINUNIT_INVOCATION_ID is injected by the manager on each start. The notify
+// endpoint follows that invocation, isolating equal names across managers and
+// old endpoints after restart. Clients use WINUNIT_NOTIFY_PIPE as supplied.
 //
 // The parser and fake TCP listener are GOOS-independent so protocol tests
 // pass on Linux. Production listen/dial use a Windows named pipe

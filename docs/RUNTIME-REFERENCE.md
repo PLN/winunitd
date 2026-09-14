@@ -122,7 +122,7 @@ Each unit start (including `Restart=` relaunch) gets a new UUID. `winctl status`
 
 ### Notify and watchdog
 
-`Type=notify` stays activating until the unit writes `READY=1` on `WINUNIT_NOTIFY_PIPE` (`\\.\pipe\winunitd\notify\<unit>`), or `TimeoutStartSec` fires. `NotifyAccess=main` only. Scripts send `READY` / `WATCHDOG` / `STATUS` with `winunit-notify.exe`.
+`Type=notify` stays activating until the unit writes `READY=1` on `WINUNIT_NOTIFY_PIPE` (`\\.\pipe\winunitd\notify\<invocation-id>`), or `TimeoutStartSec` fires. Each invocation gets a distinct endpoint, including identical unit names in different managers and restarts of the same unit. Clients must use the injected address rather than derive or cache one from a unit name. `NotifyAccess=main` only. Scripts send `READY` / `WATCHDOG` / `STATUS` with `winunit-notify.exe`.
 
 The current notify transport sends a `WINUNITD-NOTIFY/1` line from the server before the client writes its payload. Clients must read this acceptance banner before sending and closing, preventing a short-lived Windows pipe connection from being discarded before acceptance. The banner is not a readiness acknowledgement. Upgrade `winunit-notify.exe` and the daemon together: older daemons do not send it, so the current helper will time out against them. Custom clients should adopt the handshake; legacy write-only clients retain the early-disconnect risk.
 

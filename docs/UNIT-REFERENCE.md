@@ -264,7 +264,9 @@ directives on proxies produce ignored-setting warnings; read verifier warnings.
 See [runtime details](RUNTIME-REFERENCE.md#proxy-unit-types) for those restrictions.
 
 Notify clients must consume the `WINUNITD-NOTIFY/1` acceptance banner before
-sending. Upgrade the daemon and notify helper together. Readiness and heartbeat
+sending and use the current invocation's injected `WINUNIT_NOTIFY_PIPE` address.
+Equal unit names in different managers and replacement invocations have distinct
+endpoints. Upgrade the daemon and notify helper together. Readiness and heartbeat
 details are in [the notify documentation](RUNTIME-REFERENCE.md#notify-and-watchdog).
 
 ## Recovery delay and backoff

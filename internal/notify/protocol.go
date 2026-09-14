@@ -26,8 +26,8 @@ type Message struct {
 	HasPID   bool
 }
 
-// PipeName is \\.\pipe\winunitd\notify\<unit-id> (unit name; P6 keeps
-// this and injects WINUNIT_INVOCATION_ID instead).
+// PipeName formats an opaque endpoint ID. Managers pass the invocation ID,
+// so identical unit names and replacement invocations have separate endpoints.
 func PipeName(unitID string) string {
 	return pipePrefix + sanitizeUnitID(unitID)
 }
