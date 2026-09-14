@@ -50,22 +50,34 @@ type NativeProxyStatus struct {
 	ManagesDefinition bool     `json:"managesDefinition"`
 }
 
-// UserHostSnapshot contains accepted ownership, not queried process liveness.
+// UserHostSnapshot contains accepted ownership and completed session failures,
+// not freshly queried process liveness.
 // Its host-scoped instance IDs survive cleanup uncertainty and change on launch.
 type UserHostSnapshot struct {
-	HostID              string                `json:"hostId"`
-	State               string                `json:"state"`
-	AdmissionRevision   uint64                `json:"admissionRevision"`
-	LingerRevision      uint64                `json:"lingerRevision"`
-	SessionEpoch        uint64                `json:"sessionEpoch"`
-	NativeWork          int                   `json:"nativeWork"`
-	PendingTokenCleanup int                   `json:"pendingTokenCleanup"`
-	Lingering           int                   `json:"lingering"`
-	LingerState         string                `json:"lingerState,omitempty"`
-	LingerError         string                `json:"lingerError,omitempty"`
-	Instances           []UserManagerStatus   `json:"instances"`
-	Recovery            []UserRecoveryStatus  `json:"recovery"`
-	Sessions            []UserSessionSnapshot `json:"sessions"`
+	HostID                 string                `json:"hostId"`
+	State                  string                `json:"state"`
+	AdmissionRevision      uint64                `json:"admissionRevision"`
+	LingerRevision         uint64                `json:"lingerRevision"`
+	SessionEpoch           uint64                `json:"sessionEpoch"`
+	NativeWork             int                   `json:"nativeWork"`
+	PendingTokenCleanup    int                   `json:"pendingTokenCleanup"`
+	Lingering              int                   `json:"lingering"`
+	LingerState            string                `json:"lingerState,omitempty"`
+	LingerError            string                `json:"lingerError,omitempty"`
+	Instances              []UserManagerStatus   `json:"instances"`
+	Recovery               []UserRecoveryStatus  `json:"recovery"`
+	Sessions               []UserSessionSnapshot `json:"sessions"`
+	SessionFailures        []UserSessionFailure  `json:"sessionFailures,omitempty"`
+	OmittedSessionFailures int                   `json:"omittedSessionFailures,omitempty"`
+}
+
+// UserSessionFailure is a completed token/profile or admission observation,
+// not an accepted user-manager identity or permission to launch.
+type UserSessionFailure struct {
+	SessionID uint32 `json:"sessionId"`
+	SID       string `json:"sid,omitempty"`
+	Stage     string `json:"stage"`
+	Error     string `json:"error"`
 }
 
 type UserSessionSnapshot struct {

@@ -212,6 +212,8 @@ or repair storage, then retry cleanup; future output resumes after recovery.
 Rotation progress is in-memory, not a transactional on-disk manifest. This does
 not promise atomic multi-file rotation across daemon crash or power loss.
 
+### Immutable decision snapshots
+
 `winctl snapshot` (also `--user`) prints a JSON copy of one manager's accepted
 unit states and active operations, captured together under its decision lock.
 It includes manager identity, capture sequence/time, machine counts, configuration
@@ -234,17 +236,29 @@ linger revisions. Failed cleanup retains that identity and PID; a replacement
 gets a new ID. The host nonce distinguishes process lifetimes. These optional
 fields also appear in ordinary user-instance/recovery status.
 
+`userHost.sessionFailures` also reports completed failures before identity
+admission: `token-profile` lookup, invalid token `identity`, or an
+`admission-probe` failure. Each entry identifies the Windows session and carries
+the native SID only when a valid token supplied it. These records grant no
+admission and do not count as user managers. Successful retry, logoff, removal
+by authoritative session enumeration, changed admission policy and shutdown
+clear obsolete errors; delayed results from an older request or policy cannot
+restore them. The latest completed failure remains visible while a retry runs.
+Up to 128 details are returned in session-ID order, each capped at 256 UTF-8
+bytes. `omittedSessionFailures` reports any additional retained failures.
+
 Snapshot performs no native queries or worker dispatch. It includes accepted
 native-proxy inactivity and observation errors, plus the pending query count.
 It excludes fresh journal, timer-engine and native-proxy observations; ordinary
 status commands provide those independent views. Its armed revision covers the timer or
 watch arm accepted in the manager record. Completed operation
 history remains available through `operation ID`. A snapshot exceeding 1024 units,
-128 active operations or 512 KiB fails explicitly; it never truncates a complete
-view into apparent success. Use individual status/operation queries above those
-bounds. User-host input additionally allows at most 128 instance/linger records,
-4096 entries in each accepted-session/pending-request map, and eight native-work
-slots. All user-host text is included in the same 512 KiB response allowance.
+128 active operations or 512 KiB fails explicitly; it never truncates the
+ownership/operation view into apparent success. Use individual status/operation
+queries above those bounds. User-host input additionally allows at most 128
+instance/linger records, 4096 entries in each accepted-session, pending-request
+and observed-session map, and eight native-work slots. All user-host text is
+included in the same 512 KiB response allowance.
 Snapshot captures do not retain additional history in the manager.
 
 User-native work has four ordinary admission slots and one reserved slot each

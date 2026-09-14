@@ -60,6 +60,7 @@ type UserHost struct {
 	bySID                map[string]*userInstance
 	sessions             map[uint32]string // session ID -> SID
 	sessionRequests      map[uint32]uint64
+	sessionObservations  map[uint32]userSessionObservation
 	nextSessionRequest   uint64
 	lastReconcileSession uint32
 	nativeWork           map[*userNativeWork]struct{}
@@ -122,13 +123,14 @@ func NewUserHost(cfg UserHostConfig) *UserHost {
 		}
 	}
 	h := &UserHost{
-		hostID:          rand.Text(),
-		admission:       policy,
-		cfg:             cfg,
-		bySID:           make(map[string]*userInstance),
-		sessions:        make(map[uint32]string),
-		sessionRequests: make(map[uint32]uint64),
-		lingerRecords:   make(map[string]runtime.LingerRecord),
+		hostID:              rand.Text(),
+		admission:           policy,
+		cfg:                 cfg,
+		bySID:               make(map[string]*userInstance),
+		sessions:            make(map[uint32]string),
+		sessionRequests:     make(map[uint32]uint64),
+		sessionObservations: make(map[uint32]userSessionObservation),
+		lingerRecords:       make(map[string]runtime.LingerRecord),
 	}
 	if cfg.LingerDir != "" {
 		h.store = OpenLingerStore(cfg.LingerDir)
@@ -293,10 +295,12 @@ func (h *UserHost) queryAcceptedUserLogon(sessionID uint32, request uint64, work
 	var err error
 	tok, err = h.cfg.QueryToken(sessionID)
 	if err != nil {
+		h.recordSessionFailure(origin, "", "token-profile", err)
 		h.cfg.Logf("session %d: %v", sessionID, err)
 		return
 	}
 	if tok == nil {
+		h.recordSessionFailure(origin, "", "token-profile", errors.New("user token is unavailable"))
 		h.cfg.Logf("session %d: missing user token", sessionID)
 		return
 	}
@@ -305,6 +309,7 @@ func (h *UserHost) queryAcceptedUserLogon(sessionID uint32, request uint64, work
 		sid = h.sidFromToken(tok)
 	}
 	if !protocol.ValidSID(sid) {
+		h.recordSessionFailure(origin, "", "identity", errors.New("user token has an invalid SID"))
 		h.cfg.Logf("session %d: invalid SID %q", sessionID, sid)
 		return
 	}
@@ -312,10 +317,12 @@ func (h *UserHost) queryAcceptedUserLogon(sessionID uint32, request uint64, work
 	if probe {
 		allow, err = h.cfg.ProbeUserUnits(tok)
 		if err != nil {
+			h.recordSessionFailure(origin, sid, "admission-probe", err)
 			h.cfg.Logf("user admission probe: %v", err)
 			return
 		}
 	}
+	h.clearSessionFailure(origin)
 	if !allow {
 		return
 	}
