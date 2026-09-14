@@ -100,6 +100,31 @@ func (p *operationalPressure) fillVolume(t *testing.T) {
 			if err := os.Remove(filler.Name()); err != nil {
 				t.Error(err)
 			}
+			// Deletion can remain pending while Windows still owns an open
+			// handle (for example an on-access scanner). Establish restored
+			// capacity before measuring the manager's recovery deadline.
+			native, err := windows.UTF16PtrFromString(root)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			started := time.Now()
+			for {
+				var available, size, free uint64
+				if err := windows.GetDiskFreeSpaceEx(native, &available, &size, &free); err != nil {
+					t.Error(err)
+					return
+				}
+				if available >= total/2 {
+					t.Logf("native capacity restored: available=%d elapsed=%v", available, time.Since(started))
+					return
+				}
+				if time.Since(started) > 30*time.Second {
+					t.Errorf("fixture capacity did not return after filler deletion: available=%d", available)
+					return
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
 		})
 	}
 	t.Cleanup(p.repair)
