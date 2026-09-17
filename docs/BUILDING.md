@@ -2,7 +2,7 @@
 
 ## Pinned toolchain
 
-Build with Go **1.27.1**, recorded in `.go-version` and the `toolchain` directive. The module's Go **1.25.0** directive is its dependency/language minimum, not the compiler selected for qualification. The fixed Windows syscall dependency requires that minimum. CI reads `.go-version`, disables automatic toolchain switching after setup, and uses full commit pins for checkout, setup-go, and artifact upload.
+Build with Go **1.27.1**, recorded in `.go-version` and the `toolchain` directive. The module's Go **1.26.0** directive is its dependency/language minimum, not the compiler selected for qualification. The `golang.org/x/sys v0.48.0` dependency requires that minimum. CI reads `.go-version`, disables automatic toolchain switching after setup, and uses full commit pins for checkout, setup-go, and artifact upload.
 
 From the repository root:
 
