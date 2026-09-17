@@ -203,6 +203,9 @@ func createUserManagerWithBoundary(tok windows.Token, spec UserManagerSpec, job,
 		return p, err
 	}
 	p.unassigned = false
+	if spec.suspended != nil {
+		spec.suspended(p.pid)
+	}
 	if _, err := windows.ResumeThread(pi.Thread); err != nil {
 		return p, fmt.Errorf("ResumeThread: %w", err)
 	}

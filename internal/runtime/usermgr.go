@@ -23,6 +23,11 @@ type UserManagerSpec struct {
 	// same way the unit-path listener regression does. Production is nil.
 	//lint:ignore U1000 Used by the Windows launcher and native tests only.
 	cmdArgv []string
+	// suspended, if set, runs after native creation and job placement while the
+	// primary thread is still suspended. Native tests hold it to overlap policy
+	// or shutdown with a real unresumed process. Production is nil.
+	//lint:ignore U1000 Used by the Windows launcher and native tests only.
+	suspended func(pid int)
 }
 
 // UserManagerProc is one running per-user manager process.

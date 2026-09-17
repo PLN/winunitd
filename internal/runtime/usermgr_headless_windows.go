@@ -141,6 +141,9 @@ func createHeadlessUserManager(tok windows.Token, spec UserManagerSpec, job *Dae
 		return p, err
 	}
 	p.unassigned = false
+	if spec.suspended != nil {
+		spec.suspended(p.pid)
+	}
 	if _, err := windows.ResumeThread(pi.Thread); err != nil {
 		return p, err
 	}
