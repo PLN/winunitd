@@ -118,6 +118,33 @@ For source `8da951a54d39dd5f0fe460fe935cde8a5dcc070c`, the downloaded Gitea/Linu
 
 The inherited v3 artifact workflow uploaded successfully but its artifacts were absent from the REST listing. The upstream v4 action rejected the non-GitHub server. The private workflow now pins the [Gitea-recommended compatibility action](https://blog.gitea.com/release-of-1.22.0/) at `ChristopherHX/gitea-upload-artifact@81f940d004763f986ba3582c007fd842dd5cb0d7`; its patch against upstream parent `694cdabd8bdb0f10b2cea11669e1bf5453eed0a6` removes the unsupported-server check. That upload was listed and downloaded through the API. Keep this compatibility dependency under review separately from GitHub's upstream action pin.
 
+## Native user-manager launch overlap
+
+`TestNativeUserLaunchOverlap` is an opt-in Windows manager regression for a
+disposable SYSTEM runner and a real local standard-user WTS session. Ordinary
+CI skips it. The fixture must supply `WINUNITD_NATIVE_LAUNCH_FIXTURE=disposable`,
+`WINUNITD_NATIVE_LAUNCH_SID`, an absolute `WINUNITD_NATIVE_LAUNCH_EXE` pointing
+to a private copy of the matching daemon artifact, and an absolute
+`WINUNITD_NATIVE_LAUNCH_BASE` writable by the fixture user. Keep the installed
+broker stopped and ensure no other manager owns that user's control endpoint.
+Never use an installed or pilot executable as the lock target.
+
+Build the manager test executable from the same clean source with path trimming
+and race detection, retain its hash and compiler identity, and run
+`-test.run=^TestNativeUserLaunchOverlap$ -test.v -test.timeout=300s` through the
+guarded SYSTEM guest runner. A real Windows logon, target profile and permissions
+must exist before the test; simulated session notifications are insufficient.
+
+The test holds a Windows image-file oplock and requires a goroutine stack inside
+the production `CreateProcessAsUser` call both before and after policy/shutdown
+acceptance. Its launcher wrapper only observes the returned process; it adds no
+delay. Cases cover policy revocation, shutdown, and an expired shutdown deadline
+followed by cleanup retry. After releasing the oplock, it checks native child
+identity and exit through a retained process handle, drained ownership, and
+12 seconds of reconciliation without resurrection. Retain raw stack/result
+evidence privately. Restore account/profile, session, ACL and broker state after
+the run; these tests alone do not qualify the broader interactive/security matrix.
+
 ## First provisioning observations
 
 ### Fresh controller runs — September 5, 2026
