@@ -179,16 +179,8 @@ func overlapToken(t *testing.T) (*runtime.UserToken, uint32, *runtime.DaemonJob)
 	if sid := os.Getenv("WINUNITD_NATIVE_OVERLAP_SID"); sid == "" || tok.Info.SID != sid {
 		t.Fatal("WTS token does not match the fixture SID")
 	}
-	broker, err := runtime.OpenBrokerJob()
+	broker, err := runtime.NativeOverlapBroker()
 	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := broker.Close(); err != nil {
-			t.Error(err)
-		}
-	})
-	if err := broker.AssignSelf(); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("genuine WTS token selected: session=%d broker-job=self-assigned", id)
@@ -462,16 +454,8 @@ func headlessOverlapToken(t *testing.T) (*runtime.UserToken, *runtime.DaemonJob)
 	if tok == nil || tok.Info.SID != sid || tok.Source != runtime.LingerTokenPathS4U {
 		t.Fatal("genuine fixture S4U token required")
 	}
-	broker, err := runtime.OpenBrokerJob()
+	broker, err := runtime.NativeOverlapBroker()
 	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := broker.Close(); err != nil {
-			t.Error(err)
-		}
-	})
-	if err := broker.AssignSelf(); err != nil {
 		t.Fatal(err)
 	}
 	t.Log("genuine S4U token selected: session=0 broker-job=self-assigned")

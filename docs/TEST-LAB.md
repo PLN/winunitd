@@ -257,8 +257,9 @@ process with readable test binaries. They obtain a real S4U token, use the
 production private desktop helper and `CreateProcessWithTokenW(LOGON_WITH_PROFILE)`,
 and verify session zero, a non-elevated child, profile loading while held,
 profile unloading after cleanup and no linger reconciliation restart. Ordinary
-CI skips this explicit fixture. Use a fresh runner per repetition because broker
-job self-assignment lasts for the runner's lifetime. Retain failed evidence and
+CI skips this explicit fixture. A dedicated runner retains one broker root across
+its cases and closes it after the suite; self-assignment lasts for the runner's
+lifetime. Use a fresh runner per qualification repetition. Retain failed evidence and
 restore the account/profile and filesystem permissions after all owned processes
 have exited. These tests do not qualify outbound credentials or credential-store
 fallback modes.

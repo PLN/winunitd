@@ -86,7 +86,14 @@ func TestMain(m *testing.M) {
 		runSCMProxyTestService()
 		os.Exit(0)
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	if nativeOverlapBroker.job != nil {
+		if err := nativeOverlapBroker.job.Close(); err != nil {
+			fmt.Fprintln(os.Stderr, "native overlap broker cleanup:", err)
+			code = 1
+		}
+	}
+	os.Exit(code)
 }
 
 func startHelperChild(breakaway bool) (int, error) {
