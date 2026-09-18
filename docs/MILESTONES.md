@@ -6,7 +6,7 @@ feedback while continuing the R0-R8 design and qualification work. Exhaustive
 Windows qualification and the seven-day soak remain separate acceptance
 requirements; beta publication does not close them.
 
-Status updated September 14, 2026. Implements [ROADMAP.md](../ROADMAP.md) and [Design v2](../DESIGN.md).
+Status updated September 19, 2026. Implements [ROADMAP.md](../ROADMAP.md) and [Design v2](../DESIGN.md).
 R2 and R3 have completed their technical acceptance. R0, R1 and R4-R6 remain
 **in progress**; R7-R8 remain planned. The packaging spike and public beta are
 already delivered. [Post-beta tracking](POST-BETA-TRACKING.md)
@@ -76,7 +76,7 @@ Exit gate: conformance tests cover startup, explicit stop, restart, natural exit
 Status: in progress. Dependencies for closure: R2, R3. Outcome: real Windows identities and session transitions behave as designed.
 
 - [ ] **R4.1 Launch context:** SYSTEM-to-user launch, target environment/known folders, disabled handle inheritance and Windows-owned profile lifetime are implemented with selected native evidence. Complete the cross-session/profile/security matrix in the [R4 ledger](R4-EVIDENCE.md#current-implementation-and-remaining-identity-matrix).
-- [ ] **R4.2 User host:** the [interactive user admission policy](USER-ADMISSION.md), session reconciliation, fresh-token bounded recovery and cancellation are implemented. Complete multiple-session/user, rapid native transition and launch/shutdown qualification. File-based admission grants neither headless linger nor workload enablement.
+- [x] **R4.2 User host:** real multiple-session/user transitions, fresh-token recovery, peer/notification isolation, profile failures and policy/shutdown overlap through native launch completion passed the [consolidated user-host qualification](R4-EVIDENCE.md#native-launch-overlap-and-user-host-acceptance). The final source `91d8742` passed exact-source CI, 25 genuine WTS/S4U held cases and 12 immutable maintenance observations. File-based admission grants neither headless linger nor workload enablement; security and credential limitations remain separate R4 gates.
 - [x] **R4.3 SCM/maintenance:** genuine SCM readiness, invalid-configuration control/repair, pending-notify stop, and one-deadline combined system/user maintenance passed at `5443e42` and `d173bf4`, including 128 occupied ordinary connections and reserved named-pipe maintenance. Later native saturation and completed coordinator acceptance retain the cleanup/deadline contract; [acceptance evidence](R4-EVIDENCE.md#scm-readiness-and-combined-maintenance-acceptance).
 - [ ] **R4.4 Security:** verify pipe ownership/DACL/token checks, UAC-filtered users, cross-user rejection, protected privileged paths, reparse-point handling, and no unintended inherited handles.
 - [ ] **R4.5 Linger modes:** qualify explicit headless S4U behavior and its credential limitations. Any unqualified optional credential-store mode remains disabled/experimental and is excluded from supported release claims.
