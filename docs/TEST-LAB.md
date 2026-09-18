@@ -224,3 +224,33 @@ controller deadline bounds waiting; it does not forcibly terminate a guest
 command. Inspect failure evidence and retire the disposable guest before retrying.
 These commands automate post-smoke execution and collection, not baseline cloning
 or the complete release qualification matrix.
+
+## Suspended native user-manager overlap
+
+The Windows runtime tests `TestPolicyRevocationOverlapsNativeUserManagerCreation`
+and `TestShutdownOverlapsNativeUserManagerCreation` hold an unexported launch
+seam after native process creation and job placement, before `ResumeThread`.
+Ordinary production callers leave the seam unset. The tests verify the native
+owner, one suspended primary thread, retained launch ownership, a waiting stop,
+reported supersession, process exit, token release and no reconciliation restart.
+The existing behavior resumes the superseded process before job termination;
+these tests do not claim that its entry point can never execute.
+
+An ordinary interactive test run uses its own token. For cross-session evidence,
+compile the runtime test binary from the exact reviewed source and run only these
+two tests in a dedicated SYSTEM process on an owned disposable guest. Set
+`WINUNITD_NATIVE_OVERLAP_FIXTURE=disposable`, `WINUNITD_NATIVE_OVERLAP_SESSION` to
+the fresh real logon's nonzero session ID, and `WINUNITD_NATIVE_OVERLAP_SID` to
+its expected SID. That mode obtains a genuine `WTSQueryUserToken` token, assigns
+the runner to a broker job and verifies the child's owner and native session.
+The guest driver must prepare the account, real logon and executable read access,
+then restore them. Never use a development or pilot logon for that mode. Ordinary
+session-zero CI skips these interactive-profile tests; it does not replace the
+SYSTEM fixture. This pair does not qualify the headless launch seam.
+
+Use built-in `logman` with the `Microsoft-Windows-Kernel-Process` provider and
+keywords `0x30`, then retain its ETL with test UTC timestamps and PIDs. Match
+process/thread start and stop events to corroborate each held interval. ETW does
+not identify `ResumeThread`; the suspend-count assertion provides that boundary.
+Qualification of an immutable daemon binary requires separate observations;
+the instrumented test binary alone does not establish that evidence.
