@@ -246,7 +246,22 @@ the runner to a broker job and verifies the child's owner and native session.
 The guest driver must prepare the account, real logon and executable read access,
 then restore them. Never use a development or pilot logon for that mode. Ordinary
 session-zero CI skips these interactive-profile tests; it does not replace the
-SYSTEM fixture. This pair does not qualify the headless launch seam.
+SYSTEM fixture.
+
+The three `OverlapsNativeHeadlessManagerCreation` tests separately cover linger
+revocation, shutdown and an expired shutdown deadline with retained launch/token
+ownership. Set `WINUNITD_NATIVE_OVERLAP_FIXTURE=disposable` and
+`WINUNITD_NATIVE_OVERLAP_HEADLESS_SID` to a fresh, logged-off local standard
+account's SID. Run only those tests as SYSTEM in session zero, in a dedicated
+process with readable test binaries. They obtain a real S4U token, use the
+production private desktop helper and `CreateProcessWithTokenW(LOGON_WITH_PROFILE)`,
+and verify session zero, a non-elevated child, profile loading while held,
+profile unloading after cleanup and no linger reconciliation restart. Ordinary
+CI skips this explicit fixture. Use a fresh runner per repetition because broker
+job self-assignment lasts for the runner's lifetime. Retain failed evidence and
+restore the account/profile and filesystem permissions after all owned processes
+have exited. These tests do not qualify outbound credentials or credential-store
+fallback modes.
 
 Use built-in `logman` with the `Microsoft-Windows-Kernel-Process` provider and
 keywords `0x30`, then retain its ETL with test UTC timestamps and PIDs. Match

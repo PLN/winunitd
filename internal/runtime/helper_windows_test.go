@@ -21,6 +21,13 @@ func helperMode() string {
 }
 
 func TestMain(m *testing.M) {
+	if len(os.Args) == 4 && os.Args[1] == UserDesktopHelperFlag {
+		if err := ServeUserDesktopHelper(os.Args[2], os.Args[3], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	switch helperMode() {
 	case "sleep":
 		for {

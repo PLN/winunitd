@@ -4,6 +4,7 @@ package runtime_test
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 const overlapSession = 7
@@ -31,6 +33,7 @@ type suspendedLaunch struct {
 	control    *protocol.Client
 	sid        string
 	session    uint32
+	headless   bool
 	starts     atomic.Int32
 	closes     atomic.Int32
 	superseded atomic.Bool
@@ -45,15 +48,22 @@ func stamp(t *testing.T, event string, pid int) {
 	t.Logf("%s %s pid=%d", time.Now().UTC().Format("2006-01-02T15:04:05.0000000Z"), event, pid)
 }
 
-func newSuspendedLaunch(t *testing.T) *suspendedLaunch {
+func newSuspendedLaunch(t *testing.T, headless bool) *suspendedLaunch {
 	t.Helper()
-	tok, session, broker := overlapToken(t)
+	var tok *runtime.UserToken
+	var session uint32
+	var broker *runtime.DaemonJob
+	if headless {
+		tok, broker = headlessOverlapToken(t)
+	} else {
+		tok, session, broker = overlapToken(t)
+	}
 	exe, err := filepath.Abs(os.Args[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &suspendedLaunch{sid: tok.Info.SID, session: session, entered: make(chan int, 1), release: make(chan struct{}), logon: make(chan struct{})}
-	s.host = manager.NewUserHost(manager.UserHostConfig{
+	s := &suspendedLaunch{sid: tok.Info.SID, session: session, headless: headless, entered: make(chan int, 1), release: make(chan struct{}), logon: make(chan struct{})}
+	cfg := manager.UserHostConfig{
 		Daemon:     broker,
 		Admission:  manager.UserAdmission{Users: map[string]string{s.sid: "enabled"}},
 		Exe:        exe,
@@ -76,7 +86,16 @@ func newSuspendedLaunch(t *testing.T) *suspendedLaunch {
 				}
 			}
 		},
-	})
+	}
+	if headless {
+		cfg.LingerDir = t.TempDir()
+		cfg.Sessions = func() ([]uint32, error) { return nil, nil }
+		cfg.QueryToken = func(uint32) (*runtime.UserToken, error) {
+			return nil, errors.New("headless fixture must not query WTS")
+		}
+		cfg.LingerToken = func(runtime.LingerRecord) (*runtime.UserToken, error) { return tok, nil }
+	}
+	s.host = manager.NewUserHost(cfg)
 	units, err := manager.New(manager.Config{BaseDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +126,11 @@ func newSuspendedLaunch(t *testing.T) *suspendedLaunch {
 	})
 	go func() {
 		defer close(s.logon)
-		s.host.Logon(session)
+		if headless {
+			_, _ = s.host.EnableLinger(s.sid)
+		} else {
+			s.host.Logon(session)
+		}
 	}()
 	return s
 }
@@ -243,15 +266,22 @@ func awaitSuspended(t *testing.T, s *suspendedLaunch) (int, windows.Handle) {
 		t.Fatal(err)
 	}
 	owner, err := token.GetTokenUser()
+	elevated := token.IsElevated()
 	token.Close()
 	if err != nil || owner.User.Sid.String() != s.sid {
 		t.Fatal("created process owner does not match the selected token")
 	}
-	if os.Getenv("WINUNITD_NATIVE_OVERLAP_SESSION") != "" {
+	if os.Getenv("WINUNITD_NATIVE_OVERLAP_FIXTURE") == "disposable" && elevated {
+		t.Fatal("disposable fixture child must be a non-elevated user")
+	}
+	if s.headless || os.Getenv("WINUNITD_NATIVE_OVERLAP_SESSION") != "" {
 		var session uint32
 		if err := windows.ProcessIdToSessionId(uint32(pid), &session); err != nil || session != s.session {
-			t.Fatal("created process did not enter the selected WTS session")
+			t.Fatal("created process did not enter the selected session")
 		}
+	}
+	if s.headless && !overlapProfileLoaded(t, s.sid) {
+		t.Fatal("headless profile was not loaded while native creation was held")
 	}
 	if count := primaryThreadSuspendCount(t, pid); count != 1 {
 		t.Fatalf("primary thread suspend count = %d, want 1", count)
@@ -291,6 +321,9 @@ func assertSettled(t *testing.T, s *suspendedLaunch, pid int, probe windows.Hand
 	// No resurrection: the session is still present, but neither the revoked
 	// policy nor the closed host may relaunch during reconciliation.
 	s.host.Reconcile()
+	if s.headless {
+		s.host.StartLingering()
+	}
 	deadline := time.Now().Add(5 * time.Second)
 	for s.host.NativeWorkCount() != 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -299,10 +332,20 @@ func assertSettled(t *testing.T, s *suspendedLaunch, pid int, probe windows.Hand
 	if s.starts.Load() != 1 || s.host.ManagerCount() != 0 || s.host.NativeWorkCount() != 0 {
 		t.Fatalf("resurrection: starts=%d managers=%d native=%d", s.starts.Load(), s.host.ManagerCount(), s.host.NativeWorkCount())
 	}
+	if s.headless {
+		deadline := time.Now().Add(15 * time.Second)
+		for overlapProfileLoaded(t, s.sid) {
+			if time.Now().After(deadline) {
+				t.Fatal("headless profile remained loaded after native cleanup")
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		stamp(t, "profile-unloaded", pid)
+	}
 }
 
 func TestPolicyRevocationOverlapsNativeUserManagerCreation(t *testing.T) {
-	s := newSuspendedLaunch(t)
+	s := newSuspendedLaunch(t, false)
 	pid, probe := awaitSuspended(t, s)
 	revision := s.snapshot(t).AdmissionRevision
 	done := make(chan error, 1)
@@ -327,7 +370,7 @@ func TestPolicyRevocationOverlapsNativeUserManagerCreation(t *testing.T) {
 }
 
 func TestShutdownOverlapsNativeUserManagerCreation(t *testing.T) {
-	s := newSuspendedLaunch(t)
+	s := newSuspendedLaunch(t, false)
 	pid, probe := awaitSuspended(t, s)
 	done := make(chan error, 1)
 	stamp(t, "shutdown-issued", pid)
@@ -385,4 +428,135 @@ func awaitOverlapResult(t *testing.T, done <-chan error) error {
 		t.Fatal("overlapping decision did not finish")
 		return nil
 	}
+}
+
+// Headless qualification is opt-in and must use a logged-off disposable local
+// standard account. S4U supplies the token; no password or credential URI is used.
+func headlessOverlapToken(t *testing.T) (*runtime.UserToken, *runtime.DaemonJob) {
+	t.Helper()
+	sid := os.Getenv("WINUNITD_NATIVE_OVERLAP_HEADLESS_SID")
+	if sid == "" {
+		t.Skip("requires disposable SYSTEM/headless-user qualification fixture")
+	}
+	if os.Getenv("WINUNITD_NATIVE_OVERLAP_FIXTURE") != "disposable" {
+		t.Fatal("explicit disposable fixture required")
+	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil || !user.User.Sid.IsWellKnown(windows.WinLocalSystemSid) {
+		t.Fatal("SYSTEM runner required")
+	}
+	if overlapProfileLoaded(t, sid) {
+		t.Fatal("headless fixture profile must initially be unloaded")
+	}
+	tok, err := runtime.ObtainLingerToken(runtime.LingerRecord{SID: sid})
+	if tok != nil {
+		t.Cleanup(func() {
+			if err := tok.Close(); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok == nil || tok.Info.SID != sid || tok.Source != runtime.LingerTokenPathS4U {
+		t.Fatal("genuine fixture S4U token required")
+	}
+	broker, err := runtime.OpenBrokerJob()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := broker.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := broker.AssignSelf(); err != nil {
+		t.Fatal(err)
+	}
+	t.Log("genuine S4U token selected: session=0 broker-job=self-assigned")
+	return tok, broker
+}
+
+func overlapProfileLoaded(t *testing.T, sid string) bool {
+	t.Helper()
+	key, err := registry.OpenKey(registry.USERS, sid, registry.READ)
+	if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
+		return false
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := key.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return true
+}
+
+func TestLingerRevocationOverlapsNativeHeadlessManagerCreation(t *testing.T) {
+	s := newSuspendedLaunch(t, true)
+	pid, probe := awaitSuspended(t, s)
+	revision := s.snapshot(t).LingerRevision
+	done := make(chan error, 1)
+	stamp(t, "linger-revoke-issued", pid)
+	go func() { _, err := s.host.DisableLinger(s.sid); done <- err }()
+	s.awaitDecision(t, pid, func(view *protocol.UserHostSnapshot) bool { return view.LingerRevision > revision })
+	assertBlocked(t, done, "linger revocation")
+	if primaryThreadSuspendCount(t, pid) != 1 {
+		t.Fatal("process ran before linger revocation was decided")
+	}
+	stamp(t, "release", pid)
+	s.resume()
+	if err := awaitOverlapResult(t, done); err != nil {
+		t.Fatal(err)
+	}
+	assertSettled(t, s, pid, probe)
+}
+
+func TestShutdownOverlapsNativeHeadlessManagerCreation(t *testing.T) {
+	testHeadlessShutdownOverlap(t, false)
+}
+
+func TestShutdownDeadlineOverlapsNativeHeadlessManagerCreation(t *testing.T) {
+	testHeadlessShutdownOverlap(t, true)
+}
+
+func testHeadlessShutdownOverlap(t *testing.T, expire bool) {
+	s := newSuspendedLaunch(t, true)
+	pid, probe := awaitSuspended(t, s)
+	budget := 20 * time.Second
+	if expire {
+		budget = time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+	done := make(chan error, 1)
+	stamp(t, "shutdown-issued", pid)
+	go func() { done <- s.host.Shutdown(ctx) }()
+	s.awaitDecision(t, pid, func(view *protocol.UserHostSnapshot) bool { return view.State == "closing" })
+	assertBlocked(t, done, "shutdown")
+	if expire {
+		if err := awaitOverlapResult(t, done); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("held native shutdown deadline: %v", err)
+		}
+		if s.host.NativeWorkCount() != 1 || s.host.ManagerCount() != 1 || s.closes.Load() != 0 {
+			t.Fatal("expired shutdown discarded accepted launch or token ownership")
+		}
+		stamp(t, "deadline-retains-native-ownership", pid)
+	}
+	if primaryThreadSuspendCount(t, pid) != 1 {
+		t.Fatal("process ran before shutdown was decided")
+	}
+	stamp(t, "release", pid)
+	s.resume()
+	if expire {
+		retry, stop := context.WithTimeout(context.Background(), 20*time.Second)
+		defer stop()
+		if err := s.host.Shutdown(retry); err != nil {
+			t.Fatal(err)
+		}
+	} else if err := awaitOverlapResult(t, done); err != nil {
+		t.Fatal(err)
+	}
+	assertSettled(t, s, pid, probe)
 }
