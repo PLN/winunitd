@@ -1,7 +1,7 @@
 # Windows identity and manager qualification
 
-September 14, 2026: R2/R3 dependencies are satisfied. R4.3 SCM/maintenance
-technical acceptance is complete. The broader R4 launch/session/security/linger
+September 19, 2026: R2/R3 dependencies are satisfied. R4.2 user-host and R4.3
+SCM/maintenance technical acceptance is complete. The broader R4 launch/security/linger
 matrix remains open. This ledger distinguishes implemented behavior and accepted
 native observations from the remaining qualification; older checkpoint wording
 in other evidence documents describes status at the time of those runs.
@@ -262,9 +262,8 @@ client provenance, scripts, native probes, ordered snapshots and restoration
 results remain private.
 
 This qualifies the stated real multi-session and concurrent-user transitions.
-Selected profile cases are qualified below. Policy/shutdown races inside native
-manager creation and the remaining security/linger checks keep the broader R4
-gate open.
+Selected profile cases and native launch overlap are qualified below. The
+remaining security/linger checks keep the broader R4 gate open.
 
 ## Interactive profile failures and redirection
 
@@ -311,12 +310,73 @@ selected profile observations do not qualify domain/cloud/roaming profiles,
 policy/shutdown overlap inside native creation, or the remaining security and
 linger matrix. The R4 gate remains open.
 
+## Native launch overlap and user-host acceptance
+
+Source `91d8742f9903fd2ab531176189aabe9714b2f867` passed
+[CI 35401199538, attempt 1](https://github.com/PLN/winunitd/actions/runs/35401199538).
+[PR #229](https://github.com/PLN/winunitd/pull/229) merged as
+`4d111c4c274883db351693450a2f02955ea048cd`; tested and merged trees are
+`dbcbf86f5964acb06031fc774135507dc2633a2d`. Local runtime/manager race suites,
+repeated overlap tests, vet and staticcheck passed. CI artifact, module and
+vendored dependency hashes were verified; native and cross-build artifacts agree.
+
+An offline disposable Windows Server 2025 Desktop Experience build 26100 fixture
+ran the exact-source race-enabled runtime test binary as SYSTEM. An unexported
+seam holds each real child after native creation and job placement, before
+`ResumeThread`; production callers leave it unset. Control snapshots establish
+that the decision is accepted during that interval. Native probes verify the
+owner, selected session, non-elevated child and one suspended primary thread.
+Built-in Kernel-Process ETW independently orders process creation before the
+decision and process exit after release for all 25 cases.
+
+| Native path and decision | Result over five fresh runners |
+| --- | --- |
+| Genuine WTS token, interactive policy revocation | 5/5 passed; launch superseded, child exited, token released once, no reconciliation restart. |
+| Genuine WTS token, shutdown | 5/5 passed; accepted launch remained owned until release, followed by complete cleanup and rejection of later logon. |
+| Genuine local-account S4U token, linger revocation | 5/5 passed through `CreateProcessWithTokenW(LOGON_WITH_PROFILE)` and the production private desktop helper; profile loaded while held and unloaded after cleanup. |
+| Genuine local-account S4U token, shutdown | 5/5 passed; child/token cleanup and profile unload completed with no linger reconciliation restart. |
+| Genuine local-account S4U token, expired shutdown deadline | 5/5 passed; the expired call retained the manager, native work and token while the child stayed suspended. Release and a bounded shutdown retry completed cleanup and profile unload. |
+
+There were no skips. An initial test-fixture attempt replaced its self-assigned
+broker root between headless cases; later cases failed before native creation.
+The final fixture retains one root for the dedicated runner and closes it after
+the suite. The failed attempt is retained privately and is not acceptance evidence.
+
+The immutable CI daemon separately passed 12 jittered maintenance observations.
+Every trial created an interactive user manager and then quiesced with the user
+host closing, zero native work/instances and no surviving daemon process. None
+naturally hit supersession. The account/profile, autologon settings, filesystem
+ACLs and original service startup mode were restored and independently inspected;
+the fixture left no owned test/daemon processes or active controller lock.
+
+The held seam is after the Windows creation API returns, not inside that API.
+The existing lifecycle resumes a superseded child before terminating its job,
+so its entry point may execute. The deterministic tests establish retained
+ownership and cleanup across launch completion; the immutable observations do
+not establish natural supersession. These results do not qualify outbound S4U
+credentials, credential-store fallback, or domain/cloud/roaming profiles.
+
+Together with the earlier evidence, this completes R4.2 technical acceptance:
+
+| User-host obligation | Consolidated evidence |
+| --- | --- |
+| Multiple sessions and simultaneous interactive users | [Real session matrix](#multiple-real-sessions-and-concurrent-interactive-users): owner-session recovery, peer isolation and both-user SCM recovery. |
+| Repeated real logon/logoff and pending launch | [Interactive transitions](#repeated-real-interactive-transitions) and [control during pending boot](#user-control-during-pending-boot): bounded stop and no return of obsolete invocations. |
+| Notification identity across user/SYSTEM managers | [Equal-name and stale-endpoint matrix](#notification-isolation-across-managers-and-restarts): isolated READY/WATCHDOG traffic and replacement endpoint ownership. |
+| Unavailable, redirected and unsupported local profile paths | [Profile matrix](#interactive-profile-failures-and-redirection): visible rejection, recovery and peer preservation; final logoff unloaded both profiles with no manager return during 16 seconds. |
+| Policy/shutdown while a native launch remains incomplete | The 25 held cases above: accepted decisions, owned late completion, native exit, token/profile cleanup and no reconciliation resurrection. |
+
+R4.1 retains its security and inherited-handle qualification, R4.4 retains its
+real-identity security matrix, and R4.5 retains its credential limitations. R4 as
+a whole remains open. Dedicated admission administration commands and installer
+controls remain separate work; protected file administration is available.
+
 ## Current implementation and remaining identity matrix
 
 | Work package | Delivered behavior and evidence | Remaining qualification |
 | --- | --- | --- |
-| R4.1 Launch context | Interactive `CreateProcessAsUser` launch disables handle inheritance, obtains the target environment/known folders and retains a Windows-owned profile handle. Suspended creation and job ownership precede execution. Earlier genuine SYSTEM-to-interactive launch/crash/logoff observations are recorded in the [admission contract](USER-ADMISSION.md#implementation-evidence-and-limits). [Selected profile failures and redirection](#interactive-profile-failures-and-redirection) now cover unavailable hive access, local known-folder overrides and delegated UNC/reparse rejection. | Complete the remaining launch/session and cross-session security boundaries; the selected local-profile cases do not qualify domain/cloud/roaming profiles. |
-| R4.2 User host | Protected explicit/delegated admission, per-SID overrides, session reconciliation, fresh-token recovery, bounded backoff and cancellation are implemented. [Policy/admission qualification](R2-EVIDENCE.md#user-policy-and-cleanup-admission-acceptance), [real S4U snapshot/recovery](R2-EVIDENCE.md#system-user-host-snapshot-qualification), [two concurrent headless users](#concurrent-local-headless-users), [cross-manager notification isolation](#notification-isolation-across-managers-and-restarts), [control during pending boot](#user-control-during-pending-boot), [repeated real interactive transitions](#repeated-real-interactive-transitions) and [multiple real sessions/concurrent users](#multiple-real-sessions-and-concurrent-interactive-users) cover their stated scopes. Dedicated admission administration commands and installer controls remain separate work; protected file administration is available. | Policy/shutdown races during native manager creation and consolidated no-resurrection evidence across the remaining cases. |
+| R4.1 Launch context | Interactive `CreateProcessAsUser` launch disables handle inheritance, obtains the target environment/known folders and retains a Windows-owned profile handle. Suspended creation and job ownership precede execution. Earlier genuine SYSTEM-to-interactive launch/crash/logoff observations are recorded in the [admission contract](USER-ADMISSION.md#implementation-evidence-and-limits). [Selected profile failures and redirection](#interactive-profile-failures-and-redirection) now cover unavailable hive access, local known-folder overrides and delegated UNC/reparse rejection. | Complete cross-session security and inherited-handle checks under the required identities; the selected local-profile cases do not qualify domain/cloud/roaming profiles. |
+| R4.2 User host | Protected explicit/delegated admission, per-SID overrides, session reconciliation, fresh-token recovery, bounded backoff and cancellation are implemented. [Policy/admission qualification](R2-EVIDENCE.md#user-policy-and-cleanup-admission-acceptance), [real S4U snapshot/recovery](R2-EVIDENCE.md#system-user-host-snapshot-qualification), [two concurrent headless users](#concurrent-local-headless-users), [cross-manager notification isolation](#notification-isolation-across-managers-and-restarts), [control during pending boot](#user-control-during-pending-boot), [repeated real interactive transitions](#repeated-real-interactive-transitions) and [multiple real sessions/concurrent users](#multiple-real-sessions-and-concurrent-interactive-users) cover their stated scopes. Dedicated admission administration commands and installer controls remain separate work; protected file administration is available. | Technical acceptance complete with [native launch overlap and consolidated no-resurrection evidence](#native-launch-overlap-and-user-host-acceptance). R4.1/R4.4 security and R4.5 credential limits remain separate. |
 | R4.4 Security | Protected policy and pipe checks, bounded impersonation workers and reparse-point rejection are implemented. [Pipe failure handling](R2-EVIDENCE.md#september-12-pipe-impersonation-failure-handling), native launch regressions and [genuine cross-user/system pipe denial](#concurrent-local-headless-users) cover selected paths. | Interactive/filtered-token cases, privileged paths/reparse attacks and inherited-handle checks under the required identities. Same-caller or delayed-adapter tests alone do not establish those boundaries. |
 | R4.5 Linger | Headless local-account S4U launch uses `CreateProcessWithTokenW(LOGON_WITH_PROFILE)` and an exclusive private desktop helper. Windows owns profile lifetime; the old manual `LoadUserProfile` path is removed. [Production crash/recovery](R3-EVIDENCE.md#managed-bound-dependent-cleanup), [user-manager replacements](R2-EVIDENCE.md#system-user-host-snapshot-qualification) and [concurrent existing/first-created profiles](#concurrent-local-headless-users) verify profile/process cleanup in their scenarios. | Complete explicit mode/profile/session matrix and credential limitations. These observations do not qualify network authentication or domain/cloud/roaming profiles. Unqualified credential-store modes remain outside supported claims. |
 
