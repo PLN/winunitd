@@ -100,6 +100,13 @@ func TestMergeDeterministicUserEnvDropsInteractiveDump(t *testing.T) {
 }
 
 func TestApplyUserEnv(t *testing.T) {
+	// ApplyUserEnv mutates every user and interactive variable. Restore them
+	// all so later tests do not inherit TEMP inside this test's removed profile.
+	for _, keys := range [][]string{UserEnvKeys, interactiveDumpKeys} {
+		for _, key := range keys {
+			t.Setenv(key, os.Getenv(key))
+		}
+	}
 	info := UserInfo{
 		Username: "applyuser",
 		Domain:   "APPLYDOM",
