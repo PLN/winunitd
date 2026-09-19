@@ -413,6 +413,37 @@ sentinels directly qualify file-handle isolation, not every Windows handle type.
 R4.1/R4.4 retain the remaining security matrix; A3 and R4 are not closed by this
 package. See [probe execution guidance](TEST-LAB.md#native-user-manager-security-probes).
 
+## Live normal-client and read-only filesystem observations
+
+The same immutable source `0b739a581363c652f8bb0baafae78d4ab9908907`
+and verified CI payload were installed in an offline disposable Windows Server
+2025 Desktop Experience build 26100 guest. Two standard users held distinct real
+RDP logons, each with its production user manager and notify/watchdog workload.
+Each manager ran the production `winctl --user snapshot` as a temporary oneshot
+unit. Both operations succeeded. Across these calls and a subsequent 16-second
+watchdog interval, both manager instances, workload invocations, native process
+identities and logon identities remained unchanged, and heartbeats advanced.
+The temporary units were removed. This establishes successful normal client
+connections, including acceptance of the expected server owner; it does not
+establish rejection of an unexpected server owner or another user's caller.
+
+A bounded read-only inspection covered 15 objects: the installation root, daemon
+and client binaries, and the current data tree. All had SYSTEM/Administrators
+ownership and no Allow ACE granting mutation rights to an untrusted SID. No
+reparse point was followed. These are observations of the prepared fixture's
+configuration, not evidence of unsafe-root rejection or reparse-race resistance.
+
+The two accounts/profiles, client tasks/connections, temporary network setting,
+credentials, RDP settings, admission policy, filesystem grants and original
+service payload/state were restored and independently checked. Raw evidence
+retains two corrected harness assumptions: obsolete `snapshot --json` syntax and
+an operation-state assertion expecting `completed` instead of `succeeded`.
+Neither result is counted as a passed check. No production code changed.
+
+Live cross-user rejection, unexpected-server-owner/pipe-squatting cases and
+privileged-path/reparse manipulation were not executed in this continuation.
+The wider R4.1/R4.4 security gates remain open.
+
 ## Current implementation and remaining identity matrix
 
 | Work package | Delivered behavior and evidence | Remaining qualification |
