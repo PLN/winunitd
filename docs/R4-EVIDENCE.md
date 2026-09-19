@@ -371,13 +371,55 @@ real-identity security matrix, and R4.5 retains its credential limitations. R4 a
 a whole remains open. Dedicated admission administration commands and installer
 controls remain separate work; protected file administration is available.
 
+## Native inherited handles and filtered-token authorization
+
+PR [#231](https://github.com/PLN/winunitd/pull/231) qualified source
+`0b739a581363c652f8bb0baafae78d4ab9908907` with exact-source
+[CI 35435415557, attempt 1](https://github.com/PLN/winunitd/actions/runs/35435415557).
+The merge `f02edebab9a1af8ab73686a344c91abe8cb2e7e2` has the same tree,
+`300f703fef1cd63e1a92bd22bf81663b0fee611d`. Native/cross artifact manifests,
+payload hashes, module hashes and the vendored dependency tree were verified.
+Production code is unchanged by this test package.
+
+An offline disposable Windows Server 2025 Desktop Experience build 26100 guest
+ran five fresh race-enabled SYSTEM test runners for each native token lane:
+
+| Lane | Native security cases | Selective-inheritance positive controls |
+| --- | --- | --- |
+| Local standard-user S4U, session zero | 5/5 passed | 5/5 passed |
+| Standard-user WTS interactive token | 5/5 passed | 5/5 passed |
+| Genuine UAC-filtered administrator WTS token | 5/5 passed | 5/5 passed |
+
+No case skipped. Positive controls deliberately inherited one of two inheritable
+file handles and detected only that file by native identity. All 15 production
+launches inherited neither broker file sentinel nor the environment canary, had
+working standard handles and target known folders, and reported the expected
+non-elevated child identity/session. Every headless profile unloaded after cleanup.
+Filtered children reported elevation type 3 and deny-only Administrators group
+attributes `0x10`; standard children reported type 1 with no Administrators group.
+
+Each child received explicit access-denied results from fresh endpoints using
+production system-control, maintenance and other-user ACLs. Its own connection
+authenticated from the actual pipe token as owner only, without administrator
+or linger authority. SYSTEM health echoes passed on all protected endpoints both
+before and after denial. The three fixture accounts/profiles, autologon values,
+filesystem grants and original service startup mode were restored and independently
+verified. No owned process or controller lock remained. Raw evidence includes the
+cleanup failures and their verified recovery; these were not native test failures.
+
+These isolated pipe fixtures do not establish another live user manager's health,
+server-owner validation, pipe squatting or privileged filesystem protection. The
+sentinels directly qualify file-handle isolation, not every Windows handle type.
+R4.1/R4.4 retain the remaining security matrix; A3 and R4 are not closed by this
+package. See [probe execution guidance](TEST-LAB.md#native-user-manager-security-probes).
+
 ## Current implementation and remaining identity matrix
 
 | Work package | Delivered behavior and evidence | Remaining qualification |
 | --- | --- | --- |
 | R4.1 Launch context | Interactive `CreateProcessAsUser` launch disables handle inheritance, obtains the target environment/known folders and retains a Windows-owned profile handle. Suspended creation and job ownership precede execution. Earlier genuine SYSTEM-to-interactive launch/crash/logoff observations are recorded in the [admission contract](USER-ADMISSION.md#implementation-evidence-and-limits). [Selected profile failures and redirection](#interactive-profile-failures-and-redirection) now cover unavailable hive access, local known-folder overrides and delegated UNC/reparse rejection. | Complete cross-session security and inherited-handle checks under the required identities; the selected local-profile cases do not qualify domain/cloud/roaming profiles. |
 | R4.2 User host | Protected explicit/delegated admission, per-SID overrides, session reconciliation, fresh-token recovery, bounded backoff and cancellation are implemented. [Policy/admission qualification](R2-EVIDENCE.md#user-policy-and-cleanup-admission-acceptance), [real S4U snapshot/recovery](R2-EVIDENCE.md#system-user-host-snapshot-qualification), [two concurrent headless users](#concurrent-local-headless-users), [cross-manager notification isolation](#notification-isolation-across-managers-and-restarts), [control during pending boot](#user-control-during-pending-boot), [repeated real interactive transitions](#repeated-real-interactive-transitions) and [multiple real sessions/concurrent users](#multiple-real-sessions-and-concurrent-interactive-users) cover their stated scopes. Dedicated admission administration commands and installer controls remain separate work; protected file administration is available. | Technical acceptance complete with [native launch overlap and consolidated no-resurrection evidence](#native-launch-overlap-and-user-host-acceptance). R4.1/R4.4 security and R4.5 credential limits remain separate. |
-| R4.4 Security | Protected policy and pipe checks, bounded impersonation workers and reparse-point rejection are implemented. [Pipe failure handling](R2-EVIDENCE.md#september-12-pipe-impersonation-failure-handling), native launch regressions and [genuine cross-user/system pipe denial](#concurrent-local-headless-users) cover selected paths. | Interactive/filtered-token cases, privileged paths/reparse attacks and inherited-handle checks under the required identities. Same-caller or delayed-adapter tests alone do not establish those boundaries. |
+| R4.4 Security | Protected policy and pipe checks, bounded impersonation workers and reparse-point rejection are implemented. [Pipe failure handling](R2-EVIDENCE.md#september-12-pipe-impersonation-failure-handling), [genuine cross-user/system pipe denial](#concurrent-local-headless-users) and [native WTS/S4U/filtered-token probes](#native-inherited-handles-and-filtered-token-authorization) cover their stated scopes. | Live interactive manager cross-user/server-owner checks and privileged paths/reparse attacks remain. The new file-handle and isolated pipe cases do not close that wider matrix. |
 | R4.5 Linger | Headless local-account S4U launch uses `CreateProcessWithTokenW(LOGON_WITH_PROFILE)` and an exclusive private desktop helper. Windows owns profile lifetime; the old manual `LoadUserProfile` path is removed. [Production crash/recovery](R3-EVIDENCE.md#managed-bound-dependent-cleanup), [user-manager replacements](R2-EVIDENCE.md#system-user-host-snapshot-qualification) and [concurrent existing/first-created profiles](#concurrent-local-headless-users) verify profile/process cleanup in their scenarios. | Complete explicit mode/profile/session matrix and credential limitations. These observations do not qualify network authentication or domain/cloud/roaming profiles. Unqualified credential-store modes remain outside supported claims. |
 
 The R4 exit gate still requires the complete real-identity matrix. Hosted
