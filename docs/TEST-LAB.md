@@ -225,6 +225,40 @@ command. Inspect failure evidence and retire the disposable guest before retryin
 These commands automate post-smoke execution and collection, not baseline cloning
 or the complete release qualification matrix.
 
+## Native user-manager security probes
+
+The Windows runtime test binary includes a selective-inheritance positive
+control and two opt-in native security cases. Run
+`TestNativeSecurityProbeDetectsSelectiveInheritance` to prove that the child can
+identify one explicitly inherited file while distinguishing another uninherited
+file. Both parent handles are inheritable; the probe compares native file
+identities, so an unrelated child handle at the same numeric value is not a hit.
+
+Run `TestNativeInteractiveUserManagerSecurity` and
+`TestNativeHeadlessUserManagerSecurity` in dedicated SYSTEM runners using the
+disposable WTS/S4U token fixtures described below. Also set
+`WINUNITD_NATIVE_SECURITY_OTHER_SID` to a distinct disposable account's SID.
+Each case uses the production launch path with profile ownership, two
+inheritable broker file sentinels, an environment canary, and bounded child
+reports over fresh pipe names. It verifies the real child's identity/session,
+standard handles and known folders, no sentinel/environment inheritance,
+access-denied results for system-control, maintenance and other-user ACLs, and
+owner-only authorization of its actual named-pipe token. Protected endpoints
+must answer a SYSTEM health echo both before and after the denied attempts.
+
+Repeat the WTS case with a genuinely logged-on local administrator under UAC,
+setting `WINUNITD_NATIVE_SECURITY_FILTERED=1`. This requires a limited token,
+non-elevated child, deny-only Administrators group and no enabled administrator
+membership. A synthetic restricted token does not qualify that case. Leave the
+variable unset for standard-user WTS and S4U cases. The headless case additionally
+requires an initially unloaded profile and verifies unload after cleanup.
+
+These isolated endpoints exercise production pipe ACLs and authorization. They
+do not by themselves qualify another live user manager's health, server-owner
+validation, pipe squatting, privileged filesystem paths, or every possible
+native handle type. Record those checks separately. Guest drivers own account,
+logon, payload ACL and restoration evidence; test output omits fixture SIDs.
+
 ## Suspended native user-manager overlap
 
 The Windows runtime tests `TestPolicyRevocationOverlapsNativeUserManagerCreation`

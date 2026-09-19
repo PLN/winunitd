@@ -29,6 +29,12 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	switch helperMode() {
+	case "security-report":
+		if err := runSecurityReportHelper(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
 	case "sleep":
 		for {
 			time.Sleep(time.Hour)
