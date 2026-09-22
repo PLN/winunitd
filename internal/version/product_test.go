@@ -14,9 +14,12 @@ func TestProductIdentityMatchesInstallerSource(t *testing.T) {
 	proj := readRepo(t, root, "packaging/wix/Winunitd.wixproj")
 	script := readRepo(t, root, "packaging/wix/build.ps1")
 	for _, text := range []string{wxs, proj, script} {
-		if strings.Contains(text, `ProductCode="*"`) || strings.Contains(text, "CustomAction") || strings.Contains(text, "winunitd install") {
-			t.Fatal("installer source uses a generated product code, a custom action, or the daemon install verb")
+		if strings.Contains(text, `ProductCode="*"`) || strings.Contains(text, "winunitd install") {
+			t.Fatal("installer source uses a generated product code or the daemon install verb")
 		}
+	}
+	if strings.Contains(proj, "CustomAction") {
+		t.Fatal("project file must not author custom actions")
 	}
 	for _, id := range []string{UpgradeCode, ProductCode, BetaUpgradeCode, InstallerVersion} {
 		if !strings.Contains(wxs, id) && !strings.Contains(proj, id) && !strings.Contains(script, id) {
@@ -49,6 +52,69 @@ func TestProductIdentityMatchesInstallerSource(t *testing.T) {
 	}
 	if !strings.Contains(wxs, `ResetPeriodInDays="49710"`) {
 		t.Fatal("service recovery reset is not the recorded finite period")
+	}
+	if strings.Contains(wxs, "<Dialog") || strings.Contains(wxs, "WixUI") {
+		t.Fatal("quiet install gained a UI reference")
+	}
+	for _, needle := range []string{
+		`Id="NewServiceTransaction"`,
+		`Id="PullTestFail"`,
+		`Id="ExtractServiceHelper"`,
+		`Id="SetPrepareService"`,
+		`Id="RollbackService"`,
+		`Id="PrepareService"`,
+		`Id="CommitService"`,
+		`Id="InjectServiceFailure"`,
+		`DllEntry="PullTestFail"`,
+		`DllEntry="ExtractServiceHelper"`,
+		`DllEntry="RunServiceHelper"`,
+		`<InstallUISequence>`,
+		`Action="PullTestFail" Before="ExecuteAction"`,
+		`Id="MSIRESTARTMANAGERCONTROL" Value="Disable"`,
+		`Schedule="afterInstallExecute"`,
+		`Execute="rollback"`,
+		`Execute="deferred" Impersonate="no"`,
+		`Before="StopServices"`,
+		`<StopServices Condition="NOT UPGRADINGPRODUCTCODE" />`,
+		`<DeleteServices Condition="NOT UPGRADINGPRODUCTCODE" />`,
+		`service-prepare`,
+		`service-rollback`,
+		`service-commit`,
+		`Binary Id="ServiceHelper" SourceFile="$(Payload)\msi-check.exe"`,
+		`Binary Id="ServiceToken" SourceFile="$(Payload)\msi-token.dll"`,
+		`Id="WINUNITD_TEST_FAIL" Secure="yes"`,
+		`Wait="yes"`,
+	} {
+		if !strings.Contains(wxs, needle) {
+			t.Fatalf("package is missing servicing authoring %s", needle)
+		}
+	}
+	if strings.Contains(wxs, `Before="RemoveExistingProducts"`) || strings.Contains(wxs, `Schedule="afterInstallInitialize"`) {
+		t.Fatal("servicing actions must not sit between InstallInitialize and RemoveExistingProducts")
+	}
+	if strings.Contains(wxs, `File Source="$(Payload)\msi-check.exe"`) || strings.Contains(wxs, `File Source="$(Payload)\msi-token.dll"`) {
+		t.Fatal("servicing helper must stay embedded, not installed as a file")
+	}
+	if !strings.Contains(script, "msi-check.exe") || !strings.Contains(script, "msi-token.dll") || !strings.Contains(script, "16.1.0") || !strings.Contains(script, "-lkernel32") {
+		t.Fatal("product build does not produce the embedded helper and transaction DLL")
+	}
+	token := readRepo(t, root, "tools/msi-token/token.c")
+	for _, needle := range []string{
+		"GetEnvironmentVariableW",
+		"do not clear",
+		"CLIENTPROCESSID",
+		"MsiProcessMessage",
+		"CustomActionData",
+		"SELECT `Data` FROM `Binary` WHERE `Name`='ServiceHelper'",
+		"service-prepare",
+	} {
+		if !strings.Contains(token, needle) {
+			t.Fatalf("token helper missing %s", needle)
+		}
+	}
+	servicing := readRepo(t, root, "tools/msi-check/servicing.go")
+	if !strings.Contains(servicing, "msiServiceControlWait = 30 * time.Second") || !strings.Contains(servicing, "serviceStopBudget = runtime.PreshutdownTimeout") {
+		t.Fatal("servicing helper does not record the 30-second MSI wait and the longer stop budget")
 	}
 	if strings.Contains(wxs, "<CreateFolder KeyPath") {
 		t.Fatal("WiX 7 does not allow KeyPath on CreateFolder")

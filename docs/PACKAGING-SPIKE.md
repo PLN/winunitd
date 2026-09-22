@@ -59,6 +59,8 @@ Production direction: use a narrowly scoped native helper for advanced settings 
 
 The prototype requires a fresh transaction token from the lab harness. `msiexec /f` did not pass that custom property; fixture repair uses `/i REINSTALL=ALL REINSTALLMODE=amus`. The production MSI must generate its own transaction identity internally and support ordinary repair/uninstall entry points. This fixture does not qualify production custom-action security, crash/power-loss recovery, arbitrary service configurations, GUI servicing, signing, or the application maintenance barrier.
 
+R6.2 authors that production helper in `packaging/wix`: the package generates the transaction id, quiesces through the maintenance endpoint, stops for 180 seconds, and restores captured service state on rollback. The fixture package is unchanged. Native SYSTEM qualification of the product transaction is still required.
+
 ## Qualified fixture evidence
 
 Implementation: `ea7fb358581ba7cfe54cdfc04bc99044c8ce14aa`. A clean build with Go 1.27.1, WiX 7.0.0, and .NET SDK 10.0.400 was transferred, hash-verified, and tested as SYSTEM on the Server Core build above. The strict helper lane passed:

@@ -504,8 +504,10 @@ enable records or roll back configuration mutations admitted before the barrier.
 `quiesced` confirms workload/resource cleanup while the broker and control pipe
 remain running. Before replacing broker binaries, servicing must also stop the
 SCM service and confirm its process has exited. A failed or missing maintenance
-confirmation must abort replacement. This command is the runtime primitive;
-MSI servicing and rollback qualification remain separate release gates.
+confirmation must abort replacement. This command is the runtime primitive.
+The product MSI calls it, then waits up to 180 seconds for service stop and
+process exit, before replacing files. Native qualification of that transaction
+remains a release gate.
 
 Maintenance uses its own protected endpoint and bounded connection/handler
 capacity. Ordinary control-pipe saturation cannot consume those slots; saturation

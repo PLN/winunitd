@@ -76,8 +76,56 @@ MSI recovery restarts the service three times, one second apart, including
 failures that are not crashes. The failure count resets after 49710 days.
 That is the largest day count the WiX utility extension can store. Manual
 `winunitd install` still uses an infinite failure-count reset. The package
-sets a 180-second preshutdown value. It does not yet wait 180 seconds before
-replacing files. Stop the service before repair or upgrade.
+sets a 180-second preshutdown value.
+
+## Servicing a running manager
+
+Repair, upgrade, and uninstall run an embedded helper before Windows
+Installer replaces or removes package files. Removal of an older product
+is after `InstallExecute`, so the helper is not placed between
+`InstallInitialize` and `RemoveExistingProducts`. The helper is stored
+in the package. It is not an installed file, so removing the previous
+product cannot delete the copy rollback still needs.
+
+When the service is running, the helper asks the maintenance endpoint to
+quiesce and allows 180 seconds. Any result other than `quiesced`, including
+a missing endpoint, aborts the transaction before files are replaced. It
+then stops the service and waits up to another 180 seconds for SCM to
+report stopped and for that process to exit. Microsoft documents about a
+30-second wait for `ServiceControl`. This package still authors
+`ServiceControl` with `Wait="yes"`, and that action runs only after the
+helper has already stopped the service. The 180-second budget is the
+contract; the stock wait is a backstop.
+
+After the stop, the helper opens `winunitd.exe`, `winctl.exe`, and
+`winunit-notify.exe` without sharing. If one of those files is still open,
+or the service process is still alive, replacement aborts. The MSI log
+contains `abort replacement`.
+
+Before that stop, the helper records start type, delayed start, recovery
+actions, reset period, non-crash recovery, preshutdown timeout, recovery
+command, reboot message, and whether the service was running. The record
+is an administrator-only file directly under Program Files, outside the
+product directory, and its name includes a transaction id created for that
+install. Success deletes the record. On failure, after Windows Installer
+restores files and service registration, the helper restores the recorded
+configuration and the previous running or stopped state.
+
+Restarting the manager after a successful upgrade starts enabled units.
+Units that were started manually and are not enabled are not restored.
+
+On a disposable machine, `WINUNITD_TEST_FAIL=1` fails the transaction after
+the replacement service has started. That property is a qualification hook.
+It is not part of ordinary install, repair, or removal. `msiexec /f` ignores
+command-line properties; set the same name in the environment of the msiexec
+process that launches repair, including a silent repair. The client sequence
+copies it into the secure property. The elevated sequence leaves that value
+in place when it is already set, and otherwise reads it from the launching
+msiexec process. Repair can also use `/i` with `REINSTALL=ALL`
+and `REINSTALLMODE`, as in the packaging spike. The package disables Restart
+Manager so a live payload handle aborts in `service-prepare` instead of being
+closed at `InstallValidate`. The verbose MSI log includes that helper's
+standard error, including `abort replacement` and the locked file name.
 
 ## Data kept on remove
 
@@ -90,6 +138,7 @@ option.
 
 ## Not in this package
 
-Quiesce and rollback of a running service, data migration, and the install
-matrix are later packaging work. Native SYSTEM installation has to be
-qualified separately from this source tree.
+Data migration and the platform install matrix are later packaging work.
+Native SYSTEM qualification of install, repair, uninstall, and this
+servicing transaction has not been recorded. What that run must prove is
+in [R6 evidence](R6-EVIDENCE.md#maintenance-and-rollback).

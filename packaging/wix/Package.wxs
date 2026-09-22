@@ -5,16 +5,28 @@
 		This package does not call the daemon install or uninstall verbs.
 		Recovery reset is 49710 days: the utility extension cannot express
 		the infinite reset used by manual service registration.
-		Quiesce beyond ServiceControl is later maintenance work. Stop the
-		service before repair or upgrade.
+		An embedded helper quiesces, then stops for 180 seconds, before
+		StopServices and file replacement. PrepareService copies that
+		helper's standard error into the MSI log. Major upgrade removal is after
+		InstallExecute. Nothing may sit between InstallInitialize and an
+		early RemoveExistingProducts (ICE63, MSI error 2613). ServiceControl
+		remains a backstop on that already-stopped service; its wait is not
+		the 180-second budget. Rollback restores the captured service
+		configuration and running state. When a newer package removes this
+		product, StopServices and DeleteServices are skipped so they do not
+		undo the new package's start.
 	-->
 	<Package Name="WinUnit Manager" Manufacturer="PLN" Version="$(PackageVersion)"
 		ProductCode="78C43374-5AB7-4E81-B9CF-09E8ACD01133"
 		UpgradeCode="A512B91F-1883-40FD-8EDB-5B8C5708DEEA"
 		Scope="perMachine" Language="1033" InstallerVersion="500">
-		<MajorUpgrade DowngradeErrorMessage="A newer package is installed." Schedule="afterInstallInitialize" />
+		<MajorUpgrade DowngradeErrorMessage="A newer package is installed." Schedule="afterInstallExecute" />
 		<MediaTemplate EmbedCab="yes" />
 		<Property Id="ARPURLINFOABOUT" Value="https://github.com/PLN/winunitd" />
+		<Property Id="WINUNITD_TEST_FAIL" Secure="yes" />
+		<!-- Restart Manager would close lock holders at InstallValidate before
+		     PrepareService can abort. Prepare owns live-handle detection. -->
+		<Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
 		<Upgrade Id="9443AE50-251B-4A46-9465-B835A3A27133">
 			<UpgradeVersion OnlyDetect="yes" Property="WINUNITD_BETA_INSTALLED" Minimum="0.0.0" />
 		</Upgrade>
@@ -40,6 +52,8 @@
 							<util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart"
 								ThirdFailureActionType="restart" RestartServiceDelayInSeconds="1" ResetPeriodInDays="49710" />
 						</ServiceInstall>
+						<!-- Wait here is the stock ServiceControl backstop. The embedded
+						     helper already stopped the service for 180 seconds. -->
 						<ServiceControl Id="ControlDaemon" Name="winunitd" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
 					</Component>
 					<Component Id="WinctlExe" Guid="2704F5FB-2312-415C-AA67-0B9AC0A27EA6">
@@ -162,5 +176,44 @@
 		<Feature Id="AddToPath" Level="1" AllowAbsent="yes" Title="Add binaries to PATH">
 			<ComponentRef Id="PathEntry" />
 		</Feature>
+
+		<!-- Embedded so old-product removal cannot delete the helper rollback still needs.
+		     The helper is not an installed file. -->
+		<Binary Id="ServiceHelper" SourceFile="$(Payload)\msi-check.exe" />
+		<Binary Id="ServiceToken" SourceFile="$(Payload)\msi-token.dll" />
+		<CustomAction Id="NewServiceTransaction" BinaryRef="ServiceToken" DllEntry="NewPolicyTransaction" Execute="immediate" Return="check" />
+		<!-- /f ignores command-line properties. The client sequence reads the
+		     launching msiexec environment into this secure property. The
+		     execute-sequence copy does not clear a value already set. -->
+		<CustomAction Id="PullTestFail" BinaryRef="ServiceToken" DllEntry="PullTestFail" Execute="immediate" Return="check" />
+		<CustomAction Id="ExtractServiceHelper" BinaryRef="ServiceToken" DllEntry="ExtractServiceHelper" Execute="immediate" Return="check" />
+		<CustomAction Id="SetPrepareService" Property="PrepareService" Value="&quot;[WinunitdHelperPath]&quot; service-prepare &quot;[INSTALLDIR].&quot; &quot;[DATADIR].&quot; [WinunitdPolicyTransaction]" />
+		<CustomAction Id="RollbackService" BinaryRef="ServiceHelper" ExeCommand="service-rollback &quot;[INSTALLDIR].&quot; &quot;[DATADIR].&quot; [WinunitdPolicyTransaction]" Execute="rollback" Impersonate="no" Return="check" />
+		<!-- Deferred DLL so the helper's stderr, including "abort replacement", is written to the MSI log. -->
+		<CustomAction Id="PrepareService" BinaryRef="ServiceToken" DllEntry="RunServiceHelper" Execute="deferred" Impersonate="no" Return="check" />
+		<CustomAction Id="CommitService" BinaryRef="ServiceHelper" ExeCommand="service-commit &quot;[INSTALLDIR].&quot; &quot;[DATADIR].&quot; [WinunitdPolicyTransaction]" Execute="commit" Impersonate="no" Return="check" />
+		<CustomAction Id="InjectServiceFailure" BinaryRef="ServiceHelper" ExeCommand="fail" Execute="deferred" Impersonate="no" Return="check" />
+		<InstallUISequence>
+			<!-- Client msiexec process, before ExecuteAction hands off to the server. -->
+			<Custom Action="PullTestFail" Before="ExecuteAction" />
+		</InstallUISequence>
+		<InstallExecuteSequence>
+			<!-- Removal is after InstallExecute, so these actions are not
+			     between InstallInitialize and RemoveExistingProducts.
+			     Prepare is before StopServices, and that stop finishes
+			     before files change. On failure the rollback action runs
+			     after Windows Installer restores files and registration. -->
+			<StopServices Condition="NOT UPGRADINGPRODUCTCODE" />
+			<DeleteServices Condition="NOT UPGRADINGPRODUCTCODE" />
+			<Custom Action="NewServiceTransaction" After="InstallInitialize" Condition="NOT UPGRADINGPRODUCTCODE" />
+			<Custom Action="PullTestFail" After="NewServiceTransaction" />
+			<Custom Action="ExtractServiceHelper" After="PullTestFail" Condition="NOT UPGRADINGPRODUCTCODE" />
+			<Custom Action="SetPrepareService" After="ExtractServiceHelper" Condition="NOT UPGRADINGPRODUCTCODE" />
+			<Custom Action="RollbackService" Before="PrepareService" Condition="NOT UPGRADINGPRODUCTCODE" />
+			<Custom Action="PrepareService" Before="StopServices" Condition="NOT UPGRADINGPRODUCTCODE" />
+			<!-- Commit actions run after a successful transaction, not at this sequence slot. -->
+			<Custom Action="CommitService" After="PrepareService" Condition="NOT UPGRADINGPRODUCTCODE" />
+			<Custom Action="InjectServiceFailure" After="StartServices" Condition="WINUNITD_TEST_FAIL = &quot;1&quot; AND NOT REMOVE AND NOT UPGRADINGPRODUCTCODE" />
+		</InstallExecuteSequence>
 	</Package>
 </Wix>
