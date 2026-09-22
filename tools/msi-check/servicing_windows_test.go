@@ -44,22 +44,22 @@ func TestProductServiceIdentity(t *testing.T) {
 		ServiceStartName: "LocalSystem",
 		BinaryPathName:   `"C:\Program Files\winunitd\bin\winunitd.exe" --base-dir "C:\ProgramData\winunitd\."`,
 	}
-	if err := productServiceIdentity(ok, install, data); err != nil {
+	if err := classifyService(modeRepair, factsFromConfig(ok), install, data); err != nil {
 		t.Fatal(err)
 	}
 	authority := ok
 	authority.ServiceStartName = `NT AUTHORITY\SYSTEM`
-	if err := productServiceIdentity(authority, install, data); err != nil {
+	if err := classifyService(modeRepair, factsFromConfig(authority), install, data); err != nil {
 		t.Fatal(err)
 	}
 	betaLayout := ok
 	betaLayout.BinaryPathName = `"C:\Program Files\winunitd\winunitd.exe" --base-dir "C:\ProgramData\winunitd\."`
-	if err := productServiceIdentity(betaLayout, install, data); err == nil {
+	if err := classifyService(modeRepair, factsFromConfig(betaLayout), install, data); err == nil {
 		t.Fatal("accepted a service image outside bin")
 	}
 	otherAccount := ok
 	otherAccount.ServiceStartName = "NT AUTHORITY\\LocalService"
-	if err := productServiceIdentity(otherAccount, install, data); err == nil {
+	if err := classifyService(modeRepair, factsFromConfig(otherAccount), install, data); err == nil {
 		t.Fatal("accepted a non-LocalSystem service")
 	}
 }

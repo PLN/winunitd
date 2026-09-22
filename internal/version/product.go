@@ -45,6 +45,10 @@ var Components = []Component{
 	{ID: "ExampleReadme", GUID: "12ECF973-B33E-4C4C-BC89-8E8C704FE461"},
 	{ID: "EventSource", GUID: "CF160772-EA1F-4378-AA17-BF74519B1EEA"},
 	{ID: "PathEntry", GUID: "02E7B71D-5227-4CF6-BEC4-2A2F7FCD6D0E"},
+	// Data components are permanent directories. They contain no files.
+	// Child directories do not carry PermissionEx, so repair does not
+	// reapply ACLs there. Units, enable links, journals, timer state,
+	// linger records, and the daemon log are not components.
 	{ID: "DataRoot", GUID: "DB86659B-378D-4625-9191-8F5A60A56C20"},
 	{ID: "DataUnits", GUID: "4FD46D56-BD2D-4D61-B3A1-8C2085CA6049"},
 	{ID: "DataEnabled", GUID: "C82AEC80-3F19-447B-8274-96C5528DC063"},

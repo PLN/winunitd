@@ -6,8 +6,12 @@
 		Recovery reset is 49710 days: the utility extension cannot express
 		the infinite reset used by manual service registration.
 		An embedded helper quiesces, then stops for 180 seconds, before
-		StopServices and file replacement. PrepareService copies that
-		helper's standard error into the MSI log. Major upgrade removal is after
+		StopServices and file replacement. That same deferred action first
+		rejects conflicting service registrations, custom base directories,
+		machine-wide pilot launchers, and unsafe data directories. It does
+		not follow a reparse point or rewrite units, enable links, journals,
+		timer state, or linger records. PrepareService copies that helper's
+		standard error into the MSI log. Major upgrade removal is after
 		InstallExecute. Nothing may sit between InstallInitialize and an
 		early RemoveExistingProducts (ICE63, MSI error 2613). ServiceControl
 		remains a backstop on that already-stopped service; its wait is not
@@ -99,6 +103,16 @@
 			</Directory>
 		</StandardDirectory>
 
+		<!--
+			Mutable trees are permanent directories, not file components.
+			Child directories have no PermissionEx: repair must not reapply
+			ACLs or follow a junction to change the target. The data root
+			keeps the package DACL; new children inherit it. Files under
+			these directories (units, enable records, journals, timer state,
+			linger records, daemon log) are never installed, replaced, or
+			removed. Uninstall leaves the directories in place. User profiles
+			are not authored.
+		-->
 		<StandardDirectory Id="CommonAppDataFolder">
 			<Directory Id="DATADIR" Name="winunitd">
 				<Component Id="DataRoot" Guid="DB86659B-378D-4625-9191-8F5A60A56C20" Permanent="yes">
@@ -109,44 +123,32 @@
 				</Component>
 				<Directory Id="UNITSDIR" Name="units">
 					<Component Id="DataUnits" Guid="4FD46D56-BD2D-4D61-B3A1-8C2085CA6049" Permanent="yes" KeyPath="yes">
-						<CreateFolder>
-							<PermissionEx Sddl="O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
-						</CreateFolder>
+						<CreateFolder />
 					</Component>
 				</Directory>
 				<Directory Id="ENABLEDDIR" Name="enabled">
 					<Component Id="DataEnabled" Guid="C82AEC80-3F19-447B-8274-96C5528DC063" Permanent="yes" KeyPath="yes">
-						<CreateFolder>
-							<PermissionEx Sddl="O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
-						</CreateFolder>
+						<CreateFolder />
 					</Component>
 				</Directory>
 				<Directory Id="JOURNALDIR" Name="journal">
 					<Component Id="DataJournal" Guid="E74C44F8-648B-4FF0-9C60-5F146E070101" Permanent="yes" KeyPath="yes">
-						<CreateFolder>
-							<PermissionEx Sddl="O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
-						</CreateFolder>
+						<CreateFolder />
 					</Component>
 				</Directory>
 				<Directory Id="RUNTIMEDIR" Name="runtime">
 					<Component Id="DataRuntime" Guid="637F893D-37CD-448A-B532-E02DA2BBF5EA" Permanent="yes" KeyPath="yes">
-						<CreateFolder>
-							<PermissionEx Sddl="O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
-						</CreateFolder>
+						<CreateFolder />
 					</Component>
 				</Directory>
 				<Directory Id="LINGERDIR" Name="linger">
 					<Component Id="DataLinger" Guid="C9F8A0BD-7AB7-4A29-8522-751CA03D2309" Permanent="yes" KeyPath="yes">
-						<CreateFolder>
-							<PermissionEx Sddl="O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
-						</CreateFolder>
+						<CreateFolder />
 					</Component>
 				</Directory>
 				<Directory Id="DAEMONDIR" Name="daemon">
 					<Component Id="DataDaemon" Guid="99718886-3A26-46B3-9F29-4EA42ECADFBF" Permanent="yes" KeyPath="yes">
-						<CreateFolder>
-							<PermissionEx Sddl="O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
-						</CreateFolder>
+						<CreateFolder />
 					</Component>
 				</Directory>
 			</Directory>
@@ -187,7 +189,7 @@
 		     execute-sequence copy does not clear a value already set. -->
 		<CustomAction Id="PullTestFail" BinaryRef="ServiceToken" DllEntry="PullTestFail" Execute="immediate" Return="check" />
 		<CustomAction Id="ExtractServiceHelper" BinaryRef="ServiceToken" DllEntry="ExtractServiceHelper" Execute="immediate" Return="check" />
-		<CustomAction Id="SetPrepareService" Property="PrepareService" Value="&quot;[WinunitdHelperPath]&quot; service-prepare &quot;[INSTALLDIR].&quot; &quot;[DATADIR].&quot; [WinunitdPolicyTransaction]" />
+		<CustomAction Id="SetPrepareService" Property="PrepareService" Value="&quot;[WinunitdHelperPath]&quot; service-prepare &quot;[INSTALLDIR].&quot; &quot;[DATADIR].&quot; [WinunitdPolicyTransaction] &quot;[Installed]&quot; &quot;[WIX_UPGRADE_DETECTED]&quot; &quot;[REMOVE]&quot;" />
 		<CustomAction Id="RollbackService" BinaryRef="ServiceHelper" ExeCommand="service-rollback &quot;[INSTALLDIR].&quot; &quot;[DATADIR].&quot; [WinunitdPolicyTransaction]" Execute="rollback" Impersonate="no" Return="check" />
 		<!-- Deferred DLL so the helper's stderr, including "abort replacement", is written to the MSI log. -->
 		<CustomAction Id="PrepareService" BinaryRef="ServiceToken" DllEntry="RunServiceHelper" Execute="deferred" Impersonate="no" Return="check" />
@@ -210,6 +212,9 @@
 			<Custom Action="ExtractServiceHelper" After="PullTestFail" Condition="NOT UPGRADINGPRODUCTCODE" />
 			<Custom Action="SetPrepareService" After="ExtractServiceHelper" Condition="NOT UPGRADINGPRODUCTCODE" />
 			<Custom Action="RollbackService" Before="PrepareService" Condition="NOT UPGRADINGPRODUCTCODE" />
+			<!-- PrepareService preflights, then quiesces, before StopServices.
+			     CreateFolders, InstallFiles, InstallServices, and StartServices
+			     are all later, so a conflict never starts the service. -->
 			<Custom Action="PrepareService" Before="StopServices" Condition="NOT UPGRADINGPRODUCTCODE" />
 			<!-- Commit actions run after a successful transaction, not at this sequence slot. -->
 			<Custom Action="CommitService" After="PrepareService" Condition="NOT UPGRADINGPRODUCTCODE" />
