@@ -15,9 +15,24 @@ func TestInspectDirectoryRejectsUserOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = classifyDirectory(fact)
-	if err == nil || !strings.Contains(err.Error(), "unexpected ownership") {
+	// A directory created here is not a product directory. An elevated
+	// token owns it as Administrators, so preflight reports the write
+	// grant. A standard user token is rejected for ownership. Either
+	// result stays fail-closed and keeps the conflict marker.
+	if !userDirectoryConflict(err) {
 		t.Fatalf("user-owned directory: %v", err)
 	}
+}
+
+func userDirectoryConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "preflight conflict:") {
+		return false
+	}
+	return strings.Contains(msg, "unexpected ownership") || strings.Contains(msg, "permits non-administrator writes")
 }
 
 func TestInspectDirectoryRejectsReparseWithoutOpeningTarget(t *testing.T) {
