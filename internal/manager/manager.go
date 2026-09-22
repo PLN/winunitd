@@ -29,6 +29,7 @@ type Manager struct {
 	clk                  timers.Clock
 	launch               runtime.Launcher
 	journal              *journal.Store
+	daemonLog            *journal.DaemonLog
 	engine               *timers.Engine
 	mu                   sync.Mutex
 	configMu             sync.Mutex    // serializes reload/enable/disable I/O and acceptance
@@ -111,6 +112,11 @@ func New(cfg Config) (*Manager, error) {
 	if err != nil {
 		return nil, errors.Join(err, js.Close())
 	}
+	dlog, err := journal.OpenDaemonLog(cfg.BaseDir, cfg.DaemonLogWrite)
+	if err != nil {
+		return nil, errors.Join(err, js.Close())
+	}
+	js.UseDaemonLog(dlog)
 	clk := cfg.Clock
 	if clk.Now == nil || clk.SinceBoot == nil || clk.Startup.IsZero() || clk.NewTimer == nil || clk.SinceStart == nil {
 		def := timers.DefaultClock()
@@ -138,6 +144,7 @@ func New(cfg Config) (*Manager, error) {
 		scm:             scm,
 		tasks:           tasks,
 		journal:         js,
+		daemonLog:       dlog,
 		units:           make(map[string]*unitRuntime),
 	}
 	if cfg.RegistryOpen != nil {
@@ -166,6 +173,7 @@ func New(cfg Config) (*Manager, error) {
 		m.pathExists = pathwatch.Exists
 	}
 	m.engine = timers.NewEngine(clk, store, m.onTimerElapsed)
+	dlog.Record(journal.DaemonEvent{Code: journal.DaemonEventOpen})
 	return m, nil
 }
 
@@ -191,6 +199,9 @@ func (m *Manager) CloseContext(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if m.daemonLog != nil {
+		m.daemonLog.Record(journal.DaemonEvent{Code: journal.DaemonEventClose})
+	}
 	m.mu.Lock()
 	m.closed = true
 	if m.nativeProbesCancel != nil {
@@ -209,7 +220,22 @@ func (m *Manager) CloseContext(ctx context.Context) error {
 		rt.cancelRestart()
 	}
 	m.mu.Unlock()
-	return m.stops.wait(ctx, m.clock(), stopKey{manager: m}, 0, m.closePass)
+	err := m.stops.wait(ctx, m.clock(), stopKey{manager: m}, 0, m.closePass)
+	return errors.Join(err, m.closeDaemonLog(ctx))
+}
+
+// closeDaemonLog joins the writer after native cleanup. The wait is capped so
+// a stalled sink cannot consume the cleanup budget or hold this call open.
+func (m *Manager) closeDaemonLog(ctx context.Context) error {
+	if m == nil || m.daemonLog == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	dctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	return m.daemonLog.CloseContext(dctx)
 }
 
 func (m *Manager) closePass() error {
@@ -480,6 +506,7 @@ func (m *Manager) Status(name string) (*protocol.StatusResult, error) {
 		ms.LogEvictedFiles, ms.LogEvictedBytes = stats.EvictedFiles, stats.EvictedBytes
 		ms.LogDroppedRecords, ms.LogDroppedBytes = stats.DroppedRecords, stats.DroppedBytes
 		ms.LogStorageErrors, ms.LogLastStorageError = stats.StorageErrors, stats.LastStorageError
+		m.overlayDaemonLog(ms)
 		return &protocol.StatusResult{Machine: ms}, nil
 	}
 	rt, err := m.lookup(name)
@@ -496,6 +523,32 @@ func (m *Manager) Status(name string) (*protocol.StatusResult, error) {
 	m.overlayTask(&st, taskName)
 	m.overlayTimer(&st)
 	return &protocol.StatusResult{Unit: &st}, nil
+}
+
+func (m *Manager) overlayDaemonLog(ms *protocol.MachineStatus) {
+	if m == nil || ms == nil || m.daemonLog == nil {
+		return
+	}
+	stats := m.daemonLog.Stats()
+	ms.DaemonLogDroppedRecords = stats.DroppedRecords
+	ms.DaemonLogDroppedBytes = stats.DroppedBytes
+	ms.DaemonLogErrors = stats.Errors
+	ms.DaemonLogLastError = stats.LastError
+	if len(stats.Events) == 0 {
+		return
+	}
+	ms.DaemonEvents = make([]protocol.DaemonEvent, 0, len(stats.Events))
+	for _, ev := range stats.Events {
+		ms.DaemonEvents = append(ms.DaemonEvents, protocol.DaemonEvent{
+			Timestamp: ev.Timestamp, Code: ev.Code, Unit: ev.Unit,
+			InvocationID: ev.InvocationID, OperationID: ev.OperationID,
+			ConfigRevision: ev.ConfigRevision, LoadState: ev.LoadState,
+			ActiveState: ev.ActiveState, Health: ev.Health, Reason: ev.Reason,
+			RestartAttempt:      ev.RestartAttempt,
+			StartLimitBurst:     ev.StartLimitBurst,
+			StartLimitRemaining: ev.StartLimitRemaining,
+		})
+	}
 }
 
 func (m *Manager) machineLocked() *protocol.MachineStatus {
@@ -542,6 +595,7 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 		if rt.sub == core.SubAutoRestart {
 			st.RestartDelaySec = rt.restartDelay.Seconds()
 		}
+		st.RestartBudget = m.restartBudgetLocked(rt)
 		st.Health = rt.health
 		if st.Health == "" {
 			st.Health = "unknown"

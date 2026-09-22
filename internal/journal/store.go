@@ -54,6 +54,7 @@ type Store struct {
 	mainCaptures  map[string]*Capture
 	origin        atomic.Pointer[Origin]
 	diagnostics   captureGroup
+	daemonLog     atomic.Pointer[DaemonLog]
 	queueMu       sync.Mutex
 	captureWake   chan struct{}
 	captureQueues map[*captureGroup]*capturePending

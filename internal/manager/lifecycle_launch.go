@@ -430,4 +430,5 @@ func (m *Manager) failStartLimitLocked(rt *unitRuntime) {
 	if !rt.stopping && rt.unit != nil {
 		m.queueBoundStopsLocked(rt.unit.Name)
 	}
+	m.noteStartLimitLocked(rt)
 }

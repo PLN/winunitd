@@ -2,7 +2,9 @@ package protocol
 
 // SnapshotResult is one immutable decision view. System control additionally
 // copies user-host ownership while both decision locks are held in fixed order.
-// It contains no fresh process, proxy, journal or timer-engine observations.
+// It contains no fresh process, proxy, journal, daemon-log, or timer-engine
+// observations. Timer storage and schedule state belong to status and
+// list-timers. Restart budget is copied here with the accepted definition.
 type SnapshotResult struct {
 	UserHost   *UserHostSnapshot `json:"userHost,omitempty"`
 	ManagerID  string            `json:"managerId"`
@@ -17,6 +19,7 @@ type UnitSnapshot struct {
 	NativeProxy              *NativeProxyStatus `json:"nativeProxy,omitempty"`
 	RestartAttempt           uint32             `json:"restartAttempt,omitempty"`
 	RestartDelaySec          float64            `json:"restartDelaySec,omitempty"`
+	RestartBudget            *RestartBudget     `json:"restartBudget,omitempty"`
 	Health                   string             `json:"health,omitempty"`
 	ProbeFailures            int                `json:"probeFailures,omitempty"`
 	Error                    string             `json:"error,omitempty"`

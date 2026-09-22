@@ -1293,6 +1293,30 @@ func TestPrintStatusStartLimit(t *testing.T) {
 	}
 }
 
+func TestPrintStatusRestartBudgetAndDaemonLog(t *testing.T) {
+	remaining := 0
+	var out bytes.Buffer
+	c := &cli{stdout: &out}
+	if code := c.printStatus(&protocol.StatusResult{Machine: &protocol.MachineStatus{
+		State:                   "running",
+		DaemonLogDroppedRecords: 2,
+		DaemonLogErrors:         1,
+		DaemonEvents:            []protocol.DaemonEvent{{Code: "daemon.open"}},
+	}}); code != 0 {
+		t.Fatalf("machine exit %d", code)
+	}
+	if code := c.printStatus(&protocol.StatusResult{Unit: &protocol.UnitStatus{
+		Name: "loop.service", LoadState: "loaded", ActiveState: "failed",
+		RestartBudget: &protocol.RestartBudget{Policy: "on-failure", Burst: 3, IntervalSec: 60, StartsInWindow: 3, Remaining: &remaining},
+	}}); code != 0 {
+		t.Fatalf("unit exit %d", code)
+	}
+	got := out.String()
+	if !strings.Contains(got, "Daemon log: 2 dropped records") || !strings.Contains(got, "Daemon event: daemon.open") || !strings.Contains(got, "Restart budget: policy=on-failure burst=3 in-window=3 remaining=0 interval=60s") {
+		t.Fatalf("status text = %s", got)
+	}
+}
+
 func TestPrintStatusTerminationUncertain(t *testing.T) {
 	var out bytes.Buffer
 	c := &cli{stdout: &out}

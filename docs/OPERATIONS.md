@@ -146,7 +146,61 @@ storage-error and loss counters. Diagnostic messages are limited to 4096 UTF-8
 bytes, with `partial` identifying truncation. One shared diagnostic group uses
 the normal invocation allowance; a blocked disk or console cannot hold the
 coordinator while it records a rejection. Manager close joins accepted journal
-records. Other daemon output and Windows event resources remain separate work.
+records.
+
+The same rejection is also queued to the durable daemon log when that log is
+open. Environment assignments, credential or store URIs, and parser dumps are
+not written to either surface; the unit-journal line keeps the event code and
+the daemon log omits the forbidden field. Windows event resources remain
+separate installer work.
+
+### Durable daemon log
+
+The log file is `<base-dir>\daemon\daemon.log`, a direct child of the manager
+data root. Open rejects a symlink or reparse point on that chain and refuses a
+file whose resolved path leaves the root. On Windows the directory and file
+DACL grant access to SYSTEM and Administrators only. On other systems the
+directory is mode 0700 and the file is mode 0600.
+
+Records are one JSON object per line, version 1, with a closed set of event
+codes (`lifecycle.rejected`, `lifecycle.start-limit`, `daemon.open`,
+`daemon.close`). Persisted fields are only the allowlist: code, timestamp,
+unit, invocation, operation, configuration revision, load, active, and health
+state, a short reason, restart attempt, and start-limit burst/remaining.
+Unknown keys are ignored. A field that contains an environment assignment, a
+credential or store URI, a parser location, or a newline is omitted. Reasons
+longer than 160 bytes are omitted. Each encoded record is at most 1024 bytes.
+
+Enqueue holds no file I/O. The queue admits 32 records or 16 KiB, whichever
+comes first, and further records increment `daemonLogDroppedRecords` and
+`daemonLogDroppedBytes`. Write failures increment `daemonLogErrors` and retain
+a short `daemonLogLastError`. Those counters, plus at most 16 recent accepted
+events, are machine `status` observations. They are not copied into snapshot,
+and reading them does not touch the file. Startup reads at most 16 KiB of an
+existing tail so a restart can show recent lines; that read is not on the
+status or snapshot path.
+
+The current file rotates before a write would pass 256 KiB, keeping one
+previous generation beside it. Both names stay inside the daemon directory.
+The writer syncs when the queue drains and again on close. A crash can drop
+records accepted after the last successful sync.
+Shutdown asks the writer to drain only after native cleanup has been joined,
+then waits at most two seconds and no longer than the caller's close deadline.
+A stalled sink returns from that wait without blocking lifecycle decisions or
+native cleanup; the writer still releases the file after the sink returns.
+
+### Restart budget and timer storage
+
+Unit status and snapshot both carry `restartBudget` from the accepted
+definition and the in-memory start window: policy, interval, burst, starts
+still inside the window, and remaining attempts when the limit is enabled.
+Burst 0 or a non-positive interval is unlimited and omits remaining. Snapshot
+copies that budget under the decision lock and still fails closed above 1024
+units, 128 active operations, or 512 KiB.
+
+Timer storage state, storage error, schedule state, and the last activation
+are owned by unit `status` and `list-timers`. Those commands read the timer
+engine after releasing the decision lock. Snapshot does not include them.
 
 Journal v4 records leave raw stdout/stderr severity empty (unknown), while
 retaining stream identity. Neither stderr nor text resembling an error sets a

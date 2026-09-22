@@ -67,7 +67,7 @@ System manager listens on \\.\pipe\winunitd\control (LocalSystem and
 Administrators only).
 
 Flags:
-  --base-dir DIR         Data directory (units\, enabled\, journal\, runtime\, linger\).
+  --base-dir DIR         Data directory (units\, enabled\, journal\, runtime\, linger\, daemon\).
                          Default: %ProgramData%\winunitd (system) or
                          %LOCALAPPDATA%\winunitd (user manager)
   --user-manager SID     Run as the per-user manager for SID (not an SCM service)
