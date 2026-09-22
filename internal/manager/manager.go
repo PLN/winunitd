@@ -116,6 +116,9 @@ func New(cfg Config) (*Manager, error) {
 	if err != nil {
 		return nil, errors.Join(err, store.Close(), js.Close())
 	}
+	if cfg.DaemonEventEmit != nil {
+		dlog.SetEmitter(cfg.DaemonEventEmit)
+	}
 	js.UseDaemonLog(dlog)
 	clk := cfg.Clock
 	if clk.Now == nil || clk.SinceBoot == nil || clk.Startup.IsZero() || clk.NewTimer == nil || clk.SinceStart == nil {
@@ -222,6 +225,15 @@ func (m *Manager) CloseContext(ctx context.Context) error {
 	m.mu.Unlock()
 	err := m.stops.wait(ctx, m.clock(), stopKey{manager: m}, 0, m.closePass)
 	return errors.Join(err, m.closeDaemonLog(ctx))
+}
+
+// RecordDaemonEvent queues one allowlisted daemon diagnostic. It does not
+// wait for the file or the Windows event channel.
+func (m *Manager) RecordDaemonEvent(ev journal.DaemonEvent) {
+	if m == nil || m.daemonLog == nil {
+		return
+	}
+	m.daemonLog.Record(ev)
 }
 
 // closeDaemonLog joins the writer after native cleanup. The wait is capped so

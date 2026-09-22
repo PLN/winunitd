@@ -11,6 +11,7 @@ import (
 	"github.com/PLN/winunitd/internal/manager"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/winevt"
 )
 
 // Tests replace this factory only inside their test-binary subprocesses.
@@ -23,31 +24,41 @@ func serveUser(ctx context.Context, sid, baseDir string, stderr io.Writer) (serv
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	if !protocol.ValidSID(sid) {
-		return fmt.Errorf("invalid SID %q", sid)
+		err := fmt.Errorf("invalid SID %q", sid)
+		noteStartupFailure(baseDir, nil, err)
+		return err
 	}
 
 	info, err := runtime.CurrentUserInfo()
 	if err != nil {
-		return fmt.Errorf("user manager identity: %w", err)
+		err = fmt.Errorf("user manager identity: %w", err)
+		noteStartupFailure(baseDir, nil, err)
+		return err
 	}
 	if info.SID != sid {
-		return fmt.Errorf("user manager SID mismatch: running as %s, want %s", info.SID, sid)
+		err = fmt.Errorf("user manager SID mismatch: running as %s, want %s", info.SID, sid)
+		noteStartupFailure(baseDir, nil, err)
+		return err
 	}
 	if err := runtime.ApplyUserEnv(info); err != nil {
 		fmt.Fprintf(stderr, "winunitd: apply user env: %v\n", err)
 	}
 	if err := runtime.SetHeadlessUserWorkingDirectory(info.Profile); err != nil {
-		return fmt.Errorf("headless user working directory: %w", err)
+		err = fmt.Errorf("headless user working directory: %w", err)
+		noteStartupFailure(baseDir, nil, err)
+		return err
 	}
 	if baseDir == "" {
 		baseDir = manager.DefaultUserBaseDir()
 	}
 	if err := runtime.EnsureDataDirs(baseDir); err != nil {
+		noteStartupFailure(baseDir, nil, err)
 		return err
 	}
 
 	job, err := runtime.OpenDaemonJob()
 	if err != nil {
+		noteStartupFailure(baseDir, nil, err)
 		return err
 	}
 	daemonJob = job
@@ -56,14 +67,17 @@ func serveUser(ctx context.Context, sid, baseDir string, stderr io.Writer) (serv
 		if closeErr == nil {
 			daemonJob = nil
 		}
-		return errors.Join(fmt.Errorf("assign user manager job: %w", err), closeErr)
+		err = errors.Join(fmt.Errorf("assign user manager job: %w", err), closeErr)
+		noteStartupFailure(baseDir, nil, err)
+		return err
 	}
 
 	m, err := manager.New(manager.Config{
-		BaseDir:   baseDir,
-		Daemon:    job,
-		UserScope: true,
-		NotifySID: sid,
+		BaseDir:         baseDir,
+		Daemon:          job,
+		UserScope:       true,
+		NotifySID:       sid,
+		DaemonEventEmit: winevt.Emit,
 		HasInteractiveSession: func() bool {
 			return runtime.SIDHasInteractiveSession(sid)
 		},
@@ -73,13 +87,17 @@ func serveUser(ctx context.Context, sid, baseDir string, stderr io.Writer) (serv
 		if closeErr == nil {
 			daemonJob = nil
 		}
-		return errors.Join(err, closeErr)
+		err = errors.Join(err, closeErr)
+		noteStartupFailure(baseDir, nil, err)
+		return err
 	}
 	defer func() { cancel(); serveErr = errors.Join(serveErr, finish(m, job, nil, stderr)) }()
 
 	rel, err := m.Reload()
 	if err != nil {
-		return fmt.Errorf("load units: %w", err)
+		err = fmt.Errorf("load units: %w", err)
+		noteStartupFailure(baseDir, m, err)
+		return err
 	}
 	for _, e := range rel.Errors {
 		fmt.Fprintf(stderr, "winunitd: %s\n", e)
@@ -90,7 +108,9 @@ func serveUser(ctx context.Context, sid, baseDir string, stderr io.Writer) (serv
 
 	lis, err := listenUserControl(sid)
 	if err != nil {
-		return fmt.Errorf("listen: %w", err)
+		err = fmt.Errorf("listen: %w", err)
+		noteStartupFailure(baseDir, m, err)
+		return err
 	}
 	defer lis.Close()
 	fmt.Fprintf(stderr, "winunitd: user manager %s loaded %d units, listening on %s\n", sid, rel.Loaded, lis.Addr())

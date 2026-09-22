@@ -14,6 +14,7 @@ import (
 	"github.com/PLN/winunitd/internal/manager"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/winevt"
 )
 
 // daemonJob is held for the process lifetime so KILL_ON_JOB_CLOSE still fires
@@ -31,6 +32,7 @@ func serveReady(ctx context.Context, baseDir string, stderr io.Writer, sessions 
 	defer cancel()
 	job, err := runtime.OpenBrokerJob()
 	if err != nil {
+		noteStartupFailure(baseDir, nil, err)
 		return err
 	}
 	daemonJob = job
@@ -39,16 +41,20 @@ func serveReady(ctx context.Context, baseDir string, stderr io.Writer, sessions 
 		if closeErr == nil {
 			daemonJob = nil
 		}
-		return errors.Join(fmt.Errorf("assign daemon job: %w", err), closeErr)
+		err = errors.Join(fmt.Errorf("assign daemon job: %w", err), closeErr)
+		noteStartupFailure(baseDir, nil, err)
+		return err
 	}
 
-	m, err := manager.New(manager.Config{BaseDir: baseDir, Daemon: job})
+	m, err := manager.New(manager.Config{BaseDir: baseDir, Daemon: job, DaemonEventEmit: winevt.Emit})
 	if err != nil {
 		closeErr := job.Close()
 		if closeErr == nil {
 			daemonJob = nil
 		}
-		return errors.Join(err, closeErr)
+		err = errors.Join(err, closeErr)
+		noteStartupFailure(baseDir, nil, err)
+		return err
 	}
 
 	exe, err := os.Executable()
@@ -97,12 +103,16 @@ func serveReady(ctx context.Context, baseDir string, stderr io.Writer, sessions 
 
 	lis, err := protocol.ListenControl()
 	if err != nil {
-		return fmt.Errorf("listen: %w", err)
+		err = fmt.Errorf("listen: %w", err)
+		noteStartupFailure(baseDir, m, err)
+		return err
 	}
 	defer lis.Close()
 	maintenanceLis, err := protocol.ListenPipe(protocol.MaintenancePipeName)
 	if err != nil {
-		return fmt.Errorf("listen maintenance: %w", err)
+		err = fmt.Errorf("listen maintenance: %w", err)
+		noteStartupFailure(baseDir, m, err)
+		return err
 	}
 	defer maintenanceLis.Close()
 	if loadErr == nil {

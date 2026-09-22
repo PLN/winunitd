@@ -49,6 +49,11 @@ type Config struct {
 	// before the file write. A stall or error stays on the log writer.
 	// Record and lifecycle callers do not wait for it. Nil writes the file only.
 	DaemonLogWrite func([]byte) error
+	// DaemonEventEmit, when non-nil, receives each accepted daemon-log view
+	// from the writer, including when the file write fails. It is the
+	// Windows-visible channel for the same allowlisted events. Nil skips it.
+	// The function must not wait or record another daemon event.
+	DaemonEventEmit func(journal.DaemonEventView)
 	// Daemon is the M4 daemon Job Object. Unit processes nest under it.
 	Daemon *runtime.DaemonJob
 	// Clock drives the timer scheduler and manager waits for RestartSec,

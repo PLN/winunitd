@@ -5,7 +5,9 @@ for the supported beta scope and installation. See the [unit reference](UNIT-REF
 for syntax and [qualification](BETA-QUALIFICATION.md) for tested behavior.
 
 Manual service registration below is for development installations. Do not use
-those commands against an MSI installation; follow the [MSI procedure](../packaging/beta/INSTALL.md).
+those commands against an MSI installation. The unsigned beta procedure is
+[packaging/beta/INSTALL.md](../packaging/beta/INSTALL.md). The product package
+is [INSTALLATION.md](INSTALLATION.md).
 
 ## Windows Service
 
@@ -14,7 +16,7 @@ winunitd install [--base-dir DIR]
 winunitd uninstall
 ```
 
-Install creates `C:\ProgramData\winunitd` (`units\`, `enabled\`, `journal\`, `runtime\`, `linger\`) if missing, sets SCM recovery to restart on failure, and accepts preshutdown for ordered stop. It does not add PATH or register an Event Log provider.
+Install creates `C:\ProgramData\winunitd` (`units\`, `enabled\`, `journal\`, `runtime\`, `linger\`) if missing, sets SCM recovery to restart on failure, and accepts preshutdown for ordered stop. It does not add PATH or register an Event Log provider. The product MSI owns both of those registrations; a manual install does not.
 
 On start (SCM or console) the daemon starts `builtin` `default.target`, which Wants=`timers.target`. Built-in targets: `default.target`, `timers.target`, `shutdown.target` (`network-online.target` is not shipped). A user manager also loads `graphical-session.target`.
 

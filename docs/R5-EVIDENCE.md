@@ -258,3 +258,11 @@ does not establish universal power-loss durability for controllers or remote
 filesystems. Delivery policy and journaling are now qualified above. Diagnostics,
 installer state rollback and overall R5 acceptance remain
 separate gates; R2/R3 technical acceptance is complete.
+
+## Event resources
+
+R5.4b source registers the Application source `winunitd` from the product MSI
+and embeds a message table in `winunitd.exe`. Startup failures use the daemon
+log code `daemon.startup-failed` and the same redaction rules. Rendered-event
+evidence on a clean Windows installation has not been collected. R5.4 stays
+open, and this note does not waive A3 or R4.4.
