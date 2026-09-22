@@ -126,6 +126,45 @@ func TestDaemonLogRedactsSecretsParserDumpsAndUnknownFields(t *testing.T) {
 	}
 }
 
+func TestDaemonLogEmitterSurvivesWriteFailureAndRedacts(t *testing.T) {
+	root := t.TempDir()
+	log, err := OpenDaemonLog(root, func([]byte) error {
+		return os.ErrPermission
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var got []DaemonEventView
+	log.SetEmitter(func(view DaemonEventView) {
+		mu.Lock()
+		got = append(got, view)
+		mu.Unlock()
+	})
+	log.Record(DaemonEvent{Code: DaemonEventStartupFailed, Reason: "listen failed"})
+	log.Record(DaemonEvent{Code: DaemonEventStartupFailed, Reason: "rejected Environment=TOKEN=1"})
+	if err := log.CloseContext(context.Background()); err == nil {
+		t.Fatal("write failure was not reported")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("emitted %d events", len(got))
+	}
+	if got[0].Code != DaemonEventStartupFailed || got[0].Reason != "listen failed" {
+		t.Fatalf("first event %+v", got[0])
+	}
+	if got[1].Reason != "" || strings.Contains(got[1].Reason, "Environment=") {
+		t.Fatalf("forbidden reason emitted: %+v", got[1])
+	}
+	if _, ok := PublicDetail("rejected Environment=TOKEN=1"); ok {
+		t.Fatal("public detail accepted an environment assignment")
+	}
+	if detail, ok := PublicDetail("listen failed"); !ok || detail != "listen failed" {
+		t.Fatalf("public detail %q ok=%v", detail, ok)
+	}
+}
+
 func TestDaemonLogRejectsSymlinkEscape(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()

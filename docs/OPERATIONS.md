@@ -151,8 +151,13 @@ records.
 The same rejection is also queued to the durable daemon log when that log is
 open. Environment assignments, credential or store URIs, and parser dumps are
 not written to either surface; the unit-journal line keeps the event code and
-the daemon log omits the forbidden field. Windows event resources remain
-separate installer work.
+the daemon log omits the forbidden field. The same accepted daemon-log record
+is also reported to the Windows Application log when the product installer has
+registered the `winunitd` source. That source uses the message table inside
+`winunitd.exe`. Event text follows the allowlist: environment assignments,
+credential or store URIs, and parser dumps are omitted. The unit journal stays
+the workload stream. `daemon.log` stays the durable file. The Application log
+is the Windows-visible lifecycle and startup channel.
 
 ### Durable daemon log
 
@@ -164,7 +169,7 @@ directory is mode 0700 and the file is mode 0600.
 
 Records are one JSON object per line, version 1, with a closed set of event
 codes (`lifecycle.rejected`, `lifecycle.start-limit`, `daemon.open`,
-`daemon.close`). Persisted fields are only the allowlist: code, timestamp,
+`daemon.close`, `daemon.startup-failed`). Persisted fields are only the allowlist: code, timestamp,
 unit, invocation, operation, configuration revision, load, active, and health
 state, a short reason, restart attempt, and start-limit burst/remaining.
 Unknown keys are ignored. A field that contains an environment assignment, a

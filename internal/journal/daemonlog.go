@@ -25,6 +25,7 @@ const (
 	DaemonEventStartLimit        = "lifecycle.start-limit"
 	DaemonEventOpen              = "daemon.open"
 	DaemonEventClose             = "daemon.close"
+	DaemonEventStartupFailed     = "daemon.startup-failed"
 
 	maxDaemonQueueRecords = 32
 	maxDaemonQueueBytes   = 16 << 10
@@ -128,6 +129,7 @@ type DaemonLog struct {
 	closeOnce sync.Once
 	file      *os.File
 	write     func([]byte) error
+	emit      func(DaemonEventView)
 }
 
 // DaemonLogPath is <root>/daemon/daemon.log.
@@ -188,6 +190,18 @@ func OpenDaemonLog(root string, write func([]byte) error) (*DaemonLog, error) {
 	}
 	go l.loop()
 	return l, nil
+}
+
+// SetEmitter receives each accepted record from the writer, including when
+// the file write fails. fn must not wait on disk and must not call Record.
+// A nil emitter skips the Windows-visible channel. Tests leave it unset.
+func (l *DaemonLog) SetEmitter(fn func(DaemonEventView)) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.emit = fn
+	l.mu.Unlock()
 }
 
 // UseDaemonLog attaches the durable log that RecordDiagnostic also feeds.
@@ -391,6 +405,9 @@ func (l *DaemonLog) pop() ([]byte, bool) {
 }
 
 func (l *DaemonLog) writeOne(line []byte) error {
+	if view, ok := decodeDaemonEvent(line); ok {
+		defer l.emitView(view)
+	}
 	if l.write != nil {
 		if err := l.write(line); err != nil {
 			return err
@@ -421,6 +438,16 @@ func (l *DaemonLog) writeOne(line []byte) error {
 		return nil
 	}
 	return l.file.Sync()
+}
+
+func (l *DaemonLog) emitView(view DaemonEventView) {
+	l.mu.Lock()
+	fn := l.emit
+	l.mu.Unlock()
+	if fn == nil {
+		return
+	}
+	fn(cloneDaemonView(view))
 }
 
 func (l *DaemonLog) rotate() error {
@@ -574,7 +601,7 @@ func encodeDaemonEvent(ev DaemonEvent) ([]byte, DaemonEventView, bool) {
 
 func knownDaemonCode(code string) bool {
 	switch code {
-	case DaemonEventLifecycleRejected, DaemonEventStartLimit, DaemonEventOpen, DaemonEventClose:
+	case DaemonEventLifecycleRejected, DaemonEventStartLimit, DaemonEventOpen, DaemonEventClose, DaemonEventStartupFailed:
 		return true
 	default:
 		return false
@@ -595,6 +622,16 @@ func cleanDaemonReason(s string) string {
 		return ""
 	}
 	return s
+}
+
+// PublicDetail is the reason text safe to show outside the daemon log.
+// Empty, oversized, and forbidden strings are omitted.
+func PublicDetail(s string) (string, bool) {
+	cleaned := cleanDaemonReason(s)
+	if cleaned == "" {
+		return "", false
+	}
+	return cleaned, true
 }
 
 func textForbidden(s string) bool {

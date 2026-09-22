@@ -2,6 +2,8 @@
 
 Status: production installer contract beyond the shipped unsigned beta. Updated September 13, 2026. The [beta delivery gates](BETA-RELEASE.md) and [beta qualification](BETA-QUALIFICATION.md) record what is already delivered; this document retains the additional R6 requirements. Beta installation does not establish production servicing or pilot migration qualification.
 
+The product package source is [packaging/wix](../packaging/wix). It is a different product from the unsigned beta in [packaging/beta](../packaging/beta): separate UpgradeCode, binaries under `winunitd\bin`, an owned PATH component, and MSI event-source registration. The product detects the beta UpgradeCode and refuses to install beside it. It does not call `winunitd install` or `uninstall`. Operator steps are in [INSTALLATION.md](INSTALLATION.md). Native fresh-install, repair, and uninstall evidence is still required before R6.1 can close. The authored service recovery reset is 49710 days because the WiX utility extension cannot express the infinite reset used by manual registration. The 180-second quiesce transaction remains R6.2 and is not part of this package.
+
 Aligned September 5, 2026 with [ROADMAP.md](../ROADMAP.md), [Design v2](../DESIGN.md), and [R0–R8 milestones](MILESTONES.md). This document owns packaging details; the roadmap owns sequencing and release gates. The former M0–M5 sequence is mapped below for historical references.
 
 ## Delivery decision

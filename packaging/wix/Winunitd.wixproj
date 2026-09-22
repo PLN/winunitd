@@ -1,0 +1,14 @@
+<Project Sdk="WixToolset.Sdk/7.0.0">
+	<PropertyGroup>
+		<OutputType>Package</OutputType>
+		<InstallerPlatform>x64</InstallerPlatform>
+		<PackageVersion Condition="'$(PackageVersion)' == ''">0.1.0</PackageVersion>
+		<IntermediateOutputPath>obj\$(PackageVersion)\</IntermediateOutputPath>
+		<DefineConstants>PackageVersion=$(PackageVersion);Payload=$(MSBuildThisFileDirectory)..\..\dist\wix\payload;Repo=$(MSBuildThisFileDirectory)..\..</DefineConstants>
+		<OutputPath>..\..\dist\wix\$(PackageVersion)\</OutputPath>
+		<OutputName>winunitd-$(PackageVersion)-x64</OutputName>
+	</PropertyGroup>
+	<ItemGroup>
+		<PackageReference Include="WixToolset.Util.wixext" Version="7.0.0" />
+	</ItemGroup>
+</Project>

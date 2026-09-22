@@ -18,7 +18,7 @@ limits. R5.3 journaling is also technically complete: [acceptance evidence](R5-E
 combines prior pressure measurements with historical disk retention and v4
 stream/severity qualification. R5.5 [combined operational stress](R5-EVIDENCE.md#combined-operational-stress-acceptance)
 is technically complete, including real volume exhaustion and bounded recovery
-under both native identities. Durable diagnostics/event resources remain R5 work.
+under both native identities. Product MSI source and Application event resources are authored; native install and rendered-event evidence, and overall R5 and R6, remain open.
 R4.3 SCM readiness and combined maintenance are technically complete; the
 [Windows qualification ledger](R4-EVIDENCE.md) records the accepted native runs
 and the remaining broader identity/session/security matrix.

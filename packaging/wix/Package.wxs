@@ -1,0 +1,166 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+	<!--
+		Product MSI for WinUnit Manager. Identifiers are recorded in source
+		(internal/version/product.go). PackageCode stays per-build.
+		This package does not call the daemon install or uninstall verbs.
+		Recovery reset is 49710 days: the utility extension cannot express
+		the infinite reset used by manual service registration.
+		Quiesce beyond ServiceControl is later maintenance work. Stop the
+		service before repair or upgrade.
+	-->
+	<Package Name="WinUnit Manager" Manufacturer="PLN" Version="$(PackageVersion)"
+		ProductCode="78C43374-5AB7-4E81-B9CF-09E8ACD01133"
+		UpgradeCode="A512B91F-1883-40FD-8EDB-5B8C5708DEEA"
+		Scope="perMachine" Language="1033" InstallerVersion="500">
+		<MajorUpgrade DowngradeErrorMessage="A newer package is installed." Schedule="afterInstallInitialize" />
+		<MediaTemplate EmbedCab="yes" />
+		<Property Id="ARPURLINFOABOUT" Value="https://github.com/PLN/winunitd" />
+		<Upgrade Id="9443AE50-251B-4A46-9465-B835A3A27133">
+			<UpgradeVersion OnlyDetect="yes" Property="WINUNITD_BETA_INSTALLED" Minimum="0.0.0" />
+		</Upgrade>
+		<Launch Condition="Installed OR NOT WINUNITD_BETA_INSTALLED" Message="The unsigned beta package is installed. Remove it before installing this product." />
+
+		<StandardDirectory Id="ProgramFiles64Folder">
+			<Directory Id="INSTALLDIR" Name="winunitd">
+				<Component Id="InstallDir" Guid="83090082-C8E6-4AB0-A15E-F251BE295A2F">
+					<CreateFolder>
+						<PermissionEx Sddl="O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)" />
+					</CreateFolder>
+					<RegistryValue Root="HKLM" Key="Software\PLN\winunitd" Name="InstallDir" Type="string" Value="[INSTALLDIR]" KeyPath="yes" />
+				</Component>
+				<Directory Id="BINDIR" Name="bin">
+					<Component Id="WinunitdExe" Guid="72FE81DD-D07E-4666-8ED4-315C669ABA87">
+						<File Id="WinunitdExeFile" Source="$(Payload)\winunitd.exe" KeyPath="yes" />
+						<ServiceInstall Id="InstallDaemon" Name="winunitd" DisplayName="WinUnit Manager"
+							Description="Declarative Windows unit manager and process supervisor."
+							Type="ownProcess" Start="auto" Account="LocalSystem" ErrorControl="normal"
+							Arguments="--base-dir &quot;[DATADIR].&quot;" Vital="yes">
+							<ServiceConfig OnInstall="yes" OnReinstall="yes" DelayedAutoStart="no"
+								FailureActionsWhen="failedToStopOrReturnedError" PreShutdownDelay="180000" />
+							<util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart"
+								ThirdFailureActionType="restart" RestartServiceDelayInSeconds="1" ResetPeriodInDays="49710" />
+						</ServiceInstall>
+						<ServiceControl Id="ControlDaemon" Name="winunitd" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+					</Component>
+					<Component Id="WinctlExe" Guid="2704F5FB-2312-415C-AA67-0B9AC0A27EA6">
+						<File Id="WinctlExeFile" Source="$(Payload)\winctl.exe" KeyPath="yes" />
+					</Component>
+					<Component Id="NotifyExe" Guid="CFB4D2E3-0013-43C8-8731-B8078E842F1A">
+						<File Id="NotifyExeFile" Source="$(Payload)\winunit-notify.exe" KeyPath="yes" />
+					</Component>
+					<Component Id="EventSource" Guid="CF160772-EA1F-4378-AA17-BF74519B1EEA">
+						<util:EventSource Name="winunitd" Log="Application" EventMessageFile="[#WinunitdExeFile]"
+							SupportsErrors="yes" SupportsWarnings="yes" SupportsInformationals="yes" KeyPath="yes" />
+					</Component>
+					<Component Id="PathEntry" Guid="02E7B71D-5227-4CF6-BEC4-2A2F7FCD6D0E">
+						<Environment Id="WinunitdPath" Name="PATH" Value="[BINDIR]" Action="set" Part="last" System="yes" />
+						<RegistryValue Root="HKLM" Key="Software\PLN\winunitd" Name="PathEntry" Type="string" Value="[BINDIR]" KeyPath="yes" />
+					</Component>
+				</Directory>
+				<Directory Id="DOCDIR" Name="doc">
+					<Component Id="License" Guid="BAAB831A-A41F-4626-A2C6-0AD9A040D1E1">
+						<File Id="LicenseFile" Source="$(Repo)\LICENSE" KeyPath="yes" />
+					</Component>
+					<Component Id="Notices" Guid="32936E62-9823-46CA-A7F6-2AAF3801BAD5">
+						<File Id="NoticesFile" Source="$(Payload)\THIRD-PARTY-NOTICES.txt" KeyPath="yes" />
+					</Component>
+					<Component Id="InstallDoc" Guid="3244160C-AE3D-4ACF-9F72-206EC28A40A2">
+						<File Id="InstallDocFile" Source="$(Repo)\docs\INSTALLATION.md" KeyPath="yes" />
+					</Component>
+					<Component Id="UnitReference" Guid="CF528EB2-7B51-4C0F-9C3E-313003819CD1">
+						<File Id="UnitReferenceFile" Source="$(Repo)\docs\UNIT-REFERENCE.md" KeyPath="yes" />
+					</Component>
+					<Directory Id="EXAMPLEDIR" Name="examples">
+						<Component Id="ExampleService" Guid="9E2A318D-032C-4116-A51A-89268C5560F8">
+							<File Id="ExampleServiceFile" Source="$(Repo)\examples\beta\worker.service" KeyPath="yes" />
+						</Component>
+						<Component Id="ExampleTarget" Guid="C0E86A03-4BD0-4DFB-B854-CC540DABF0BC">
+							<File Id="ExampleTargetFile" Source="$(Repo)\examples\beta\worker.target" KeyPath="yes" />
+						</Component>
+						<Component Id="ExampleReadme" Guid="12ECF973-B33E-4C4C-BC89-8E8C704FE461">
+							<File Id="ExampleReadmeFile" Source="$(Repo)\examples\beta\README.md" KeyPath="yes" />
+						</Component>
+					</Directory>
+				</Directory>
+			</Directory>
+		</StandardDirectory>
+
+		<StandardDirectory Id="CommonAppDataFolder">
+			<Directory Id="DATADIR" Name="winunitd">
+				<Component Id="DataRoot" Guid="DB86659B-378D-4625-9191-8F5A60A56C20" Permanent="yes">
+					<CreateFolder>
+						<PermissionEx Sddl="O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
+					</CreateFolder>
+					<RegistryValue Root="HKLM" Key="Software\PLN\winunitd" Name="DataRoot" Type="string" Value="[DATADIR]" KeyPath="yes" />
+				</Component>
+				<Directory Id="UNITSDIR" Name="units">
+					<Component Id="DataUnits" Guid="4FD46D56-BD2D-4D61-B3A1-8C2085CA6049" Permanent="yes" KeyPath="yes">
+						<CreateFolder>
+							<PermissionEx Sddl="O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
+						</CreateFolder>
+					</Component>
+				</Directory>
+				<Directory Id="ENABLEDDIR" Name="enabled">
+					<Component Id="DataEnabled" Guid="C82AEC80-3F19-447B-8274-96C5528DC063" Permanent="yes" KeyPath="yes">
+						<CreateFolder>
+							<PermissionEx Sddl="O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
+						</CreateFolder>
+					</Component>
+				</Directory>
+				<Directory Id="JOURNALDIR" Name="journal">
+					<Component Id="DataJournal" Guid="E74C44F8-648B-4FF0-9C60-5F146E070101" Permanent="yes" KeyPath="yes">
+						<CreateFolder>
+							<PermissionEx Sddl="O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
+						</CreateFolder>
+					</Component>
+				</Directory>
+				<Directory Id="RUNTIMEDIR" Name="runtime">
+					<Component Id="DataRuntime" Guid="637F893D-37CD-448A-B532-E02DA2BBF5EA" Permanent="yes" KeyPath="yes">
+						<CreateFolder>
+							<PermissionEx Sddl="O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
+						</CreateFolder>
+					</Component>
+				</Directory>
+				<Directory Id="LINGERDIR" Name="linger">
+					<Component Id="DataLinger" Guid="C9F8A0BD-7AB7-4A29-8522-751CA03D2309" Permanent="yes" KeyPath="yes">
+						<CreateFolder>
+							<PermissionEx Sddl="O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
+						</CreateFolder>
+					</Component>
+				</Directory>
+				<Directory Id="DAEMONDIR" Name="daemon">
+					<Component Id="DataDaemon" Guid="99718886-3A26-46B3-9F29-4EA42ECADFBF" Permanent="yes" KeyPath="yes">
+						<CreateFolder>
+							<PermissionEx Sddl="O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
+						</CreateFolder>
+					</Component>
+				</Directory>
+			</Directory>
+		</StandardDirectory>
+
+		<Feature Id="Main" Level="1" AllowAbsent="no">
+			<ComponentRef Id="InstallDir" />
+			<ComponentRef Id="WinunitdExe" />
+			<ComponentRef Id="WinctlExe" />
+			<ComponentRef Id="NotifyExe" />
+			<ComponentRef Id="EventSource" />
+			<ComponentRef Id="License" />
+			<ComponentRef Id="Notices" />
+			<ComponentRef Id="InstallDoc" />
+			<ComponentRef Id="UnitReference" />
+			<ComponentRef Id="ExampleService" />
+			<ComponentRef Id="ExampleTarget" />
+			<ComponentRef Id="ExampleReadme" />
+			<ComponentRef Id="DataRoot" />
+			<ComponentRef Id="DataUnits" />
+			<ComponentRef Id="DataEnabled" />
+			<ComponentRef Id="DataJournal" />
+			<ComponentRef Id="DataRuntime" />
+			<ComponentRef Id="DataLinger" />
+			<ComponentRef Id="DataDaemon" />
+		</Feature>
+		<Feature Id="AddToPath" Level="1" AllowAbsent="yes" Title="Add binaries to PATH">
+			<ComponentRef Id="PathEntry" />
+		</Feature>
+	</Package>
+</Wix>

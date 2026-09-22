@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/PLN/winunitd/internal/version"
+	"github.com/PLN/winunitd/internal/winres"
 )
 
 type artifact struct {
@@ -112,6 +113,11 @@ func run() error {
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
+		if *goos == "windows" {
+			if err := winres.Stamp(path, executableInfo(name, *releaseVersion)); err != nil {
+				return fmt.Errorf("%s version resource: %w", name, err)
+			}
+		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
@@ -137,6 +143,24 @@ func run() error {
 	}
 	fmt.Printf("Built %d artifacts for %s/%s with %s (dirty=%t)\n", len(m.Artifacts), m.GOOS, m.GOARCH, m.Go, m.Dirty)
 	return nil
+}
+
+func executableInfo(name, release string) winres.Info {
+	desc := map[string]string{
+		"winunitd":       "WinUnit Manager",
+		"winctl":         "WinUnit Manager control",
+		"winunit-notify": "WinUnit Manager notify helper",
+	}
+	return winres.Info{
+		InternalName:     name,
+		OriginalFilename: name + ".exe",
+		FileDescription:  desc[name],
+		Release:          release,
+		Company:          version.Manufacturer,
+		Product:          version.ProductName,
+		Copyright:        version.Copyright,
+		IncludeMessages:  name == "winunitd",
+	}
 }
 
 func commandOutput(name string, args ...string) (string, error) {
