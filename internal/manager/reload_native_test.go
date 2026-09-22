@@ -71,6 +71,19 @@ func TestReloadRetainsActiveNativeProxy(t *testing.T) {
 				if !stopped() {
 					t.Fatal("Stop did not reach the retained external service/task")
 				}
+				// Stop can return while a native observation query still holds
+				// the runtime record. That query is allowed to finish; the
+				// retention check is the settled record.
+				waitCond(t, func() bool {
+					m.mu.Lock()
+					defer m.mu.Unlock()
+					rt := m.units["worker.service"]
+					if rt == nil {
+						return false
+					}
+					_, probing := m.nativeProbes[rt]
+					return rt.state == core.Inactive && rt.operations == 0 && !rt.cleanupPending() && !probing
+				})
 				if _, err := m.Reload(); err != nil {
 					t.Fatal(err)
 				}
