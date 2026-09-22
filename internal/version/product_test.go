@@ -50,6 +50,23 @@ func TestProductIdentityMatchesInstallerSource(t *testing.T) {
 	if !strings.Contains(wxs, `ResetPeriodInDays="49710"`) {
 		t.Fatal("service recovery reset is not the recorded finite period")
 	}
+	if strings.Contains(wxs, "<CreateFolder KeyPath") {
+		t.Fatal("WiX 7 does not allow KeyPath on CreateFolder")
+	}
+	for _, id := range []string{"DataUnits", "DataEnabled", "DataJournal", "DataRuntime", "DataLinger", "DataDaemon"} {
+		if !strings.Contains(wxs, `Id="`+id+`" Guid="`) || !strings.Contains(wxs, `Id="`+id+`" Guid="`+guidOf(id)+`" Permanent="yes" KeyPath="yes"`) {
+			t.Fatalf("data directory %s is missing a component key path", id)
+		}
+	}
+}
+
+func guidOf(id string) string {
+	for _, component := range Components {
+		if component.ID == id {
+			return component.GUID
+		}
+	}
+	return ""
 }
 
 func moduleRoot(t *testing.T) string {
