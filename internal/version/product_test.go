@@ -62,9 +62,12 @@ func TestProductIdentityMatchesInstallerSource(t *testing.T) {
 		`Id="PrepareService"`,
 		`Id="CommitService"`,
 		`Id="InjectServiceFailure"`,
+		`Schedule="afterInstallExecute"`,
 		`Execute="rollback"`,
 		`Execute="deferred" Impersonate="no"`,
-		`Before="RemoveExistingProducts"`,
+		`Before="StopServices"`,
+		`<StopServices Condition="NOT UPGRADINGPRODUCTCODE" />`,
+		`<DeleteServices Condition="NOT UPGRADINGPRODUCTCODE" />`,
 		`service-prepare`,
 		`service-rollback`,
 		`service-commit`,
@@ -76,6 +79,9 @@ func TestProductIdentityMatchesInstallerSource(t *testing.T) {
 		if !strings.Contains(wxs, needle) {
 			t.Fatalf("package is missing servicing authoring %s", needle)
 		}
+	}
+	if strings.Contains(wxs, `Before="RemoveExistingProducts"`) || strings.Contains(wxs, `Schedule="afterInstallInitialize"`) {
+		t.Fatal("servicing actions must not sit between InstallInitialize and RemoveExistingProducts")
 	}
 	if strings.Contains(wxs, `File Source="$(Payload)\msi-check.exe"`) || strings.Contains(wxs, `File Source="$(Payload)\msi-token.dll"`) {
 		t.Fatal("servicing helper must stay embedded, not installed as a file")

@@ -81,7 +81,9 @@ sets a 180-second preshutdown value.
 ## Servicing a running manager
 
 Repair, upgrade, and uninstall run an embedded helper before Windows
-Installer removes an older product or replaces files. The helper is stored
+Installer replaces or removes package files. Removal of an older product
+is after `InstallExecute`, so the helper is not placed between
+`InstallInitialize` and `RemoveExistingProducts`. The helper is stored
 in the package. It is not an installed file, so removing the previous
 product cannot delete the copy rollback still needs.
 

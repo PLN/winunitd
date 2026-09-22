@@ -57,7 +57,11 @@ process aborts replacement. Injected failure restores the captured service
 configuration and the previous running or stopped state. Quiet install and
 the Application event source `winunitd` are unchanged.
 
-No native SYSTEM run of this transaction is recorded here. Raw MSI logs stay
+No successful native SYSTEM run of this transaction is recorded here. A
+fresh SYSTEM install of `3ddf5cf` returned 1603 with MSI error 2613 because
+custom actions sat between `InstallInitialize` and `RemoveExistingProducts`.
+The package now schedules removal after `InstallExecute` and the helper
+before `StopServices`. The cases below remain unproven. Raw MSI logs stay
 in the private operator workspace. Do not add guest names, addresses, or
 private paths to this note.
 
@@ -72,7 +76,8 @@ count.
    maintenance in progress for more than 30 seconds and less than 180
    seconds. The install waits past 30 seconds, then replaces files, and the
    service is running afterward. The MSI log shows `service-prepare` before
-   `RemoveExistingProducts`.
+   `InstallFiles` and does not report error 2613. `RemoveExistingProducts`
+   is after `InstallExecute`.
 3. A workload that does not release within 180 seconds. The install returns
    1603, the log contains `abort replacement`, and the previous payload and
    running service remain.
