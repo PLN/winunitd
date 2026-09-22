@@ -7,7 +7,8 @@ R5.5 technical acceptance is complete as of September 14, 2026.
 `3605c2c7978c4b10076558a76e5453fd051e60bc`, passed
 [exact-source Windows/Linux CI](https://github.com/PLN/winunitd/actions/runs/34813927032).
 Merge `136909debd9b9aa3d79b07fe18ab3d42b1225cbd` has the identical tested tree.
-R5.4 diagnostics/event resources and overall R5 remain open.
+R5.4 diagnostics, rendered Application events, and overall R5 are accepted in
+[diagnostics and event resources](#diagnostics-and-event-resources).
 
 Windows 11 Enterprise LTSC 26100.9168 qualification ran 19 selected tests three
 times per SYSTEM and headless standard-user identity, without skips. Each
@@ -71,8 +72,9 @@ broker installation, MSI servicing, physical power-loss durability or the pilot.
 ## Journaling acceptance
 
 R5.3 technical acceptance is complete as of September 13, 2026. The R2/R3
-dependencies are satisfied. R5.4 durable daemon diagnostics/event resources
-remain open; combined operational stress is accepted above. Overall R5 is open.
+dependencies are satisfied. R5.4 diagnostics and rendered Application events
+are accepted in [diagnostics and event resources](#diagnostics-and-event-resources);
+combined operational stress is accepted above. Overall R5 is complete.
 
 The final changes qualify total historical retention and separate captured
 stream identity from severity:
@@ -120,8 +122,8 @@ bounds. Combined trigger/reader/disk/crash stress is accepted above under R5.5.
 ## Timer delivery acceptance
 
 R5.2 technical acceptance is complete as of September 13, 2026. The R2/R3
-dependencies are satisfied. R5.3 and R5.5 are accepted above; R5.4 and the complete
-R5 gate remain open.
+dependencies are satisfied. R5.3, R5.4, and R5.5 are accepted, and the complete
+R5 gate is met.
 The [delivery contract](OPERATIONS.md#timer-delivery-and-clock-domains) documents
 relative and wall-clock origins, civil-time gaps/folds and active-service overlap;
 the [persistence evidence](#timer-state-replacement-and-interrupted-activation)
@@ -209,7 +211,8 @@ after integration.
 This qualifies retryable rotation errors. Progress is in-memory; multi-file
 rotation is not an atomic crash/power-loss transaction. Earlier file-handle and
 per-name-counter bounds remain implemented. Total historical disk retention is
-now accepted above; durable daemon diagnostics and complete R5 remain open.
+now accepted above. Durable daemon diagnostics and overall R5 are accepted in
+[diagnostics and event resources](#diagnostics-and-event-resources).
 
 ## Timer state replacement and interrupted activation
 
@@ -255,14 +258,37 @@ publication, so persistent workloads must be idempotent.
 This delivers the R5.1 technical slice and issue #99's crash/failure-injection
 scope. The evidence covers process crashes and the tested local filesystem; it
 does not establish universal power-loss durability for controllers or remote
-filesystems. Delivery policy and journaling are now qualified above. Diagnostics,
-installer state rollback and overall R5 acceptance remain
-separate gates; R2/R3 technical acceptance is complete.
+filesystems. Delivery policy and journaling are now qualified above. Diagnostics
+and overall R5 acceptance are complete. Installer state rollback stays a
+separate R6 gate. R2/R3 technical acceptance is complete. A3 and R4.4 stay open.
 
-## Event resources
+## Diagnostics and event resources
 
-R5.4b source registers the Application source `winunitd` from the product MSI
-and embeds a message table in `winunitd.exe`. Startup failures use the daemon
-log code `daemon.startup-failed` and the same redaction rules. Rendered-event
-evidence on a clean Windows installation has not been collected. R5.4 stays
-open, and this note does not waive A3 or R4.4.
+R5.4 technical acceptance is complete as of September 22, 2026. R5.1–R5.5 are
+checked, so overall R5 is complete.
+
+R5.4a runtime diagnostics merged at `a48e6e9dbde9d7f093f37b6b9c0e4336bc03d5e8`
+([#236](https://github.com/PLN/winunitd/pull/236)). That tree matches the
+qualified source `480470064b085591b2cd57ab1bf4c3c51f021149`, which passed
+[exact-source Windows/Linux CI](https://github.com/PLN/winunitd/actions/runs/35763808946).
+Status and snapshot copy the restart budget. Timer storage and schedule state
+stay on unit status and list-timers. The daemon log under the data root queues
+allowlisted event codes, rejects a symlink or reparse point, and refuses a
+resolved path outside that root. Drop and write-error counters appear on
+machine status. Native SYSTEM and headless-user qualification of that tree
+passed. Raw logs stay private.
+
+R5.4b event resources and the product MSI merged at
+`59ec4d802f0346647eb39d45539fb84aa9cb5368`
+([#238](https://github.com/PLN/winunitd/pull/238)). That tree matches the
+qualified source `a3b5bb25388c49f46509af624a7e8cb778ecddb6`, which passed
+[exact-source Windows/Linux CI](https://github.com/PLN/winunitd/actions/runs/35776115569).
+The product MSI registers the Application source `winunitd` and embeds a
+message table in `winunitd.exe`. Startup failures use the daemon log code
+`daemon.startup-failed` and the same redaction rules. Environment assignments,
+credential or store URIs, and parser dumps stay omitted.
+
+Rendered Application events passed on a clean Windows installation.
+Qualification id `a3b5bb2-a5-msi` records readable Application messages for
+event IDs 1000 (daemon opened) and 1002 (startup failed). Raw logs stay
+private. A3 and R4.4 stay open. R6.1 stays a separate gate.
