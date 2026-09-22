@@ -39,6 +39,12 @@ func OpenStore(dir string) (*Store, error) {
 	return &Store{dir: dir}, nil
 }
 
+// Close releases resources owned by the store. Load and Save open each file
+// for one operation, so there is no retained handle to join.
+func (s *Store) Close() error {
+	return nil
+}
+
 func (s *Store) path(name string) string {
 	if s == nil || s.dir == "" {
 		return ""

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,24 @@ import (
 	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/journal"
 )
+
+func TestNewReleasesStoresWhenDaemonLogOpenFails(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, journal.DaemonDirName), []byte("not-dir"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(Config{BaseDir: dir, Launch: &fakeLauncher{}}); err == nil {
+		t.Fatal("expected daemon log open failure")
+	}
+	if err := os.Remove(filepath.Join(dir, journal.DaemonDirName)); err != nil {
+		t.Fatal(err)
+	}
+	m, err := New(Config{BaseDir: dir, Launch: &fakeLauncher{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { m.Close() })
+}
 
 func TestDaemonLogStallDoesNotBlockLifecycle(t *testing.T) {
 	dir := t.TempDir()

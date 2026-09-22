@@ -114,7 +114,7 @@ func New(cfg Config) (*Manager, error) {
 	}
 	dlog, err := journal.OpenDaemonLog(cfg.BaseDir, cfg.DaemonLogWrite)
 	if err != nil {
-		return nil, errors.Join(err, js.Close())
+		return nil, errors.Join(err, store.Close(), js.Close())
 	}
 	js.UseDaemonLog(dlog)
 	clk := cfg.Clock

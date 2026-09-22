@@ -69,10 +69,7 @@ func TestDaemonLogStallOverflowAndCleanup(t *testing.T) {
 	if err := os.Remove(log.path); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(filepath.Dir(log.path))
-	if err != nil || info.Mode().Perm() != 0o700 {
-		t.Fatalf("daemon directory mode = %v err=%v", info, err)
-	}
+	assertProtectedDaemonDir(t, filepath.Dir(log.path))
 }
 
 func TestDaemonLogRedactsSecretsParserDumpsAndUnknownFields(t *testing.T) {
