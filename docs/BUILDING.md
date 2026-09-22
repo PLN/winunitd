@@ -45,9 +45,10 @@ The product MSI entry point is `./packaging/wix/build.ps1`. It builds the
 `0.1.0-alpha` payload, stamps PE version metadata from that release identity,
 embeds the daemon message table, and packages `winunitd-0.1.0-x64.msi` with
 WiX 7.0.0. Installer version `0.1.0` is paired with the ProductCode recorded
-in `internal/version/product.go`. This package does not build the beta
-preflight helper or transaction DLL. A successful package build is not
-install qualification.
+in `internal/version/product.go`. The same script builds `msi-check.exe` and
+the transaction-identity DLL with MinGW GCC 16.1.0 and embeds both in the
+package. They are not installed files and add no runtime requirement on the
+destination machine. A successful package build is not install qualification.
 
 The beta MSI additionally builds a small native transaction-identity DLL using
 MinGW GCC 16.1.0, alongside the existing WiX 7/.NET 10.0.400 packaging toolchain.

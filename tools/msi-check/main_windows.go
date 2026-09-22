@@ -22,9 +22,12 @@ func main() {
 	}
 	args := os.Args[1:]
 	var err error
-	if len(args) > 0 && strings.HasPrefix(args[0], "policy-") {
+	switch {
+	case len(args) > 0 && strings.HasPrefix(args[0], "policy-"):
 		err = policy(args)
-	} else {
+	case len(args) > 0 && strings.HasPrefix(args[0], "service-"):
+		err = serviceTransaction(args)
+	default:
 		err = check(args)
 	}
 	if err != nil {

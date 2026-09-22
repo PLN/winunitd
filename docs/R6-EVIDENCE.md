@@ -40,6 +40,53 @@ previous lab broker and user startup settings, removed fixture ownership and
 confirmed profile unload. The real application pilot was unchanged.
 
 This qualifies startup/recovery policy and the listed servicing paths. It does
-not complete R6: production maintenance integration, migration tooling and the
-full platform/locked-file/rollback acceptance matrix remain. R7 handoff and its
-seven-day soak have not started.
+not complete R6. R6.3 data migration, R6.4 platform acceptance, R6.5 migration
+tooling, and overall R6 remain open. R7 handoff and its seven-day soak have
+not started.
+
+## Maintenance and rollback
+
+The product MSI now embeds the servicing helper described in
+[installation](INSTALLATION.md#servicing-a-running-manager) and
+[#241](https://github.com/PLN/winunitd/issues/241). Repair, upgrade, and
+uninstall quiesce a running manager, then wait up to 180 seconds for SCM stop
+and process exit before replacing files. That wait is longer than the
+documented 30-second `ServiceControl` wait. `ServiceControl` stays in the
+package and runs after the helper. An open payload file or a live service
+process aborts replacement. Injected failure restores the captured service
+configuration and the previous running or stopped state. Quiet install and
+the Application event source `winunitd` are unchanged.
+
+No native SYSTEM run of this transaction is recorded here. Raw MSI logs stay
+in the private operator workspace. Do not add guest names, addresses, or
+private paths to this note.
+
+Native SYSTEM qualification must prove all of the following on a disposable
+machine, as SYSTEM, from a clean build of the PR tip. Skipped cases do not
+count.
+
+1. Fresh install with no `winunitd` service returns 0. The service is
+   running, the Application event source `winunitd` is registered, and the
+   transaction state file under Program Files is gone.
+2. Repair or upgrade while the manager is running a workload that keeps
+   maintenance in progress for more than 30 seconds and less than 180
+   seconds. The install waits past 30 seconds, then replaces files, and the
+   service is running afterward. The MSI log shows `service-prepare` before
+   `RemoveExistingProducts`.
+3. A workload that does not release within 180 seconds. The install returns
+   1603, the log contains `abort replacement`, and the previous payload and
+   running service remain.
+4. A payload binary held open after the service would otherwise stop. The
+   install returns 1603, the log contains `abort replacement` and the file
+   name, and that binary's bytes are unchanged.
+5. Upgrade and repair with `WINUNITD_TEST_FAIL=1`. Each returns 1603. The
+   previous payload hash is restored. Start type, delayed start, recovery
+   actions, reset period, non-crash recovery, preshutdown timeout, and the
+   previous running or stopped state match the pre-transaction service.
+   Repeat once with the service stopped beforehand and confirm it stays
+   stopped.
+6. Quiet repair without the test property still registers the Application
+   event source and does not show installer UI.
+
+Record MSI exit codes, the before/after running state, and payload hashes.
+This qualification does not close R6.1, R6.3, R6.4, R6.5, or overall R6.

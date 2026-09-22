@@ -11,6 +11,14 @@ try {
 	if (Test-Path -LiteralPath $packageManifest) { Remove-Item -LiteralPath $packageManifest }
 	go run ./tools/build -out dist/wix/payload -version '0.1.0-alpha'
 	if ($LASTEXITCODE) { throw 'Payload build failed' }
+	go build -trimpath -o dist/wix/payload/msi-check.exe ./tools/msi-check
+	if ($LASTEXITCODE) { throw 'Service helper build failed' }
+	$compiler = (Get-Command gcc -ErrorAction Stop).Source
+	$compilerVersion = & $compiler -dumpfullversion
+	if ($LASTEXITCODE) { throw 'C compiler version probe failed' }
+	if ($compilerVersion -ne '16.1.0') { throw 'MSI token helper requires GCC 16.1.0' }
+	& $compiler -shared -nostdlib -O2 -Wall -Wextra -Werror '-Wl,--no-insert-timestamp,--entry,0' -o dist/wix/payload/msi-token.dll tools/msi-token/token.c -lmsi -lbcrypt
+	if ($LASTEXITCODE) { throw 'MSI transaction identity helper build failed' }
 	Push-Location $PSScriptRoot
 	try {
 		dotnet build Winunitd.wixproj -p:AcceptEula=wix7 "-p:PackageVersion=$PackageVersion" --nologo
@@ -28,6 +36,10 @@ try {
 		upgradeCode = 'A512B91F-1883-40FD-8EDB-5B8C5708DEEA'
 		signed = $false
 		wix = '7.0.0'
+		dotnet = '10.0.400'
+		token_compiler = "gcc $compilerVersion"
+		token_helper_sha256 = (Get-FileHash dist/wix/payload/msi-token.dll).Hash.ToLowerInvariant()
+		helper_sha256 = (Get-FileHash dist/wix/payload/msi-check.exe).Hash.ToLowerInvariant()
 		name = $file.Name
 		size = $file.Length
 		sha256 = (Get-FileHash $file.FullName).Hash.ToLowerInvariant()
