@@ -1,5 +1,7 @@
-// Immediate MSI action: changes session properties only, never machine state.
-// Deferred policy actions receive this fresh identifier in their command lines.
+// Immediate MSI actions: change session properties only, never machine state.
+// Deferred service actions receive the fresh transaction id in their command lines.
+// msiexec /f ignores command-line properties; PullTestFail copies the disposable
+// qualification hook from the process environment so repair can still inject failure.
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <msi.h>
@@ -18,4 +20,12 @@ __declspec(dllexport) UINT __stdcall NewPolicyTransaction(MSIHANDLE session) {
     }
     token[32] = 0;
     return MsiSetPropertyW(session, L"WinunitdPolicyTransaction", token);
+}
+
+__declspec(dllexport) UINT __stdcall PullTestFail(MSIHANDLE session) {
+    wchar_t value[16];
+    DWORD n = GetEnvironmentVariableW(L"WINUNITD_TEST_FAIL", value, 16);
+    if (n == 1 && value[0] == L'1')
+        return MsiSetPropertyW(session, L"WINUNITD_TEST_FAIL", L"1");
+    return ERROR_SUCCESS;
 }

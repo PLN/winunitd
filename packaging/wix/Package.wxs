@@ -23,6 +23,9 @@
 		<MediaTemplate EmbedCab="yes" />
 		<Property Id="ARPURLINFOABOUT" Value="https://github.com/PLN/winunitd" />
 		<Property Id="WINUNITD_TEST_FAIL" Secure="yes" />
+		<!-- Restart Manager would close lock holders at InstallValidate before
+		     PrepareService can abort. Prepare owns live-handle detection. -->
+		<Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
 		<Upgrade Id="9443AE50-251B-4A46-9465-B835A3A27133">
 			<UpgradeVersion OnlyDetect="yes" Property="WINUNITD_BETA_INSTALLED" Minimum="0.0.0" />
 		</Upgrade>
@@ -178,6 +181,8 @@
 		<Binary Id="ServiceHelper" SourceFile="$(Payload)\msi-check.exe" />
 		<Binary Id="ServiceToken" SourceFile="$(Payload)\msi-token.dll" />
 		<CustomAction Id="NewServiceTransaction" BinaryRef="ServiceToken" DllEntry="NewPolicyTransaction" Execute="immediate" Return="check" />
+		<!-- /f ignores command-line properties; copy the env hook before Inject is conditioned. -->
+		<CustomAction Id="PullTestFail" BinaryRef="ServiceToken" DllEntry="PullTestFail" Execute="immediate" Return="check" />
 		<CustomAction Id="RollbackService" BinaryRef="ServiceHelper" ExeCommand="service-rollback &quot;[INSTALLDIR].&quot; &quot;[DATADIR].&quot; [WinunitdPolicyTransaction]" Execute="rollback" Impersonate="no" Return="check" />
 		<CustomAction Id="PrepareService" BinaryRef="ServiceHelper" ExeCommand="service-prepare &quot;[INSTALLDIR].&quot; &quot;[DATADIR].&quot; [WinunitdPolicyTransaction]" Execute="deferred" Impersonate="no" Return="check" />
 		<CustomAction Id="CommitService" BinaryRef="ServiceHelper" ExeCommand="service-commit &quot;[INSTALLDIR].&quot; &quot;[DATADIR].&quot; [WinunitdPolicyTransaction]" Execute="commit" Impersonate="no" Return="check" />
@@ -191,6 +196,7 @@
 			<StopServices Condition="NOT UPGRADINGPRODUCTCODE" />
 			<DeleteServices Condition="NOT UPGRADINGPRODUCTCODE" />
 			<Custom Action="NewServiceTransaction" After="InstallInitialize" Condition="NOT UPGRADINGPRODUCTCODE" />
+			<Custom Action="PullTestFail" After="NewServiceTransaction" />
 			<Custom Action="RollbackService" Before="PrepareService" Condition="NOT UPGRADINGPRODUCTCODE" />
 			<Custom Action="PrepareService" Before="StopServices" Condition="NOT UPGRADINGPRODUCTCODE" />
 			<!-- Commit actions run after a successful transaction, not at this sequence slot. -->

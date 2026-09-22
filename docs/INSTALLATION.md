@@ -116,7 +116,11 @@ Units that were started manually and are not enabled are not restored.
 
 On a disposable machine, `WINUNITD_TEST_FAIL=1` fails the transaction after
 the replacement service has started. That property is a qualification hook.
-It is not part of ordinary install, repair, or removal.
+It is not part of ordinary install, repair, or removal. `msiexec /f` ignores
+command-line properties; set the same name in the process environment for
+repair, or use `/i` with `REINSTALL=ALL` and `REINSTALLMODE` as in the packaging
+spike. The package disables Restart Manager so a live payload handle aborts in
+`service-prepare` instead of being closed at `InstallValidate`.
 
 ## Data kept on remove
 

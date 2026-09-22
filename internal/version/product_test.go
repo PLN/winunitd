@@ -58,10 +58,13 @@ func TestProductIdentityMatchesInstallerSource(t *testing.T) {
 	}
 	for _, needle := range []string{
 		`Id="NewServiceTransaction"`,
+		`Id="PullTestFail"`,
 		`Id="RollbackService"`,
 		`Id="PrepareService"`,
 		`Id="CommitService"`,
 		`Id="InjectServiceFailure"`,
+		`DllEntry="PullTestFail"`,
+		`Id="MSIRESTARTMANAGERCONTROL" Value="Disable"`,
 		`Schedule="afterInstallExecute"`,
 		`Execute="rollback"`,
 		`Execute="deferred" Impersonate="no"`,
