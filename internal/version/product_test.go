@@ -89,7 +89,7 @@ func TestProductIdentityMatchesInstallerSource(t *testing.T) {
 	if strings.Contains(wxs, `File Source="$(Payload)\msi-check.exe"`) || strings.Contains(wxs, `File Source="$(Payload)\msi-token.dll"`) {
 		t.Fatal("servicing helper must stay embedded, not installed as a file")
 	}
-	if !strings.Contains(script, "msi-check.exe") || !strings.Contains(script, "msi-token.dll") || !strings.Contains(script, "16.1.0") {
+	if !strings.Contains(script, "msi-check.exe") || !strings.Contains(script, "msi-token.dll") || !strings.Contains(script, "16.1.0") || !strings.Contains(script, "-lkernel32") {
 		t.Fatal("product build does not produce the embedded helper and transaction DLL")
 	}
 	servicing := readRepo(t, root, "tools/msi-check/servicing.go")
