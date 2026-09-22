@@ -6,7 +6,8 @@
 		Recovery reset is 49710 days: the utility extension cannot express
 		the infinite reset used by manual service registration.
 		An embedded helper quiesces, then stops for 180 seconds, before
-		StopServices and file replacement. Major upgrade removal is after
+		StopServices and file replacement. PrepareService copies that
+		helper's standard error into the MSI log. Major upgrade removal is after
 		InstallExecute. Nothing may sit between InstallInitialize and an
 		early RemoveExistingProducts (ICE63, MSI error 2613). ServiceControl
 		remains a backstop on that already-stopped service; its wait is not
@@ -181,12 +182,21 @@
 		<Binary Id="ServiceHelper" SourceFile="$(Payload)\msi-check.exe" />
 		<Binary Id="ServiceToken" SourceFile="$(Payload)\msi-token.dll" />
 		<CustomAction Id="NewServiceTransaction" BinaryRef="ServiceToken" DllEntry="NewPolicyTransaction" Execute="immediate" Return="check" />
-		<!-- /f ignores command-line properties; copy the env hook before Inject is conditioned. -->
+		<!-- /f ignores command-line properties. The client sequence reads the
+		     launching msiexec environment into this secure property. The
+		     execute-sequence copy does not clear a value already set. -->
 		<CustomAction Id="PullTestFail" BinaryRef="ServiceToken" DllEntry="PullTestFail" Execute="immediate" Return="check" />
+		<CustomAction Id="ExtractServiceHelper" BinaryRef="ServiceToken" DllEntry="ExtractServiceHelper" Execute="immediate" Return="check" />
+		<CustomAction Id="SetPrepareService" Property="PrepareService" Value="&quot;[WinunitdHelperPath]&quot; service-prepare &quot;[INSTALLDIR].&quot; &quot;[DATADIR].&quot; [WinunitdPolicyTransaction]" />
 		<CustomAction Id="RollbackService" BinaryRef="ServiceHelper" ExeCommand="service-rollback &quot;[INSTALLDIR].&quot; &quot;[DATADIR].&quot; [WinunitdPolicyTransaction]" Execute="rollback" Impersonate="no" Return="check" />
-		<CustomAction Id="PrepareService" BinaryRef="ServiceHelper" ExeCommand="service-prepare &quot;[INSTALLDIR].&quot; &quot;[DATADIR].&quot; [WinunitdPolicyTransaction]" Execute="deferred" Impersonate="no" Return="check" />
+		<!-- Deferred DLL so the helper's stderr, including "abort replacement", is written to the MSI log. -->
+		<CustomAction Id="PrepareService" BinaryRef="ServiceToken" DllEntry="RunServiceHelper" Execute="deferred" Impersonate="no" Return="check" />
 		<CustomAction Id="CommitService" BinaryRef="ServiceHelper" ExeCommand="service-commit &quot;[INSTALLDIR].&quot; &quot;[DATADIR].&quot; [WinunitdPolicyTransaction]" Execute="commit" Impersonate="no" Return="check" />
 		<CustomAction Id="InjectServiceFailure" BinaryRef="ServiceHelper" ExeCommand="fail" Execute="deferred" Impersonate="no" Return="check" />
+		<InstallUISequence>
+			<!-- Client msiexec process, before ExecuteAction hands off to the server. -->
+			<Custom Action="PullTestFail" Before="ExecuteAction" />
+		</InstallUISequence>
 		<InstallExecuteSequence>
 			<!-- Removal is after InstallExecute, so these actions are not
 			     between InstallInitialize and RemoveExistingProducts.
@@ -197,6 +207,8 @@
 			<DeleteServices Condition="NOT UPGRADINGPRODUCTCODE" />
 			<Custom Action="NewServiceTransaction" After="InstallInitialize" Condition="NOT UPGRADINGPRODUCTCODE" />
 			<Custom Action="PullTestFail" After="NewServiceTransaction" />
+			<Custom Action="ExtractServiceHelper" After="PullTestFail" Condition="NOT UPGRADINGPRODUCTCODE" />
+			<Custom Action="SetPrepareService" After="ExtractServiceHelper" Condition="NOT UPGRADINGPRODUCTCODE" />
 			<Custom Action="RollbackService" Before="PrepareService" Condition="NOT UPGRADINGPRODUCTCODE" />
 			<Custom Action="PrepareService" Before="StopServices" Condition="NOT UPGRADINGPRODUCTCODE" />
 			<!-- Commit actions run after a successful transaction, not at this sequence slot. -->

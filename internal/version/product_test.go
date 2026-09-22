@@ -59,11 +59,17 @@ func TestProductIdentityMatchesInstallerSource(t *testing.T) {
 	for _, needle := range []string{
 		`Id="NewServiceTransaction"`,
 		`Id="PullTestFail"`,
+		`Id="ExtractServiceHelper"`,
+		`Id="SetPrepareService"`,
 		`Id="RollbackService"`,
 		`Id="PrepareService"`,
 		`Id="CommitService"`,
 		`Id="InjectServiceFailure"`,
 		`DllEntry="PullTestFail"`,
+		`DllEntry="ExtractServiceHelper"`,
+		`DllEntry="RunServiceHelper"`,
+		`<InstallUISequence>`,
+		`Action="PullTestFail" Before="ExecuteAction"`,
 		`Id="MSIRESTARTMANAGERCONTROL" Value="Disable"`,
 		`Schedule="afterInstallExecute"`,
 		`Execute="rollback"`,
@@ -91,6 +97,20 @@ func TestProductIdentityMatchesInstallerSource(t *testing.T) {
 	}
 	if !strings.Contains(script, "msi-check.exe") || !strings.Contains(script, "msi-token.dll") || !strings.Contains(script, "16.1.0") || !strings.Contains(script, "-lkernel32") {
 		t.Fatal("product build does not produce the embedded helper and transaction DLL")
+	}
+	token := readRepo(t, root, "tools/msi-token/token.c")
+	for _, needle := range []string{
+		"GetEnvironmentVariableW",
+		"do not clear",
+		"CLIENTPROCESSID",
+		"MsiProcessMessage",
+		"CustomActionData",
+		"SELECT `Data` FROM `Binary` WHERE `Name`='ServiceHelper'",
+		"service-prepare",
+	} {
+		if !strings.Contains(token, needle) {
+			t.Fatalf("token helper missing %s", needle)
+		}
 	}
 	servicing := readRepo(t, root, "tools/msi-check/servicing.go")
 	if !strings.Contains(servicing, "msiServiceControlWait = 30 * time.Second") || !strings.Contains(servicing, "serviceStopBudget = runtime.PreshutdownTimeout") {

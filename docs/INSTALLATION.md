@@ -117,10 +117,15 @@ Units that were started manually and are not enabled are not restored.
 On a disposable machine, `WINUNITD_TEST_FAIL=1` fails the transaction after
 the replacement service has started. That property is a qualification hook.
 It is not part of ordinary install, repair, or removal. `msiexec /f` ignores
-command-line properties; set the same name in the process environment for
-repair, or use `/i` with `REINSTALL=ALL` and `REINSTALLMODE` as in the packaging
-spike. The package disables Restart Manager so a live payload handle aborts in
-`service-prepare` instead of being closed at `InstallValidate`.
+command-line properties; set the same name in the environment of the msiexec
+process that launches repair, including a silent repair. The client sequence
+copies it into the secure property. The elevated sequence leaves that value
+in place when it is already set, and otherwise reads it from the launching
+msiexec process. Repair can also use `/i` with `REINSTALL=ALL`
+and `REINSTALLMODE`, as in the packaging spike. The package disables Restart
+Manager so a live payload handle aborts in `service-prepare` instead of being
+closed at `InstallValidate`. The verbose MSI log includes that helper's
+standard error, including `abort replacement` and the locked file name.
 
 ## Data kept on remove
 
