@@ -207,3 +207,19 @@ func TestTimerStateCrashHelper(t *testing.T) {
 	}
 	t.Fatal("helper did not stop at replacement boundary")
 }
+
+func TestStoreClose(t *testing.T) {
+	if err := (*Store)(nil).Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save("work.timer", Runtime{}); err != nil {
+		t.Fatal(err)
+	}
+}

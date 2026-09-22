@@ -12,9 +12,16 @@ const maxDiagnosticMessage = 4096
 // Callers supply the accepted unit/invocation identity. One shared queue group
 // has the same byte/record allowance and loss accounting as workload capture;
 // Store.Close joins accepted records. Messages are bounded UTF-8 copies.
+// Environment values, store URIs, and parser dumps are replaced with the event
+// code before either the unit journal or the attached daemon log sees them.
+// The daemon log enqueue does not wait on its sink.
 func (s *Store) RecordDiagnostic(unit, invocation, message string) {
 	if s == nil {
 		return
+	}
+	redacted := diagnosticForbidden(message)
+	if redacted {
+		message = DaemonEventLifecycleRejected
 	}
 	partial := len(message) > maxDiagnosticMessage
 	if partial {
@@ -35,4 +42,13 @@ func (s *Store) RecordDiagnostic(unit, invocation, message string) {
 		Stream: "daemon", Severity: SeverityErr, Partial: partial,
 		Session: origin.Session, UserSID: origin.UserSID,
 	}, &s.diagnostics)
+	if log := s.daemonLog.Load(); log != nil {
+		reason := ""
+		if !redacted {
+			reason = message
+		}
+		log.Record(DaemonEvent{
+			Code: DaemonEventLifecycleRejected, Unit: unit, InvocationID: invocation, Reason: reason,
+		})
+	}
 }

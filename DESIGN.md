@@ -190,6 +190,8 @@ Use machine-wide x64 WiX/MSI with MSI-owned files, service, PATH, and event regi
 
 Status exposes accepted and invocation configuration revisions, operation/invocation IDs, ownership type, load/lifecycle/health state, PID/session/token-source facts where appropriate, last exit/stop errors, restart limits, pending deadlines, and storage degradation. Return sanitized structured data; exclude credentials and environment values. Add bounded protocol responses and deliberate version negotiation. Logs and operation outcomes must remain accessible for removed-but-live units.
 
+Restart budget is part of that decision copy: policy, interval, burst, starts still inside the window, and remaining attempts appear on unit status and snapshot. Timer storage and schedule state stay on unit status and list-timers, which read the timer engine after the decision lock. Snapshot does not query that engine and keeps its fail-closed unit, operation, and byte limits. The durable daemon log under the machine data tree records structured event codes and allowlisted fields only. Enqueue does not wait on the sink, drop and write errors are visible on machine status, and shutdown joins the writer for at most two seconds after native cleanup. Environment values, credential or store URIs, and parser dumps are omitted. Windows event-source registration remains installer work.
+
 ## 11. Verification and incremental delivery
 
 Keep Linux policy tests and Windows adapter tests. Add invariant-based operation sequences, fake-clock schedules, parser/protocol fuzzing, and real-process regressions for output/reload/termination. Bound test resources and isolate endpoints so tests cannot operate on the installed pilot.

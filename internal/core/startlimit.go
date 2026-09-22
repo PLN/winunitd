@@ -38,6 +38,15 @@ func RecordStart(starts []time.Time, now time.Time, interval time.Duration, burs
 	return append(starts[:n], now)
 }
 
+// StartsInWindow reports how many recorded starts still fall inside interval
+// ending at now. A non-positive interval counts none.
+func StartsInWindow(starts []time.Time, now time.Time, interval time.Duration) int {
+	if interval <= 0 {
+		return 0
+	}
+	return countStartsInWindow(starts, now, interval)
+}
+
 func countStartsInWindow(starts []time.Time, now time.Time, interval time.Duration) int {
 	cutoff := now.Add(-interval)
 	n := 0

@@ -149,6 +149,14 @@ type MachineStatus struct {
 	LogDroppedBytes     uint64 `json:"logDroppedBytes,omitempty"`
 	LogStorageErrors    uint64 `json:"logStorageErrors,omitempty"`
 	LogLastStorageError string `json:"logLastStorageError,omitempty"`
+	// Daemon-log counters count records the durable log dropped or failed to
+	// write. DaemonEvents is the recent accepted tail, capped at 16. Snapshot
+	// does not include either observation.
+	DaemonLogDroppedRecords uint64        `json:"daemonLogDroppedRecords,omitempty"`
+	DaemonLogDroppedBytes   uint64        `json:"daemonLogDroppedBytes,omitempty"`
+	DaemonLogErrors         uint64        `json:"daemonLogErrors,omitempty"`
+	DaemonLogLastError      string        `json:"daemonLogLastError,omitempty"`
+	DaemonEvents            []DaemonEvent `json:"daemonEvents,omitempty"`
 
 	State          string               `json:"state"`
 	UnitsLoaded    int                  `json:"unitsLoaded"`
@@ -187,6 +195,39 @@ type UserRecoveryStatus struct {
 	Error         string `json:"error,omitempty"`
 }
 
+// RestartBudget is the accepted start-limit and restart policy copied with
+// lifecycle state. Burst 0 or a non-positive interval is unlimited, and then
+// Remaining is omitted. The policy is the Restart= value when the unit has a
+// service section. No environment values or unit-file text are included.
+type RestartBudget struct {
+	Policy         string  `json:"policy,omitempty"`
+	IntervalSec    float64 `json:"intervalSec"`
+	Burst          int     `json:"burst"`
+	StartsInWindow int     `json:"startsInWindow"`
+	Remaining      *int    `json:"remaining,omitempty"`
+	MaxDelaySec    float64 `json:"maxDelaySec,omitempty"`
+}
+
+// DaemonEvent is one accepted daemon-log record. It is a machine-status
+// observation, not part of the decision snapshot. Fields are allowlisted;
+// environment values, store URIs, and parser dumps are omitted before this
+// value is published.
+type DaemonEvent struct {
+	Timestamp           string `json:"timestamp,omitempty"`
+	Code                string `json:"code"`
+	Unit                string `json:"unit,omitempty"`
+	InvocationID        string `json:"invocationId,omitempty"`
+	OperationID         string `json:"operationId,omitempty"`
+	ConfigRevision      string `json:"configRevision,omitempty"`
+	LoadState           string `json:"loadState,omitempty"`
+	ActiveState         string `json:"activeState,omitempty"`
+	Health              string `json:"health,omitempty"`
+	Reason              string `json:"reason,omitempty"`
+	RestartAttempt      uint32 `json:"restartAttempt,omitempty"`
+	StartLimitBurst     *int   `json:"startLimitBurst,omitempty"`
+	StartLimitRemaining *int   `json:"startLimitRemaining,omitempty"`
+}
+
 // UnitStatus is one loaded unit (DESIGN.md §24, §45). MainPID identifies the
 // accepted owned process until cleanup releases it; it is not a fresh liveness
 // query. Native proxies report their separate query result. InvocationID is the
@@ -199,6 +240,7 @@ type UnitStatus struct {
 	NativeProxy            *NativeProxyStatus `json:"nativeProxy,omitempty"`
 	RestartAttempt         uint32             `json:"restartAttempt,omitempty"`
 	RestartDelaySec        float64            `json:"restartDelaySec,omitempty"`
+	RestartBudget          *RestartBudget     `json:"restartBudget,omitempty"`
 	WindowsCPUWeight       uint32             `json:"windowsCPUWeight,omitempty"`
 	WindowsCPUQuota        uint32             `json:"windowsCPUQuota,omitempty"`
 	NativeObservationError string             `json:"nativeObservationError,omitempty"`

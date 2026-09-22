@@ -37,7 +37,7 @@ type Config struct {
 	MaxStopTransactions int
 	// BaseDir is the data root. Production uses C:\ProgramData\winunitd
 	// (DESIGN.md §7, §12, §22). Tests pass a temporary directory.
-	// Layout: units\, enabled\, journal\.
+	// Layout: units\, enabled\, journal\, runtime\, linger\, daemon\.
 	BaseDir string
 	// Launch starts unit processes. Nil uses runtime.NewLauncher(Daemon).
 	Launch runtime.Launcher
@@ -45,6 +45,10 @@ type Config struct {
 	// store transfers to the manager, including cleanup if later setup fails.
 	// Qualification fixtures can inject storage faults through this factory.
 	JournalOpen func(string) (*journal.Store, error)
+	// DaemonLogWrite, when non-nil, observes each encoded daemon-log record
+	// before the file write. A stall or error stays on the log writer.
+	// Record and lifecycle callers do not wait for it. Nil writes the file only.
+	DaemonLogWrite func([]byte) error
 	// Daemon is the M4 daemon Job Object. Unit processes nest under it.
 	Daemon *runtime.DaemonJob
 	// Clock drives the timer scheduler and manager waits for RestartSec,
@@ -139,6 +143,10 @@ func (c Config) EnabledPath(target, unitName string) string {
 
 func (c Config) JournalDir() string {
 	return filepath.Join(c.BaseDir, journalDirName)
+}
+
+func (c Config) DaemonLogPath() string {
+	return journal.DaemonLogPath(c.BaseDir)
 }
 
 func (c Config) RuntimeDir() string {

@@ -841,6 +841,19 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 				fmt.Fprintf(c.stdout, "  Journal error: %s\n", m.LogLastStorageError)
 			}
 		}
+		if m.DaemonLogDroppedRecords != 0 || m.DaemonLogErrors != 0 {
+			fmt.Fprintf(c.stdout, "  Daemon log: %d dropped records, %d dropped bytes, %d write errors\n", m.DaemonLogDroppedRecords, m.DaemonLogDroppedBytes, m.DaemonLogErrors)
+			if m.DaemonLogLastError != "" {
+				fmt.Fprintf(c.stdout, "  Daemon log error: %s\n", m.DaemonLogLastError)
+			}
+		}
+		for _, ev := range m.DaemonEvents {
+			fmt.Fprintf(c.stdout, "  Daemon event: %s %s", ev.Code, ev.Unit)
+			if ev.InvocationID != "" {
+				fmt.Fprintf(c.stdout, " invocation=%s", ev.InvocationID)
+			}
+			fmt.Fprintln(c.stdout)
+		}
 		if m.UserManagers > 0 || m.Lingering > 0 || m.LingerState != "" || m.UserNativeWork > 0 || len(m.UserRecovery) > 0 || len(m.UserInstances) > 0 {
 			fmt.Fprintf(c.stdout, "  Users:  %d managers\n", m.UserManagers)
 			fmt.Fprintf(c.stdout, "          %d lingering\n", m.Lingering)
@@ -902,6 +915,13 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		}
 		if u.RestartDelaySec != 0 {
 			fmt.Fprintf(c.stdout, "Restart delay: %gs\n", u.RestartDelaySec)
+		}
+		if b := u.RestartBudget; b != nil {
+			remaining := "unlimited"
+			if b.Remaining != nil {
+				remaining = fmt.Sprintf("%d", *b.Remaining)
+			}
+			fmt.Fprintf(c.stdout, "Restart budget: policy=%s burst=%d in-window=%d remaining=%s interval=%gs\n", b.Policy, b.Burst, b.StartsInWindow, remaining, b.IntervalSec)
 		}
 		if u.TerminationUncertain {
 			if len(u.PendingCleanup) != 0 {
