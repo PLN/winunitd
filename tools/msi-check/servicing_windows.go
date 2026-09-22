@@ -20,6 +20,11 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
+const (
+	serviceStateVersion  = 1
+	maxServiceStateBytes = 64 * 1024
+)
+
 // savedServiceState is one MSI transaction. MSI owns file rollback; this
 // record owns the prior SCM configuration and whether the service was running.
 type savedServiceState struct {

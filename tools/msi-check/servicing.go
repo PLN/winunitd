@@ -25,11 +25,6 @@ var serviceStopBudget = runtime.PreshutdownTimeout
 // A missing or failed quiesce aborts replacement; it is not success.
 var quiesceBudget = time.Duration(protocol.MaxMaintenanceTimeoutMS) * time.Millisecond
 
-const (
-	serviceStateVersion  = 1
-	maxServiceStateBytes = 64 * 1024
-)
-
 var serviceTokenPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 func validServiceToken(token string) bool {
