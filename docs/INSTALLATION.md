@@ -177,8 +177,12 @@ which grants control to SYSTEM and Administrators only.
 
 ## Not in this package
 
-The platform install matrix and the Hermes pilot migration command are
-later packaging work. Native SYSTEM qualification of the conflict and
-unsafe-directory preflight has not been recorded. Servicing evidence for
-the quiesce and rollback transaction is in
+The Hermes pilot migration command is later work (R6.5 / R7). The
+platform acceptance matrix is still open. The repeatable case list is
+`tests/installer`. One SYSTEM guest is recorded as
+`9961798-r64-accept` in [R6 evidence](R6-EVIDENCE.md#acceptance),
+including `preflight-reparse` and `preflight-unmanaged-service`.
+GUI install, offline install, and the claimed SKUs listed there are
+still open. Servicing evidence for the quiesce and
+rollback transaction is in
 [R6 evidence](R6-EVIDENCE.md#maintenance-and-rollback).

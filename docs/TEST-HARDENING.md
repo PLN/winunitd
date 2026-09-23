@@ -141,9 +141,12 @@ Record uncached full-command wall time and the manager package time beside the
 source identity. The September 7 manager baseline was 45.1 seconds; compilation
 and package scheduling make it different from total command wall time.
 A provisional review budget is 90 seconds for the manager package and 180 seconds
-for a warm-toolchain full command. Exceeding it triggers profiling and test
-consolidation, not skipped assertions or larger timeouts. Hosted cold setup is
-measured separately under the existing 15-minute job deadline.
+for a warm-toolchain full command. Exceeding it on a warm local toolchain
+triggers profiling and test consolidation, not skipped assertions. Hosted
+Windows CI uses `go test -race -parallel 1 ./... -timeout 15m` because the
+180-second limit panicked in `internal/manager` while tests were still queued.
+`-parallel 1` stays. The Windows job deadline is 45 minutes so that test can
+finish and the later steps still run.
 
 The September 9 review follow-up measured 56.7 seconds for the uncached full
 command (`-count=1`) and 45.1 seconds for internal/manager on the local Windows

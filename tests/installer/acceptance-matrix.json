@@ -1,0 +1,329 @@
+{
+  "schema": 1,
+  "claimed_skus": [
+    "Windows 11 Enterprise x64",
+    "Windows 11 Enterprise LTSC x64",
+    "Windows Server 2022 x64",
+    "Windows Server 2025 x64",
+    "Windows Server Core x64"
+  ],
+  "summary_fields": [
+    "evidence_id",
+    "source_commit",
+    "installer_version",
+    "product_code",
+    "upgrade_code",
+    "package_sha256",
+    "guest_product",
+    "guest_edition",
+    "guest_build",
+    "installation_type",
+    "identity",
+    "offline",
+    "interactive",
+    "case_id",
+    "status",
+    "msi_exit",
+    "service_before",
+    "service_after",
+    "payload_sha256",
+    "log_markers",
+    "reboot_started",
+    "layout_ok",
+    "event_source",
+    "path_owned",
+    "prerequisite_action",
+    "data_retained",
+    "note"
+  ],
+  "cases": [
+    {
+      "id": "quiet-install",
+      "gate": ["R6.1", "R6.4"],
+      "title": "Clean quiet install",
+      "expect_exit": [0],
+      "expect_markers": [],
+      "requires": {
+        "identity": "elevated",
+        "interactive": false,
+        "offline": false,
+        "product": "absent",
+        "older_msi": false,
+        "beta_msi": false,
+        "gui_sku": false
+      }
+    },
+    {
+      "id": "gui-install",
+      "gate": ["R6.1", "R6.4"],
+      "title": "Clean GUI install",
+      "expect_exit": [0],
+      "expect_markers": [],
+      "requires": {
+        "identity": "elevated",
+        "interactive": true,
+        "offline": false,
+        "product": "absent",
+        "older_msi": false,
+        "beta_msi": false,
+        "gui_sku": true
+      }
+    },
+    {
+      "id": "system-install",
+      "gate": ["R6.4"],
+      "title": "Clean SYSTEM install",
+      "expect_exit": [0],
+      "expect_markers": [],
+      "requires": {
+        "identity": "system",
+        "interactive": false,
+        "offline": false,
+        "product": "absent",
+        "older_msi": false,
+        "beta_msi": false,
+        "gui_sku": false
+      }
+    },
+    {
+      "id": "offline-install",
+      "gate": ["R6.4"],
+      "title": "Clean offline quiet install",
+      "expect_exit": [0],
+      "expect_markers": [],
+      "requires": {
+        "identity": "elevated",
+        "interactive": false,
+        "offline": true,
+        "product": "absent",
+        "older_msi": false,
+        "beta_msi": false,
+        "gui_sku": false
+      }
+    },
+    {
+      "id": "repair-fa",
+      "gate": ["R6.1", "R6.4"],
+      "title": "Quiet repair with /fa",
+      "expect_exit": [0],
+      "expect_markers": [],
+      "requires": {
+        "identity": "elevated",
+        "interactive": false,
+        "offline": false,
+        "product": "present",
+        "older_msi": false,
+        "beta_msi": false,
+        "gui_sku": false
+      }
+    },
+    {
+      "id": "repair-reinstall",
+      "gate": ["R6.1", "R6.4"],
+      "title": "Quiet repair with REINSTALL=ALL",
+      "expect_exit": [0],
+      "expect_markers": [],
+      "requires": {
+        "identity": "elevated",
+        "interactive": false,
+        "offline": false,
+        "product": "present",
+        "older_msi": false,
+        "beta_msi": false,
+        "gui_sku": false
+      }
+    },
+    {
+      "id": "uninstall",
+      "gate": ["R6.1", "R6.4"],
+      "title": "Quiet uninstall",
+      "expect_exit": [0],
+      "expect_markers": [],
+      "requires": {
+        "identity": "elevated",
+        "interactive": false,
+        "offline": false,
+        "product": "present",
+        "older_msi": false,
+        "beta_msi": false,
+        "gui_sku": false
+      }
+    },
+    {
+      "id": "reinstall-retained",
+      "gate": ["R6.4"],
+      "title": "Reinstall over retained data",
+      "expect_exit": [0],
+      "expect_markers": [],
+      "requires": {
+        "identity": "elevated",
+        "interactive": false,
+        "offline": false,
+        "product": "present",
+        "older_msi": false,
+        "beta_msi": false,
+        "gui_sku": false
+      }
+    },
+    {
+      "id": "downgrade",
+      "gate": ["R6.4"],
+      "title": "Downgrade rejection",
+      "expect_exit": [1603],
+      "expect_markers": ["A newer package is installed."],
+      "requires": {
+        "identity": "elevated",
+        "interactive": false,
+        "offline": false,
+        "product": "present",
+        "older_msi": true,
+        "beta_msi": false,
+        "gui_sku": false
+      }
+    },
+    {
+      "id": "n1-upgrade",
+      "gate": ["R6.4"],
+      "title": "N-1 upgrade",
+      "expect_exit": [0],
+      "expect_markers": [],
+      "requires": {
+        "identity": "elevated",
+        "interactive": false,
+        "offline": false,
+        "product": "absent",
+        "older_msi": true,
+        "beta_msi": false,
+        "gui_sku": false
+      }
+    },
+    {
+      "id": "locked-file",
+      "gate": ["R6.4"],
+      "title": "Locked payload aborts replacement",
+      "expect_exit": [1603],
+      "expect_markers": ["abort replacement"],
+      "requires": {
+        "identity": "elevated",
+        "interactive": false,
+        "offline": false,
+        "product": "present",
+        "older_msi": false,
+        "beta_msi": false,
+        "gui_sku": false
+      }
+    },
+    {
+      "id": "rollback-test-fail-running",
+      "gate": ["R6.4"],
+      "title": "WINUNITD_TEST_FAIL repair restores a running service",
+      "expect_exit": [1603],
+      "expect_markers": ["InjectServiceFailure"],
+      "requires": {
+        "identity": "elevated",
+        "interactive": false,
+        "offline": false,
+        "product": "present",
+        "older_msi": false,
+        "beta_msi": false,
+        "gui_sku": false
+      }
+    },
+    {
+      "id": "rollback-test-fail-stopped",
+      "gate": ["R6.4"],
+      "title": "WINUNITD_TEST_FAIL repair leaves a stopped service stopped",
+      "expect_exit": [1603],
+      "expect_markers": ["InjectServiceFailure"],
+      "requires": {
+        "identity": "elevated",
+        "interactive": false,
+        "offline": false,
+        "product": "present",
+        "older_msi": false,
+        "beta_msi": false,
+        "gui_sku": false
+      }
+    },
+    {
+      "id": "rollback-upgrade",
+      "gate": ["R6.4"],
+      "title": "WINUNITD_TEST_FAIL upgrade restores the older payload",
+      "expect_exit": [1603],
+      "expect_markers": ["InjectServiceFailure"],
+      "requires": {
+        "identity": "elevated",
+        "interactive": false,
+        "offline": false,
+        "product": "absent",
+        "older_msi": true,
+        "beta_msi": false,
+        "gui_sku": false
+      }
+    },
+    {
+      "id": "non-admin",
+      "gate": ["R6.4"],
+      "title": "Non-admin quiet install is rejected",
+      "expect_exit": [1602, 1603, 1625],
+      "expect_markers": [],
+      "requires": {
+        "identity": "not-elevated",
+        "interactive": false,
+        "offline": false,
+        "product": "absent",
+        "older_msi": false,
+        "beta_msi": false,
+        "gui_sku": false
+      }
+    },
+    {
+      "id": "beta-conflict",
+      "gate": ["R6.4"],
+      "title": "Product refuses to install beside the unsigned beta",
+      "expect_exit": [1603],
+      "expect_markers": ["The unsigned beta package is installed."],
+      "requires": {
+        "identity": "elevated",
+        "interactive": false,
+        "offline": false,
+        "product": "absent",
+        "older_msi": false,
+        "beta_msi": true,
+        "gui_sku": false
+      }
+    },
+    {
+      "id": "preflight-reparse",
+      "gate": ["R6.3"],
+      "title": "Reparse point under ProgramData winunitd",
+      "expect_exit": [1603],
+      "expect_markers": ["preflight conflict:", "reparse point"],
+      "requires": {
+        "identity": "elevated",
+        "interactive": false,
+        "offline": false,
+        "product": "absent",
+        "older_msi": false,
+        "beta_msi": false,
+        "gui_sku": false
+      }
+    },
+    {
+      "id": "preflight-unmanaged-service",
+      "gate": ["R6.3"],
+      "title": "Unmanaged winunitd service image",
+      "expect_exit": [1603],
+      "expect_markers": ["preflight conflict:", "unmanaged winunitd binary path"],
+      "requires": {
+        "identity": "elevated",
+        "interactive": false,
+        "offline": false,
+        "product": "absent",
+        "older_msi": false,
+        "beta_msi": false,
+        "gui_sku": false
+      }
+    }
+  ]
+}

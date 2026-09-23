@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,5 +64,21 @@ func TestInspectDirectoryRejectsReparseWithoutOpeningTarget(t *testing.T) {
 	got, err := os.ReadFile(secret)
 	if err != nil || string(got) != "keep" {
 		t.Fatalf("target bytes = %q %v", got, err)
+	}
+	err = protectedDirectory(link)
+	if err == nil || !strings.Contains(err.Error(), "reparse point") || !strings.Contains(err.Error(), "refusing to follow") {
+		t.Fatalf("protectedDirectory reparse: %v", err)
+	}
+	logged := fmt.Errorf("preflight conflict: unsafe directory data: %w", err)
+	if !strings.Contains(logged.Error(), "preflight conflict:") || !strings.Contains(logged.Error(), "reparse point") {
+		t.Fatalf("protectedDirectory log: %v", logged)
+	}
+	file := filepath.Join(parent, "file")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = protectedDirectory(file)
+	if err == nil || !strings.Contains(err.Error(), "ordinary directories") || strings.Contains(err.Error(), "reparse point") {
+		t.Fatalf("protectedDirectory file: %v", err)
 	}
 }

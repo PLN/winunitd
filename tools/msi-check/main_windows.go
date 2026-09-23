@@ -105,8 +105,12 @@ func protectedDirectory(dir string) error {
 			return err
 		}
 		attrs, err := windows.GetFileAttributes(name)
-		if err == nil && (attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 || attrs&windows.FILE_ATTRIBUTE_DIRECTORY == 0) {
-			return fmt.Errorf("installation directories must be ordinary directories")
+		if err == nil {
+			reparse := attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0
+			directory := attrs&windows.FILE_ATTRIBUTE_DIRECTORY != 0
+			if reparse || !directory {
+				return protectedDirectoryShape(reparse, directory)
+			}
 		}
 		if err != nil && !errors.Is(err, windows.ERROR_FILE_NOT_FOUND) && !errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
 			return err

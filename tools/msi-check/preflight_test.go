@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,6 +108,27 @@ func TestClassifyServiceConflicts(t *testing.T) {
 	err = classifyService(modeUninstall, broken, install, data)
 	if err == nil || !strings.Contains(err.Error(), "unmanaged winunitd binary path") {
 		t.Fatalf("uninstall of an unrelated service: %v", err)
+	}
+}
+
+func TestProtectedDirectoryReparseMarker(t *testing.T) {
+	junction := protectedDirectoryShape(true, true)
+	if junction == nil || !strings.Contains(junction.Error(), "reparse point") || !strings.Contains(junction.Error(), "refusing to follow") {
+		t.Fatalf("reparse: %v", junction)
+	}
+	if strings.Contains(junction.Error(), "ordinary directories") {
+		t.Fatalf("reparse used the file message: %v", junction)
+	}
+	logged := fmt.Errorf("preflight conflict: unsafe directory data: %w", junction)
+	if !strings.Contains(logged.Error(), "preflight conflict:") || !strings.Contains(logged.Error(), "reparse point") {
+		t.Fatalf("log: %v", logged)
+	}
+	file := protectedDirectoryShape(false, false)
+	if file == nil || !strings.Contains(file.Error(), "ordinary directories") || strings.Contains(file.Error(), "reparse point") {
+		t.Fatalf("file: %v", file)
+	}
+	if err := protectedDirectoryShape(false, true); err != nil {
+		t.Fatalf("directory: %v", err)
 	}
 }
 

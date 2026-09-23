@@ -17,6 +17,8 @@ go run ./tools/build
 
 Go can download the selected toolchain through its normal verified module mechanism. Alternatively install that version from [official Go downloads](https://go.dev/dl/). The build command rejects a compiler different from `.go-version`. Direct `go test` commands do not enforce exact compiler equality, so record `go version` when reporting local results.
 
+Hosted Windows CI keeps `-parallel 1` and uses `-timeout 15m`. The 180-second limit above is the warm local budget. Linux CI stays at 180 seconds.
+
 The builder resolves the pinned compiler using `go env GOROOT GOVERSION`, then
 verifies the absolute child compiler with toolchain switching disabled. Inherited
 GOROOT values cannot redirect child builds. Compiler-selection regressions reject
