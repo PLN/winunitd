@@ -48,8 +48,8 @@ $script:Offline = $null
 $script:Interactive = $false
 
 function ConvertTo-Array($Value) {
-	if ($null -eq $Value) { return ,@() }
-	return ,@($Value)
+	if ($null -eq $Value) { return @() }
+	return @($Value)
 }
 
 function ConvertTo-GuidText([string]$Text) {

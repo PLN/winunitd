@@ -3,8 +3,10 @@ package installer_test
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -152,6 +154,78 @@ func TestAcceptanceMatrixMatchesHarness(t *testing.T) {
 	if !strings.Contains(script, "No recorded N-1 package") && !strings.Contains(script, "no recorded N-1 package") {
 		t.Fatal("missing older package must stay an explicit skip")
 	}
+}
+
+func TestQuietInstallSpecIsOneElevatedCase(t *testing.T) {
+	root := moduleRoot(t)
+	script := readRepo(t, root, "tests/installer/acceptance.ps1")
+	fn := convertToArrayFunction(t, script)
+	if strings.Contains(fn, "return ,@") || strings.Contains(fn, "return , @") {
+		t.Fatal("ConvertTo-Array re-wraps its input with the unary comma")
+	}
+	if !strings.Contains(fn, "return @($Value)") || !strings.Contains(fn, "return @()") {
+		t.Fatal("ConvertTo-Array must return a flat list")
+	}
+
+	exe, err := exec.LookPath("pwsh")
+	if err != nil {
+		exe, err = exec.LookPath("powershell")
+	}
+	if err != nil {
+		if runtime.GOOS == "windows" {
+			t.Fatal("powershell is required to check case selection")
+		}
+		t.Skip("powershell is not installed")
+	}
+	probe := filepath.Join(t.TempDir(), "select-case.ps1")
+	body := "param([Parameter(Mandatory)][string]$MatrixPath)\n" + fn + `
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version 2.0
+$matrix = Get-Content -LiteralPath $MatrixPath -Raw -Encoding utf8 | ConvertFrom-Json
+$Case = 'quiet-install'
+$spec = $null
+$seen = 0
+foreach ($item in @(ConvertTo-Array $matrix.cases)) {
+	$seen++
+	if ($item.id -eq $Case) {
+		if ($null -ne $spec) { throw 'quiet-install matched more than once' }
+		$spec = $item
+	}
+}
+if ($seen -lt 2) { throw "case list collapsed to $seen" }
+if ($null -eq $spec) { throw 'quiet-install was not selected' }
+if ($spec -is [System.Array]) { throw 'selected spec is an array' }
+$identity = $spec.requires.identity
+if ($identity -isnot [string]) { throw 'requires.identity is not a string' }
+if ($identity -ne 'elevated') { throw "requires.identity is $identity" }
+$one = @(ConvertTo-Array 'elevated')
+if ($one.Count -ne 1 -or $one[0] -isnot [string] -or $one[0] -ne 'elevated') { throw 'a single object was not one element' }
+$none = @(ConvertTo-Array $null)
+if ($none.Count -ne 0) { throw 'null was not an empty list' }
+`
+	if err := os.WriteFile(probe, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(exe, "-NoProfile", "-NonInteractive", "-File", probe, filepath.Join(root, "tests/installer/acceptance-matrix.json"))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("quiet-install selection: %v\n%s", err, out)
+	}
+}
+
+func convertToArrayFunction(t *testing.T, script string) string {
+	t.Helper()
+	const start = "function ConvertTo-Array($Value) {"
+	i := strings.Index(script, start)
+	if i < 0 {
+		t.Fatal("ConvertTo-Array is missing")
+	}
+	rest := script[i:]
+	j := strings.Index(rest, "\nfunction ")
+	if j < 0 {
+		t.Fatal("ConvertTo-Array has no following function")
+	}
+	return rest[:j+1]
 }
 
 func TestAcceptanceEvidenceStaysUnchecked(t *testing.T) {
