@@ -255,7 +255,7 @@ still missing evidence.
 | `rollback-test-fail-running` | R6.4 | 1603 | `WINUNITD_TEST_FAIL=1` during `/fa`. Log contains `InjectServiceFailure`. Delayed start and the running state are restored. Same-version bytes match; the delayed-start value is the restore check |
 | `rollback-test-fail-stopped` | R6.4 | 1603 | Same injected failure from a stopped service. The service stays stopped and delayed start is restored |
 | `rollback-upgrade` | R6.4 | 1603 | Injected failure while moving from the older package to `0.1.0`. The older payload hash, delayed start, and running state are restored |
-| `non-admin` | R6.4 | 1602, 1603, or 1625 | Quiet install without an elevated token. An elevated parent creates fixture user alice, starts the Secondary Logon service, and starts msiexec with LogonUser and CreateProcessAsUser. A start failure note includes the Win32 code. The product stays absent |
+| `non-admin` | R6.4 | 1601, 1602, 1603, or 1625 | Quiet install without an elevated token. An elevated parent creates fixture user alice, starts the Secondary Logon service, and starts msiexec with LogonUser and CreateProcessAsUser. A start failure note includes the Win32 code. A standard-user quiet install may return 1601 when Windows Installer service access is denied, and the product must stay absent |
 | `beta-conflict` | R6.4 | 1603 | Unsigned beta is installed. Product install logs `The unsigned beta package is installed.` and leaves the beta in place. The harness discovers a built beta MSI when `-BetaMsi` is omitted, stops winunitd, waits until it is stopped, then removes the beta. A failed removal force-stops the service and records the remove exit |
 | `preflight-reparse` | R6.3 | 1603 | Junction at `%ProgramData%\winunitd`. Log contains `preflight conflict:` and `reparse point`. The link and a marker in the target stay. The product layout stays absent |
 | `preflight-unmanaged-service` | R6.3 | 1603 | Pre-existing `winunitd` service whose image is not the package binary. Log contains `preflight conflict:` and `unmanaged winunitd binary path`. The image stays. The product layout stays absent |
@@ -516,4 +516,53 @@ force-stops the service again and records the remove exit. Beta
 `CheckStopped` runs on REMOVE before `StopServices`, and `PreparePolicy`
 uses the same stopped check, which matches the beta install contract.
 The harness stops the service instead of changing that package.
+
+### 7d21de2-r64-finish
+
+Evidence id `7d21de2-r64-finish` records the runnable acceptance set for
+0.1-alpha. The source tip is
+`7d21de27f5ffd2663e6a03ef0d52045bbee4a968`. This note is a later commit.
+`installer_version` is `0.1.0`. `package_sha256` is
+`56f38c4ffa7aa8d2a953e932603a312ec81eda00ccf6a069fc9c71d6f1d4ef00`.
+`guest_sku` is `unclaimed`. Raw logs stay in the private operator
+workspace.
+
+`9961798-r64-accept` and `f1e38a0-r64-continue` are preserved. The
+SYSTEM matrix under `9961798-r64-accept` remains the prior SYSTEM
+subset: `quiet-install`, `system-install`, `repair-fa`,
+`repair-reinstall`, `uninstall`, `locked-file`,
+`rollback-test-fail-running`, `rollback-test-fail-stopped`,
+`reinstall-retained`, `preflight-reparse`, and
+`preflight-unmanaged-service`. Those cases were not re-run here.
+
+| Case | Status | MSI exit | Markers |
+| --- | --- | --- | --- |
+| `offline-install` | `passed` | 0 | Empty default routes are offline |
+| `non-admin` | `passed` | 1601 | Standard-user quiet install cannot reach the Windows Installer service. The product stays absent |
+| `beta-conflict` | `passed` | 1603 | `The unsigned beta package is installed.` |
+| `gui-install` | `passed` | 0 | Log marker `UILevel = 3`. Interactive desktop session |
+
+Eval interactive GUI is recorded for 0.1-alpha. Earlier notes that an
+unclaimed run does not check R6.1 or R6.4 describe
+`9961798-r64-accept` and `f1e38a0-r64-continue`. For 0.1-alpha, R6.1 is
+checked because quiet, repair, and uninstall are already recorded under
+`9961798-r64-accept` and `gui-install` passed on an interactive desktop
+with `guest_sku=unclaimed` (Eval). R6.4 is checked because every case
+that does not need claimed media or an older MSI passed on at least one
+guest. The runnable set is `quiet-install`, `gui-install`,
+`system-install`, `offline-install`, `repair-fa`, `repair-reinstall`,
+`uninstall`, `reinstall-retained`, `locked-file`,
+`rollback-test-fail-running`, `rollback-test-fail-stopped`,
+`non-admin`, `beta-conflict`, `preflight-reparse`, and
+`preflight-unmanaged-service`.
+
+These were not run:
+
+- deferred-media: Windows 11 Enterprise x64, Windows 11 Enterprise LTSC x64 (non-Eval), Windows Server 2022 x64, Windows Server 2025 x64, and Windows Server Core x64
+- deferred-older-msi: `downgrade`, `n1-upgrade`, and `rollback-upgrade`, until an older MSI exists with UpgradeCode `A512B91F-1883-40FD-8EDB-5B8C5708DEEA` and ProductVersion lower than `0.1.0`
+
+No OlderMsi version is invented. No claimed SKU is recorded as run.
+R6.5 and overall R6 stay open. A3 / R4.4 stay deferred.
+[#245](https://github.com/PLN/winunitd/issues/245) stays open until the
+matrix rules for overall close are met.
 

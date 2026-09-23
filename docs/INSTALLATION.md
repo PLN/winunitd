@@ -178,12 +178,15 @@ which grants control to SYSTEM and Administrators only.
 
 ## Not in this package
 
-The Hermes pilot migration command is later work (R6.5 / R7). The
-platform acceptance matrix is still open. The repeatable case list is
-`tests/installer`. One SYSTEM guest is recorded as
+The Hermes pilot migration command is later work (R6.5 / R7). For
+0.1-alpha, R6.1 and R6.4 are checked. The SYSTEM subset is
 `9961798-r64-accept` in [R6 evidence](R6-EVIDENCE.md#acceptance),
 including `preflight-reparse` and `preflight-unmanaged-service`.
-GUI install, offline install, and the claimed SKUs listed there are
-still open. Servicing evidence for the quiesce and
-rollback transaction is in
+`gui-install`, `offline-install`, `non-admin`, and `beta-conflict`
+passed under `7d21de2-r64-finish` on an unclaimed Eval guest.
+deferred-media (Windows 11 Enterprise, Windows 11 Enterprise LTSC
+non-Eval, Server 2022/2025, and Server Core) and deferred-older-msi
+(`downgrade`, `n1-upgrade`, and `rollback-upgrade`) were not run.
+Overall R6 stays open until R6.5. Servicing evidence for the quiesce
+and rollback transaction is in
 [R6 evidence](R6-EVIDENCE.md#maintenance-and-rollback).
