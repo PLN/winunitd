@@ -123,8 +123,9 @@ Before service stop, replacement, or start, the deferred helper rejects:
 The helper does not follow a reparse point and does not try to repair
 the target ACL. The MSI log contains `preflight conflict:`. Reinstalling
 over retained data starts units that are already enabled. A manual
-install that uses another base directory, and the Hermes pilot move,
-stay on the explicit migration path (R6.5 / R7).
+install that uses another base directory stays on the explicit
+migration command. The R6.5 command refuses to adopt a custom base
+directory. Live Hermes handoff remains R7.
 
 Automated tests cover the authoring split, the repair/upgrade/uninstall
 fixture, and the fail-closed decisions. Native SYSTEM
@@ -494,7 +495,9 @@ Claimed SKUs with no recorded run:
 Server Core remains an installation type of the claimed Server 2022 and
 Server 2025 SKUs. This Evaluation guest fills none of those rows. R6.1
 and R6.4 stay unchecked. R6.5 and overall R6 stay open. A3 / R4.4 stay
-deferred. [#245](https://github.com/PLN/winunitd/issues/245) stays open.
+deferred. [#245](https://github.com/PLN/winunitd/issues/245) is closed.
+deferred-media and deferred-older-msi stay on the deferral lists in
+this file and in [milestones](MILESTONES.md).
 
 ### Harness corrections after f1e38a0-r64-continue
 
@@ -562,7 +565,42 @@ These were not run:
 - deferred-older-msi: `downgrade`, `n1-upgrade`, and `rollback-upgrade`, until an older MSI exists with UpgradeCode `A512B91F-1883-40FD-8EDB-5B8C5708DEEA` and ProductVersion lower than `0.1.0`
 
 No OlderMsi version is invented. No claimed SKU is recorded as run.
-R6.5 and overall R6 stay open. A3 / R4.4 stay deferred.
-[#245](https://github.com/PLN/winunitd/issues/245) stays open until the
-matrix rules for overall close are met.
+R6.5 is recorded under [4223ac9-r65-migrate](#4223ac9-r65-migrate). Overall R6 stays open. A3 / R4.4 stay deferred.
+[#245](https://github.com/PLN/winunitd/issues/245) is closed.
+deferred-media and deferred-older-msi stay on the deferral lists above
+and in [milestones](MILESTONES.md).
+
+## R6.5 migration tool
+
+### 4223ac9-r65-migrate
+
+Evidence id `4223ac9-r65-migrate` records a native disposable-VM run of
+`tools/migrate/fixture/Invoke-MigrateFixture.ps1` on tip
+`f4e6c477ada211cf5df736a16ea7685a612412a4`. The fixture accounts are alice, bob, and carol. The run does not
+register scheduled tasks, call msiexec, or install a product package. Raw logs
+stay in the private operator workspace. Do not add guest names, addresses, or
+private paths here.
+
+## Verified
+
+Native execution passed with fixture exit 0 and marker `r65-fixture-pass`.
+
+| Step | Result |
+| --- | --- |
+| discover | pass |
+| backup | pass |
+| dry-run | pass |
+| apply | pass |
+| health | pass |
+| injected-failure-restore | pass |
+| base-dir-conflict | pass |
+
+`-execute-msi` remains unqualified here. This id does not close overall R6.
+R7 has not started. A3 / R4.4 stay deferred.
+
+The verified native run is tip `f4e6c477ada211cf5df736a16ea7685a612412a4`.
+The content ship that records this evidence includes that tip. Later
+commits on the same branch were not a re-run of the disposable-VM fixture.
+#245 is closed. deferred-media and deferred-older-msi stay on the deferral
+lists in this file.
 
