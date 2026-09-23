@@ -61,6 +61,12 @@ jobs:
           ./tools/maintenance/hermes-pilot-tests.ps1
           ./tools/maintenance/hermes-unit-tests.ps1
 
+      - name: Migration fixture
+        shell: powershell
+        run: |
+          go build -o "$env:TEMP\winunitd-migrate.exe" ./tools/migrate
+          ./tools/migrate/fixture/Invoke-MigrateFixture.ps1 -MigrateExe "$env:TEMP\winunitd-migrate.exe"
+
       - name: Build
         run: go run ./tools/build
 
