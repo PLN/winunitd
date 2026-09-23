@@ -12,6 +12,10 @@ function Invoke-MigrateStep {
     )
     & $MigrateExe @MigrateArgs
     $code = $LASTEXITCODE
+    # An expected non-zero (injected failure, fail-closed dry-run) is part of
+    # the sequence. Clear it so the Actions powershell wrapper, which exits
+    # with LASTEXITCODE after this script returns, does not fail a pass.
+    $global:LASTEXITCODE = 0
     if ($code -ne $Expect) {
         throw "$Title exited $code, expected $Expect"
     }
@@ -58,3 +62,5 @@ $after = (Get-FileHash (Join-Path $conflict 'fixture.json')).Hash
 if ($before -ne $after) { throw 'conflict dry-run mutated the fixture' }
 
 Write-Output 'r65-fixture-pass'
+$global:LASTEXITCODE = 0
+exit 0

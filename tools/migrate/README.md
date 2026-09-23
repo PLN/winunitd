@@ -74,5 +74,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/migrate/fixture/Invoke
 ```
 
 Native disposable-VM evidence is recorded in
-[R6 evidence](../../docs/R6-EVIDENCE.md#r65-migration-tool). A run that
-has not been executed on a Windows guest stays unverified.
+[R6 evidence](../../docs/R6-EVIDENCE.md#4223ac9-r65-migrate). That run
+passed on tip `f4e6c477ada211cf5df736a16ea7685a612412a4` with marker
+`r65-fixture-pass`. `-execute-msi` stays unqualified.

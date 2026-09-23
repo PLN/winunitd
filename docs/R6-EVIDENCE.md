@@ -565,52 +565,42 @@ These were not run:
 - deferred-older-msi: `downgrade`, `n1-upgrade`, and `rollback-upgrade`, until an older MSI exists with UpgradeCode `A512B91F-1883-40FD-8EDB-5B8C5708DEEA` and ProductVersion lower than `0.1.0`
 
 No OlderMsi version is invented. No claimed SKU is recorded as run.
-R6.5 and overall R6 stay open. A3 / R4.4 stay deferred.
+R6.5 is recorded under [4223ac9-r65-migrate](#4223ac9-r65-migrate). Overall R6 stays open. A3 / R4.4 stay deferred.
 [#245](https://github.com/PLN/winunitd/issues/245) is closed.
 deferred-media and deferred-older-msi stay on the deferral lists above
 and in [milestones](MILESTONES.md).
 
 ## R6.5 migration tool
 
-Evidence id `4223ac9-r65-migrate` is reserved for a native disposable
-VM run of the pilot fixture. The branch starts at
-`4223ac975cbe8e570267cdaf49b2fe8dbad945b9`. This note does not record a
-guest result. Raw logs of a future run stay in the private operator
-workspace. Do not add guest names, addresses, or private paths here.
+### 4223ac9-r65-migrate
 
-## Unverified
+Evidence id `4223ac9-r65-migrate` records a native disposable-VM run of
+`tools/migrate/fixture/Invoke-MigrateFixture.ps1` on tip
+`f4e6c477ada211cf5df736a16ea7685a612412a4`. The fixture accounts are alice, bob, and carol. The run does not
+register scheduled tasks, call msiexec, or install a product package. Raw logs
+stay in the private operator workspace. Do not add guest names, addresses, or
+private paths here.
 
-Native execution of `tools/migrate/fixture/Invoke-MigrateFixture.ps1`
-has not been run on a Windows guest. CI can execute that script in a
-temporary directory. That run does not register scheduled tasks, call
-msiexec, or install a product package, and it is not the disposable-VM
-qualification.
+## Verified
 
-In-tree tests cover the fixture state machine:
+Native execution passed with fixture exit 0 and marker `r65-fixture-pass`.
 
-- discover separates MSI preflight rejects from per-user moves
-- dry-run prints the handoff sequence and does not mutate the fixture
-- conflicts fail closed for an unmanaged service, a non-LocalSystem
-  account, the beta UpgradeCode, a custom `--base-dir`, duplicate
-  launchers, a machine scheduled task, a machine Run value, a reparse
-  point, an unsafe data directory, and a destination collision
-- apply copies unit and enable records, leaves journals in place,
-  archives them in the backup, disables the pilot task and old
-  triggers, stops owned processes, and records product service identity
-  when the caller supplies an MSI path
-- health requires service identity, a disabled pilot, the copied
-  workload unit, and the control-owner marker
-- an injected failure after copy restores the pilot and removes copied
-  units while retaining the backup
-- linger records stay put unless `-linger` is set
-- `rollback -backup` is the inverse command
+| Step | Result |
+| --- | --- |
+| discover | pass |
+| backup | pass |
+| dry-run | pass |
+| apply | pass |
+| health | pass |
+| injected-failure-restore | pass |
+| base-dir-conflict | pass |
 
-The control-owner marker stands in for the system pipe and `winctl`.
-`-execute-msi` is implemented for a later native run and is not
-qualified here. The fixture accounts are alice, bob, and carol. The
-fixture does not install Hermes.
+`-execute-msi` remains unqualified here. This id does not close overall R6.
+R7 has not started. A3 / R4.4 stay deferred.
 
-This id does not check R6.5 or overall R6. R7 has not started. A3 /
-R4.4 stay deferred. #245 is closed. deferred-media and
-deferred-older-msi stay on the deferral lists in this file.
+The verified native run is tip `f4e6c477ada211cf5df736a16ea7685a612412a4`.
+The content ship that records this evidence includes that tip. Later
+commits on the same branch were not a re-run of the disposable-VM fixture.
+#245 is closed. deferred-media and deferred-older-msi stay on the deferral
+lists in this file.
 

@@ -191,6 +191,8 @@ an unclaimed Eval guest. deferred-media (Windows 11 Enterprise,
 Windows 11 Enterprise LTSC non-Eval, Server 2022/2025, and Server
 Core) and deferred-older-msi (`downgrade`, `n1-upgrade`, and
 `rollback-upgrade`) were not run. Native R6.5 fixture evidence
-`4223ac9-r65-migrate` is unverified, so overall R6 stays open.
+`4223ac9-r65-migrate` is verified on tip
+`f4e6c477ada211cf5df736a16ea7685a612412a4`. `-execute-msi` stays
+unqualified. Overall R6 stays open.
 Servicing evidence for the quiesce and rollback transaction is in
 [R6 evidence](R6-EVIDENCE.md#maintenance-and-rollback).

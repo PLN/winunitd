@@ -105,7 +105,10 @@ func TestConcurrentCaptureDrainsDuringStorageStall(t *testing.T) {
 		t.Fatal("helper queue pressure was not bounded and reported")
 	}
 	unblock()
-	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	// The accepted queue is up to invocationQueueRecords short lines, then a
+	// shared flush. One second is not enough for that drain under the race
+	// detector on a crowded runner; the stall itself stays asserted above.
+	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if !helper.WaitContext(ctx) {
 		t.Fatal("capture did not recover after storage resumed")
