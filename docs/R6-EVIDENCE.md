@@ -40,9 +40,9 @@ previous lab broker and user startup settings, removed fixture ownership and
 confirmed profile unload. The real application pilot was unchanged.
 
 This qualifies startup/recovery policy and the listed servicing paths. It does
-not complete R6. R6.3 data migration, R6.4 platform acceptance, R6.5 migration
-tooling, and overall R6 remain open. R7 handoff and its seven-day soak have
-not started.
+not complete R6. R6.3 data retention is recorded separately. R6.4 platform
+acceptance, R6.5 migration tooling, and overall R6 remain open. R7 handoff
+and its seven-day soak have not started.
 
 ## Maintenance and rollback
 
@@ -57,17 +57,15 @@ process aborts replacement. Injected failure restores the captured service
 configuration and the previous running or stopped state. Quiet install and
 the Application event source `winunitd` are unchanged.
 
-No successful native SYSTEM run of this transaction is recorded here. A
-fresh SYSTEM install of `3ddf5cf` returned 1603 with MSI error 2613 because
+A fresh SYSTEM install of `3ddf5cf` returned 1603 with MSI error 2613 because
 custom actions sat between `InstallInitialize` and `RemoveExistingProducts`.
 The package now schedules removal after `InstallExecute` and the helper
-before `StopServices`. The cases below remain unproven. Raw MSI logs stay
-in the private operator workspace. Do not add guest names, addresses, or
-private paths to this note.
+before `StopServices`. Native SYSTEM servicing evidence is recorded as
+`b915fbd-r62-servicing`. Raw MSI logs stay in the private operator
+workspace. Do not add guest names, addresses, or private paths to this note.
 
-Native SYSTEM qualification must prove all of the following on a disposable
-machine, as SYSTEM, from a clean build of the PR tip. Skipped cases do not
-count.
+Native SYSTEM evidence `b915fbd-r62-servicing` covers the following cases
+on a disposable machine, as SYSTEM. Skipped cases do not count.
 
 1. Fresh install with no `winunitd` service returns 0. The service is
    running, the Application event source `winunitd` is registered, and the
@@ -94,4 +92,42 @@ count.
    event source and does not show installer UI.
 
 Record MSI exit codes, the before/after running state, and payload hashes.
-This qualification does not close R6.1, R6.3, R6.4, R6.5, or overall R6.
+This qualification does not close R6.1, R6.4, R6.5, or overall R6.
+
+## Data and compatibility
+
+R6.3 keeps machine and user units, journals, timer state, and linger
+records across repair, upgrade, and uninstall. Those files are not MSI
+file components. Mutable directories are permanent and, except for the
+data root, do not carry `PermissionEx`, so repair does not overwrite
+units, reset enable records, recreate user configuration, or reapply
+child ACLs. There is no purge option. The package does not rewrite
+on-disk formats. A format change needs an explicit migration; MSI
+rollback does not undo it.
+
+Before service stop, replacement, or start, the deferred helper rejects:
+
+- a pre-existing `winunitd` service on a fresh install, including one
+  whose paths already match the package
+- an unmanaged binary path or a service account other than LocalSystem
+- a custom `--base-dir`, which is not adopted or relocated
+- a machine scheduled task or machine Run value that launches
+  `winunitd.exe` (install, repair, and upgrade; uninstall still removes
+  this package)
+- a reparse point, unexpected owner, or non-administrator write grant on
+  the install directory, `bin`, the data root, or `units`, `enabled`,
+  `journal`, `runtime`, `linger`, or `daemon`
+
+The helper does not follow a reparse point and does not try to repair
+the target ACL. The MSI log contains `preflight conflict:`. Reinstalling
+over retained data starts units that are already enabled. A manual
+install that uses another base directory, and the Hermes pilot move,
+stay on the explicit migration path (R6.5 / R7).
+
+Automated tests cover the authoring split, the repair/upgrade/uninstall
+fixture, and the fail-closed decisions. No native SYSTEM run of this
+preflight is recorded here. A later qualification should show the MSI
+log line on a disposable machine for a junction under
+`%ProgramData%\winunitd` and for a pre-existing service whose image is
+not the package binary. Raw logs stay private. This note does not close
+R6.1, R6.4, R6.5, or overall R6.

@@ -78,6 +78,7 @@ func TestProductIdentityMatchesInstallerSource(t *testing.T) {
 		`<StopServices Condition="NOT UPGRADINGPRODUCTCODE" />`,
 		`<DeleteServices Condition="NOT UPGRADINGPRODUCTCODE" />`,
 		`service-prepare`,
+		`&quot;[Installed]&quot; &quot;[WIX_UPGRADE_DETECTED]&quot; &quot;[REMOVE]&quot;`,
 		`service-rollback`,
 		`service-commit`,
 		`Binary Id="ServiceHelper" SourceFile="$(Payload)\msi-check.exe"`,

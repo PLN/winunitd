@@ -35,15 +35,23 @@ type savedServiceState struct {
 }
 
 func serviceTransaction(args []string) error {
-	if len(args) != 4 || !validServiceToken(args[3]) {
+	if len(args) == 0 {
 		return fmt.Errorf("invalid service transaction arguments")
 	}
-	op, token := args[0], args[3]
+	op := args[0]
 	switch op {
-	case "service-prepare", "service-rollback", "service-commit":
+	case "service-prepare":
+		if len(args) != 7 || !validServiceToken(args[3]) {
+			return fmt.Errorf("invalid service transaction arguments")
+		}
+	case "service-rollback", "service-commit":
+		if len(args) != 4 || !validServiceToken(args[3]) {
+			return fmt.Errorf("invalid service transaction arguments")
+		}
 	default:
 		return fmt.Errorf("unknown service operation")
 	}
+	token := args[3]
 	statePath, err := serviceStatePath(token)
 	if err != nil {
 		return err
@@ -70,6 +78,10 @@ func serviceTransaction(args []string) error {
 		}
 		return err
 	}
+	mode, err := preflightMode(args[4], args[5], args[6])
+	if err != nil {
+		return err
+	}
 	if err := requireStandardDirs(args[1], args[2]); err != nil {
 		return err
 	}
@@ -77,12 +89,13 @@ func serviceTransaction(args []string) error {
 	if err != nil {
 		return err
 	}
-	for _, dir := range []string{installDir, dataDir} {
-		if err := protectedDirectory(dir); err != nil {
-			return err
-		}
+	// Conflict and unsafe-directory checks run before quiesce, stop, or
+	// service registration changes. CreateFolders and StartServices are
+	// later in the MSI sequence.
+	if err := preflightProduct(installDir, dataDir, mode); err != nil {
+		return err
 	}
-	return prepareService(statePath, token, installDir, dataDir)
+	return prepareService(statePath, token, installDir, dataDir, mode)
 }
 
 func standardProductDirs() (installDir, dataDir string, err error) {
@@ -120,7 +133,7 @@ func serviceStatePath(token string) (string, error) {
 	return filepath.Join(base, "winunitd-service-"+token+".json"), nil
 }
 
-func prepareService(statePath, token, installDir, dataDir string) error {
+func prepareService(statePath, token, installDir, dataDir, mode string) error {
 	m, err := mgr.Connect()
 	if err != nil {
 		return err
@@ -142,7 +155,9 @@ func prepareService(statePath, token, installDir, dataDir string) error {
 	if err != nil {
 		return err
 	}
-	if err := productServiceIdentity(cfg, installDir, dataDir); err != nil {
+	// Re-check immediately before stop so a service that appeared after the
+	// first read is still refused when it is not this package.
+	if err := classifyService(mode, factsFromConfig(cfg), installDir, dataDir); err != nil {
 		return err
 	}
 	st, err := s.Query()
@@ -184,15 +199,6 @@ func abortIfPayloadBusy(installDir string) error {
 		return err
 	}
 	return replacementBlocked(false, locked)
-}
-
-func productServiceIdentity(cfg mgr.Config, installDir, dataDir string) error {
-	argv, err := windows.DecomposeCommandLine(cfg.BinaryPathName)
-	exe := filepath.Join(installDir, "bin", "winunitd.exe")
-	if err != nil || len(argv) != 3 || !strings.EqualFold(filepath.Clean(argv[0]), exe) || argv[1] != "--base-dir" || !strings.EqualFold(filepath.Clean(argv[2]), dataDir) || !localSystemAccount(cfg.ServiceStartName) {
-		return fmt.Errorf("service registration differs from this package; restore it before servicing")
-	}
-	return nil
 }
 
 func localSystemAccount(name string) bool {

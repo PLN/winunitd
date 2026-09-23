@@ -127,18 +127,58 @@ Manager so a live payload handle aborts in `service-prepare` instead of being
 closed at `InstallValidate`. The verbose MSI log includes that helper's
 standard error, including `abort replacement` and the locked file name.
 
-## Data kept on remove
+## Data kept across repair, upgrade, and remove
 
-Uninstall removes the service, the event source, the binaries, the
-documentation, and the owned PATH entry. It keeps
-`%ProgramData%\winunitd` and per-user data, including units, enablement,
-journals, timer state, linger records, and `daemon.log`. Reinstalling over
-that tree starts whatever units are already enabled. There is no purge
-option.
+Machine units, enable records, journals, timer state, linger records, and
+`daemon.log` live under `%ProgramData%\winunitd`. User managers keep their
+own trees under `%LOCALAPPDATA%\winunitd`. None of those files are MSI
+file components. Repair and upgrade replace package binaries and metadata
+only. They do not overwrite unit files, reset enable records, or recreate
+user configuration. The mutable directories are permanent, so uninstall
+does not remove them either. There is no purge option.
+
+Uninstall does remove the service registration, the package binaries, the
+documentation, the Application event source `winunitd`, and the PATH entry
+this package added. Unrelated PATH entries stay.
+
+Reinstalling over the retained tree starts whatever units are already
+enabled. Units that were started manually and are not enabled are not
+restored. That is the same rule as a successful upgrade.
+
+The package does not rewrite unit files or on-disk state when a format
+changes. Readers stay able to load the previous format. An explicit
+migration is a separate transaction. Rolling the MSI back does not undo
+that migration.
+
+A manual install that uses a base directory other than
+`%ProgramData%\winunitd` is not adopted or moved. The Hermes pilot
+migration command is later work (R6.5 / R7). This package only detects
+that conflict and stops.
+
+## Conflicts and unsafe directories
+
+Before the service is stopped, replaced, or started, the elevated helper
+rejects the transaction when any of the following is true:
+
+| Condition | Result |
+| --- | --- |
+| A `winunitd` service already exists and this product is not installed | Conflict. The package does not take ownership of a manual registration, even when the paths match |
+| The service image is not `%ProgramFiles%\winunitd\bin\winunitd.exe` | Conflict. An unmanaged binary path is left unchanged |
+| The service account is not LocalSystem | Conflict. An unrelated service of the same name is left unchanged |
+| `--base-dir` is not `%ProgramData%\winunitd` | Conflict. A custom base directory is not adopted or relocated |
+| A machine scheduled task or machine Run value launches `winunitd.exe` | Conflict on install, repair, and upgrade. Uninstall still removes this package. Per-user discovery stays with the explicit migration step |
+| `%ProgramData%\winunitd` or `units`, `enabled`, `journal`, `runtime`, `linger`, or `daemon` is a reparse point, is not owned by SYSTEM or Administrators, or grants write access to another principal | Conflict. The helper does not follow the link and does not try to repair the target ACL |
+
+The MSI log contains `preflight conflict:` and the reason. Fix the
+condition, or use the explicit migration path, and run the install again.
+Repair does not reapply ACLs on the mutable directories, so a safe
+existing ACL is left as it is. New directories inherit the data-root ACL,
+which grants control to SYSTEM and Administrators only.
 
 ## Not in this package
 
-Data migration and the platform install matrix are later packaging work.
-Native SYSTEM qualification of install, repair, uninstall, and this
-servicing transaction has not been recorded. What that run must prove is
-in [R6 evidence](R6-EVIDENCE.md#maintenance-and-rollback).
+The platform install matrix and the Hermes pilot migration command are
+later packaging work. Native SYSTEM qualification of the conflict and
+unsafe-directory preflight has not been recorded. Servicing evidence for
+the quiesce and rollback transaction is in
+[R6 evidence](R6-EVIDENCE.md#maintenance-and-rollback).
