@@ -23,6 +23,14 @@ func TestPreflightMode(t *testing.T) {
 		{"", "", "all", modeUninstall},
 		{product, "", "AddToPath", modeRepair},
 		{"", "", "Main,AddToPath", modeRepair},
+		// MSI writes a date into Installed for repair, reinstall, and uninstall.
+		{"00:00:00", "", "", modeRepair},
+		{"20260923000000", "", "", modeRepair},
+		{"23:59:59", "", "", modeRepair},
+		{"00:00:00", "", "ALL", modeUninstall},
+		{"20260923000000", "", "all", modeUninstall},
+		{"00:00:00", upgrade, "", modeUpgrade},
+		{"20260923000000", "", "AddToPath", modeRepair},
 	} {
 		got, err := preflightMode(tt.installed, tt.upgrade, tt.remove)
 		if err != nil || got != tt.want {
@@ -34,6 +42,16 @@ func TestPreflightMode(t *testing.T) {
 		{"", "../state", ""},
 		{"", "", `ALL" & calc`},
 		{"", "", "..\\Windows"},
+		{"24:00:00", "", ""},
+		{"00:60:00", "", ""},
+		{"00:00:60", "", ""},
+		{"20261323000000", "", ""},
+		{"20260932000000", "", ""},
+		{"2026092300000", "", ""},
+		{"00000000000000", "", ""},
+		{"2026-09-23", "", ""},
+		{"", "00:00:00", ""},
+		{"", "20260923000000", ""},
 	} {
 		if _, err := preflightMode(bad[0], bad[1], bad[2]); err == nil || !strings.Contains(err.Error(), "invalid installer context") {
 			t.Fatalf("accepted %q: %v", bad, err)

@@ -57,8 +57,10 @@ var msiGUID = regexp.MustCompile(`(?i)^\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 // REMOVE=ALL is uninstall even when Installed is also set. An upgrade
 // detection wins over a plain Installed value. Any other non-empty
 // Installed or feature-remove value is maintenance of this package.
+// MSI sets Installed to an installation date/time, not a product code, on
+// repair, same-package reinstall, and uninstall.
 func preflightMode(installed, upgrade, remove string) (string, error) {
-	if !validGUIDList(installed) || !validGUIDList(upgrade) || !validRemoveToken(remove) {
+	if !validInstalledToken(installed) || !validGUIDList(upgrade) || !validRemoveToken(remove) {
 		return "", fmt.Errorf("preflight conflict: invalid installer context")
 	}
 	if strings.EqualFold(strings.TrimSpace(remove), "ALL") {
@@ -71,6 +73,51 @@ func preflightMode(installed, upgrade, remove string) (string, error) {
 		return modeRepair, nil
 	}
 	return modeInstall, nil
+}
+
+// validInstalledToken accepts the Installed property. Empty is a first
+// install. A product-code list is still maintenance. Windows Installer
+// itself writes a date: HH:MM:SS (observed as 00:00:00) or 14-digit
+// YYYYMMDDHHMMSS (for example 20260923000000).
+func validInstalledToken(raw string) bool {
+	if validGUIDList(raw) {
+		return true
+	}
+	return msiInstalledDate(strings.TrimSpace(raw))
+}
+
+// msiInstalledDate reports whether raw is a Windows Installer date/time.
+// The clock form is HH:MM:SS. The other form is YYYYMMDDHHMMSS.
+func msiInstalledDate(raw string) bool {
+	switch len(raw) {
+	case 8:
+		if raw[2] != ':' || raw[5] != ':' {
+			return false
+		}
+		return decimalField(raw[0:2], 0, 23) &&
+			decimalField(raw[3:5], 0, 59) &&
+			decimalField(raw[6:8], 0, 59)
+	case 14:
+		return decimalField(raw[0:4], 1980, 9999) &&
+			decimalField(raw[4:6], 1, 12) &&
+			decimalField(raw[6:8], 1, 31) &&
+			decimalField(raw[8:10], 0, 23) &&
+			decimalField(raw[10:12], 0, 59) &&
+			decimalField(raw[12:14], 0, 59)
+	default:
+		return false
+	}
+}
+
+func decimalField(s string, min, max int) bool {
+	n := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n >= min && n <= max
 }
 
 func validGUIDList(raw string) bool {
