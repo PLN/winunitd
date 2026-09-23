@@ -14,7 +14,7 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
-func executeMSISupported() error { return nil }
+func executeMSISupported(bool) error { return nil }
 
 func executeMSI(path string) error {
 	cmd := exec.Command("msiexec.exe", "/i", path, "/qn", "/norestart")
@@ -32,11 +32,17 @@ func executeMSI(path string) error {
 	return fmt.Errorf("msiexec failed")
 }
 
-func stopInstalledService() error {
+func stopInstalledService(executed bool) error {
+	if !executed {
+		return nil
+	}
 	return serviceControl("stop", map[int]bool{0: true, 1062: true})
 }
 
-func startInstalledService() error {
+func startInstalledService(want bool) error {
+	if !want {
+		return nil
+	}
 	return serviceControl("start", map[int]bool{0: true, 1056: true})
 }
 
@@ -56,7 +62,10 @@ func serviceControl(op string, ok map[int]bool) error {
 	return fmt.Errorf("sc %s winunitd failed", op)
 }
 
-func productServiceMatches() error {
+func productServiceMatches(check bool) error {
+	if !check {
+		return nil
+	}
 	m, err := mgr.Connect()
 	if err != nil {
 		return fmt.Errorf("service identity")

@@ -81,10 +81,8 @@ func apply(root string, opt options) error {
 	if err := knownPhase(opt.FailAfter); err != nil {
 		return err
 	}
-	if opt.ExecuteMSI {
-		if err := executeMSISupported(); err != nil {
-			return err
-		}
+	if err := executeMSISupported(opt.ExecuteMSI); err != nil {
+		return err
 	}
 	if strings.TrimSpace(opt.BackupDir) == "" {
 		return fmt.Errorf("backup directory is required")
@@ -235,10 +233,8 @@ func phaseInstall(root string, fx *fixture, opt options) error {
 			}
 		}
 	case fx.Service.Exists && serviceManaged(fx.Service) && !fx.Service.Running:
-		if opt.ExecuteMSI {
-			if err := startInstalledService(); err != nil {
-				return err
-			}
+		if err := startInstalledService(opt.ExecuteMSI); err != nil {
+			return err
 		}
 		fx.Service.Running = true
 	}
@@ -266,10 +262,8 @@ func evaluateHealth(root string, fx fixture, opt options) ([]string, error) {
 	if !serviceManaged(fx.Service) || !fx.Service.Running {
 		return nil, fmt.Errorf("health check failed: service-identity")
 	}
-	if msiExecuted(opt.BackupDir) {
-		if err := productServiceMatches(); err != nil {
-			return nil, fmt.Errorf("health check failed: service-identity")
-		}
+	if err := productServiceMatches(msiExecuted(opt.BackupDir)); err != nil {
+		return nil, fmt.Errorf("health check failed: service-identity")
 	}
 	for _, user := range fx.Users {
 		for _, task := range user.Tasks {
@@ -373,10 +367,8 @@ func rollback(root, backupDir string) error {
 	if strings.TrimSpace(backupDir) == "" {
 		return fmt.Errorf("backup directory is required")
 	}
-	if msiExecuted(backupDir) {
-		if err := stopInstalledService(); err != nil {
-			return fmt.Errorf("stop new service ownership")
-		}
+	if err := stopInstalledService(msiExecuted(backupDir)); err != nil {
+		return fmt.Errorf("stop new service ownership")
 	}
 	raw, err := os.ReadFile(filepath.Join(backupDir, fixtureFile))
 	if err != nil {
