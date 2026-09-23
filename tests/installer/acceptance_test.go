@@ -440,9 +440,9 @@ func TestContinuationHarnessUnblocksRemainingCases(t *testing.T) {
 	}
 	beta := extractFunction(t, script, "Invoke-BetaConflict {")
 	stop := strings.Index(beta, "Stop-AcceptanceService")
-	remove := strings.Index(beta, "'/x'")
+	betaRemove := strings.Index(beta, "'/x'")
 	again := strings.LastIndex(beta, "Stop-AcceptanceService")
-	if stop < 0 || remove < 0 || stop > remove || again <= remove || !strings.Contains(beta, "remove exit") {
+	if stop < 0 || betaRemove < 0 || stop > betaRemove || again <= betaRemove || !strings.Contains(beta, "remove exit") {
 		t.Fatal("beta cleanup must stop the service before msiexec /x and record the remove exit")
 	}
 	if !strings.Contains(script, `dist\beta`) || !strings.Contains(script, `packaging\beta`) {
