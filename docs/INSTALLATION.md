@@ -193,6 +193,7 @@ Core) and deferred-older-msi (`downgrade`, `n1-upgrade`, and
 `rollback-upgrade`) were not run. Native R6.5 fixture evidence
 `4223ac9-r65-migrate` is verified on tip
 `f4e6c477ada211cf5df736a16ea7685a612412a4`. `-execute-msi` stays
-unqualified. Overall R6 stays open.
+unqualified. For 0.1-alpha, overall R6 is checked. The documented
+limitations are deferred-media and deferred-older-msi.
 Servicing evidence for the quiesce and rollback transaction is in
 [R6 evidence](R6-EVIDENCE.md#maintenance-and-rollback).

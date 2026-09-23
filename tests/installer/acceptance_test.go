@@ -18,7 +18,8 @@ import (
 // R6.4 are checked when the runnable set has passed on at least one
 // guest, including an unclaimed Eval guest. deferred-media and
 // deferred-older-msi stay listed. R6.5 is checked from verified native
-// fixture evidence. Overall R6 stays open.
+// fixture evidence. For 0.1-alpha, overall R6 is checked; those two
+// lists are the documented limitations.
 var requiredCases = []string{
 	"quiet-install",
 	"gui-install",
@@ -376,8 +377,11 @@ func TestAcceptanceAlphaGates(t *testing.T) {
 	if !taskChecked(milestones, "R6.1") || !taskChecked(milestones, "R6.4") || !taskChecked(milestones, "R6.5") {
 		t.Fatal("0.1-alpha checks R6.1 and R6.4 from the runnable set, and R6.5 from verified native fixture evidence")
 	}
-	if !strings.Contains(milestones, "R6.5 is checked") || !strings.Contains(milestones, "Overall R6 stays open") {
-		t.Fatal("overall R6 stays open for deferred-media and deferred-older-msi after R6.5 is checked")
+	if !strings.Contains(milestones, "R6.5 is checked") || !strings.Contains(milestones, "overall R6 is checked") {
+		t.Fatal("0.1-alpha checks overall R6; documented limitations are deferred-media and deferred-older-msi")
+	}
+	if strings.Contains(milestones, "Overall R6 stays open") {
+		t.Fatal("R6 status still says overall R6 is open")
 	}
 	if !strings.Contains(evidence, "4223ac9-r65-migrate") || !strings.Contains(evidence, "## Verified") {
 		t.Fatal("verified native fixture evidence 4223ac9-r65-migrate is missing")

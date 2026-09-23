@@ -38,7 +38,7 @@ Other feature expansion is paused through the stabilization milestones. Existing
 
 ## Milestone sequence
 
-R2, R3, and R5 have completed technical acceptance. R0, R1, R4, and R6 remain **in progress**; R7/R8 are planned. The [coordinator audit](docs/R2-COORDINATOR-AUDIT.md) and [consolidated evidence](docs/R2-EVIDENCE.md#consolidated-coordinator-acceptance) record the latest closure. Their IDs track the longer-term design, not beta release prerequisites or deadlines. See the milestones for completed work packages and qualification evidence; B1-B4 record the completed first beta delivery. Use the post-beta tracking for current work.
+R2, R3, and R5 have completed technical acceptance. For 0.1-alpha, overall R6 is checked with documented limitations (deferred-media and deferred-older-msi). R0, R1, and R4 remain **in progress**; R7/R8 are planned. The [coordinator audit](docs/R2-COORDINATOR-AUDIT.md) and [consolidated evidence](docs/R2-EVIDENCE.md#consolidated-coordinator-acceptance) record the latest closure. Their IDs track the longer-term design, not beta release prerequisites or deadlines. See the milestones for completed work packages and qualification evidence; B1-B4 record the completed first beta delivery. Use the post-beta tracking for current work.
 
 | ID | Outcome | Depends on | Completion signal |
 | --- | --- | --- | --- |

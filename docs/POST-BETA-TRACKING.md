@@ -1,6 +1,6 @@
 # Post-beta tracking
 
-Status refreshed September 22, 2026. The public 0.2.1-beta delivery gates B1-B4 are complete.
+Status refreshed September 23, 2026. The public 0.2.1-beta delivery gates B1-B4 are complete.
 Prioritize adopter feedback and reproducible defects in the supported core, then
 continue the architecture and qualification backlog. Preserve documented beta
 syntax. Status follows the linked qualification evidence; no new release is
@@ -9,7 +9,7 @@ implied by this tracking update.
 ## Milestones
 
 GitHub milestones mirror [repository acceptance gates](MILESTONES.md). R2, R3, and R5
-technical acceptance is complete; R0, R1, R4, and R6 remain in progress and R7-R8 remain
+technical acceptance is complete. For 0.1-alpha, overall R6 is checked with documented limitations (deferred-media and deferred-older-msi). R0, R1, and R4 remain in progress and R7-R8 remain
 planned. The packaging spike is already delivered.
 R5.1 timer persistence and R5.2 delivery policy are technically complete;
 [timer evidence](R5-EVIDENCE.md#timer-delivery-acceptance) records the final
@@ -23,7 +23,7 @@ are accepted in [diagnostics evidence](R5-EVIDENCE.md#diagnostics-and-event-reso
 at `a48e6e9` ([#236](https://github.com/PLN/winunitd/pull/236)) and `59ec4d8`
 ([#238](https://github.com/PLN/winunitd/pull/238)); qualification id
 `a3b5bb2-a5-msi` (raw evidence is private). Overall R5 is complete. Product MSI
-source is authored; overall R6 remains open. A3 and R4.4 stay open.
+source is authored. For 0.1-alpha, overall R6 is checked with documented limitations deferred-media and deferred-older-msi. A3 and R4.4 stay open.
 R4.3 SCM readiness and combined maintenance are technically complete; the
 [Windows qualification ledger](R4-EVIDENCE.md) records the accepted native runs
 and the remaining broader identity/session/security matrix.
