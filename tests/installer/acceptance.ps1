@@ -10,14 +10,21 @@
   publishing a reviewed run. A skipped case is missing evidence.
 
   Installer 0.1.0 is the only recorded product package. -OlderMsi is an
-  operator-supplied earlier package with the same UpgradeCode. This
-  script does not invent a version.
+  operator-supplied earlier package with the same UpgradeCode, or a
+  package discovered under dist\wix, the top of packaging\wix, or
+  beside the product MSI. This script does not invent a version.
+  -BetaMsi, when omitted, is discovered from the packaging\beta output
+  layout (dist\beta, the top of packaging\beta, or beside the product
+  MSI). The version is read from that file.
 
 .EXAMPLE
   powershell -NoProfile -File tests/installer/acceptance.ps1 -Case list
 
 .EXAMPLE
   powershell -NoProfile -File tests/installer/acceptance.ps1 -DisposableGuest -MsiPath <product-msi> -EvidenceDirectory <private-directory> -Case quiet-install
+
+.EXAMPLE
+  powershell -NoProfile -File tests/installer/acceptance.ps1 -DisposableGuest -MsiPath <product-msi> -EvidenceDirectory <private-directory> -Case gui-install
 #>
 [CmdletBinding()]
 param(
@@ -46,6 +53,10 @@ $script:Guest = $null
 $script:Identity = ''
 $script:Offline = $null
 $script:Interactive = $false
+$script:SummaryIdentity = ''
+$script:GuestSku = 'unclaimed'
+$script:SecLogonPriorStart = $null
+$script:SecLogonPriorRunning = $false
 
 function ConvertTo-Array($Value) {
 	if ($null -eq $Value) { return @() }
@@ -273,7 +284,8 @@ function Get-LogMarkers([string]$Log) {
 		'abort replacement',
 		'A newer package is installed.',
 		'The unsigned beta package is installed.',
-		'InjectServiceFailure'
+		'InjectServiceFailure',
+		'UILevel = 3'
 	)
 	$found = New-Object System.Collections.Generic.List[string]
 	if (-not $Log -or -not (Test-Path -LiteralPath $Log)) { return $found.ToArray() }
@@ -297,18 +309,40 @@ function Get-InstallFailureNote($Run) {
 	return ''
 }
 
+function New-MsiexecStartInfo([string]$Arguments, [bool]$Shell, [bool]$Hidden, [string]$User, [System.Security.SecureString]$Password, [bool]$Profile) {
+	$info = New-Object System.Diagnostics.ProcessStartInfo
+	$info.FileName = Join-Path $env:SystemRoot 'System32\msiexec.exe'
+	$info.Arguments = $Arguments
+	$info.UseShellExecute = $Shell
+	if ($Hidden) { $info.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden }
+	else { $info.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Normal }
+	if ($User) {
+		$info.UserName = $User
+		$info.Domain = '.'
+		$info.Password = $Password
+		$info.LoadUserProfile = $Profile
+		$info.WorkingDirectory = $env:SystemRoot
+	}
+	return $info
+}
+
 function Invoke-Msiexec {
 	param(
 		[Parameter(Mandatory)][string]$LogName,
 		[Parameter(Mandatory)][string[]]$Words,
 		[switch]$Quiet,
+		[switch]$BasicUi,
 		[switch]$TestFail,
-		[int]$TimeoutSec = 360
+		[int]$TimeoutSec = 360,
+		[string]$RunAs,
+		[System.Security.SecureString]$RunAsPassword
 	)
+	if ($Quiet -and $BasicUi) { throw 'unsupported UI level' }
 	$log = Join-Path $EvidenceDirectory ($LogName + '.log')
 	$argv = New-Object System.Collections.Generic.List[string]
 	foreach ($word in $Words) { [void]$argv.Add($word) }
 	if ($Quiet) { [void]$argv.Add('/qn') }
+	elseif ($BasicUi) { [void]$argv.Add('/qb!') }
 	[void]$argv.Add('/norestart')
 	[void]$argv.Add('/L*v')
 	[void]$argv.Add((ConvertTo-MsiArg $log))
@@ -317,13 +351,16 @@ function Invoke-Msiexec {
 	else { Remove-Item Env:WINUNITD_TEST_FAIL -ErrorAction SilentlyContinue }
 	$boot = Get-BootStamp
 	try {
-		$info = New-Object System.Diagnostics.ProcessStartInfo
-		$info.FileName = Join-Path $env:SystemRoot 'System32\msiexec.exe'
-		$info.Arguments = ($argv -join ' ')
-		$info.UseShellExecute = $true
-		if ($Quiet) { $info.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden }
-		else { $info.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Normal }
-		$proc = [System.Diagnostics.Process]::Start($info)
+		$arguments = ($argv -join ' ')
+		$hidden = [bool]$Quiet -or [bool]$RunAs
+		if ($RunAs) {
+			$exit = Start-FixtureMsiexec -User $RunAs -Password $RunAsPassword -Arguments $arguments -TimeoutSec $TimeoutSec
+			$reboot = (Get-BootStamp) -ne $boot
+			return [pscustomobject]@{ ExitCode = [int]$exit; Log = $log; Reboot = [bool]$reboot }
+		} else {
+			$info = New-MsiexecStartInfo $arguments $true $hidden '' $null $false
+			$proc = [System.Diagnostics.Process]::Start($info)
+		}
 		if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
 			try { $proc.Kill() } catch { }
 			throw 'msiexec timed out'
@@ -378,11 +415,47 @@ function Get-GuestFacts {
 	[pscustomobject]@{ Product = $product; Edition = $edition; Build = $build; InstallationType = $kind }
 }
 
+function Get-ElevationType {
+	if (-not ('WinunitdToken' -as [type])) {
+		Add-Type -TypeDefinition @'
+using System;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+public static class WinunitdToken {
+	[DllImport("advapi32.dll", SetLastError = true)]
+	public static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
+	[DllImport("advapi32.dll", SetLastError = true)]
+	public static extern bool GetTokenInformation(IntPtr tokenHandle, int tokenInformationClass, ref int tokenInformation, int tokenInformationLength, out int returnLength);
+	[DllImport("kernel32.dll", SetLastError = true)]
+	public static extern bool CloseHandle(IntPtr handle);
+	public static int Elevation() {
+		IntPtr token;
+		if (!OpenProcessToken(Process.GetCurrentProcess().Handle, 8, out token)) return 0;
+		try {
+			int value = 0;
+			int needed;
+			if (!GetTokenInformation(token, 18, ref value, 4, out needed)) return 0;
+			return value;
+		} finally {
+			CloseHandle(token);
+		}
+	}
+}
+'@ -ErrorAction Stop
+	}
+	return [WinunitdToken]::Elevation()
+}
+
 function Get-IdentityLabel {
 	$ident = [Security.Principal.WindowsIdentity]::GetCurrent()
 	$principal = New-Object Security.Principal.WindowsPrincipal($ident)
 	$system = New-Object Security.Principal.SecurityIdentifier ([Security.Principal.WellKnownSidType]::LocalSystemSid, $null)
 	if ($ident.User.Value -eq $system.Value) { return 'SYSTEM' }
+	$elevation = 0
+	try { $elevation = [int](Get-ElevationType) } catch { $elevation = 0 }
+	# TokenElevationTypeFull = 2, TokenElevationTypeLimited = 3.
+	if ($elevation -eq 2) { return 'Administrator' }
+	if ($elevation -eq 3) { return 'uac-filtered' }
 	if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { return 'Administrator' }
 	$admins = New-Object Security.Principal.SecurityIdentifier ([Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null)
 	foreach ($group in $ident.Groups) {
@@ -391,14 +464,96 @@ function Get-IdentityLabel {
 	return 'standard-user'
 }
 
+function Test-InteractiveDesktop {
+	if (-not [Environment]::UserInteractive) { return $false }
+	try {
+		$session = [int](Get-Process -Id $PID).SessionId
+	} catch {
+		return $false
+	}
+	return $session -gt 0
+}
+
+function Get-ClaimedSku([string]$Product, [string]$Edition, [string]$Build, [string]$InstallationType) {
+	# Windows 11 starts at build 22000. Server 2022 is build 20348.
+	# Server 2025 shares build 26100 with Windows 11 24H2, so a server
+	# row also requires a Server product name or installation type.
+	# Evaluation images and every other edition are unclaimed.
+	if ($Edition -match 'Eval' -or $Product -match 'Evaluation') { return 'unclaimed' }
+	$buildNum = 0
+	if ($Build -match '^([0-9]+)\.') { $buildNum = [int]$Matches[1] }
+	$client = $InstallationType -eq 'Client'
+	$core = $InstallationType -eq 'Server Core'
+	$server = $InstallationType -eq 'Server' -or $core
+	if ($client -and $buildNum -ge 22000) {
+		if ($Edition -eq 'Enterprise') { return 'Windows 11 Enterprise x64' }
+		if ($Edition -eq 'EnterpriseS') { return 'Windows 11 Enterprise LTSC x64' }
+	}
+	if ($server) {
+		$year = ''
+		if ($Product -match 'Server 2022' -or $buildNum -eq 20348) { $year = '2022' }
+		elseif ($Product -match 'Server 2025' -or ($buildNum -ge 26100 -and $Product -match 'Server')) { $year = '2025' }
+		if (-not $year) { return 'unclaimed' }
+		if ($core) { return 'Windows Server Core x64' }
+		if ($year -eq '2022') { return 'Windows Server 2022 x64' }
+		if ($year -eq '2025') { return 'Windows Server 2025 x64' }
+	}
+	return 'unclaimed'
+}
+
 function Test-OfflineGuest {
+	# An empty route table is offline. Indeterminate only when NetTCPIP
+	# cannot load. Get-NetRoute's empty-result error must not become that.
 	try {
 		Import-Module NetTCPIP -ErrorAction Stop
-		$v4 = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop)
-		$v6 = @(Get-NetRoute -DestinationPrefix '::/0' -ErrorAction SilentlyContinue)
-		return (@($v4).Count + @($v6).Count) -eq 0
 	} catch {
 		return $null
+	}
+	$v4 = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue)
+	$v6 = @(Get-NetRoute -DestinationPrefix '::/0' -ErrorAction SilentlyContinue)
+	return (@($v4).Count + @($v6).Count) -eq 0
+}
+
+function Get-DefaultRouteSnapshot {
+	Import-Module NetTCPIP -ErrorAction Stop
+	$items = New-Object System.Collections.Generic.List[object]
+	foreach ($prefix in @('0.0.0.0/0', '::/0')) {
+		foreach ($route in @(Get-NetRoute -DestinationPrefix $prefix -ErrorAction SilentlyContinue)) {
+			[void]$items.Add([pscustomobject]@{
+				DestinationPrefix = [string]$route.DestinationPrefix
+				NextHop = [string]$route.NextHop
+				InterfaceIndex = [int]$route.InterfaceIndex
+				RouteMetric = [int]$route.RouteMetric
+				AddressFamily = [string]$route.AddressFamily
+			})
+		}
+	}
+	return $items.ToArray()
+}
+
+function Restore-DefaultRoutes($Routes) {
+	Import-Module NetTCPIP -ErrorAction Stop
+	foreach ($route in @($Routes)) {
+		if (-not $route) { continue }
+		$alive = @(Get-NetRoute -DestinationPrefix $route.DestinationPrefix -InterfaceIndex $route.InterfaceIndex -ErrorAction SilentlyContinue)
+		$present = $false
+		foreach ($item in $alive) {
+			if ([string]$item.NextHop -eq $route.NextHop) { $present = $true }
+		}
+		if ($present) { continue }
+		New-NetRoute -DestinationPrefix $route.DestinationPrefix -InterfaceIndex $route.InterfaceIndex -NextHop $route.NextHop -RouteMetric $route.RouteMetric -AddressFamily $route.AddressFamily -Confirm:$false -ErrorAction Stop | Out-Null
+	}
+}
+
+function Test-LocalPath([string]$Path) {
+	try {
+		$root = [IO.Path]::GetPathRoot($Path)
+		if (-not $root -or $root.Length -lt 1) { return $false }
+		$drive = New-Object System.IO.DriveInfo($root.Substring(0, 1))
+		$kind = $drive.DriveType
+		return $kind -eq [IO.DriveType]::Fixed -or $kind -eq [IO.DriveType]::Removable
+	} catch {
+		return $false
 	}
 }
 
@@ -449,6 +604,101 @@ function Test-OlderProductMsi([string]$Path) {
 	return ''
 }
 
+function Get-PackageFiles([string]$Directory, [string]$Filter, [bool]$ChildDirectories) {
+	$files = New-Object System.Collections.Generic.List[string]
+	if (-not $Directory -or -not (Test-Path -LiteralPath $Directory)) { return $files.ToArray() }
+	$dirs = @()
+	if ($ChildDirectories) {
+		$dirs = @(Get-ChildItem -LiteralPath $Directory -Directory -ErrorAction SilentlyContinue)
+	} else {
+		$dirs = @([pscustomobject]@{ FullName = $Directory })
+	}
+	foreach ($dir in $dirs) {
+		if (-not $dir) { continue }
+		foreach ($file in @(Get-ChildItem -LiteralPath $dir.FullName -File -Filter $Filter -ErrorAction SilentlyContinue)) {
+			[void]$files.Add($file.FullName)
+		}
+	}
+	return $files.ToArray()
+}
+
+function Test-BetaPackageFile([string]$Path) {
+	try {
+		$name = [IO.Path]::GetFileName($Path)
+		if ($name -notmatch '^winunitd-\d+\.\d+\.\d+-x64-beta\.msi$') { return $false }
+		$upgrade = ConvertTo-GuidText (Get-MsiProperty $Path 'UpgradeCode')
+		if ($upgrade -ne $BetaUpgradeCode) { return $false }
+		if ($null -eq (ConvertTo-MsiVersion (Get-MsiProperty $Path 'ProductVersion'))) { return $false }
+		return $true
+	} catch {
+		return $false
+	}
+}
+
+function Select-HighestMsi([string[]]$Paths) {
+	$best = ''
+	$bestVer = $null
+	$tie = $false
+	foreach ($path in @($Paths)) {
+		if (-not $path) { continue }
+		$ver = ConvertTo-MsiVersion (Get-MsiProperty $path 'ProductVersion')
+		if ($null -eq $ver) { continue }
+		if ($null -eq $bestVer -or $ver -gt $bestVer) {
+			$bestVer = $ver
+			$best = $path
+			$tie = $false
+		} elseif ($ver -eq $bestVer -and (ConvertTo-PathKey $path) -ne (ConvertTo-PathKey $best)) {
+			$tie = $true
+		}
+	}
+	if ($tie) { throw 'multiple packages share the selected version' }
+	return $best
+}
+
+function Find-BetaMsi([string]$RepoRoot, [string]$ProductMsi) {
+	$files = New-Object System.Collections.Generic.List[string]
+	foreach ($path in @(Get-PackageFiles (Join-Path $RepoRoot 'dist\beta') 'winunitd-*-x64-beta.msi' $true)) { [void]$files.Add($path) }
+	foreach ($path in @(Get-PackageFiles (Join-Path $RepoRoot 'packaging\beta') 'winunitd-*-x64-beta.msi' $false)) { [void]$files.Add($path) }
+	$sibling = Split-Path -Parent $ProductMsi
+	foreach ($path in @(Get-PackageFiles $sibling 'winunitd-*-x64-beta.msi' $false)) { [void]$files.Add($path) }
+	$valid = New-Object System.Collections.Generic.List[string]
+	$seen = @{}
+	foreach ($path in $files) {
+		if (-not $path) { continue }
+		$key = ConvertTo-PathKey $path
+		if ($seen.ContainsKey($key)) { continue }
+		$seen[$key] = $true
+		if (Test-BetaPackageFile $path) { [void]$valid.Add($path) }
+	}
+	if ($valid.Count -eq 0) { return '' }
+	return Select-HighestMsi $valid.ToArray()
+}
+
+function Find-OlderProductMsi([string]$RepoRoot, [string]$ProductMsi) {
+	$files = New-Object System.Collections.Generic.List[string]
+	foreach ($path in @(Get-PackageFiles (Join-Path $RepoRoot 'dist\wix') 'winunitd-*-x64.msi' $true)) { [void]$files.Add($path) }
+	foreach ($path in @(Get-PackageFiles (Join-Path $RepoRoot 'packaging\wix') 'winunitd-*-x64.msi' $false)) { [void]$files.Add($path) }
+	$sibling = Split-Path -Parent $ProductMsi
+	foreach ($path in @(Get-PackageFiles $sibling 'winunitd-*-x64.msi' $false)) { [void]$files.Add($path) }
+	$productKey = ConvertTo-PathKey $ProductMsi
+	$valid = New-Object System.Collections.Generic.List[string]
+	$seen = @{}
+	foreach ($path in $files) {
+		if (-not $path) { continue }
+		$name = [IO.Path]::GetFileName($path)
+		if ($name -notmatch '^winunitd-\d+\.\d+\.\d+-x64\.msi$') { continue }
+		$key = ConvertTo-PathKey $path
+		if ($key -eq $productKey) { continue }
+		if ($seen.ContainsKey($key)) { continue }
+		$seen[$key] = $true
+		try {
+			if (-not (Test-OlderProductMsi $path)) { [void]$valid.Add($path) }
+		} catch { }
+	}
+	if ($valid.Count -eq 0) { return '' }
+	return Select-HighestMsi $valid.ToArray()
+}
+
 function Get-SkipReason($Spec) {
 	$req = $Spec.requires
 	if ($req.gui_sku -and $script:Guest.InstallationType -eq 'Server Core') {
@@ -456,11 +706,11 @@ function Get-SkipReason($Spec) {
 	}
 	if ($req.identity -eq 'system' -and $script:Identity -ne 'SYSTEM') { return 'current identity is not SYSTEM' }
 	if ($req.identity -eq 'elevated' -and $script:Identity -ne 'SYSTEM' -and $script:Identity -ne 'Administrator') { return 'current identity is not elevated' }
-	if ($req.identity -eq 'not-elevated' -and ($script:Identity -eq 'SYSTEM' -or $script:Identity -eq 'Administrator')) { return 'current identity is elevated' }
-	if ($req.interactive -and -not $script:Interactive) { return 'no interactive session' }
+	# non-admin drops an elevated parent to fixture user alice.
+	if ($req.identity -eq 'not-elevated' -and $Case -ne 'non-admin' -and ($script:Identity -eq 'SYSTEM' -or $script:Identity -eq 'Administrator')) { return 'current identity is elevated' }
+	if ($req.interactive -and -not $script:Interactive) { return 'no interactive session: process is not user-interactive in a desktop session (session id greater than 0)' }
 	if ($req.offline) {
-		if ($null -eq $script:Offline) { return 'could not determine default route' }
-		if (-not $script:Offline) { return 'default route present' }
+		if ($null -eq $script:Offline) { return 'could not determine default route: NetTCPIP module did not load' }
 	}
 	$present = Test-ProductPresent
 	if ($req.product -eq 'absent' -and $present) { return 'product is already installed' }
@@ -515,7 +765,8 @@ function Write-Summary($Result) {
 		guest_edition = [string]$script:Guest.Edition
 		guest_build = [string]$script:Guest.Build
 		installation_type = [string]$script:Guest.InstallationType
-		identity = [string]$script:Identity
+		guest_sku = [string]$script:GuestSku
+		identity = $(if ($script:SummaryIdentity) { [string]$script:SummaryIdentity } else { [string]$script:Identity })
 		offline = $script:Offline
 		interactive = [bool]$script:Interactive
 		case_id = $Case
@@ -629,13 +880,60 @@ function Get-DelayedStart {
 	return [int]$prop.DelayedAutostart -eq 1
 }
 
-function Invoke-CleanInstall([string]$LogName, [bool]$Quiet, [int]$TimeoutSec) {
+function Invoke-CleanInstall([string]$LogName, [bool]$Quiet, [int]$TimeoutSec, [bool]$BasicUi = $false) {
 	$before = Get-ServiceState
-	$run = Invoke-Msiexec -LogName $LogName -Quiet:$Quiet -TimeoutSec $TimeoutSec -Words @('/i', (ConvertTo-MsiArg $MsiPath))
+	$run = Invoke-Msiexec -LogName $LogName -Quiet:$Quiet -BasicUi:$BasicUi -TimeoutSec $TimeoutSec -Words @('/i', (ConvertTo-MsiArg $MsiPath))
 	$note = Get-InstallFailureNote $run
 	$status = 'passed'
 	if ($note) { $status = 'failed' }
 	return New-CaseResult $status $note $run.ExitCode $run.Log $run.Reboot $before (Get-ServiceState) $null
+}
+
+function Invoke-OfflineInstall {
+	$before = Get-ServiceState
+	if (-not (Test-LocalPath $MsiPath) -or -not (Test-LocalPath $EvidenceDirectory)) {
+		return New-CaseResult 'failed' 'offline case requires a local package and evidence directory' $null '' $false $before $before $null
+	}
+	$removed = New-Object System.Collections.Generic.List[object]
+	$script:RouteRestoreNote = ''
+	$result = $null
+	try {
+		try {
+			foreach ($route in @(Get-DefaultRouteSnapshot)) {
+				if (-not $route) { continue }
+				[void]$removed.Add($route)
+				Remove-NetRoute -DestinationPrefix $route.DestinationPrefix -InterfaceIndex $route.InterfaceIndex -NextHop $route.NextHop -Confirm:$false -ErrorAction Stop | Out-Null
+			}
+		} catch {
+			$result = New-CaseResult 'failed' 'could not remove default route' $null '' $false $before (Get-ServiceState) $null
+		}
+		if (-not $result) {
+			$script:Offline = Test-OfflineGuest
+			if ($script:Offline -ne $true) {
+				$result = New-CaseResult 'failed' 'default route remained' $null '' $false $before (Get-ServiceState) $null
+			} else {
+				$result = Invoke-CleanInstall 'offline-install' $true 360
+			}
+		}
+	} catch {
+		$failure = $_
+		if (-not $result) {
+			$note = 'could not remove default route'
+			if ($failure.Exception.Message -eq 'msiexec timed out') { $note = 'msiexec timed out' }
+			$result = New-CaseResult 'failed' $note $null '' $false $before (Get-ServiceState) $null
+		}
+	} finally {
+		if ($removed.Count -gt 0) {
+			try { Restore-DefaultRoutes $removed.ToArray() } catch { $script:RouteRestoreNote = 'default route restore failed' }
+		}
+	}
+	if (-not $result) { $result = New-CaseResult 'failed' 'could not remove default route' $null '' $false $before (Get-ServiceState) $null }
+	if ($script:RouteRestoreNote) {
+		$result.Status = 'failed'
+		if (-not $result.Note) { $result.Note = $script:RouteRestoreNote }
+		else { $result.Note = $result.Note + '; ' + $script:RouteRestoreNote }
+	}
+	return $result
 }
 
 function Invoke-Repair([string]$LogName, [string[]]$Words) {
@@ -650,9 +948,9 @@ function Invoke-Repair([string]$LogName, [string[]]$Words) {
 function Invoke-SelectedCase {
 	switch ($Case) {
 		'quiet-install' { return Invoke-CleanInstall 'quiet-install' $true 360 }
-		'gui-install' { return Invoke-CleanInstall 'gui-install' $false 900 }
+		'gui-install' { return Invoke-CleanInstall 'gui-install' $false 900 $true }
 		'system-install' { return Invoke-CleanInstall 'system-install' $true 360 }
-		'offline-install' { return Invoke-CleanInstall 'offline-install' $true 360 }
+		'offline-install' { return Invoke-OfflineInstall }
 		'repair-fa' { return Invoke-Repair 'repair-fa' @('/fa', (ConvertTo-MsiArg $MsiPath)) }
 		'repair-reinstall' { return Invoke-Repair 'repair-reinstall' @('/i', (ConvertTo-MsiArg $MsiPath), 'REINSTALL=ALL', 'REINSTALLMODE=amus') }
 		'uninstall' { return Invoke-Uninstall }
@@ -906,16 +1204,718 @@ function Invoke-RollbackUpgrade {
 	}
 }
 
-function Invoke-NonAdmin {
-	$before = Get-ServiceState
-	$run = Invoke-Msiexec -LogName 'non-admin' -Quiet -TimeoutSec 180 -Words @('/i', (ConvertTo-MsiArg $MsiPath))
+function New-FixturePassword {
+	$rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+	try {
+		$bytes = New-Object byte[] 24
+		$rng.GetBytes($bytes)
+		return 'Aa1!' + [Convert]::ToBase64String($bytes)
+	} finally {
+		$rng.Dispose()
+	}
+}
+
+function Add-AccessRule([string]$Path, [Security.Principal.IdentityReference]$Identity, [string]$Rights, [bool]$Container) {
+	$acl = Get-Acl -LiteralPath $Path
+	$flags = [Security.AccessControl.InheritanceFlags]::None
+	if ($Container) { $flags = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit' }
+	$prop = [Security.AccessControl.PropagationFlags]::None
+	$right = [Security.AccessControl.FileSystemRights]$Rights
+	$rule = New-Object System.Security.AccessControl.FileSystemAccessRule($Identity, $right, $flags, $prop, 'Allow')
+	$acl.AddAccessRule($rule)
+	Set-Acl -LiteralPath $Path -AclObject $acl
+	return $rule
+}
+
+function Remove-AccessRule([string]$Path, $Rule) {
+	if (-not $Rule -or -not (Test-Path -LiteralPath $Path)) { return }
+	$acl = Get-Acl -LiteralPath $Path
+	[void]$acl.RemoveAccessRule($Rule)
+	Set-Acl -LiteralPath $Path -AclObject $acl
+}
+
+function Test-FixtureUserElevated([Security.Principal.SecurityIdentifier]$Sid) {
+	Import-Module Microsoft.PowerShell.LocalAccounts -ErrorAction Stop
+	foreach ($member in @(Get-LocalGroupMember -Group 'Administrators' -ErrorAction SilentlyContinue)) {
+		if (-not $member) { continue }
+		if ([string]$member.SID -eq $Sid.Value) { return $true }
+	}
+	return $false
+}
+
+function Invoke-NonAdminResult($Run, [string]$Before) {
 	$allowed = @(1602, 1603, 1625)
 	$note = ''
-	if ($run.Reboot) { $note = 'reboot started' }
-	elseif ($allowed -notcontains $run.ExitCode) { $note = 'unexpected exit' }
+	if ($Run.Reboot) { $note = 'reboot started' }
+	elseif ($allowed -notcontains $Run.ExitCode) { $note = 'unexpected exit' }
 	elseif (Test-ProductPresent) { $note = 'product was installed' }
 	elseif ((Get-ServiceState) -ne 'absent') { $note = 'service remained' }
-	return New-CaseResult $(if ($note) { 'failed' } else { 'passed' }) $note $run.ExitCode $run.Log $run.Reboot $before (Get-ServiceState) $null
+	$status = 'passed'
+	if ($note) { $status = 'failed' }
+	return New-CaseResult $status $note $Run.ExitCode $Run.Log $Run.Reboot $Before (Get-ServiceState) $null
+}
+
+function Ensure-FixtureType {
+	if ('WinunitdFixture' -as [type]) { return }
+	Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Security;
+using System.Text;
+
+public static class WinunitdFixture {
+	const uint TOKEN_ADJUST_PRIVILEGES = 0x0020;
+	const uint TOKEN_QUERY = 0x0008;
+	const uint SE_PRIVILEGE_ENABLED = 0x00000002;
+	const uint POLICY_LOOKUP_NAMES = 0x00000800;
+	const uint POLICY_CREATE_ACCOUNT = 0x00000010;
+
+	[StructLayout(LayoutKind.Sequential)]
+	struct LUID {
+		public uint LowPart;
+		public int HighPart;
+	}
+
+	[StructLayout(LayoutKind.Sequential)]
+	struct LUID_AND_ATTRIBUTES {
+		public LUID Luid;
+		public uint Attributes;
+	}
+
+	[StructLayout(LayoutKind.Sequential)]
+	struct TOKEN_PRIVILEGES {
+		public int Count;
+		public LUID_AND_ATTRIBUTES Priv;
+	}
+
+	[StructLayout(LayoutKind.Sequential)]
+	struct LSA_UNICODE_STRING {
+		public ushort Length;
+		public ushort MaximumLength;
+		public IntPtr Buffer;
+	}
+
+	[StructLayout(LayoutKind.Sequential)]
+	struct LSA_OBJECT_ATTRIBUTES {
+		public int Length;
+		public IntPtr RootDirectory;
+		public IntPtr ObjectName;
+		public uint Attributes;
+		public IntPtr SecurityDescriptor;
+		public IntPtr SecurityQualityOfService;
+	}
+
+	[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+	struct STARTUPINFO {
+		public int cb;
+		public IntPtr lpReserved;
+		public IntPtr lpDesktop;
+		public IntPtr lpTitle;
+		public int dwX;
+		public int dwY;
+		public int dwXSize;
+		public int dwYSize;
+		public int dwXCountChars;
+		public int dwYCountChars;
+		public int dwFillAttribute;
+		public int dwFlags;
+		public short wShowWindow;
+		public short cbReserved2;
+		public IntPtr lpReserved2;
+		public IntPtr hStdInput;
+		public IntPtr hStdOutput;
+		public IntPtr hStdError;
+	}
+
+	[StructLayout(LayoutKind.Sequential)]
+	struct PROCESS_INFORMATION {
+		public IntPtr hProcess;
+		public IntPtr hThread;
+		public int dwProcessId;
+		public int dwThreadId;
+	}
+
+	[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+	struct PROFILEINFO {
+		public int dwSize;
+		public int dwFlags;
+		public string lpUserName;
+		public string lpProfilePath;
+		public string lpDefaultPath;
+		public string lpServerName;
+		public string lpPolicyPath;
+		public IntPtr hProfile;
+	}
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	static extern bool CloseHandle(IntPtr handle);
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	static extern IntPtr LocalFree(IntPtr memory);
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	static extern bool TerminateProcess(IntPtr process, uint exitCode);
+
+	[DllImport("advapi32.dll", SetLastError = true)]
+	static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+
+	[DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+	static extern bool LookupPrivilegeValue(string system, string name, out LUID luid);
+
+	[DllImport("advapi32.dll", SetLastError = true)]
+	static extern bool AdjustTokenPrivileges(IntPtr token, bool disableAll, ref TOKEN_PRIVILEGES newState, int length, IntPtr previous, IntPtr returned);
+
+	[DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+	static extern bool ConvertStringSidToSid(string text, out IntPtr sid);
+
+	[DllImport("advapi32.dll")]
+	static extern uint LsaOpenPolicy(IntPtr system, ref LSA_OBJECT_ATTRIBUTES attributes, uint access, out IntPtr policy);
+
+	[DllImport("advapi32.dll")]
+	static extern uint LsaAddAccountRights(IntPtr policy, IntPtr sid, LSA_UNICODE_STRING[] rights, uint count);
+
+	[DllImport("advapi32.dll")]
+	static extern uint LsaRemoveAccountRights(IntPtr policy, IntPtr sid, bool allRights, LSA_UNICODE_STRING[] rights, uint count);
+
+	[DllImport("advapi32.dll")]
+	static extern uint LsaClose(IntPtr policy);
+
+	[DllImport("advapi32.dll")]
+	static extern uint LsaNtStatusToWinError(uint status);
+
+	[DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+	static extern bool LogonUser(string user, string domain, IntPtr password, int logonType, int provider, out IntPtr token);
+
+	[DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+	static extern bool CreateProcessAsUser(IntPtr token, string application, StringBuilder commandLine, IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string directory, ref STARTUPINFO startup, out PROCESS_INFORMATION information);
+
+	[DllImport("userenv.dll", SetLastError = true)]
+	static extern bool CreateEnvironmentBlock(out IntPtr environment, IntPtr token, bool inherit);
+
+	[DllImport("userenv.dll", SetLastError = true)]
+	static extern bool DestroyEnvironmentBlock(IntPtr environment);
+
+	[DllImport("userenv.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+	static extern bool LoadUserProfile(IntPtr token, ref PROFILEINFO profile);
+
+	[DllImport("userenv.dll", SetLastError = true)]
+	static extern bool UnloadUserProfile(IntPtr token, IntPtr profile);
+
+	static void EnablePrivilege(string name) {
+		IntPtr token;
+		if (!OpenProcessToken(System.Diagnostics.Process.GetCurrentProcess().Handle, TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, out token)) {
+			throw new Win32Exception(Marshal.GetLastWin32Error());
+		}
+		try {
+			LUID luid;
+			if (!LookupPrivilegeValue(null, name, out luid)) {
+				throw new Win32Exception(Marshal.GetLastWin32Error());
+			}
+			LUID_AND_ATTRIBUTES item = new LUID_AND_ATTRIBUTES();
+			item.Luid = luid;
+			item.Attributes = SE_PRIVILEGE_ENABLED;
+			TOKEN_PRIVILEGES privileges = new TOKEN_PRIVILEGES();
+			privileges.Count = 1;
+			privileges.Priv = item;
+			if (!AdjustTokenPrivileges(token, false, ref privileges, 0, IntPtr.Zero, IntPtr.Zero)) {
+				throw new Win32Exception(Marshal.GetLastWin32Error());
+			}
+			int error = Marshal.GetLastWin32Error();
+			if (error != 0) {
+				throw new Win32Exception(error);
+			}
+		} finally {
+			CloseHandle(token);
+		}
+	}
+
+	static void TryEnable(string name) {
+		try { EnablePrivilege(name); } catch (Win32Exception) { }
+	}
+
+	static void AccountRight(string sidText, bool add) {
+		EnablePrivilege("SeTcbPrivilege");
+		IntPtr sid;
+		if (!ConvertStringSidToSid(sidText, out sid)) {
+			throw new Win32Exception(Marshal.GetLastWin32Error());
+		}
+		IntPtr policy = IntPtr.Zero;
+		try {
+			LSA_OBJECT_ATTRIBUTES attributes = new LSA_OBJECT_ATTRIBUTES();
+			attributes.Length = Marshal.SizeOf(typeof(LSA_OBJECT_ATTRIBUTES));
+			uint status = LsaOpenPolicy(IntPtr.Zero, ref attributes, POLICY_LOOKUP_NAMES | POLICY_CREATE_ACCOUNT, out policy);
+			if (status != 0) {
+				throw new Win32Exception((int)LsaNtStatusToWinError(status));
+			}
+			string right = "SeBatchLogonRight";
+			IntPtr buffer = Marshal.StringToHGlobalUni(right);
+			try {
+				LSA_UNICODE_STRING unicode = new LSA_UNICODE_STRING();
+				unicode.Buffer = buffer;
+				unicode.Length = (ushort)(right.Length * 2);
+				unicode.MaximumLength = (ushort)((right.Length + 1) * 2);
+				LSA_UNICODE_STRING[] rights = new LSA_UNICODE_STRING[] { unicode };
+				if (add) {
+					status = LsaAddAccountRights(policy, sid, rights, 1);
+				} else {
+					status = LsaRemoveAccountRights(policy, sid, false, rights, 1);
+				}
+				if (status != 0) {
+					throw new Win32Exception((int)LsaNtStatusToWinError(status));
+				}
+			} finally {
+				Marshal.FreeHGlobal(buffer);
+			}
+		} finally {
+			if (policy != IntPtr.Zero) {
+				LsaClose(policy);
+			}
+			LocalFree(sid);
+		}
+	}
+
+	public static void GrantBatchLogon(string sidText) { AccountRight(sidText, true); }
+
+	public static void RevokeBatchLogon(string sidText) { AccountRight(sidText, false); }
+
+	public static FixtureProcess Start(string user, SecureString password, int logonType, string application, string commandLine, string directory) {
+		TryEnable("SeAssignPrimaryTokenPrivilege");
+		TryEnable("SeIncreaseQuotaPrivilege");
+		TryEnable("SeBackupPrivilege");
+		TryEnable("SeRestorePrivilege");
+		IntPtr raw = Marshal.SecureStringToGlobalAllocUnicode(password);
+		IntPtr token;
+		try {
+			if (!LogonUser(user, ".", raw, logonType, 0, out token)) {
+				throw new Win32Exception(Marshal.GetLastWin32Error());
+			}
+		} finally {
+			Marshal.ZeroFreeGlobalAllocUnicode(raw);
+		}
+		IntPtr profile = IntPtr.Zero;
+		try {
+			PROFILEINFO info = new PROFILEINFO();
+			info.dwSize = Marshal.SizeOf(typeof(PROFILEINFO));
+			info.dwFlags = 1;
+			info.lpUserName = user;
+			if (LoadUserProfile(token, ref info)) {
+				profile = info.hProfile;
+			}
+			IntPtr environment = IntPtr.Zero;
+			bool haveEnvironment = CreateEnvironmentBlock(out environment, token, false);
+			try {
+				STARTUPINFO startup = new STARTUPINFO();
+				startup.cb = Marshal.SizeOf(typeof(STARTUPINFO));
+				PROCESS_INFORMATION created;
+				uint flags = 0x08000000;
+				if (haveEnvironment) {
+					flags |= 0x00000400;
+				}
+				StringBuilder command = new StringBuilder(commandLine, commandLine.Length + 1);
+				if (!CreateProcessAsUser(token, application, command, IntPtr.Zero, IntPtr.Zero, false, flags, haveEnvironment ? environment : IntPtr.Zero, directory, ref startup, out created)) {
+					throw new Win32Exception(Marshal.GetLastWin32Error());
+				}
+				CloseHandle(created.hThread);
+				FixtureProcess process = new FixtureProcess(token, profile, created.hProcess);
+				token = IntPtr.Zero;
+				profile = IntPtr.Zero;
+				return process;
+			} finally {
+				if (haveEnvironment && environment != IntPtr.Zero) {
+					DestroyEnvironmentBlock(environment);
+				}
+			}
+		} catch {
+			if (profile != IntPtr.Zero) {
+				UnloadUserProfile(token, profile);
+			}
+			if (token != IntPtr.Zero) {
+				CloseHandle(token);
+			}
+			throw;
+		}
+	}
+}
+
+public sealed class FixtureProcess : IDisposable {
+	IntPtr token;
+	IntPtr profile;
+	IntPtr process;
+
+	public FixtureProcess(IntPtr token, IntPtr profile, IntPtr process) {
+		this.token = token;
+		this.profile = profile;
+		this.process = process;
+	}
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	static extern bool CloseHandle(IntPtr handle);
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	static extern bool TerminateProcess(IntPtr process, uint exitCode);
+
+	[DllImport("userenv.dll", SetLastError = true)]
+	static extern bool UnloadUserProfile(IntPtr token, IntPtr profile);
+
+	public bool Wait(int milliseconds) {
+		return WaitForSingleObject(process, (uint)milliseconds) == 0;
+	}
+
+	public int GetExitCode() {
+		uint code;
+		if (!GetExitCodeProcess(process, out code)) {
+			throw new Win32Exception(Marshal.GetLastWin32Error());
+		}
+		return unchecked((int)code);
+	}
+
+	public void Kill() {
+		TerminateProcess(process, 1);
+	}
+
+	public void Dispose() {
+		if (process != IntPtr.Zero) {
+			CloseHandle(process);
+			process = IntPtr.Zero;
+		}
+		if (profile != IntPtr.Zero && token != IntPtr.Zero) {
+			UnloadUserProfile(token, profile);
+			profile = IntPtr.Zero;
+		}
+		if (token != IntPtr.Zero) {
+			CloseHandle(token);
+			token = IntPtr.Zero;
+		}
+	}
+}
+'@
+}
+
+function Add-Win32Code($Codes, $ErrorRecord) {
+	$ex = $ErrorRecord.Exception
+	while ($ex) {
+		$win = $ex -as [ComponentModel.Win32Exception]
+		if ($win) {
+			[void]$Codes.Add([int]$win.NativeErrorCode)
+			return
+		}
+		$match = [regex]::Match([string]$ex.Message, 'Win32 ([0-9]+)')
+		if ($match.Success) {
+			[void]$Codes.Add([int]$match.Groups[1].Value)
+			return
+		}
+		$ex = $ex.InnerException
+	}
+}
+
+function Format-FixtureStartNote($Codes) {
+	$seen = @{}
+	$parts = New-Object System.Collections.Generic.List[string]
+	foreach ($code in @($Codes)) {
+		$n = [int]$code
+		if ($n -le 0 -or $seen.ContainsKey([string]$n)) { continue }
+		$seen[[string]$n] = $true
+		[void]$parts.Add('Win32 ' + $n)
+	}
+	if ($parts.Count -eq 0) { return 'could not start msiexec as fixture user' }
+	return 'could not start msiexec as fixture user: ' + ($parts -join ' ')
+}
+
+function Enable-SecondaryLogon {
+	$key = 'HKLM:\SYSTEM\CurrentControlSet\Services\seclogon'
+	if (-not (Test-Path -LiteralPath $key)) { throw 'could not start msiexec as fixture user: Win32 1060' }
+	$start = [int](Get-ItemProperty -LiteralPath $key).Start
+	$running = (Get-Service -Name seclogon).Status -eq 'Running'
+	$script:SecLogonPriorStart = $start
+	$script:SecLogonPriorRunning = $running
+	if ($start -eq 4) {
+		& sc.exe config seclogon start= demand | Out-Null
+		if ($LASTEXITCODE -ne 0) { throw "could not start msiexec as fixture user: Win32 $LASTEXITCODE" }
+	}
+	if (-not $running) {
+		& sc.exe start seclogon | Out-Null
+		$code = [int]$LASTEXITCODE
+		if ($code -ne 0 -and $code -ne 1056) { throw "could not start msiexec as fixture user: Win32 $code" }
+		$deadline = (Get-Date).AddSeconds(30)
+		do {
+			if ((Get-Service -Name seclogon).Status -eq 'Running') { return }
+			if ((Get-Date) -ge $deadline) { throw 'could not start msiexec as fixture user: Win32 1053' }
+			Start-Sleep -Seconds 1
+		} while ($true)
+	}
+}
+
+function Restore-SecondaryLogon {
+	if ($null -eq $script:SecLogonPriorStart) { return }
+	$key = 'HKLM:\SYSTEM\CurrentControlSet\Services\seclogon'
+	try {
+		if (Test-Path -LiteralPath $key) {
+			$prior = [int]$script:SecLogonPriorStart
+			$current = [int](Get-ItemProperty -LiteralPath $key).Start
+			if ($current -ne $prior) {
+				$word = 'demand'
+				if ($prior -eq 2) { $word = 'auto' }
+				elseif ($prior -eq 4) { $word = 'disabled' }
+				& sc.exe config seclogon start= $word | Out-Null
+			}
+			if (-not $script:SecLogonPriorRunning) {
+				& sc.exe stop seclogon | Out-Null
+			}
+		}
+	} catch {
+		# The case result does not depend on restoring this service.
+	} finally {
+		$script:SecLogonPriorStart = $null
+	}
+}
+
+function Start-TokenMsiexec([string]$User, [Security.SecureString]$Password, [string]$Arguments, [int]$TimeoutSec, [int]$LogonType) {
+	$exe = Join-Path $env:SystemRoot 'System32\msiexec.exe'
+	$command = '"' + $exe + '" ' + $Arguments
+	$proc = [WinunitdFixture]::Start($User, $Password, $LogonType, $exe, $command, $env:SystemRoot)
+	try {
+		if (-not $proc.Wait($TimeoutSec * 1000)) {
+			try { $proc.Kill() } catch { }
+			throw 'msiexec timed out'
+		}
+		return $proc.GetExitCode()
+	} finally {
+		$proc.Dispose()
+	}
+}
+
+function Start-LogonMsiexec([string]$User, [Security.SecureString]$Password, [string]$Arguments, [int]$TimeoutSec) {
+	$info = New-MsiexecStartInfo $Arguments $false $true $User $Password $true
+	try {
+		$proc = [System.Diagnostics.Process]::Start($info)
+	} catch {
+		$first = $_
+		$info = New-MsiexecStartInfo $Arguments $false $true $User $Password $false
+		try {
+			$proc = [System.Diagnostics.Process]::Start($info)
+		} catch {
+			throw $first
+		}
+	}
+	if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
+		try { $proc.Kill() } catch { }
+		throw 'msiexec timed out'
+	}
+	$proc.Refresh()
+	return [int]$proc.ExitCode
+}
+
+function ConvertTo-PlainPassword([Security.SecureString]$Password) {
+	$ptr = [Runtime.InteropServices.Marshal]::SecureStringToGlobalAllocUnicode($Password)
+	try { return [Runtime.InteropServices.Marshal]::PtrToStringUni($ptr) }
+	finally { [Runtime.InteropServices.Marshal]::ZeroFreeGlobalAllocUnicode($ptr) }
+}
+
+function Start-TaskMsiexec([string]$User, [Security.SecureString]$Password, [string]$Arguments, [int]$TimeoutSec) {
+	$name = 'winunitd-acceptance-alice'
+	$service = New-Object -ComObject 'Schedule.Service'
+	$service.Connect()
+	$folder = $service.GetFolder('\')
+	try { $folder.DeleteTask($name, 0) } catch { }
+	$task = $service.NewTask(0)
+	$task.Principal.UserId = '.\' + $User
+	$task.Principal.LogonType = 1
+	$task.Principal.RunLevel = 0
+	$task.Settings.DisallowStartIfOnBatteries = $false
+	$task.Settings.StopIfGoingOnBatteries = $false
+	$task.Settings.ExecutionTimeLimit = 'PT4H'
+	$action = $task.Actions.Create(0)
+	$action.Path = Join-Path $env:SystemRoot 'System32\msiexec.exe'
+	$action.Arguments = $Arguments
+	$plain = ConvertTo-PlainPassword $Password
+	try {
+		try {
+			$registered = $folder.RegisterTaskDefinition($name, $task, 6, ('.\' + $User), $plain, 1, $null)
+		} catch {
+			$win = 0
+			if ($_.Exception -and $_.Exception.HResult) { $win = [int]($_.Exception.HResult -band 0xFFFF) }
+			if ($win -le 0) { $win = 1385 }
+			throw "could not start msiexec as fixture user: Win32 $win"
+		}
+	} finally {
+		$plain = $null
+	}
+	try {
+		$beforeRun = [datetime]$registered.LastRunTime
+		$registered.Run($null) | Out-Null
+		$deadline = (Get-Date).AddSeconds($TimeoutSec)
+		$sawRunning = $false
+		$code = 0
+		while ($true) {
+			$current = $folder.GetTask($name)
+			$state = [int]$current.State
+			$code = [int64]$current.LastTaskResult
+			$ran = ([datetime]$current.LastRunTime) -gt $beforeRun
+			if ($state -eq 4) { $sawRunning = $true }
+			$busy = $state -eq 4 -or $state -eq 2 -or $code -eq 267009 -or $code -eq 267011
+			if (($sawRunning -or $ran) -and -not $busy) { break }
+			if ((Get-Date) -ge $deadline) {
+				try { $current.Stop(0) } catch { }
+				throw 'msiexec timed out'
+			}
+			Start-Sleep -Seconds 1
+		}
+		if (($code -band 0x80000000) -ne 0) {
+			$win = [int]($code -band 0xFFFF)
+			if ($win -le 0) { $win = [int]$code }
+			throw "could not start msiexec as fixture user: Win32 $win"
+		}
+		return $code
+	} finally {
+		try { $folder.DeleteTask($name, 0) } catch { }
+	}
+}
+
+function Start-FixtureMsiexec([string]$User, [Security.SecureString]$Password, [string]$Arguments, [int]$TimeoutSec) {
+	Ensure-FixtureType
+	$codes = New-Object System.Collections.Generic.List[int]
+	$exit = 0
+	$started = $false
+	try {
+		try { Enable-SecondaryLogon } catch { Add-Win32Code $codes $_ }
+		$sidText = ([Security.Principal.NTAccount]::new($User)).Translate([Security.Principal.SecurityIdentifier]).Value
+		foreach ($logonType in @(4, 2)) {
+			if ($started) { break }
+			$granted = $false
+			try {
+				if ($logonType -eq 4) {
+					[WinunitdFixture]::GrantBatchLogon($sidText)
+					$granted = $true
+				}
+				$exit = Start-TokenMsiexec -User $User -Password $Password -Arguments $Arguments -TimeoutSec $TimeoutSec -LogonType $logonType
+				$started = $true
+			} catch {
+				if ($_.Exception.Message -eq 'msiexec timed out') { throw }
+				Add-Win32Code $codes $_
+			} finally {
+				if ($granted) {
+					try { [WinunitdFixture]::RevokeBatchLogon($sidText) } catch { }
+				}
+			}
+		}
+		if (-not $started) {
+			try {
+				$exit = Start-LogonMsiexec -User $User -Password $Password -Arguments $Arguments -TimeoutSec $TimeoutSec
+				$started = $true
+			} catch {
+				if ($_.Exception.Message -eq 'msiexec timed out') { throw }
+				Add-Win32Code $codes $_
+			}
+		}
+		if (-not $started) {
+			try {
+				$exit = Start-TaskMsiexec -User $User -Password $Password -Arguments $Arguments -TimeoutSec $TimeoutSec
+				$started = $true
+			} catch {
+				if ($_.Exception.Message -eq 'msiexec timed out') { throw }
+				Add-Win32Code $codes $_
+			}
+		}
+		if (-not $started) { throw (Format-FixtureStartNote $codes) }
+		return $exit
+	} finally {
+		Restore-SecondaryLogon
+	}
+}
+
+function Invoke-NonAdmin {
+	$before = Get-ServiceState
+	$created = $false
+	$script:FixtureCleanupNote = ''
+	$result = $null
+	$grants = New-Object System.Collections.Generic.List[object]
+	try {
+		if ($script:Identity -eq 'SYSTEM' -or $script:Identity -eq 'Administrator') {
+			try {
+				Import-Module Microsoft.PowerShell.LocalAccounts -ErrorAction Stop
+				if (Get-LocalUser -Name 'alice' -ErrorAction SilentlyContinue) {
+					$result = New-CaseResult 'failed' 'fixture user alice already exists' $null '' $false $before $before $null
+				} else {
+					$plain = New-FixturePassword
+					$secure = ConvertTo-SecureString $plain -AsPlainText -Force
+					New-LocalUser -Name 'alice' -Password $secure -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires -Description 'acceptance fixture' | Out-Null
+					$created = $true
+					$plain = ''
+					$sid = ([Security.Principal.NTAccount]::new('alice')).Translate([Security.Principal.SecurityIdentifier])
+					if (Test-FixtureUserElevated $sid) {
+						$result = New-CaseResult 'failed' 'fixture user is elevated' $null '' $false $before $before $null
+					} else {
+						$msiDir = Split-Path -Parent $MsiPath
+						[void]$grants.Add([pscustomobject]@{ Path = $EvidenceDirectory; Rule = (Add-AccessRule $EvidenceDirectory $sid 'Modify' $true) })
+						[void]$grants.Add([pscustomobject]@{ Path = $msiDir; Rule = (Add-AccessRule $msiDir $sid 'ReadAndExecute' $false) })
+						[void]$grants.Add([pscustomobject]@{ Path = $MsiPath; Rule = (Add-AccessRule $MsiPath $sid 'ReadAndExecute' $false) })
+						$script:SummaryIdentity = 'standard-user'
+						$run = Invoke-Msiexec -LogName 'non-admin' -Quiet -TimeoutSec 180 -RunAs 'alice' -RunAsPassword $secure -Words @('/i', (ConvertTo-MsiArg $MsiPath))
+						$result = Invoke-NonAdminResult $run $before
+					}
+				}
+			} catch {
+				$failure = $_
+				$errPath = Join-Path $EvidenceDirectory 'non-admin.err'
+				try {
+					$text = $failure | Out-String
+					if ($text -match 'Aa1!') { $text = [string]$failure.Exception.Message }
+					if ($text -match 'Aa1!') { $text = 'could not start msiexec as fixture user' }
+					$text | Out-File -FilePath $errPath -Encoding utf8
+				} catch { }
+				if (-not $result) {
+					$note = 'could not create fixture user'
+					$message = [string]$failure.Exception.Message
+					if ($message -eq 'msiexec timed out') { $note = 'msiexec timed out' }
+					elseif ($message -match '^could not start msiexec as fixture user(?:: Win32 [0-9]+(?: Win32 [0-9]+)*)?$') { $note = $message }
+					elseif ($created) { $note = 'could not start msiexec as fixture user' }
+					$result = New-CaseResult 'failed' $note $null '' $false $before (Get-ServiceState) $null
+				}
+			}
+		} else {
+			$run = Invoke-Msiexec -LogName 'non-admin' -Quiet -TimeoutSec 180 -Words @('/i', (ConvertTo-MsiArg $MsiPath))
+			$result = Invoke-NonAdminResult $run $before
+		}
+	} finally {
+		foreach ($grant in $grants) {
+			try { Remove-AccessRule $grant.Path $grant.Rule } catch { $script:FixtureCleanupNote = 'fixture access cleanup failed' }
+		}
+		if ($created) {
+			try {
+				Import-Module Microsoft.PowerShell.LocalAccounts -ErrorAction Stop
+				Remove-LocalUser -Name 'alice' | Out-Null
+			} catch {
+				$script:FixtureCleanupNote = 'fixture user cleanup failed'
+			}
+		}
+	}
+	if (-not $result) { $result = New-CaseResult 'failed' 'could not create fixture user' $null '' $false $before (Get-ServiceState) $null }
+	if ($script:FixtureCleanupNote) {
+		$result.Status = 'failed'
+		if (-not $result.Note) { $result.Note = $script:FixtureCleanupNote }
+		else { $result.Note = $result.Note + '; ' + $script:FixtureCleanupNote }
+	}
+	return $result
+}
+
+function Stop-AcceptanceService {
+	$state = Get-ServiceState
+	if ($state -eq 'absent' -or $state -eq 'stopped') { return $true }
+	Stop-Service -Name winunitd -Force -ErrorAction SilentlyContinue
+	return Wait-ServiceState 'stopped' 180
 }
 
 function Invoke-BetaConflict {
@@ -932,8 +1932,21 @@ function Invoke-BetaConflict {
 	elseif ($run.ExitCode -ne 1603) { $note = 'unexpected exit' }
 	elseif (Test-Path -LiteralPath (Get-ProductExe)) { $note = 'product layout appeared' }
 	elseif (-not (Test-Path -LiteralPath (Get-BetaExe))) { $note = 'beta package was replaced' }
+	# The beta package rejects uninstall while winunitd is running.
+	# CheckStopped and PreparePolicy both run on REMOVE before StopServices.
+	$stopped = Stop-AcceptanceService
 	$remove = Invoke-Msiexec -LogName 'beta-conflict-remove' -Quiet -TimeoutSec 600 -Words @('/x', (ConvertTo-MsiArg $BetaMsi))
-	if (-not $note -and ($remove.ExitCode -ne 0 -or $remove.Reboot)) { $note = 'beta cleanup failed' }
+	$removeFailed = $remove.Reboot -or ($null -eq $remove.ExitCode) -or ($remove.ExitCode -ne 0)
+	$lingering = (Get-ServiceState) -eq 'running' -or (Get-ServiceState) -eq 'other'
+	if ((-not $stopped) -or $removeFailed -or $lingering) {
+		Stop-AcceptanceService | Out-Null
+		$lingering = (Get-ServiceState) -eq 'running' -or (Get-ServiceState) -eq 'other'
+		$cleanup = 'beta cleanup failed: remove exit ' + [string]$remove.ExitCode
+		if (-not $stopped) { $cleanup = 'beta cleanup failed: service did not stop; remove exit ' + [string]$remove.ExitCode }
+		elseif ($lingering) { $cleanup = 'beta cleanup failed: service still running; remove exit ' + [string]$remove.ExitCode }
+		if (-not $note) { $note = $cleanup }
+		elseif ($note -notlike '*remove exit*') { $note = $note + '; ' + $cleanup }
+	}
 	return New-CaseResult $(if ($note) { 'failed' } else { 'passed' }) $note $run.ExitCode $run.Log $run.Reboot $before (Get-ServiceState) $null
 }
 
@@ -1015,6 +2028,7 @@ if ($Case -eq 'list') {
 	exit 0
 }
 if ($env:OS -ne 'Windows_NT') { throw 'Windows guest required' }
+if (-not [Environment]::Is64BitProcess) { throw '64-bit Windows PowerShell is required' }
 if (-not $DisposableGuest) { throw 'Disposable guest acknowledgement required' }
 if ($EvidenceId -and $EvidenceId -notmatch '^[a-z0-9][a-z0-9-]{0,63}$') { throw 'evidence id must be a short public token' }
 if (-not $EvidenceDirectory) { throw 'Evidence directory is required' }
@@ -1031,16 +2045,43 @@ $EvidenceDirectory = $evidenceFull
 
 try {
 	$MsiPath = Resolve-InputPath $MsiPath 'product MSI was not found'
-	if ($OlderMsi) { $OlderMsi = Resolve-InputPath $OlderMsi 'older MSI was not found' }
-	if ($BetaMsi) { $BetaMsi = Resolve-InputPath $BetaMsi 'beta MSI was not found' }
 	$spec = $null
 	foreach ($item in @(ConvertTo-Array $matrix.cases)) {
 		if ($item.id -eq $Case) { $spec = $item }
 	}
 	if (-not $spec) { throw 'unknown case' }
+	if ($OlderMsi) { $OlderMsi = Resolve-InputPath $OlderMsi 'older MSI was not found' }
+	elseif ($spec.requires.older_msi) {
+		try { $OlderMsi = Find-OlderProductMsi $repoRoot $MsiPath } catch {
+			if ($_.Exception.Message -eq 'multiple packages share the selected version') {
+				$script:Guest = Get-GuestFacts
+				$script:GuestSku = Get-ClaimedSku $script:Guest.Product $script:Guest.Edition $script:Guest.Build $script:Guest.InstallationType
+				$script:Identity = Get-IdentityLabel
+				$result = New-CaseResult 'not_run' 'multiple older packages' $null '' $false (Get-ServiceState) (Get-ServiceState) $null
+				Write-Summary $result
+				exit 2
+			}
+			throw
+		}
+	}
+	if ($BetaMsi) { $BetaMsi = Resolve-InputPath $BetaMsi 'beta MSI was not found' }
+	elseif ($spec.requires.beta_msi) {
+		try { $BetaMsi = Find-BetaMsi $repoRoot $MsiPath } catch {
+			if ($_.Exception.Message -eq 'multiple packages share the selected version') {
+				$script:Guest = Get-GuestFacts
+				$script:GuestSku = Get-ClaimedSku $script:Guest.Product $script:Guest.Edition $script:Guest.Build $script:Guest.InstallationType
+				$script:Identity = Get-IdentityLabel
+				$result = New-CaseResult 'not_run' 'multiple beta packages' $null '' $false (Get-ServiceState) (Get-ServiceState) $null
+				Write-Summary $result
+				exit 2
+			}
+			throw
+		}
+	}
 	$script:Guest = Get-GuestFacts
+	$script:GuestSku = Get-ClaimedSku $script:Guest.Product $script:Guest.Edition $script:Guest.Build $script:Guest.InstallationType
 	$script:Identity = Get-IdentityLabel
-	$script:Interactive = [bool][Environment]::UserInteractive
+	$script:Interactive = Test-InteractiveDesktop
 	$script:Offline = Test-OfflineGuest
 	Assert-PackageIdentity
 	$script:Commit = Get-RecordedCommit

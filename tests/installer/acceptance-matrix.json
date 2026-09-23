@@ -18,6 +18,7 @@
     "guest_edition",
     "guest_build",
     "installation_type",
+    "guest_sku",
     "identity",
     "offline",
     "interactive",
@@ -58,7 +59,7 @@
       "gate": ["R6.1", "R6.4"],
       "title": "Clean GUI install",
       "expect_exit": [0],
-      "expect_markers": [],
+      "expect_markers": ["UILevel = 3"],
       "requires": {
         "identity": "elevated",
         "interactive": true,
