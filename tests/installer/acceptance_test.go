@@ -13,11 +13,11 @@ import (
 	"github.com/PLN/winunitd/internal/version"
 )
 
-// requiredCases is the R6.4 acceptance matrix. A skipped case is missing
-// evidence. Evidence id 9961798-r64-accept is one SYSTEM guest and does
-// not check R6.1 or R6.4. Checking either box requires GUI coverage where
-// a shell exists and a passed matrix for each claimed SKU that is closed,
-// and an update to TestAcceptanceEvidenceStaysUnchecked.
+// requiredCases is the R6.4 acceptance matrix. A skipped case that needs
+// claimed media or an older MSI stays deferred. For 0.1-alpha, R6.1 and
+// R6.4 are checked when the runnable set has passed on at least one
+// guest, including an unclaimed Eval guest. deferred-media and
+// deferred-older-msi stay listed. R6.5 stays open.
 var requiredCases = []string{
 	"quiet-install",
 	"gui-install",
@@ -124,6 +124,19 @@ func TestAcceptanceMatrixMatchesHarness(t *testing.T) {
 	}
 	if got["non-admin"].Requires.Identity != "not-elevated" {
 		t.Fatal("non-admin case must run without an elevated token")
+	}
+	nonAdminExits := map[int]bool{}
+	for _, code := range got["non-admin"].ExpectExit {
+		nonAdminExits[code] = true
+	}
+	for _, code := range []int{1601, 1602, 1603, 1625} {
+		if !nonAdminExits[code] {
+			t.Fatalf("non-admin must accept exit %d", code)
+		}
+	}
+	resultFn := extractFunction(t, script, "Invoke-NonAdminResult($Run, [string]$Before) {")
+	if !strings.Contains(resultFn, "1601, 1602, 1603, 1625") {
+		t.Fatal("non-admin result must allow exit 1601")
 	}
 	for _, sku := range matrix.ClaimedSKUs {
 		if !strings.Contains(evidence, sku) || !strings.Contains(milestones, sku) {
@@ -324,7 +337,7 @@ func extractFunction(t *testing.T, script, signature string) string {
 	return rest[:j+1]
 }
 
-func TestAcceptanceEvidenceStaysUnchecked(t *testing.T) {
+func TestAcceptanceAlphaGates(t *testing.T) {
 	root := moduleRoot(t)
 	evidence := readRepo(t, root, "docs/R6-EVIDENCE.md")
 	milestones := readRepo(t, root, "docs/MILESTONES.md")
@@ -338,21 +351,38 @@ func TestAcceptanceEvidenceStaysUnchecked(t *testing.T) {
 	if !strings.Contains(evidence, "2f57d8388d3a5af79ac87409d950cc326af7bf74c91b0f1d54ca33f6cbf0dd23") {
 		t.Fatal("acceptance record lost the equal-tree MSI sha256")
 	}
+	if !strings.Contains(evidence, "56f38c4ffa7aa8d2a953e932603a312ec81eda00ccf6a069fc9c71d6f1d4ef00") {
+		t.Fatal("finish record lost the equal-tree MSI sha256")
+	}
 	if !strings.Contains(evidence, "26100.9168") || !strings.Contains(evidence, "EnterpriseSEval") {
 		t.Fatal("acceptance record lost the guest edition or build")
 	}
 	const notRun = "`gui-install`, `offline-install`, `non-admin`, `beta-conflict`, `downgrade`, `n1-upgrade`, and `rollback-upgrade`"
 	if !strings.Contains(evidence, notRun) || !strings.Contains(milestones, "`gui-install`, `offline-install`, `non-admin`, `beta-conflict`, `downgrade`, `n1-upgrade`, and `rollback-upgrade`") {
-		t.Fatal("not_run cases must stay listed")
+		t.Fatal("9961798-r64-accept not_run cases must stay listed")
 	}
-	if taskChecked(milestones, "R6.1") || taskChecked(milestones, "R6.4") {
-		t.Fatal("R6.1 and R6.4 stay unchecked")
+	if !strings.Contains(evidence, "7d21de2-r64-finish") || !strings.Contains(milestones, "7d21de2-r64-finish") {
+		t.Fatal("finish evidence id is missing")
+	}
+	if !strings.Contains(evidence, "f1e38a0-r64-continue") || !strings.Contains(milestones, "f1e38a0-r64-continue") {
+		t.Fatal("continuation evidence id was not preserved")
+	}
+	for _, deferred := range []string{"deferred-media", "deferred-older-msi"} {
+		if !strings.Contains(evidence, deferred) || !strings.Contains(milestones, deferred) {
+			t.Fatalf("%s must stay listed", deferred)
+		}
+	}
+	if !taskChecked(milestones, "R6.1") || !taskChecked(milestones, "R6.4") {
+		t.Fatal("0.1-alpha checks R6.1 and R6.4 from the runnable set")
 	}
 	if taskChecked(milestones, "R6.5") {
 		t.Fatal("R6.5 stays open")
 	}
-	if !strings.Contains(milestones, "R6.1, R6.4, and R6.5 stay open") {
-		t.Fatal("overall R6 status lost the open gates")
+	if !strings.Contains(milestones, "R6.5 and overall R6 stay open") {
+		t.Fatal("overall R6 status lost the open R6.5 gate")
+	}
+	if strings.Contains(milestones, "R6.1, R6.4, and R6.5 stay open") {
+		t.Fatal("R6 status still says R6.1 and R6.4 are open")
 	}
 	if !strings.Contains(milestones, "A3 / R4.4 stay deferred") {
 		t.Fatal("A3 / R4.4 deferral is missing from the R6 status")

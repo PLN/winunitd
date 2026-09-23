@@ -266,7 +266,7 @@
       "id": "non-admin",
       "gate": ["R6.4"],
       "title": "Non-admin quiet install is rejected",
-      "expect_exit": [1602, 1603, 1625],
+      "expect_exit": [1601, 1602, 1603, 1625],
       "expect_markers": [],
       "requires": {
         "identity": "not-elevated",

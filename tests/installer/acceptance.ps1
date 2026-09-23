@@ -1244,7 +1244,8 @@ function Test-FixtureUserElevated([Security.Principal.SecurityIdentifier]$Sid) {
 }
 
 function Invoke-NonAdminResult($Run, [string]$Before) {
-	$allowed = @(1602, 1603, 1625)
+	# 1601: a standard-user quiet install cannot reach the Windows Installer service.
+	$allowed = @(1601, 1602, 1603, 1625)
 	$note = ''
 	if ($Run.Reboot) { $note = 'reboot started' }
 	elseif ($allowed -notcontains $Run.ExitCode) { $note = 'unexpected exit' }
