@@ -151,11 +151,11 @@ function Get-BootStamp {
 function Get-PathSegments {
 	$raw = [Environment]::GetEnvironmentVariable('Path', 'Machine')
 	$items = New-Object System.Collections.Generic.List[string]
-	if (-not $raw) { return ,$items }
+	if (-not $raw) { return $items.ToArray() }
 	foreach ($part in $raw.Split(';')) {
 		if ($part -ne '') { [void]$items.Add($part) }
 	}
-	return ,$items
+	return $items.ToArray()
 }
 
 function Test-PathOwned {
@@ -276,12 +276,12 @@ function Get-LogMarkers([string]$Log) {
 		'InjectServiceFailure'
 	)
 	$found = New-Object System.Collections.Generic.List[string]
-	if (-not $Log -or -not (Test-Path -LiteralPath $Log)) { return ,$found }
+	if (-not $Log -or -not (Test-Path -LiteralPath $Log)) { return $found.ToArray() }
 	$text = [IO.File]::ReadAllText($Log)
 	foreach ($item in $known) {
 		if ($text.Contains($item)) { [void]$found.Add($item) }
 	}
-	return ,$found
+	return $found.ToArray()
 }
 
 function Get-InstallFailureNote($Run) {
@@ -842,8 +842,14 @@ function Invoke-LockedFile {
 		$note = ''
 		if ($run.Reboot) { $note = 'reboot started' }
 		elseif ($run.ExitCode -ne 1603) { $note = 'unexpected exit' }
-		elseif ((Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash.ToLowerInvariant() -ne $hash) { $note = 'payload hash changed' }
 		elseif ((Get-ServiceState) -ne 'stopped') { $note = 'service state changed' }
+		if ($stream) {
+			$stream.Dispose()
+			$stream = $null
+		}
+		if (-not $note -and (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash.ToLowerInvariant() -ne $hash) {
+			$note = 'payload hash changed'
+		}
 		return New-CaseResult $(if ($note) { 'failed' } else { 'passed' }) $note $run.ExitCode $run.Log $run.Reboot $before (Get-ServiceState) $null
 	} finally {
 		if ($stream) { $stream.Dispose() }

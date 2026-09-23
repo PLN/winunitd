@@ -159,26 +159,33 @@ func TestAcceptanceMatrixMatchesHarness(t *testing.T) {
 func TestQuietInstallSpecIsOneElevatedCase(t *testing.T) {
 	root := moduleRoot(t)
 	script := readRepo(t, root, "tests/installer/acceptance.ps1")
-	fn := convertToArrayFunction(t, script)
-	if strings.Contains(fn, "return ,@") || strings.Contains(fn, "return , @") {
-		t.Fatal("ConvertTo-Array re-wraps its input with the unary comma")
+	if strings.Contains(script, "return ,") {
+		t.Fatal("a returned collection is still wrapped with the unary comma")
 	}
+	fn := extractFunction(t, script, "ConvertTo-Array($Value) {")
 	if !strings.Contains(fn, "return @($Value)") || !strings.Contains(fn, "return @()") {
 		t.Fatal("ConvertTo-Array must return a flat list")
 	}
+	pathFn := extractFunction(t, script, "Get-PathSegments {")
+	if !strings.Contains(pathFn, "return $items.ToArray()") {
+		t.Fatal("Get-PathSegments must return a flat string array")
+	}
+	markerFn := extractFunction(t, script, "Get-LogMarkers([string]$Log) {")
+	if !strings.Contains(markerFn, "return $found.ToArray()") {
+		t.Fatal("Get-LogMarkers must return a flat string array")
+	}
+	probePath := strings.Replace(pathFn,
+		"[Environment]::GetEnvironmentVariable('Path', 'Machine')",
+		"$script:PathFixture", 1)
+	if probePath == pathFn {
+		t.Fatal("Get-PathSegments path source was not isolated")
+	}
 
-	exe, err := exec.LookPath("pwsh")
-	if err != nil {
-		exe, err = exec.LookPath("powershell")
-	}
-	if err != nil {
-		if runtime.GOOS == "windows" {
-			t.Fatal("powershell is required to check case selection")
-		}
-		t.Skip("powershell is not installed")
-	}
+	exe := powershellExe(t)
 	probe := filepath.Join(t.TempDir(), "select-case.ps1")
-	body := "param([Parameter(Mandatory)][string]$MatrixPath)\n" + fn + `
+	body := "param([Parameter(Mandatory)][string]$MatrixPath)\n" +
+		fn + extractFunction(t, script, "ConvertTo-PathKey([string]$Path) {") +
+		probePath + markerFn + `
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 $matrix = Get-Content -LiteralPath $MatrixPath -Raw -Encoding utf8 | ConvertFrom-Json
@@ -202,6 +209,57 @@ $one = @(ConvertTo-Array 'elevated')
 if ($one.Count -ne 1 -or $one[0] -isnot [string] -or $one[0] -ne 'elevated') { throw 'a single object was not one element' }
 $none = @(ConvertTo-Array $null)
 if ($none.Count -ne 0) { throw 'null was not an empty list' }
+
+function Assert-PathSegments([string]$Raw, [int]$ExpectCount, [string]$MustMatch) {
+	$script:PathFixture = $Raw
+	$got = @(Get-PathSegments)
+	if ($got.Count -ne $ExpectCount) { throw "path count $($got.Count) for [$Raw]" }
+	foreach ($segment in $got) {
+		if ($segment -isnot [string]) { throw 'path segment is not a string' }
+	}
+	if (-not $MustMatch) { return }
+	$want = ConvertTo-PathKey $MustMatch
+	$hit = $false
+	foreach ($segment in $got) {
+		if ((ConvertTo-PathKey $segment) -eq $want) { $hit = $true }
+	}
+	if (-not $hit) { throw 'Program Files bin was not enumerated' }
+}
+Assert-PathSegments '' 0 ''
+Assert-PathSegments 'C:\Windows;;C:\Program Files\winunitd\bin;' 2 'C:\Program Files\winunitd\bin'
+Assert-PathSegments 'C:\Program Files\winunitd\bin' 1 'C:\Program Files\winunitd\bin'
+function Take-Segments([string[]]$Before) {
+	if ($Before.Count -ne 2) { throw "bound path count $($Before.Count)" }
+	foreach ($segment in $Before) {
+		if ($segment -isnot [string]) { throw 'bound path segment is not a string' }
+	}
+}
+$script:PathFixture = 'C:\Windows;C:\Program Files\winunitd\bin'
+Take-Segments @(Get-PathSegments)
+
+$missing = @(Get-LogMarkers '')
+if ($missing.Count -ne 0) { throw 'missing log was not an empty marker list' }
+$logDir = Join-Path ([IO.Path]::GetTempPath()) ('winunitd-markers-' + [guid]::NewGuid().ToString('n'))
+New-Item -ItemType Directory -Path $logDir | Out-Null
+try {
+	$log = Join-Path $logDir 'sample.log'
+	Set-Content -LiteralPath $log -Value ('preflight conflict: reparse point' + [Environment]::NewLine) -Encoding ascii
+	$two = @(Get-LogMarkers $log)
+	if ($two.Count -ne 2) { throw "markers collapsed to $($two.Count)" }
+	foreach ($marker in $two) {
+		if ($marker -isnot [string]) { throw 'marker is not a string' }
+	}
+	if ($two -notcontains 'preflight conflict:' -or $two -notcontains 'reparse point') {
+		throw 'known markers were not enumerated'
+	}
+	Set-Content -LiteralPath $log -Value 'InjectServiceFailure' -Encoding ascii
+	$single = @(Get-LogMarkers $log)
+	if ($single.Count -ne 1 -or $single[0] -isnot [string] -or $single[0] -ne 'InjectServiceFailure') {
+		throw 'a single marker was wrapped'
+	}
+} finally {
+	Remove-Item -LiteralPath $logDir -Recurse -Force
+}
 `
 	if err := os.WriteFile(probe, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -209,21 +267,58 @@ if ($none.Count -ne 0) { throw 'null was not an empty list' }
 	cmd := exec.Command(exe, "-NoProfile", "-NonInteractive", "-File", probe, filepath.Join(root, "tests/installer/acceptance-matrix.json"))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("quiet-install selection: %v\n%s", err, out)
+		t.Fatalf("collection enumeration: %v\n%s", err, out)
 	}
 }
 
-func convertToArrayFunction(t *testing.T, script string) string {
+func TestLockedFileHashesAfterRelease(t *testing.T) {
+	root := moduleRoot(t)
+	script := readRepo(t, root, "tests/installer/acceptance.ps1")
+	fn := extractFunction(t, script, "Invoke-LockedFile {")
+	lock := strings.Index(fn, "[IO.FileShare]::None")
+	msi := strings.Index(fn, "Invoke-Msiexec")
+	finally := strings.Index(fn, "\t} finally {")
+	if lock < 0 || msi < lock || finally < msi {
+		t.Fatal("payload lock must be held through msiexec")
+	}
+	post := fn[msi:finally]
+	service := strings.Index(post, "service state changed")
+	release := strings.Index(post, "$stream.Dispose()")
+	hash := strings.Index(post, "Get-FileHash")
+	if service < 0 || release < service || hash < release {
+		t.Fatal("locked-file hash comparison must run after the lock is released")
+	}
+	if strings.Count(fn, "$stream.Dispose()") < 2 {
+		t.Fatal("locked-file must still dispose the lock from finally")
+	}
+}
+
+func powershellExe(t *testing.T) string {
 	t.Helper()
-	const start = "function ConvertTo-Array($Value) {"
+	exe, err := exec.LookPath("pwsh")
+	if err != nil {
+		exe, err = exec.LookPath("powershell")
+	}
+	if err != nil {
+		if runtime.GOOS == "windows" {
+			t.Fatal("powershell is required to check case selection")
+		}
+		t.Skip("powershell is not installed")
+	}
+	return exe
+}
+
+func extractFunction(t *testing.T, script, signature string) string {
+	t.Helper()
+	start := "function " + signature
 	i := strings.Index(script, start)
 	if i < 0 {
-		t.Fatal("ConvertTo-Array is missing")
+		t.Fatalf("%s is missing", signature)
 	}
 	rest := script[i:]
 	j := strings.Index(rest, "\nfunction ")
 	if j < 0 {
-		t.Fatal("ConvertTo-Array has no following function")
+		t.Fatalf("%s has no following function", signature)
 	}
 	return rest[:j+1]
 }
