@@ -173,6 +173,18 @@ func evaluatePreflight(mode string, dirs []dirFact, service serviceFacts, instal
 	return classifyPilot(mode, pilots)
 }
 
+// protectedDirectoryShape distinguishes a reparse point from a file.
+// The service-prepare log wraps this text after "preflight conflict:".
+func protectedDirectoryShape(reparse, directory bool) error {
+	if reparse {
+		return fmt.Errorf("is a reparse point; refusing to follow it")
+	}
+	if !directory {
+		return fmt.Errorf("installation directories must be ordinary directories")
+	}
+	return nil
+}
+
 func classifyDirectory(f dirFact) error {
 	name := safeDirName(f.Name)
 	if f.Missing {
