@@ -9,8 +9,9 @@ implied by this tracking update.
 ## Milestones
 
 GitHub milestones mirror [repository acceptance gates](MILESTONES.md). R2, R3, and R5
-technical acceptance is complete. For 0.1-alpha, overall R6 is checked with documented limitations (deferred-media and deferred-older-msi). R0, R1, and R4 remain in progress and R7-R8 remain
-planned. The packaging spike is already delivered.
+technical acceptance is complete. For 0.1-alpha only, overall R6 is checked under the [#251](https://github.com/PLN/winunitd/issues/251) deferral policy with documented limitations (deferred-media and deferred-older-msi). R0, R1, and R4 remain in progress and R7-R8 remain
+planned. R4 acceptance (R4.1, R4.4, and R4.5) remains an unmet prerequisite for the fully qualified release. This alpha check does not itself authorize the R7 handoff.
+The packaging spike is already delivered.
 R5.1 timer persistence and R5.2 delivery policy are technically complete;
 [timer evidence](R5-EVIDENCE.md#timer-delivery-acceptance) records the final
 90-case native matrix, mixed-clock and half-hour DST fixes, and resume-model

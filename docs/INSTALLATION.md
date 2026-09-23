@@ -193,7 +193,10 @@ Core) and deferred-older-msi (`downgrade`, `n1-upgrade`, and
 `rollback-upgrade`) were not run. Native R6.5 fixture evidence
 `4223ac9-r65-migrate` is verified on tip
 `f4e6c477ada211cf5df736a16ea7685a612412a4`. `-execute-msi` stays
-unqualified. For 0.1-alpha, overall R6 is checked. The documented
-limitations are deferred-media and deferred-older-msi.
+unqualified. For 0.1-alpha only, overall R6 is checked under the
+[#251](https://github.com/PLN/winunitd/issues/251) deferral policy. The documented
+limitations are deferred-media and deferred-older-msi. R4 acceptance
+(R4.1, R4.4, and R4.5) remains an unmet prerequisite for the fully qualified
+release. This alpha check does not itself authorize the R7 handoff.
 Servicing evidence for the quiesce and rollback transaction is in
 [R6 evidence](R6-EVIDENCE.md#maintenance-and-rollback).
