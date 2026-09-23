@@ -93,7 +93,8 @@ on a disposable machine, as SYSTEM. Skipped cases do not count.
 
 Record MSI exit codes, the before/after running state, and payload hashes.
 This qualification does not close R6.1, R6.4, R6.5, or overall R6.
-The unrecorded acceptance cases are listed in [Acceptance](#acceptance).
+The acceptance record and the cases still missing are in
+[Acceptance](#acceptance).
 
 ## Data and compatibility
 
@@ -126,13 +127,11 @@ install that uses another base directory, and the Hermes pilot move,
 stay on the explicit migration path (R6.5 / R7).
 
 Automated tests cover the authoring split, the repair/upgrade/uninstall
-fixture, and the fail-closed decisions. No native SYSTEM run of this
-preflight is recorded here. A later qualification should show the MSI
-log line on a disposable machine for a junction under
-`%ProgramData%\winunitd` and for a pre-existing service whose image is
-not the package binary. Those runs are harness cases
-`preflight-reparse` and `preflight-unmanaged-service`. Raw logs stay
-private. This note does not close R6.1, R6.4, R6.5, or overall R6.
+fixture, and the fail-closed decisions. Native SYSTEM
+`preflight-reparse` and `preflight-unmanaged-service` on one guest are
+recorded as `9961798-r64-accept` in [Acceptance](#acceptance). Raw logs
+stay private. That record is one guest. This note does not close R6.1,
+R6.4, R6.5, or overall R6.
 
 ## Acceptance
 
@@ -144,7 +143,44 @@ on a disposable Windows guest and appends one redacted JSON line to a
 private `acceptance-summary.jsonl`. Raw MSI logs stay in that private
 directory. The harness does not assign an evidence id.
 
-No acceptance evidence id is recorded.
+Acceptance evidence id `9961798-r64-accept` records one SYSTEM guest.
+It supersedes draft id `c040800-r64-accept`. The source commit is
+`99617988a3cc0bfa93c26a6c2eed0ac76c68520b`. Exact-source CI
+[run 35807241580](https://github.com/PLN/winunitd/actions/runs/35807241580)
+is green on that commit. The equal-tree MSI sha256 is
+`2f57d8388d3a5af79ac87409d950cc326af7bf74c91b0f1d54ca33f6cbf0dd23`.
+Raw MSI logs stay private.
+
+The guest reports Windows 10 Enterprise LTSC 2024 Evaluation
+(`EnterpriseSEval`), build `26100.9168`, installation type Client.
+The identity is SYSTEM and `interactive` is false. This guest is
+outside the claimed first-release SKU list below.
+
+Passed cases, each with `status=passed`:
+
+| Case | MSI exit |
+| --- | --- |
+| `quiet-install` | 0 |
+| `system-install` | 0 |
+| `repair-fa` | 0 |
+| `repair-reinstall` | 0 |
+| `locked-file` | 1603 |
+| `rollback-test-fail-running` | 1603 |
+| `rollback-test-fail-stopped` | 1603 |
+| `reinstall-retained` | 0 |
+| `uninstall` | 0 |
+| `preflight-reparse` | 1603 |
+| `preflight-unmanaged-service` | 1603 |
+
+`preflight-reparse` markers include `preflight conflict:` and
+`reparse point`. The product log says `is a reparse point; refusing to follow it`.
+
+These cases are `not_run` on this guest and stay missing evidence: `gui-install`, `offline-install`, `non-admin`, `beta-conflict`, `downgrade`, `n1-upgrade`, and `rollback-upgrade`.
+
+R6.1 stays unchecked. Quiet install, both repair paths, and uninstall
+passed on this guest. GUI install is still missing on a guest that has
+an interactive shell. R6.4 stays unchecked. The claimed SKUs below have
+no recorded run. R6.5 and overall R6 stay open. A3 / R4.4 stay deferred.
 
 `b915fbd-r62-servicing` remains the R6.2 servicing record on a
 disposable Windows 11 Enterprise LTSC build 26100. It overlaps a fresh
@@ -172,7 +208,7 @@ Exit 3010 is not an expected pass. A locked payload is an abort: exit
 1603, log marker `abort replacement`, the prior payload hash unchanged,
 and `reboot_started` false.
 
-Claimed SKUs that still need a recorded run:
+Claimed SKUs with no recorded run:
 
 - Windows 11 Enterprise x64
 - Windows 11 Enterprise LTSC x64
@@ -191,13 +227,16 @@ unchecked until every applicable case has a passed summary on every
 claimed SKU that was actually run, and the unchecked SKUs are listed
 here if any remain.
 
-R6.1 stays unchecked until a recorded evidence id covers a fresh quiet
-install, a GUI install where the guest has an interactive shell, one
-repair path (`repair-fa` or `repair-reinstall`), and `uninstall`, each
-with the layout assertions below. R6.5 and overall R6 stay open. A3 /
-R4.4 stay deferred.
+R6.1 stays unchecked until the record also includes a GUI install on a
+guest that has an interactive shell, with the layout assertions below.
+The SYSTEM quiet, repair, and uninstall rows above do not supply that
+GUI run. R6.5 and overall R6 stay open. A3 / R4.4 stay deferred.
 
-### Cases still unrecorded
+### Case catalog
+
+The table is the case contract. `9961798-r64-accept` is the only
+acceptance evidence id. A case listed as `not_run` in that record is
+still missing evidence.
 
 | Case | Gate | Expected exit | What a pass shows |
 | --- | --- | --- | --- |

@@ -14,9 +14,10 @@ import (
 )
 
 // requiredCases is the R6.4 acceptance matrix. A skipped case is missing
-// evidence. Checking R6.1 or R6.4 in MILESTONES requires replacing the
-// unrecorded marker in docs/R6-EVIDENCE.md with a real evidence id from a
-// disposable guest, and updating this test to match that record.
+// evidence. Evidence id 9961798-r64-accept is one SYSTEM guest and does
+// not check R6.1 or R6.4. Checking either box requires GUI coverage where
+// a shell exists and a passed matrix for each claimed SKU that is closed,
+// and an update to TestAcceptanceEvidenceStaysUnchecked.
 var requiredCases = []string{
 	"quiet-install",
 	"gui-install",
@@ -327,11 +328,25 @@ func TestAcceptanceEvidenceStaysUnchecked(t *testing.T) {
 	root := moduleRoot(t)
 	evidence := readRepo(t, root, "docs/R6-EVIDENCE.md")
 	milestones := readRepo(t, root, "docs/MILESTONES.md")
-	if !strings.Contains(evidence, "No acceptance evidence id is recorded.") {
-		t.Fatal("acceptance evidence must stay explicitly unrecorded until a lab id replaces this marker")
+	const evidenceID = "9961798-r64-accept"
+	if !strings.Contains(evidence, evidenceID) || !strings.Contains(milestones, evidenceID) {
+		t.Fatal("acceptance evidence id 9961798-r64-accept is missing")
+	}
+	if strings.Contains(evidence, "No acceptance evidence id is recorded.") || strings.Contains(milestones, "No acceptance evidence id is recorded.") {
+		t.Fatal("the unrecorded acceptance marker is stale")
+	}
+	if !strings.Contains(evidence, "2f57d8388d3a5af79ac87409d950cc326af7bf74c91b0f1d54ca33f6cbf0dd23") {
+		t.Fatal("acceptance record lost the equal-tree MSI sha256")
+	}
+	if !strings.Contains(evidence, "26100.9168") || !strings.Contains(evidence, "EnterpriseSEval") {
+		t.Fatal("acceptance record lost the guest edition or build")
+	}
+	const notRun = "`gui-install`, `offline-install`, `non-admin`, `beta-conflict`, `downgrade`, `n1-upgrade`, and `rollback-upgrade`"
+	if !strings.Contains(evidence, notRun) || !strings.Contains(milestones, "`gui-install`, `offline-install`, `non-admin`, `beta-conflict`, `downgrade`, `n1-upgrade`, and `rollback-upgrade`") {
+		t.Fatal("not_run cases must stay listed")
 	}
 	if taskChecked(milestones, "R6.1") || taskChecked(milestones, "R6.4") {
-		t.Fatal("R6.1 and R6.4 stay unchecked while acceptance evidence is unrecorded")
+		t.Fatal("R6.1 and R6.4 stay unchecked")
 	}
 	if taskChecked(milestones, "R6.5") {
 		t.Fatal("R6.5 stays open")
