@@ -565,7 +565,7 @@ These were not run:
 - deferred-older-msi: `downgrade`, `n1-upgrade`, and `rollback-upgrade`, until an older MSI exists with UpgradeCode `A512B91F-1883-40FD-8EDB-5B8C5708DEEA` and ProductVersion lower than `0.1.0`
 
 No OlderMsi version is invented. No claimed SKU is recorded as run.
-R6.5 is recorded under [4223ac9-r65-migrate](#4223ac9-r65-migrate). Overall R6 stays open. A3 / R4.4 stay deferred.
+R6.5 is recorded under [4223ac9-r65-migrate](#4223ac9-r65-migrate). For 0.1-alpha only, overall R6 is checked under the [#251](https://github.com/PLN/winunitd/issues/251) deferral policy. R4 acceptance (R4.1, R4.4, and R4.5) remains an unmet prerequisite for the fully qualified release. This alpha check does not itself authorize the R7 handoff. The documented limitations are the deferred-media and deferred-older-msi lists above and in [milestones](MILESTONES.md). No new matrix row is added here. A3 / R4.4 stay deferred.
 [#245](https://github.com/PLN/winunitd/issues/245) is closed.
 deferred-media and deferred-older-msi stay on the deferral lists above
 and in [milestones](MILESTONES.md).
@@ -595,7 +595,7 @@ Native execution passed with fixture exit 0 and marker `r65-fixture-pass`.
 | injected-failure-restore | pass |
 | base-dir-conflict | pass |
 
-`-execute-msi` remains unqualified here. This id does not close overall R6.
+`-execute-msi` remains unqualified here. This id does not by itself close overall R6. For 0.1-alpha, overall R6 is checked in [milestones](MILESTONES.md). The documented limitations stay the deferred-media and deferred-older-msi lists in this file.
 R7 has not started. A3 / R4.4 stay deferred.
 
 The verified native run is tip `f4e6c477ada211cf5df736a16ea7685a612412a4`.

@@ -38,7 +38,7 @@ Other feature expansion is paused through the stabilization milestones. Existing
 
 ## Milestone sequence
 
-R2, R3, and R5 have completed technical acceptance. R0, R1, R4, and R6 remain **in progress**; R7/R8 are planned. The [coordinator audit](docs/R2-COORDINATOR-AUDIT.md) and [consolidated evidence](docs/R2-EVIDENCE.md#consolidated-coordinator-acceptance) record the latest closure. Their IDs track the longer-term design, not beta release prerequisites or deadlines. See the milestones for completed work packages and qualification evidence; B1-B4 record the completed first beta delivery. Use the post-beta tracking for current work.
+R2, R3, and R5 have completed technical acceptance. For 0.1-alpha only, overall R6 is checked under the [#251](https://github.com/PLN/winunitd/issues/251) deferral policy with documented limitations (deferred-media and deferred-older-msi). R0, R1, and R4 remain **in progress**; R7/R8 are planned. The [coordinator audit](docs/R2-COORDINATOR-AUDIT.md) and [consolidated evidence](docs/R2-EVIDENCE.md#consolidated-coordinator-acceptance) record the latest closure. Their IDs track the longer-term design, not beta release prerequisites or deadlines. See the milestones for completed work packages and qualification evidence; B1-B4 record the completed first beta delivery. Use the post-beta tracking for current work.
 
 | ID | Outcome | Depends on | Completion signal |
 | --- | --- | --- | --- |
@@ -59,7 +59,10 @@ R2 closure requires the R1.1-R1.3 ownership/cleanup regressions to remain passin
 it does not wait for R1.4 aggregate fairness, unattended R0 provisioning, or R4
 identity/session qualification. Those retain their own release gates. R6's R3-R5
 dependencies apply to the fully qualified installer, not the completed narrower
-B1-B4 beta MSI contract.
+B1-B4 beta MSI contract. The #251 deferral policy also permits the narrower
+0.1-alpha R6 check without satisfying those full acceptance dependencies.
+R4 acceptance (R4.1, R4.4, and R4.5) remains an unmet prerequisite for the fully
+qualified release. This alpha check does not itself authorize the R7 handoff.
 
 R0 packaging research may proceed alongside runtime stabilization. R4 and R5 may proceed independently once their predecessors close. R8 provider research and public-source preparation may start earlier, but do not waive release gates. No date is promised until the Windows qualification work establishes a reliable estimate.
 
