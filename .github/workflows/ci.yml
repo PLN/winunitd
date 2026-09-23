@@ -16,7 +16,9 @@ jobs:
   windows:
     name: windows
     runs-on: windows-latest
-    timeout-minutes: 15
+    # Covers a 15-minute race test plus vet, staticcheck, vulncheck,
+    # maintenance scripts, and the build.
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -40,7 +42,10 @@ jobs:
           CGO_ENABLED: 1
         # -parallel 1: Windows -race + t.Parallel starves notify/watchdog
         # goroutines; the first two -race jobs failed on wait timeouts.
-        run: go test -race -parallel 1 ./... -timeout 180s
+        # -timeout 15m: hosted Windows runners need that long for the
+        # manager package under -race -parallel 1. 180s panicked while
+        # tests were still queued.
+        run: go test -race -parallel 1 ./... -timeout 15m
 
       - name: Patched pipe regression
         env:
