@@ -234,8 +234,9 @@ GUI run. R6.5 and overall R6 stay open. A3 / R4.4 stay deferred.
 
 ### Case catalog
 
-The table is the case contract. `9961798-r64-accept` is the only
-acceptance evidence id. A case listed as `not_run` in that record is
+The table is the case contract. `9961798-r64-accept` records the SYSTEM
+subset. Continuation id `f1e38a0-r64-continue` is additional and does not
+replace that record. A case listed as `not_run` in the SYSTEM record is
 still missing evidence.
 
 | Case | Gate | Expected exit | What a pass shows |
@@ -332,12 +333,13 @@ R6.5 and overall R6 stay open. A3 / R4.4 stay deferred.
 ## Acceptance continuation
 
 This section is appended after evidence id `9961798-r64-accept`.
-That record stays as written. This change does not add a native run
-and does not assign a continuation evidence id.
-
-No continuation evidence id is assigned. After a disposable-guest run,
-append a new id under this heading. Use lowercase letters, digits, and
-hyphens. Do not reuse `9961798-r64-accept`. Copy the summary fields,
+That record stays as written. The harness commit
+`f1e38a0b80b72c18297f6ba1657473e4fa2dc10b` prepared the remaining cases.
+The native continuation on that tip is evidence id
+`f1e38a0-r64-continue` in
+[f1e38a0-r64-continue](#f1e38a0-r64-continue). Do not reuse
+`9961798-r64-accept`. Further runs append another id under this heading.
+Use lowercase letters, digits, and hyphens. Copy the summary fields,
 including `guest_sku`, into a table here. Leave the raw log, the
 evidence directory, the guest name, account names, addresses, and SIDs
 in the private operator workspace.
@@ -399,7 +401,13 @@ ProductVersion.
 
 ### Still not_run
 
-These cases remain `not_run`: `gui-install`, `offline-install`, `non-admin`, `beta-conflict`, `downgrade`, `n1-upgrade`, and `rollback-upgrade`.
+The harness commit left these cases without a continuation result:
+`gui-install`, `offline-install`, `non-admin`, `beta-conflict`,
+`downgrade`, `n1-upgrade`, and `rollback-upgrade`. Evidence id
+`f1e38a0-r64-continue` records the later guest. `non-admin` and
+`beta-conflict` are `failed` there. `offline-install`, `gui-install`,
+`downgrade`, `n1-upgrade`, and `rollback-upgrade` are `not_run`.
+`failed` and `not_run` stay missing evidence.
 
 Claimed SKUs with no recorded run:
 
@@ -429,4 +437,50 @@ Windows 11 Enterprise LTSC desktop, each as its own invocation:
 and `rollback-upgrade` only when an older recorded product MSI is
 supplied. Repeat the applicable cases for each claimed Server guest
 the lab can provide. Server Core skips `gui-install`.
+
+### f1e38a0-r64-continue
+
+Evidence id `f1e38a0-r64-continue` records one agent-driven continuation.
+The source tip is `f1e38a0b80b72c18297f6ba1657473e4fa2dc10b`. Exact-source
+CI [run 35810305710](https://github.com/PLN/winunitd/actions/runs/35810305710)
+is green on that tip. This note is a later commit. That green run does
+not cover this commit, and this commit has no green CI run yet.
+
+The equal-tree product MSI for the tip is installer `0.1.0`. The package
+manifest commit matched the tip. Raw logs stay in the private operator
+workspace.
+
+The guest is Windows 11 Enterprise LTSC Evaluation (Eval), installation
+type Client, build `26100.9168`. Agent-driven jobs ran as SYSTEM.
+`interactive` is false, and the guest had no console session. `guest_sku`
+is `unclaimed`. This Evaluation guest does not fill the claimed Windows
+11 Enterprise or Windows 11 Enterprise LTSC rows.
+
+The SYSTEM subset under `9961798-r64-accept` stays as written. Those
+cases were not re-run.
+
+| Case | Status | Note |
+| --- | --- | --- |
+| `offline-install` | `not_run` | Default route indeterminate |
+| `non-admin` | `failed` | Could not start msiexec as fixture user alice |
+| `beta-conflict` | `failed` | Product refused with the unsigned-beta-installed marker (MSI exit 1603). Beta cleanup failed and left the service running |
+| `gui-install` | `not_run` | No interactive session |
+| `downgrade`, `n1-upgrade`, `rollback-upgrade` | `not_run` | No older product MSI with UpgradeCode `A512B91F-1883-40FD-8EDB-5B8C5708DEEA` and ProductVersion lower than `0.1.0`. No ProductVersion is invented |
+
+`failed` and `not_run` are missing evidence. `beta-conflict` showed the
+refusal marker and exit 1603, and the case is `failed` because beta
+cleanup left the service running.
+
+Claimed SKUs with no recorded run:
+
+- Windows 11 Enterprise x64
+- Windows 11 Enterprise LTSC x64 (non-Eval)
+- Windows Server 2022 x64
+- Windows Server 2025 x64
+- Windows Server Core x64
+
+Server Core remains an installation type of the claimed Server 2022 and
+Server 2025 SKUs. This Evaluation guest fills none of those rows. R6.1
+and R6.4 stay unchecked. R6.5 and overall R6 stay open. A3 / R4.4 stay
+deferred. [#245](https://github.com/PLN/winunitd/issues/245) stays open.
 
