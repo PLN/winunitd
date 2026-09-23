@@ -36,7 +36,8 @@ msiexec /fa winunitd-0.1.0-x64.msi /qn /norestart /L*v repair.log
 msiexec /x winunitd-0.1.0-x64.msi /qn /norestart /L*v uninstall.log
 ```
 
-There is no extra installer UI. Do not force a reboot.
+The package does not add a custom setup wizard. Quiet install is `/qn`.
+Basic Windows Installer UI is `/qb`. Do not force a reboot.
 
 | Exit | Meaning |
 | --- | --- |

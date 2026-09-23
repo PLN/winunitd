@@ -241,9 +241,9 @@ still missing evidence.
 | Case | Gate | Expected exit | What a pass shows |
 | --- | --- | --- | --- |
 | `quiet-install` | R6.1, R6.4 | 0 | Clean `/qn` install. Service `winunitd`, display name WinUnit Manager, LocalSystem, automatic start, package binary and `--base-dir`. Application event source `winunitd`. PATH ownership under `HKLM\Software\PLN\winunitd`. Program Files `bin` and `doc`, ProgramData `units`, `enabled`, `journal`, `runtime`, `linger`, `daemon`. Examples stay documentation. No Go, WiX, .NET, or Python prerequisite action |
-| `gui-install` | R6.1, R6.4 | 0 | Same assertions with installer UI, on a guest that has an interactive shell |
+| `gui-install` | R6.1, R6.4 | 0 | Same assertions with basic installer UI (`/qb!`) on an interactive desktop session. The log contains `UILevel = 3` |
 | `system-install` | R6.4 | 0 | Same assertions as SYSTEM |
-| `offline-install` | R6.4 | 0 | Same assertions with no default route |
+| `offline-install` | R6.4 | 0 | Same assertions with no default route. The harness removes and restores that route for this case |
 | `repair-fa` | R6.1, R6.4 | 0 | Quiet `/fa` repair keeps the layout, event source, and PATH ownership |
 | `repair-reinstall` | R6.1, R6.4 | 0 | Quiet `/i REINSTALL=ALL REINSTALLMODE=amus` repair, the same layout assertions |
 | `uninstall` | R6.1, R6.4 | 0 | Service, product binaries, event source, and the owned PATH entry are gone. Unrelated PATH entries stay. ProgramData and a retained marker stay |
@@ -254,8 +254,8 @@ still missing evidence.
 | `rollback-test-fail-running` | R6.4 | 1603 | `WINUNITD_TEST_FAIL=1` during `/fa`. Log contains `InjectServiceFailure`. Delayed start and the running state are restored. Same-version bytes match; the delayed-start value is the restore check |
 | `rollback-test-fail-stopped` | R6.4 | 1603 | Same injected failure from a stopped service. The service stays stopped and delayed start is restored |
 | `rollback-upgrade` | R6.4 | 1603 | Injected failure while moving from the older package to `0.1.0`. The older payload hash, delayed start, and running state are restored |
-| `non-admin` | R6.4 | 1602, 1603, or 1625 | Quiet install without an elevated token. The product stays absent |
-| `beta-conflict` | R6.4 | 1603 | Unsigned beta is installed. Product install logs `The unsigned beta package is installed.` and leaves the beta in place. The harness then removes the beta |
+| `non-admin` | R6.4 | 1602, 1603, or 1625 | Quiet install without an elevated token. An elevated parent uses fixture user alice. The product stays absent |
+| `beta-conflict` | R6.4 | 1603 | Unsigned beta is installed. Product install logs `The unsigned beta package is installed.` and leaves the beta in place. The harness discovers a built beta MSI when `-BetaMsi` is omitted, then removes the beta |
 | `preflight-reparse` | R6.3 | 1603 | Junction at `%ProgramData%\winunitd`. Log contains `preflight conflict:` and `reparse point`. The link and a marker in the target stay. The product layout stays absent |
 | `preflight-unmanaged-service` | R6.3 | 1603 | Pre-existing `winunitd` service whose image is not the package binary. Log contains `preflight conflict:` and `unmanaged winunitd binary path`. The image stays. The product layout stays absent |
 
@@ -277,6 +277,7 @@ private operator workspace.
 - `guest_edition`
 - `guest_build`
 - `installation_type`
+- `guest_sku`
 - `identity`
 - `offline`
 - `interactive`
@@ -320,9 +321,112 @@ then one clean install (`quiet-install`, `system-install`,
 `offline-install`, or `gui-install`), then `repair-fa`,
 `repair-reinstall`, `rollback-test-fail-running`,
 `rollback-test-fail-stopped`, `locked-file`, `reinstall-retained`, and
-`uninstall`. Run `non-admin` from a non-elevated token on a guest where
+`uninstall`. Run `non-admin` from a non-elevated token, or from an
+elevated parent which drops to fixture user alice, on a guest where
 the product is absent. Repeat the applicable cases for each claimed
 SKU. Add `downgrade`, `n1-upgrade`, and `rollback-upgrade` only when an
 older recorded package exists.
 
 R6.5 and overall R6 stay open. A3 / R4.4 stay deferred.
+
+## Acceptance continuation
+
+This section is appended after evidence id `9961798-r64-accept`.
+That record stays as written. This change does not add a native run
+and does not assign a continuation evidence id.
+
+No continuation evidence id is assigned. After a disposable-guest run,
+append a new id under this heading. Use lowercase letters, digits, and
+hyphens. Do not reuse `9961798-r64-accept`. Copy the summary fields,
+including `guest_sku`, into a table here. Leave the raw log, the
+evidence directory, the guest name, account names, addresses, and SIDs
+in the private operator workspace.
+
+`guest_sku` is one of the claimed names, or `unclaimed`. Evaluation
+editions and every other SKU are `unclaimed`. Windows 11 starts at
+build 22000, including a guest whose product name still says Windows
+10. Server 2022 is build 20348. Server 2025 shares build 26100 with
+Windows 11 24H2, so a server row also requires a Server product name
+or installation type. An `unclaimed` run does not fill a claimed row
+and does not check R6.1 or R6.4.
+
+### Harness for the remaining cases
+
+`gui-install` starts `msiexec /i` with `/qb!` (basic UI, no cancel
+button) and requires an interactive desktop: the process is user
+interactive and its session id is greater than 0. Server Core stays
+`not_applicable`. A pass still requires the layout, service identity,
+Application event source, PATH ownership, and no destination Go, WiX,
+.NET, or Python action. The verbose log must contain `UILevel = 3`.
+Run this case in the desktop session. A session 0 or remoting session
+is `not_run`.
+
+`offline-install` removes IPv4 and IPv6 default routes for that case
+only, requires the product MSI and the evidence directory to be on a
+local disk, and restores the routes afterward. The summary records
+`offline` true. Gateway addresses stay out of the summary. A restore
+failure fails the case.
+
+`non-admin` runs quiet install without an elevated token. When the
+parent is already a standard user or a filtered administrator token,
+msiexec runs as that token. That token must be able to read the product
+MSI and write the evidence directory. When the parent is Administrator or
+SYSTEM, the harness creates local user alice, starts msiexec as alice,
+then removes alice. If alice already exists, the case fails and does
+not reuse that account. The summary identity for the fixture path is
+`standard-user`. Fixture names stay alice, bob, and carol.
+
+`beta-conflict` uses `-BetaMsi` when it is passed. Otherwise it
+discovers `winunitd-<version>-x64-beta.msi` whose UpgradeCode is
+`9443AE50-251B-4A46-9465-B835A3A27133`. The search is `dist/beta/<version>/`,
+the top level of `packaging/beta`, and the directory beside the product
+MSI. The version is read from the package. The harness does not select
+a version that is not in one of those files, and it does not search
+`packaging/beta/obj`.
+
+`downgrade`, `n1-upgrade`, and `rollback-upgrade` use `-OlderMsi` when
+it is passed. Otherwise they look for `winunitd-<version>-x64.msi`
+under `dist/wix/<version>/`, the top level of `packaging/wix`, or
+beside the product MSI. A file counts only when its UpgradeCode is
+`A512B91F-1883-40FD-8EDB-5B8C5708DEEA` and its ProductVersion is lower
+than `0.1.0`. No such package is in this tree. `packaging/wix/build.ps1`
+refuses to build any installer version other than `0.1.0`. The unsigned
+beta packages `0.2.0` and `0.2.1` use UpgradeCode
+`9443AE50-251B-4A46-9465-B835A3A27133`. The packaging-spike fixtures use
+UpgradeCode `6BF75153-09DE-4D44-B053-74B01921B136`. None of those is a
+product N-1. Those three cases stay `not_run`. Do not invent a
+ProductVersion.
+
+### Still not_run
+
+These cases remain `not_run`: `gui-install`, `offline-install`, `non-admin`, `beta-conflict`, `downgrade`, `n1-upgrade`, and `rollback-upgrade`.
+
+Claimed SKUs with no recorded run:
+
+- Windows 11 Enterprise x64
+- Windows 11 Enterprise LTSC x64
+- Windows Server 2022 x64
+- Windows Server 2025 x64
+- Windows Server Core x64
+
+The recorded guest for `9961798-r64-accept` is Windows 10 Enterprise
+LTSC 2024 Evaluation (`EnterpriseSEval`), build `26100.9168`. That
+identity is `unclaimed`. It does not satisfy a claimed row.
+`gui-install` on Server Core remains `not_applicable` and does not
+satisfy GUI install for a desktop SKU.
+
+R6.1 stays unchecked until a GUI install on an interactive claimed
+desktop SKU (Windows 11 Enterprise or Windows 11 Enterprise LTSC x64)
+is copied under this heading. R6.4 stays unchecked. One claimed SKU
+would still leave the others required, and the three older-package
+cases stay open until a real older product MSI exists. R6.5 and
+overall R6 stay open. A3 / R4.4 stay deferred.
+
+Suggested continuation order on one claimed Windows 11 Enterprise or
+Windows 11 Enterprise LTSC desktop, each as its own invocation:
+`beta-conflict`, `gui-install` from the interactive desktop,
+`offline-install`, then `non-admin`. Add `downgrade`, `n1-upgrade`,
+and `rollback-upgrade` only when an older recorded product MSI is
+supplied. Repeat the applicable cases for each claimed Server guest
+the lab can provide. Server Core skips `gui-install`.
+

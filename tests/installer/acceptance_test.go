@@ -359,6 +359,66 @@ func TestAcceptanceEvidenceStaysUnchecked(t *testing.T) {
 	}
 }
 
+func TestContinuationHarnessUnblocksRemainingCases(t *testing.T) {
+	root := moduleRoot(t)
+	script := readRepo(t, root, "tests/installer/acceptance.ps1")
+	evidence := readRepo(t, root, "docs/R6-EVIDENCE.md")
+	build := readRepo(t, root, "packaging/wix/build.ps1")
+	if !strings.Contains(evidence, "## Acceptance continuation") || !strings.Contains(evidence, "No continuation evidence id is assigned") {
+		t.Fatal("continuation evidence section is missing")
+	}
+	if !strings.Contains(evidence, "| `quiet-install` | 0 |") || !strings.Contains(evidence, "9961798-r64-accept") {
+		t.Fatal("9961798-r64-accept history was overwritten")
+	}
+	if strings.Contains(build, "0.0.1") || !strings.Contains(build, "Record a new ProductCode before changing the installer version") {
+		t.Fatal("product build must keep refusing an unrecorded installer version")
+	}
+	if strings.Contains(script, "$InstallerVersion = '0.0") {
+		t.Fatal("harness invented an installer version")
+	}
+	gui := extractFunction(t, script, "Invoke-CleanInstall([string]$LogName, [bool]$Quiet, [int]$TimeoutSec, [bool]$BasicUi = $false) {")
+	if !strings.Contains(gui, "-BasicUi:$BasicUi") {
+		t.Fatal("clean install lost the basic UI switch")
+	}
+	if !strings.Contains(script, "/qb!") || !strings.Contains(script, "UILevel = 3") {
+		t.Fatal("gui-install must request basic installer UI")
+	}
+	interactive := extractFunction(t, script, "Test-InteractiveDesktop {")
+	if !strings.Contains(interactive, "SessionId") || !strings.Contains(interactive, "UserInteractive") {
+		t.Fatal("interactive detection must require a desktop session")
+	}
+	offline := extractFunction(t, script, "Invoke-OfflineInstall {")
+	remove := strings.Index(offline, "Remove-NetRoute")
+	restore := strings.Index(offline, "Restore-DefaultRoutes")
+	install := strings.Index(offline, "Invoke-CleanInstall 'offline-install'")
+	if remove < 0 || install < remove || restore < install {
+		t.Fatal("offline-install must remove the default route and restore it after msiexec")
+	}
+	skip := extractFunction(t, script, "Get-SkipReason($Spec) {")
+	if strings.Contains(skip, "default route present") {
+		t.Fatal("offline-install still skips when a default route is present")
+	}
+	nonAdmin := extractFunction(t, script, "Invoke-NonAdmin {")
+	if !strings.Contains(nonAdmin, "New-LocalUser -Name 'alice'") || !strings.Contains(nonAdmin, "Remove-LocalUser -Name 'alice'") {
+		t.Fatal("non-admin elevated parent must use fixture user alice")
+	}
+	if !strings.Contains(nonAdmin, "-RunAs 'alice'") {
+		t.Fatal("non-admin msiexec must run as alice")
+	}
+	if !strings.Contains(script, `dist\beta`) || !strings.Contains(script, `packaging\beta`) {
+		t.Fatal("beta discovery lost the packaging/beta output layout")
+	}
+	if !strings.Contains(script, "no recorded N-1 package") {
+		t.Fatal("missing older package must stay an explicit skip")
+	}
+	sku := extractFunction(t, script, "Get-ClaimedSku([string]$Product, [string]$Edition, [string]$Build, [string]$InstallationType) {")
+	for _, text := range []string{"Eval", "22000", "20348", "26100", "EnterpriseS", "unclaimed", "Windows Server Core x64"} {
+		if !strings.Contains(sku, text) {
+			t.Fatalf("claimed SKU classification lost %s", text)
+		}
+	}
+}
+
 func TestAcceptanceHarnessHasNoLabInventory(t *testing.T) {
 	root := moduleRoot(t)
 	for _, rel := range []string{

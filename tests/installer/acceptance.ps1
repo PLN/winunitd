@@ -10,14 +10,21 @@
   publishing a reviewed run. A skipped case is missing evidence.
 
   Installer 0.1.0 is the only recorded product package. -OlderMsi is an
-  operator-supplied earlier package with the same UpgradeCode. This
-  script does not invent a version.
+  operator-supplied earlier package with the same UpgradeCode, or a
+  package discovered under dist\wix, the top of packaging\wix, or
+  beside the product MSI. This script does not invent a version.
+  -BetaMsi, when omitted, is discovered from the packaging\beta output
+  layout (dist\beta, the top of packaging\beta, or beside the product
+  MSI). The version is read from that file.
 
 .EXAMPLE
   powershell -NoProfile -File tests/installer/acceptance.ps1 -Case list
 
 .EXAMPLE
   powershell -NoProfile -File tests/installer/acceptance.ps1 -DisposableGuest -MsiPath <product-msi> -EvidenceDirectory <private-directory> -Case quiet-install
+
+.EXAMPLE
+  powershell -NoProfile -File tests/installer/acceptance.ps1 -DisposableGuest -MsiPath <product-msi> -EvidenceDirectory <private-directory> -Case gui-install
 #>
 [CmdletBinding()]
 param(
@@ -46,6 +53,8 @@ $script:Guest = $null
 $script:Identity = ''
 $script:Offline = $null
 $script:Interactive = $false
+$script:SummaryIdentity = ''
+$script:GuestSku = 'unclaimed'
 
 function ConvertTo-Array($Value) {
 	if ($null -eq $Value) { return @() }
@@ -273,7 +282,8 @@ function Get-LogMarkers([string]$Log) {
 		'abort replacement',
 		'A newer package is installed.',
 		'The unsigned beta package is installed.',
-		'InjectServiceFailure'
+		'InjectServiceFailure',
+		'UILevel = 3'
 	)
 	$found = New-Object System.Collections.Generic.List[string]
 	if (-not $Log -or -not (Test-Path -LiteralPath $Log)) { return $found.ToArray() }
@@ -297,18 +307,40 @@ function Get-InstallFailureNote($Run) {
 	return ''
 }
 
+function New-MsiexecStartInfo([string]$Arguments, [bool]$Shell, [bool]$Hidden, [string]$User, [System.Security.SecureString]$Password, [bool]$Profile) {
+	$info = New-Object System.Diagnostics.ProcessStartInfo
+	$info.FileName = Join-Path $env:SystemRoot 'System32\msiexec.exe'
+	$info.Arguments = $Arguments
+	$info.UseShellExecute = $Shell
+	if ($Hidden) { $info.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden }
+	else { $info.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Normal }
+	if ($User) {
+		$info.UserName = $User
+		$info.Domain = '.'
+		$info.Password = $Password
+		$info.LoadUserProfile = $Profile
+		$info.WorkingDirectory = $env:SystemRoot
+	}
+	return $info
+}
+
 function Invoke-Msiexec {
 	param(
 		[Parameter(Mandatory)][string]$LogName,
 		[Parameter(Mandatory)][string[]]$Words,
 		[switch]$Quiet,
+		[switch]$BasicUi,
 		[switch]$TestFail,
-		[int]$TimeoutSec = 360
+		[int]$TimeoutSec = 360,
+		[string]$RunAs,
+		[System.Security.SecureString]$RunAsPassword
 	)
+	if ($Quiet -and $BasicUi) { throw 'unsupported UI level' }
 	$log = Join-Path $EvidenceDirectory ($LogName + '.log')
 	$argv = New-Object System.Collections.Generic.List[string]
 	foreach ($word in $Words) { [void]$argv.Add($word) }
 	if ($Quiet) { [void]$argv.Add('/qn') }
+	elseif ($BasicUi) { [void]$argv.Add('/qb!') }
 	[void]$argv.Add('/norestart')
 	[void]$argv.Add('/L*v')
 	[void]$argv.Add((ConvertTo-MsiArg $log))
@@ -317,13 +349,20 @@ function Invoke-Msiexec {
 	else { Remove-Item Env:WINUNITD_TEST_FAIL -ErrorAction SilentlyContinue }
 	$boot = Get-BootStamp
 	try {
-		$info = New-Object System.Diagnostics.ProcessStartInfo
-		$info.FileName = Join-Path $env:SystemRoot 'System32\msiexec.exe'
-		$info.Arguments = ($argv -join ' ')
-		$info.UseShellExecute = $true
-		if ($Quiet) { $info.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden }
-		else { $info.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Normal }
-		$proc = [System.Diagnostics.Process]::Start($info)
+		$arguments = ($argv -join ' ')
+		$hidden = [bool]$Quiet -or [bool]$RunAs
+		if ($RunAs) {
+			$info = New-MsiexecStartInfo $arguments $false $true $RunAs $RunAsPassword $true
+			try {
+				$proc = [System.Diagnostics.Process]::Start($info)
+			} catch {
+				$info = New-MsiexecStartInfo $arguments $false $true $RunAs $RunAsPassword $false
+				$proc = [System.Diagnostics.Process]::Start($info)
+			}
+		} else {
+			$info = New-MsiexecStartInfo $arguments $true $hidden '' $null $false
+			$proc = [System.Diagnostics.Process]::Start($info)
+		}
 		if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
 			try { $proc.Kill() } catch { }
 			throw 'msiexec timed out'
@@ -378,17 +417,90 @@ function Get-GuestFacts {
 	[pscustomobject]@{ Product = $product; Edition = $edition; Build = $build; InstallationType = $kind }
 }
 
+function Get-ElevationType {
+	if (-not ('WinunitdToken' -as [type])) {
+		Add-Type -TypeDefinition @'
+using System;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+public static class WinunitdToken {
+	[DllImport("advapi32.dll", SetLastError = true)]
+	public static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
+	[DllImport("advapi32.dll", SetLastError = true)]
+	public static extern bool GetTokenInformation(IntPtr tokenHandle, int tokenInformationClass, ref int tokenInformation, int tokenInformationLength, out int returnLength);
+	[DllImport("kernel32.dll", SetLastError = true)]
+	public static extern bool CloseHandle(IntPtr handle);
+	public static int Elevation() {
+		IntPtr token;
+		if (!OpenProcessToken(Process.GetCurrentProcess().Handle, 8, out token)) return 0;
+		try {
+			int value = 0;
+			int needed;
+			if (!GetTokenInformation(token, 18, ref value, 4, out needed)) return 0;
+			return value;
+		} finally {
+			CloseHandle(token);
+		}
+	}
+}
+'@ -ErrorAction Stop
+	}
+	return [WinunitdToken]::Elevation()
+}
+
 function Get-IdentityLabel {
 	$ident = [Security.Principal.WindowsIdentity]::GetCurrent()
 	$principal = New-Object Security.Principal.WindowsPrincipal($ident)
 	$system = New-Object Security.Principal.SecurityIdentifier ([Security.Principal.WellKnownSidType]::LocalSystemSid, $null)
 	if ($ident.User.Value -eq $system.Value) { return 'SYSTEM' }
+	$elevation = 0
+	try { $elevation = [int](Get-ElevationType) } catch { $elevation = 0 }
+	# TokenElevationTypeFull = 2, TokenElevationTypeLimited = 3.
+	if ($elevation -eq 2) { return 'Administrator' }
+	if ($elevation -eq 3) { return 'uac-filtered' }
 	if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { return 'Administrator' }
 	$admins = New-Object Security.Principal.SecurityIdentifier ([Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null)
 	foreach ($group in $ident.Groups) {
 		if ($group.Value -eq $admins.Value) { return 'uac-filtered' }
 	}
 	return 'standard-user'
+}
+
+function Test-InteractiveDesktop {
+	if (-not [Environment]::UserInteractive) { return $false }
+	try {
+		$session = [int](Get-Process -Id $PID).SessionId
+	} catch {
+		return $false
+	}
+	return $session -gt 0
+}
+
+function Get-ClaimedSku([string]$Product, [string]$Edition, [string]$Build, [string]$InstallationType) {
+	# Windows 11 starts at build 22000. Server 2022 is build 20348.
+	# Server 2025 shares build 26100 with Windows 11 24H2, so a server
+	# row also requires a Server product name or installation type.
+	# Evaluation images and every other edition are unclaimed.
+	if ($Edition -match 'Eval' -or $Product -match 'Evaluation') { return 'unclaimed' }
+	$buildNum = 0
+	if ($Build -match '^([0-9]+)\.') { $buildNum = [int]$Matches[1] }
+	$client = $InstallationType -eq 'Client'
+	$core = $InstallationType -eq 'Server Core'
+	$server = $InstallationType -eq 'Server' -or $core
+	if ($client -and $buildNum -ge 22000) {
+		if ($Edition -eq 'Enterprise') { return 'Windows 11 Enterprise x64' }
+		if ($Edition -eq 'EnterpriseS') { return 'Windows 11 Enterprise LTSC x64' }
+	}
+	if ($server) {
+		$year = ''
+		if ($Product -match 'Server 2022' -or $buildNum -eq 20348) { $year = '2022' }
+		elseif ($Product -match 'Server 2025' -or ($buildNum -ge 26100 -and $Product -match 'Server')) { $year = '2025' }
+		if (-not $year) { return 'unclaimed' }
+		if ($core) { return 'Windows Server Core x64' }
+		if ($year -eq '2022') { return 'Windows Server 2022 x64' }
+		if ($year -eq '2025') { return 'Windows Server 2025 x64' }
+	}
+	return 'unclaimed'
 }
 
 function Test-OfflineGuest {
@@ -399,6 +511,49 @@ function Test-OfflineGuest {
 		return (@($v4).Count + @($v6).Count) -eq 0
 	} catch {
 		return $null
+	}
+}
+
+function Get-DefaultRouteSnapshot {
+	Import-Module NetTCPIP -ErrorAction Stop
+	$items = New-Object System.Collections.Generic.List[object]
+	foreach ($prefix in @('0.0.0.0/0', '::/0')) {
+		foreach ($route in @(Get-NetRoute -DestinationPrefix $prefix -ErrorAction SilentlyContinue)) {
+			[void]$items.Add([pscustomobject]@{
+				DestinationPrefix = [string]$route.DestinationPrefix
+				NextHop = [string]$route.NextHop
+				InterfaceIndex = [int]$route.InterfaceIndex
+				RouteMetric = [int]$route.RouteMetric
+				AddressFamily = [string]$route.AddressFamily
+			})
+		}
+	}
+	return $items.ToArray()
+}
+
+function Restore-DefaultRoutes($Routes) {
+	Import-Module NetTCPIP -ErrorAction Stop
+	foreach ($route in @($Routes)) {
+		if (-not $route) { continue }
+		$alive = @(Get-NetRoute -DestinationPrefix $route.DestinationPrefix -InterfaceIndex $route.InterfaceIndex -ErrorAction SilentlyContinue)
+		$present = $false
+		foreach ($item in $alive) {
+			if ([string]$item.NextHop -eq $route.NextHop) { $present = $true }
+		}
+		if ($present) { continue }
+		New-NetRoute -DestinationPrefix $route.DestinationPrefix -InterfaceIndex $route.InterfaceIndex -NextHop $route.NextHop -RouteMetric $route.RouteMetric -AddressFamily $route.AddressFamily -Confirm:$false -ErrorAction Stop | Out-Null
+	}
+}
+
+function Test-LocalPath([string]$Path) {
+	try {
+		$root = [IO.Path]::GetPathRoot($Path)
+		if (-not $root -or $root.Length -lt 1) { return $false }
+		$drive = New-Object System.IO.DriveInfo($root.Substring(0, 1))
+		$kind = $drive.DriveType
+		return $kind -eq [IO.DriveType]::Fixed -or $kind -eq [IO.DriveType]::Removable
+	} catch {
+		return $false
 	}
 }
 
@@ -449,6 +604,101 @@ function Test-OlderProductMsi([string]$Path) {
 	return ''
 }
 
+function Get-PackageFiles([string]$Directory, [string]$Filter, [bool]$ChildDirectories) {
+	$files = New-Object System.Collections.Generic.List[string]
+	if (-not $Directory -or -not (Test-Path -LiteralPath $Directory)) { return $files.ToArray() }
+	$dirs = @()
+	if ($ChildDirectories) {
+		$dirs = @(Get-ChildItem -LiteralPath $Directory -Directory -ErrorAction SilentlyContinue)
+	} else {
+		$dirs = @([pscustomobject]@{ FullName = $Directory })
+	}
+	foreach ($dir in $dirs) {
+		if (-not $dir) { continue }
+		foreach ($file in @(Get-ChildItem -LiteralPath $dir.FullName -File -Filter $Filter -ErrorAction SilentlyContinue)) {
+			[void]$files.Add($file.FullName)
+		}
+	}
+	return $files.ToArray()
+}
+
+function Test-BetaPackageFile([string]$Path) {
+	try {
+		$name = [IO.Path]::GetFileName($Path)
+		if ($name -notmatch '^winunitd-\d+\.\d+\.\d+-x64-beta\.msi$') { return $false }
+		$upgrade = ConvertTo-GuidText (Get-MsiProperty $Path 'UpgradeCode')
+		if ($upgrade -ne $BetaUpgradeCode) { return $false }
+		if ($null -eq (ConvertTo-MsiVersion (Get-MsiProperty $Path 'ProductVersion'))) { return $false }
+		return $true
+	} catch {
+		return $false
+	}
+}
+
+function Select-HighestMsi([string[]]$Paths) {
+	$best = ''
+	$bestVer = $null
+	$tie = $false
+	foreach ($path in @($Paths)) {
+		if (-not $path) { continue }
+		$ver = ConvertTo-MsiVersion (Get-MsiProperty $path 'ProductVersion')
+		if ($null -eq $ver) { continue }
+		if ($null -eq $bestVer -or $ver -gt $bestVer) {
+			$bestVer = $ver
+			$best = $path
+			$tie = $false
+		} elseif ($ver -eq $bestVer -and (ConvertTo-PathKey $path) -ne (ConvertTo-PathKey $best)) {
+			$tie = $true
+		}
+	}
+	if ($tie) { throw 'multiple packages share the selected version' }
+	return $best
+}
+
+function Find-BetaMsi([string]$RepoRoot, [string]$ProductMsi) {
+	$files = New-Object System.Collections.Generic.List[string]
+	foreach ($path in @(Get-PackageFiles (Join-Path $RepoRoot 'dist\beta') 'winunitd-*-x64-beta.msi' $true)) { [void]$files.Add($path) }
+	foreach ($path in @(Get-PackageFiles (Join-Path $RepoRoot 'packaging\beta') 'winunitd-*-x64-beta.msi' $false)) { [void]$files.Add($path) }
+	$sibling = Split-Path -Parent $ProductMsi
+	foreach ($path in @(Get-PackageFiles $sibling 'winunitd-*-x64-beta.msi' $false)) { [void]$files.Add($path) }
+	$valid = New-Object System.Collections.Generic.List[string]
+	$seen = @{}
+	foreach ($path in $files) {
+		if (-not $path) { continue }
+		$key = ConvertTo-PathKey $path
+		if ($seen.ContainsKey($key)) { continue }
+		$seen[$key] = $true
+		if (Test-BetaPackageFile $path) { [void]$valid.Add($path) }
+	}
+	if ($valid.Count -eq 0) { return '' }
+	return Select-HighestMsi $valid.ToArray()
+}
+
+function Find-OlderProductMsi([string]$RepoRoot, [string]$ProductMsi) {
+	$files = New-Object System.Collections.Generic.List[string]
+	foreach ($path in @(Get-PackageFiles (Join-Path $RepoRoot 'dist\wix') 'winunitd-*-x64.msi' $true)) { [void]$files.Add($path) }
+	foreach ($path in @(Get-PackageFiles (Join-Path $RepoRoot 'packaging\wix') 'winunitd-*-x64.msi' $false)) { [void]$files.Add($path) }
+	$sibling = Split-Path -Parent $ProductMsi
+	foreach ($path in @(Get-PackageFiles $sibling 'winunitd-*-x64.msi' $false)) { [void]$files.Add($path) }
+	$productKey = ConvertTo-PathKey $ProductMsi
+	$valid = New-Object System.Collections.Generic.List[string]
+	$seen = @{}
+	foreach ($path in $files) {
+		if (-not $path) { continue }
+		$name = [IO.Path]::GetFileName($path)
+		if ($name -notmatch '^winunitd-\d+\.\d+\.\d+-x64\.msi$') { continue }
+		$key = ConvertTo-PathKey $path
+		if ($key -eq $productKey) { continue }
+		if ($seen.ContainsKey($key)) { continue }
+		$seen[$key] = $true
+		try {
+			if (-not (Test-OlderProductMsi $path)) { [void]$valid.Add($path) }
+		} catch { }
+	}
+	if ($valid.Count -eq 0) { return '' }
+	return Select-HighestMsi $valid.ToArray()
+}
+
 function Get-SkipReason($Spec) {
 	$req = $Spec.requires
 	if ($req.gui_sku -and $script:Guest.InstallationType -eq 'Server Core') {
@@ -456,11 +706,11 @@ function Get-SkipReason($Spec) {
 	}
 	if ($req.identity -eq 'system' -and $script:Identity -ne 'SYSTEM') { return 'current identity is not SYSTEM' }
 	if ($req.identity -eq 'elevated' -and $script:Identity -ne 'SYSTEM' -and $script:Identity -ne 'Administrator') { return 'current identity is not elevated' }
-	if ($req.identity -eq 'not-elevated' -and ($script:Identity -eq 'SYSTEM' -or $script:Identity -eq 'Administrator')) { return 'current identity is elevated' }
+	# non-admin drops an elevated parent to fixture user alice.
+	if ($req.identity -eq 'not-elevated' -and $Case -ne 'non-admin' -and ($script:Identity -eq 'SYSTEM' -or $script:Identity -eq 'Administrator')) { return 'current identity is elevated' }
 	if ($req.interactive -and -not $script:Interactive) { return 'no interactive session' }
 	if ($req.offline) {
 		if ($null -eq $script:Offline) { return 'could not determine default route' }
-		if (-not $script:Offline) { return 'default route present' }
 	}
 	$present = Test-ProductPresent
 	if ($req.product -eq 'absent' -and $present) { return 'product is already installed' }
@@ -515,7 +765,8 @@ function Write-Summary($Result) {
 		guest_edition = [string]$script:Guest.Edition
 		guest_build = [string]$script:Guest.Build
 		installation_type = [string]$script:Guest.InstallationType
-		identity = [string]$script:Identity
+		guest_sku = [string]$script:GuestSku
+		identity = $(if ($script:SummaryIdentity) { [string]$script:SummaryIdentity } else { [string]$script:Identity })
 		offline = $script:Offline
 		interactive = [bool]$script:Interactive
 		case_id = $Case
@@ -629,13 +880,60 @@ function Get-DelayedStart {
 	return [int]$prop.DelayedAutostart -eq 1
 }
 
-function Invoke-CleanInstall([string]$LogName, [bool]$Quiet, [int]$TimeoutSec) {
+function Invoke-CleanInstall([string]$LogName, [bool]$Quiet, [int]$TimeoutSec, [bool]$BasicUi = $false) {
 	$before = Get-ServiceState
-	$run = Invoke-Msiexec -LogName $LogName -Quiet:$Quiet -TimeoutSec $TimeoutSec -Words @('/i', (ConvertTo-MsiArg $MsiPath))
+	$run = Invoke-Msiexec -LogName $LogName -Quiet:$Quiet -BasicUi:$BasicUi -TimeoutSec $TimeoutSec -Words @('/i', (ConvertTo-MsiArg $MsiPath))
 	$note = Get-InstallFailureNote $run
 	$status = 'passed'
 	if ($note) { $status = 'failed' }
 	return New-CaseResult $status $note $run.ExitCode $run.Log $run.Reboot $before (Get-ServiceState) $null
+}
+
+function Invoke-OfflineInstall {
+	$before = Get-ServiceState
+	if (-not (Test-LocalPath $MsiPath) -or -not (Test-LocalPath $EvidenceDirectory)) {
+		return New-CaseResult 'failed' 'offline case requires a local package and evidence directory' $null '' $false $before $before $null
+	}
+	$removed = New-Object System.Collections.Generic.List[object]
+	$script:RouteRestoreNote = ''
+	$result = $null
+	try {
+		try {
+			foreach ($route in @(Get-DefaultRouteSnapshot)) {
+				if (-not $route) { continue }
+				[void]$removed.Add($route)
+				Remove-NetRoute -DestinationPrefix $route.DestinationPrefix -InterfaceIndex $route.InterfaceIndex -NextHop $route.NextHop -Confirm:$false -ErrorAction Stop | Out-Null
+			}
+		} catch {
+			$result = New-CaseResult 'failed' 'could not remove default route' $null '' $false $before (Get-ServiceState) $null
+		}
+		if (-not $result) {
+			$script:Offline = Test-OfflineGuest
+			if ($script:Offline -ne $true) {
+				$result = New-CaseResult 'failed' 'default route remained' $null '' $false $before (Get-ServiceState) $null
+			} else {
+				$result = Invoke-CleanInstall 'offline-install' $true 360
+			}
+		}
+	} catch {
+		$failure = $_
+		if (-not $result) {
+			$note = 'could not remove default route'
+			if ($failure.Exception.Message -eq 'msiexec timed out') { $note = 'msiexec timed out' }
+			$result = New-CaseResult 'failed' $note $null '' $false $before (Get-ServiceState) $null
+		}
+	} finally {
+		if ($removed.Count -gt 0) {
+			try { Restore-DefaultRoutes $removed.ToArray() } catch { $script:RouteRestoreNote = 'default route restore failed' }
+		}
+	}
+	if (-not $result) { $result = New-CaseResult 'failed' 'could not remove default route' $null '' $false $before (Get-ServiceState) $null }
+	if ($script:RouteRestoreNote) {
+		$result.Status = 'failed'
+		if (-not $result.Note) { $result.Note = $script:RouteRestoreNote }
+		else { $result.Note = $result.Note + '; ' + $script:RouteRestoreNote }
+	}
+	return $result
 }
 
 function Invoke-Repair([string]$LogName, [string[]]$Words) {
@@ -650,9 +948,9 @@ function Invoke-Repair([string]$LogName, [string[]]$Words) {
 function Invoke-SelectedCase {
 	switch ($Case) {
 		'quiet-install' { return Invoke-CleanInstall 'quiet-install' $true 360 }
-		'gui-install' { return Invoke-CleanInstall 'gui-install' $false 900 }
+		'gui-install' { return Invoke-CleanInstall 'gui-install' $false 900 $true }
 		'system-install' { return Invoke-CleanInstall 'system-install' $true 360 }
-		'offline-install' { return Invoke-CleanInstall 'offline-install' $true 360 }
+		'offline-install' { return Invoke-OfflineInstall }
 		'repair-fa' { return Invoke-Repair 'repair-fa' @('/fa', (ConvertTo-MsiArg $MsiPath)) }
 		'repair-reinstall' { return Invoke-Repair 'repair-reinstall' @('/i', (ConvertTo-MsiArg $MsiPath), 'REINSTALL=ALL', 'REINSTALLMODE=amus') }
 		'uninstall' { return Invoke-Uninstall }
@@ -906,16 +1204,123 @@ function Invoke-RollbackUpgrade {
 	}
 }
 
-function Invoke-NonAdmin {
-	$before = Get-ServiceState
-	$run = Invoke-Msiexec -LogName 'non-admin' -Quiet -TimeoutSec 180 -Words @('/i', (ConvertTo-MsiArg $MsiPath))
+function New-FixturePassword {
+	$rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+	try {
+		$bytes = New-Object byte[] 24
+		$rng.GetBytes($bytes)
+		return 'Aa1!' + [Convert]::ToBase64String($bytes)
+	} finally {
+		$rng.Dispose()
+	}
+}
+
+function Add-AccessRule([string]$Path, [Security.Principal.IdentityReference]$Identity, [string]$Rights, [bool]$Container) {
+	$acl = Get-Acl -LiteralPath $Path
+	$flags = [Security.AccessControl.InheritanceFlags]::None
+	if ($Container) { $flags = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit' }
+	$prop = [Security.AccessControl.PropagationFlags]::None
+	$right = [Security.AccessControl.FileSystemRights]$Rights
+	$rule = New-Object System.Security.AccessControl.FileSystemAccessRule($Identity, $right, $flags, $prop, 'Allow')
+	$acl.AddAccessRule($rule)
+	Set-Acl -LiteralPath $Path -AclObject $acl
+	return $rule
+}
+
+function Remove-AccessRule([string]$Path, $Rule) {
+	if (-not $Rule -or -not (Test-Path -LiteralPath $Path)) { return }
+	$acl = Get-Acl -LiteralPath $Path
+	[void]$acl.RemoveAccessRule($Rule)
+	Set-Acl -LiteralPath $Path -AclObject $acl
+}
+
+function Test-FixtureUserElevated([Security.Principal.SecurityIdentifier]$Sid) {
+	Import-Module Microsoft.PowerShell.LocalAccounts -ErrorAction Stop
+	foreach ($member in @(Get-LocalGroupMember -Group 'Administrators' -ErrorAction SilentlyContinue)) {
+		if (-not $member) { continue }
+		if ([string]$member.SID -eq $Sid.Value) { return $true }
+	}
+	return $false
+}
+
+function Invoke-NonAdminResult($Run, [string]$Before) {
 	$allowed = @(1602, 1603, 1625)
 	$note = ''
-	if ($run.Reboot) { $note = 'reboot started' }
-	elseif ($allowed -notcontains $run.ExitCode) { $note = 'unexpected exit' }
+	if ($Run.Reboot) { $note = 'reboot started' }
+	elseif ($allowed -notcontains $Run.ExitCode) { $note = 'unexpected exit' }
 	elseif (Test-ProductPresent) { $note = 'product was installed' }
 	elseif ((Get-ServiceState) -ne 'absent') { $note = 'service remained' }
-	return New-CaseResult $(if ($note) { 'failed' } else { 'passed' }) $note $run.ExitCode $run.Log $run.Reboot $before (Get-ServiceState) $null
+	$status = 'passed'
+	if ($note) { $status = 'failed' }
+	return New-CaseResult $status $note $Run.ExitCode $Run.Log $Run.Reboot $Before (Get-ServiceState) $null
+}
+
+function Invoke-NonAdmin {
+	$before = Get-ServiceState
+	$created = $false
+	$script:FixtureCleanupNote = ''
+	$result = $null
+	$grants = New-Object System.Collections.Generic.List[object]
+	try {
+		if ($script:Identity -eq 'SYSTEM' -or $script:Identity -eq 'Administrator') {
+			try {
+				Import-Module Microsoft.PowerShell.LocalAccounts -ErrorAction Stop
+				if (Get-LocalUser -Name 'alice' -ErrorAction SilentlyContinue) {
+					$result = New-CaseResult 'failed' 'fixture user alice already exists' $null '' $false $before $before $null
+				} else {
+					$plain = New-FixturePassword
+					$secure = ConvertTo-SecureString $plain -AsPlainText -Force
+					New-LocalUser -Name 'alice' -Password $secure -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires -Description 'acceptance fixture' | Out-Null
+					$created = $true
+					$plain = ''
+					$sid = ([Security.Principal.NTAccount]::new('alice')).Translate([Security.Principal.SecurityIdentifier])
+					if (Test-FixtureUserElevated $sid) {
+						$result = New-CaseResult 'failed' 'fixture user is elevated' $null '' $false $before $before $null
+					} else {
+						$msiDir = Split-Path -Parent $MsiPath
+						[void]$grants.Add([pscustomobject]@{ Path = $EvidenceDirectory; Rule = (Add-AccessRule $EvidenceDirectory $sid 'Modify' $true) })
+						[void]$grants.Add([pscustomobject]@{ Path = $msiDir; Rule = (Add-AccessRule $msiDir $sid 'ReadAndExecute' $false) })
+						[void]$grants.Add([pscustomobject]@{ Path = $MsiPath; Rule = (Add-AccessRule $MsiPath $sid 'ReadAndExecute' $false) })
+						$script:SummaryIdentity = 'standard-user'
+						$run = Invoke-Msiexec -LogName 'non-admin' -Quiet -TimeoutSec 180 -RunAs 'alice' -RunAsPassword $secure -Words @('/i', (ConvertTo-MsiArg $MsiPath))
+						$result = Invoke-NonAdminResult $run $before
+					}
+				}
+			} catch {
+				$failure = $_
+				$errPath = Join-Path $EvidenceDirectory 'non-admin.err'
+				try { $failure | Out-File -FilePath $errPath -Encoding utf8 } catch { }
+				if (-not $result) {
+					$note = 'could not create fixture user'
+					if ($failure.Exception.Message -eq 'msiexec timed out') { $note = 'msiexec timed out' }
+					elseif ($created) { $note = 'could not start msiexec as fixture user' }
+					$result = New-CaseResult 'failed' $note $null '' $false $before (Get-ServiceState) $null
+				}
+			}
+		} else {
+			$run = Invoke-Msiexec -LogName 'non-admin' -Quiet -TimeoutSec 180 -Words @('/i', (ConvertTo-MsiArg $MsiPath))
+			$result = Invoke-NonAdminResult $run $before
+		}
+	} finally {
+		foreach ($grant in $grants) {
+			try { Remove-AccessRule $grant.Path $grant.Rule } catch { $script:FixtureCleanupNote = 'fixture access cleanup failed' }
+		}
+		if ($created) {
+			try {
+				Import-Module Microsoft.PowerShell.LocalAccounts -ErrorAction Stop
+				Remove-LocalUser -Name 'alice' | Out-Null
+			} catch {
+				$script:FixtureCleanupNote = 'fixture user cleanup failed'
+			}
+		}
+	}
+	if (-not $result) { $result = New-CaseResult 'failed' 'could not create fixture user' $null '' $false $before (Get-ServiceState) $null }
+	if ($script:FixtureCleanupNote) {
+		$result.Status = 'failed'
+		if (-not $result.Note) { $result.Note = $script:FixtureCleanupNote }
+		else { $result.Note = $result.Note + '; ' + $script:FixtureCleanupNote }
+	}
+	return $result
 }
 
 function Invoke-BetaConflict {
@@ -1015,6 +1420,7 @@ if ($Case -eq 'list') {
 	exit 0
 }
 if ($env:OS -ne 'Windows_NT') { throw 'Windows guest required' }
+if (-not [Environment]::Is64BitProcess) { throw '64-bit Windows PowerShell is required' }
 if (-not $DisposableGuest) { throw 'Disposable guest acknowledgement required' }
 if ($EvidenceId -and $EvidenceId -notmatch '^[a-z0-9][a-z0-9-]{0,63}$') { throw 'evidence id must be a short public token' }
 if (-not $EvidenceDirectory) { throw 'Evidence directory is required' }
@@ -1031,16 +1437,43 @@ $EvidenceDirectory = $evidenceFull
 
 try {
 	$MsiPath = Resolve-InputPath $MsiPath 'product MSI was not found'
-	if ($OlderMsi) { $OlderMsi = Resolve-InputPath $OlderMsi 'older MSI was not found' }
-	if ($BetaMsi) { $BetaMsi = Resolve-InputPath $BetaMsi 'beta MSI was not found' }
 	$spec = $null
 	foreach ($item in @(ConvertTo-Array $matrix.cases)) {
 		if ($item.id -eq $Case) { $spec = $item }
 	}
 	if (-not $spec) { throw 'unknown case' }
+	if ($OlderMsi) { $OlderMsi = Resolve-InputPath $OlderMsi 'older MSI was not found' }
+	elseif ($spec.requires.older_msi) {
+		try { $OlderMsi = Find-OlderProductMsi $repoRoot $MsiPath } catch {
+			if ($_.Exception.Message -eq 'multiple packages share the selected version') {
+				$script:Guest = Get-GuestFacts
+				$script:GuestSku = Get-ClaimedSku $script:Guest.Product $script:Guest.Edition $script:Guest.Build $script:Guest.InstallationType
+				$script:Identity = Get-IdentityLabel
+				$result = New-CaseResult 'not_run' 'multiple older packages' $null '' $false (Get-ServiceState) (Get-ServiceState) $null
+				Write-Summary $result
+				exit 2
+			}
+			throw
+		}
+	}
+	if ($BetaMsi) { $BetaMsi = Resolve-InputPath $BetaMsi 'beta MSI was not found' }
+	elseif ($spec.requires.beta_msi) {
+		try { $BetaMsi = Find-BetaMsi $repoRoot $MsiPath } catch {
+			if ($_.Exception.Message -eq 'multiple packages share the selected version') {
+				$script:Guest = Get-GuestFacts
+				$script:GuestSku = Get-ClaimedSku $script:Guest.Product $script:Guest.Edition $script:Guest.Build $script:Guest.InstallationType
+				$script:Identity = Get-IdentityLabel
+				$result = New-CaseResult 'not_run' 'multiple beta packages' $null '' $false (Get-ServiceState) (Get-ServiceState) $null
+				Write-Summary $result
+				exit 2
+			}
+			throw
+		}
+	}
 	$script:Guest = Get-GuestFacts
+	$script:GuestSku = Get-ClaimedSku $script:Guest.Product $script:Guest.Edition $script:Guest.Build $script:Guest.InstallationType
 	$script:Identity = Get-IdentityLabel
-	$script:Interactive = [bool][Environment]::UserInteractive
+	$script:Interactive = Test-InteractiveDesktop
 	$script:Offline = Test-OfflineGuest
 	Assert-PackageIdentity
 	$script:Commit = Get-RecordedCommit
