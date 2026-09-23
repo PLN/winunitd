@@ -244,7 +244,7 @@ still missing evidence.
 | `quiet-install` | R6.1, R6.4 | 0 | Clean `/qn` install. Service `winunitd`, display name WinUnit Manager, LocalSystem, automatic start, package binary and `--base-dir`. Application event source `winunitd`. PATH ownership under `HKLM\Software\PLN\winunitd`. Program Files `bin` and `doc`, ProgramData `units`, `enabled`, `journal`, `runtime`, `linger`, `daemon`. Examples stay documentation. No Go, WiX, .NET, or Python prerequisite action |
 | `gui-install` | R6.1, R6.4 | 0 | Same assertions with basic installer UI (`/qb!`) on an interactive desktop session. The log contains `UILevel = 3` |
 | `system-install` | R6.4 | 0 | Same assertions as SYSTEM |
-| `offline-install` | R6.4 | 0 | Same assertions with no default route. The harness removes and restores that route for this case |
+| `offline-install` | R6.4 | 0 | Same assertions with no default route. An empty IPv4 and IPv6 default-route table is offline. The probe is indeterminate only when NetTCPIP cannot load. The harness removes and restores that route for this case |
 | `repair-fa` | R6.1, R6.4 | 0 | Quiet `/fa` repair keeps the layout, event source, and PATH ownership |
 | `repair-reinstall` | R6.1, R6.4 | 0 | Quiet `/i REINSTALL=ALL REINSTALLMODE=amus` repair, the same layout assertions |
 | `uninstall` | R6.1, R6.4 | 0 | Service, product binaries, event source, and the owned PATH entry are gone. Unrelated PATH entries stay. ProgramData and a retained marker stay |
@@ -255,8 +255,8 @@ still missing evidence.
 | `rollback-test-fail-running` | R6.4 | 1603 | `WINUNITD_TEST_FAIL=1` during `/fa`. Log contains `InjectServiceFailure`. Delayed start and the running state are restored. Same-version bytes match; the delayed-start value is the restore check |
 | `rollback-test-fail-stopped` | R6.4 | 1603 | Same injected failure from a stopped service. The service stays stopped and delayed start is restored |
 | `rollback-upgrade` | R6.4 | 1603 | Injected failure while moving from the older package to `0.1.0`. The older payload hash, delayed start, and running state are restored |
-| `non-admin` | R6.4 | 1602, 1603, or 1625 | Quiet install without an elevated token. An elevated parent uses fixture user alice. The product stays absent |
-| `beta-conflict` | R6.4 | 1603 | Unsigned beta is installed. Product install logs `The unsigned beta package is installed.` and leaves the beta in place. The harness discovers a built beta MSI when `-BetaMsi` is omitted, then removes the beta |
+| `non-admin` | R6.4 | 1602, 1603, or 1625 | Quiet install without an elevated token. An elevated parent creates fixture user alice, starts the Secondary Logon service, and starts msiexec with LogonUser and CreateProcessAsUser. A start failure note includes the Win32 code. The product stays absent |
+| `beta-conflict` | R6.4 | 1603 | Unsigned beta is installed. Product install logs `The unsigned beta package is installed.` and leaves the beta in place. The harness discovers a built beta MSI when `-BetaMsi` is omitted, stops winunitd, waits until it is stopped, then removes the beta. A failed removal force-stops the service and records the remove exit |
 | `preflight-reparse` | R6.3 | 1603 | Junction at `%ProgramData%\winunitd`. Log contains `preflight conflict:` and `reparse point`. The link and a marker in the target stay. The product layout stays absent |
 | `preflight-unmanaged-service` | R6.3 | 1603 | Pre-existing `winunitd` service whose image is not the package binary. Log contains `preflight conflict:` and `unmanaged winunitd binary path`. The image stays. The product layout stays absent |
 
@@ -361,11 +361,14 @@ interactive and its session id is greater than 0. Server Core stays
 Application event source, PATH ownership, and no destination Go, WiX,
 .NET, or Python action. The verbose log must contain `UILevel = 3`.
 Run this case in the desktop session. A session 0 or remoting session
-is `not_run`.
+is `not_run`. The skip note says the process is not user-interactive
+in a desktop session, and the session id must be greater than 0.
 
 `offline-install` removes IPv4 and IPv6 default routes for that case
 only, requires the product MSI and the evidence directory to be on a
-local disk, and restores the routes afterward. The summary records
+local disk, and restores the routes afterward. An empty default-route
+table is offline. The probe is indeterminate only when the NetTCPIP
+module cannot load, and that is the skip. The summary records
 `offline` true. Gateway addresses stay out of the summary. A restore
 failure fails the case.
 
@@ -373,7 +376,11 @@ failure fails the case.
 parent is already a standard user or a filtered administrator token,
 msiexec runs as that token. That token must be able to read the product
 MSI and write the evidence directory. When the parent is Administrator or
-SYSTEM, the harness creates local user alice, starts msiexec as alice,
+SYSTEM, the harness creates local user alice, starts the Secondary
+Logon service, and starts msiexec as alice with LogonUser and
+CreateProcessAsUser. If that start fails, it tries a one-shot scheduled
+task as alice. The failure note includes the Win32 code and omits the
+password. The private error file is still `non-admin.err`. The harness
 then removes alice. If alice already exists, the case fails and does
 not reuse that account. The summary identity for the fixture path is
 `standard-user`. Fixture names stay alice, bob, and carol.
@@ -384,7 +391,12 @@ discovers `winunitd-<version>-x64-beta.msi` whose UpgradeCode is
 the top level of `packaging/beta`, and the directory beside the product
 MSI. The version is read from the package. The harness does not select
 a version that is not in one of those files, and it does not search
-`packaging/beta/obj`.
+`packaging/beta/obj`. Before `msiexec /x`, the harness force-stops
+winunitd and waits until the service is stopped. The beta runs
+`CheckStopped` and `PreparePolicy` on removal before `StopServices`,
+and both require a stopped service. If removal fails, the harness
+force-stops again and records the remove exit. The product refusal
+stays exit 1603 with the unsigned-beta marker.
 
 `downgrade`, `n1-upgrade`, and `rollback-upgrade` use `-OlderMsi` when
 it is passed. Otherwise they look for `winunitd-<version>-x64.msi`
@@ -483,4 +495,25 @@ Server Core remains an installation type of the claimed Server 2022 and
 Server 2025 SKUs. This Evaluation guest fills none of those rows. R6.1
 and R6.4 stay unchecked. R6.5 and overall R6 stay open. A3 / R4.4 stay
 deferred. [#245](https://github.com/PLN/winunitd/issues/245) stays open.
+
+### Harness corrections after f1e38a0-r64-continue
+
+No new guest result is recorded here. These harness corrections do not
+check R6.1 or R6.4, do not start R6.5, and do not invent a
+ProductVersion. The product UpgradeCode remains
+`A512B91F-1883-40FD-8EDB-5B8C5708DEEA`. `downgrade`, `n1-upgrade`, and
+`rollback-upgrade` stay `not_run`.
+
+`Test-OfflineGuest` treats an empty IPv4 and IPv6 default-route table
+as offline. It returns indeterminate only when NetTCPIP cannot load.
+`gui-install` still requires a user-interactive process whose session
+id is greater than 0. `non-admin` starts the Secondary Logon service,
+then starts msiexec as fixture user alice with LogonUser and
+CreateProcessAsUser. The failure note includes the Win32 code, and
+`non-admin.err` is still written. `beta-conflict` force-stops winunitd
+and waits until it is stopped before `msiexec /x`. A failed removal
+force-stops the service again and records the remove exit. Beta
+`CheckStopped` runs on REMOVE before `StopServices`, and `PreparePolicy`
+uses the same stopped check, which matches the beta install contract.
+The harness stops the service instead of changing that package.
 

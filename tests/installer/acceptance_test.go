@@ -364,8 +364,14 @@ func TestContinuationHarnessUnblocksRemainingCases(t *testing.T) {
 	script := readRepo(t, root, "tests/installer/acceptance.ps1")
 	evidence := readRepo(t, root, "docs/R6-EVIDENCE.md")
 	build := readRepo(t, root, "packaging/wix/build.ps1")
-	if !strings.Contains(evidence, "## Acceptance continuation") || !strings.Contains(evidence, "No continuation evidence id is assigned") {
+	if !strings.Contains(evidence, "## Acceptance continuation") || !strings.Contains(evidence, "f1e38a0-r64-continue") {
 		t.Fatal("continuation evidence section is missing")
+	}
+	if !strings.Contains(evidence, "Could not start msiexec as fixture user alice") || !strings.Contains(evidence, "Default route indeterminate") {
+		t.Fatal("f1e38a0-r64-continue history was rewritten")
+	}
+	if !strings.Contains(evidence, "A512B91F-1883-40FD-8EDB-5B8C5708DEEA") {
+		t.Fatal("continuation record lost the product UpgradeCode")
 	}
 	if !strings.Contains(evidence, "| `quiet-install` | 0 |") || !strings.Contains(evidence, "9961798-r64-accept") {
 		t.Fatal("9961798-r64-accept history was overwritten")
@@ -387,6 +393,17 @@ func TestContinuationHarnessUnblocksRemainingCases(t *testing.T) {
 	if !strings.Contains(interactive, "SessionId") || !strings.Contains(interactive, "UserInteractive") {
 		t.Fatal("interactive detection must require a desktop session")
 	}
+	if !strings.Contains(interactive, "return $session -gt 0") || strings.Contains(interactive, "return $session -ge 0") {
+		t.Fatal("gui-install must keep the session id greater than 0 gate")
+	}
+	offlineProbe := extractFunction(t, script, "Test-OfflineGuest {")
+	load := strings.Index(offlineProbe, "Import-Module NetTCPIP -ErrorAction Stop")
+	nullRet := strings.Index(offlineProbe, "return $null")
+	v4 := strings.Index(offlineProbe, "Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue")
+	v6 := strings.Index(offlineProbe, "Get-NetRoute -DestinationPrefix '::/0' -ErrorAction SilentlyContinue")
+	if load < 0 || nullRet < load || v4 < nullRet || v6 < nullRet || !strings.Contains(offlineProbe, "-eq 0") {
+		t.Fatal("offline probe must treat an empty route table as offline and stay indeterminate only when NetTCPIP cannot load")
+	}
 	offline := extractFunction(t, script, "Invoke-OfflineInstall {")
 	remove := strings.Index(offline, "Remove-NetRoute")
 	restore := strings.Index(offline, "Restore-DefaultRoutes")
@@ -398,12 +415,35 @@ func TestContinuationHarnessUnblocksRemainingCases(t *testing.T) {
 	if strings.Contains(skip, "default route present") {
 		t.Fatal("offline-install still skips when a default route is present")
 	}
+	if !strings.Contains(skip, "session id greater than 0") {
+		t.Fatal("gui-install skip note must name the session id gate")
+	}
 	nonAdmin := extractFunction(t, script, "Invoke-NonAdmin {")
 	if !strings.Contains(nonAdmin, "New-LocalUser -Name 'alice'") || !strings.Contains(nonAdmin, "Remove-LocalUser -Name 'alice'") {
 		t.Fatal("non-admin elevated parent must use fixture user alice")
 	}
 	if !strings.Contains(nonAdmin, "-RunAs 'alice'") {
 		t.Fatal("non-admin msiexec must run as alice")
+	}
+	if !strings.Contains(nonAdmin, "non-admin.err") || !strings.Contains(nonAdmin, "could not start msiexec as fixture user") {
+		t.Fatal("non-admin must keep the private error file and the start-failure note")
+	}
+	if !strings.Contains(script, "LogonUser") || !strings.Contains(script, "CreateProcessAsUser") || !strings.Contains(script, "seclogon") {
+		t.Fatal("non-admin start must use LogonUser and CreateProcessAsUser after starting secondary logon")
+	}
+	if !strings.Contains(script, "Win32 ") {
+		t.Fatal("non-admin start failure must surface the Win32 code")
+	}
+	stopHelper := extractFunction(t, script, "Stop-AcceptanceService {")
+	if !strings.Contains(stopHelper, "Stop-Service -Name winunitd -Force") || !strings.Contains(stopHelper, "Wait-ServiceState 'stopped'") {
+		t.Fatal("beta cleanup must force-stop winunitd and wait until it is stopped")
+	}
+	beta := extractFunction(t, script, "Invoke-BetaConflict {")
+	stop := strings.Index(beta, "Stop-AcceptanceService")
+	remove := strings.Index(beta, "'/x'")
+	again := strings.LastIndex(beta, "Stop-AcceptanceService")
+	if stop < 0 || remove < 0 || stop > remove || again <= remove || !strings.Contains(beta, "remove exit") {
+		t.Fatal("beta cleanup must stop the service before msiexec /x and record the remove exit")
 	}
 	if !strings.Contains(script, `dist\beta`) || !strings.Contains(script, `packaging\beta`) {
 		t.Fatal("beta discovery lost the packaging/beta output layout")

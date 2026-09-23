@@ -55,6 +55,8 @@ $script:Offline = $null
 $script:Interactive = $false
 $script:SummaryIdentity = ''
 $script:GuestSku = 'unclaimed'
+$script:SecLogonPriorStart = $null
+$script:SecLogonPriorRunning = $false
 
 function ConvertTo-Array($Value) {
 	if ($null -eq $Value) { return @() }
@@ -352,13 +354,9 @@ function Invoke-Msiexec {
 		$arguments = ($argv -join ' ')
 		$hidden = [bool]$Quiet -or [bool]$RunAs
 		if ($RunAs) {
-			$info = New-MsiexecStartInfo $arguments $false $true $RunAs $RunAsPassword $true
-			try {
-				$proc = [System.Diagnostics.Process]::Start($info)
-			} catch {
-				$info = New-MsiexecStartInfo $arguments $false $true $RunAs $RunAsPassword $false
-				$proc = [System.Diagnostics.Process]::Start($info)
-			}
+			$exit = Start-FixtureMsiexec -User $RunAs -Password $RunAsPassword -Arguments $arguments -TimeoutSec $TimeoutSec
+			$reboot = (Get-BootStamp) -ne $boot
+			return [pscustomobject]@{ ExitCode = [int]$exit; Log = $log; Reboot = [bool]$reboot }
 		} else {
 			$info = New-MsiexecStartInfo $arguments $true $hidden '' $null $false
 			$proc = [System.Diagnostics.Process]::Start($info)
@@ -504,14 +502,16 @@ function Get-ClaimedSku([string]$Product, [string]$Edition, [string]$Build, [str
 }
 
 function Test-OfflineGuest {
+	# An empty route table is offline. Indeterminate only when NetTCPIP
+	# cannot load. Get-NetRoute's empty-result error must not become that.
 	try {
 		Import-Module NetTCPIP -ErrorAction Stop
-		$v4 = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop)
-		$v6 = @(Get-NetRoute -DestinationPrefix '::/0' -ErrorAction SilentlyContinue)
-		return (@($v4).Count + @($v6).Count) -eq 0
 	} catch {
 		return $null
 	}
+	$v4 = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue)
+	$v6 = @(Get-NetRoute -DestinationPrefix '::/0' -ErrorAction SilentlyContinue)
+	return (@($v4).Count + @($v6).Count) -eq 0
 }
 
 function Get-DefaultRouteSnapshot {
@@ -708,9 +708,9 @@ function Get-SkipReason($Spec) {
 	if ($req.identity -eq 'elevated' -and $script:Identity -ne 'SYSTEM' -and $script:Identity -ne 'Administrator') { return 'current identity is not elevated' }
 	# non-admin drops an elevated parent to fixture user alice.
 	if ($req.identity -eq 'not-elevated' -and $Case -ne 'non-admin' -and ($script:Identity -eq 'SYSTEM' -or $script:Identity -eq 'Administrator')) { return 'current identity is elevated' }
-	if ($req.interactive -and -not $script:Interactive) { return 'no interactive session' }
+	if ($req.interactive -and -not $script:Interactive) { return 'no interactive session: process is not user-interactive in a desktop session (session id greater than 0)' }
 	if ($req.offline) {
-		if ($null -eq $script:Offline) { return 'could not determine default route' }
+		if ($null -eq $script:Offline) { return 'could not determine default route: NetTCPIP module did not load' }
 	}
 	$present = Test-ProductPresent
 	if ($req.product -eq 'absent' -and $present) { return 'product is already installed' }
@@ -1255,6 +1255,587 @@ function Invoke-NonAdminResult($Run, [string]$Before) {
 	return New-CaseResult $status $note $Run.ExitCode $Run.Log $Run.Reboot $Before (Get-ServiceState) $null
 }
 
+function Ensure-FixtureType {
+	if ('WinunitdFixture' -as [type]) { return }
+	Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Security;
+using System.Text;
+
+public static class WinunitdFixture {
+	const uint TOKEN_ADJUST_PRIVILEGES = 0x0020;
+	const uint TOKEN_QUERY = 0x0008;
+	const uint SE_PRIVILEGE_ENABLED = 0x00000002;
+	const uint POLICY_LOOKUP_NAMES = 0x00000800;
+	const uint POLICY_CREATE_ACCOUNT = 0x00000010;
+
+	[StructLayout(LayoutKind.Sequential)]
+	struct LUID {
+		public uint LowPart;
+		public int HighPart;
+	}
+
+	[StructLayout(LayoutKind.Sequential)]
+	struct LUID_AND_ATTRIBUTES {
+		public LUID Luid;
+		public uint Attributes;
+	}
+
+	[StructLayout(LayoutKind.Sequential)]
+	struct TOKEN_PRIVILEGES {
+		public int Count;
+		public LUID_AND_ATTRIBUTES Priv;
+	}
+
+	[StructLayout(LayoutKind.Sequential)]
+	struct LSA_UNICODE_STRING {
+		public ushort Length;
+		public ushort MaximumLength;
+		public IntPtr Buffer;
+	}
+
+	[StructLayout(LayoutKind.Sequential)]
+	struct LSA_OBJECT_ATTRIBUTES {
+		public int Length;
+		public IntPtr RootDirectory;
+		public IntPtr ObjectName;
+		public uint Attributes;
+		public IntPtr SecurityDescriptor;
+		public IntPtr SecurityQualityOfService;
+	}
+
+	[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+	struct STARTUPINFO {
+		public int cb;
+		public IntPtr lpReserved;
+		public IntPtr lpDesktop;
+		public IntPtr lpTitle;
+		public int dwX;
+		public int dwY;
+		public int dwXSize;
+		public int dwYSize;
+		public int dwXCountChars;
+		public int dwYCountChars;
+		public int dwFillAttribute;
+		public int dwFlags;
+		public short wShowWindow;
+		public short cbReserved2;
+		public IntPtr lpReserved2;
+		public IntPtr hStdInput;
+		public IntPtr hStdOutput;
+		public IntPtr hStdError;
+	}
+
+	[StructLayout(LayoutKind.Sequential)]
+	struct PROCESS_INFORMATION {
+		public IntPtr hProcess;
+		public IntPtr hThread;
+		public int dwProcessId;
+		public int dwThreadId;
+	}
+
+	[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+	struct PROFILEINFO {
+		public int dwSize;
+		public int dwFlags;
+		public string lpUserName;
+		public string lpProfilePath;
+		public string lpDefaultPath;
+		public string lpServerName;
+		public string lpPolicyPath;
+		public IntPtr hProfile;
+	}
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	static extern bool CloseHandle(IntPtr handle);
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	static extern IntPtr LocalFree(IntPtr memory);
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	static extern bool TerminateProcess(IntPtr process, uint exitCode);
+
+	[DllImport("advapi32.dll", SetLastError = true)]
+	static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+
+	[DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+	static extern bool LookupPrivilegeValue(string system, string name, out LUID luid);
+
+	[DllImport("advapi32.dll", SetLastError = true)]
+	static extern bool AdjustTokenPrivileges(IntPtr token, bool disableAll, ref TOKEN_PRIVILEGES newState, int length, IntPtr previous, IntPtr returned);
+
+	[DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+	static extern bool ConvertStringSidToSid(string text, out IntPtr sid);
+
+	[DllImport("advapi32.dll")]
+	static extern uint LsaOpenPolicy(IntPtr system, ref LSA_OBJECT_ATTRIBUTES attributes, uint access, out IntPtr policy);
+
+	[DllImport("advapi32.dll")]
+	static extern uint LsaAddAccountRights(IntPtr policy, IntPtr sid, LSA_UNICODE_STRING[] rights, uint count);
+
+	[DllImport("advapi32.dll")]
+	static extern uint LsaRemoveAccountRights(IntPtr policy, IntPtr sid, bool allRights, LSA_UNICODE_STRING[] rights, uint count);
+
+	[DllImport("advapi32.dll")]
+	static extern uint LsaClose(IntPtr policy);
+
+	[DllImport("advapi32.dll")]
+	static extern uint LsaNtStatusToWinError(uint status);
+
+	[DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+	static extern bool LogonUser(string user, string domain, IntPtr password, int logonType, int provider, out IntPtr token);
+
+	[DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+	static extern bool CreateProcessAsUser(IntPtr token, string application, StringBuilder commandLine, IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string directory, ref STARTUPINFO startup, out PROCESS_INFORMATION information);
+
+	[DllImport("userenv.dll", SetLastError = true)]
+	static extern bool CreateEnvironmentBlock(out IntPtr environment, IntPtr token, bool inherit);
+
+	[DllImport("userenv.dll", SetLastError = true)]
+	static extern bool DestroyEnvironmentBlock(IntPtr environment);
+
+	[DllImport("userenv.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+	static extern bool LoadUserProfile(IntPtr token, ref PROFILEINFO profile);
+
+	[DllImport("userenv.dll", SetLastError = true)]
+	static extern bool UnloadUserProfile(IntPtr token, IntPtr profile);
+
+	static void EnablePrivilege(string name) {
+		IntPtr token;
+		if (!OpenProcessToken(System.Diagnostics.Process.GetCurrentProcess().Handle, TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, out token)) {
+			throw new Win32Exception(Marshal.GetLastWin32Error());
+		}
+		try {
+			LUID luid;
+			if (!LookupPrivilegeValue(null, name, out luid)) {
+				throw new Win32Exception(Marshal.GetLastWin32Error());
+			}
+			LUID_AND_ATTRIBUTES item = new LUID_AND_ATTRIBUTES();
+			item.Luid = luid;
+			item.Attributes = SE_PRIVILEGE_ENABLED;
+			TOKEN_PRIVILEGES privileges = new TOKEN_PRIVILEGES();
+			privileges.Count = 1;
+			privileges.Priv = item;
+			if (!AdjustTokenPrivileges(token, false, ref privileges, 0, IntPtr.Zero, IntPtr.Zero)) {
+				throw new Win32Exception(Marshal.GetLastWin32Error());
+			}
+			int error = Marshal.GetLastWin32Error();
+			if (error != 0) {
+				throw new Win32Exception(error);
+			}
+		} finally {
+			CloseHandle(token);
+		}
+	}
+
+	static void TryEnable(string name) {
+		try { EnablePrivilege(name); } catch (Win32Exception) { }
+	}
+
+	static void AccountRight(string sidText, bool add) {
+		EnablePrivilege("SeTcbPrivilege");
+		IntPtr sid;
+		if (!ConvertStringSidToSid(sidText, out sid)) {
+			throw new Win32Exception(Marshal.GetLastWin32Error());
+		}
+		IntPtr policy = IntPtr.Zero;
+		try {
+			LSA_OBJECT_ATTRIBUTES attributes = new LSA_OBJECT_ATTRIBUTES();
+			attributes.Length = Marshal.SizeOf(typeof(LSA_OBJECT_ATTRIBUTES));
+			uint status = LsaOpenPolicy(IntPtr.Zero, ref attributes, POLICY_LOOKUP_NAMES | POLICY_CREATE_ACCOUNT, out policy);
+			if (status != 0) {
+				throw new Win32Exception((int)LsaNtStatusToWinError(status));
+			}
+			string right = "SeBatchLogonRight";
+			IntPtr buffer = Marshal.StringToHGlobalUni(right);
+			try {
+				LSA_UNICODE_STRING unicode = new LSA_UNICODE_STRING();
+				unicode.Buffer = buffer;
+				unicode.Length = (ushort)(right.Length * 2);
+				unicode.MaximumLength = (ushort)((right.Length + 1) * 2);
+				LSA_UNICODE_STRING[] rights = new LSA_UNICODE_STRING[] { unicode };
+				if (add) {
+					status = LsaAddAccountRights(policy, sid, rights, 1);
+				} else {
+					status = LsaRemoveAccountRights(policy, sid, false, rights, 1);
+				}
+				if (status != 0) {
+					throw new Win32Exception((int)LsaNtStatusToWinError(status));
+				}
+			} finally {
+				Marshal.FreeHGlobal(buffer);
+			}
+		} finally {
+			if (policy != IntPtr.Zero) {
+				LsaClose(policy);
+			}
+			LocalFree(sid);
+		}
+	}
+
+	public static void GrantBatchLogon(string sidText) { AccountRight(sidText, true); }
+
+	public static void RevokeBatchLogon(string sidText) { AccountRight(sidText, false); }
+
+	public static FixtureProcess Start(string user, SecureString password, int logonType, string application, string commandLine, string directory) {
+		TryEnable("SeAssignPrimaryTokenPrivilege");
+		TryEnable("SeIncreaseQuotaPrivilege");
+		TryEnable("SeBackupPrivilege");
+		TryEnable("SeRestorePrivilege");
+		IntPtr raw = Marshal.SecureStringToGlobalAllocUnicode(password);
+		IntPtr token;
+		try {
+			if (!LogonUser(user, ".", raw, logonType, 0, out token)) {
+				throw new Win32Exception(Marshal.GetLastWin32Error());
+			}
+		} finally {
+			Marshal.ZeroFreeGlobalAllocUnicode(raw);
+		}
+		IntPtr profile = IntPtr.Zero;
+		try {
+			PROFILEINFO info = new PROFILEINFO();
+			info.dwSize = Marshal.SizeOf(typeof(PROFILEINFO));
+			info.dwFlags = 1;
+			info.lpUserName = user;
+			if (LoadUserProfile(token, ref info)) {
+				profile = info.hProfile;
+			}
+			IntPtr environment = IntPtr.Zero;
+			bool haveEnvironment = CreateEnvironmentBlock(out environment, token, false);
+			try {
+				STARTUPINFO startup = new STARTUPINFO();
+				startup.cb = Marshal.SizeOf(typeof(STARTUPINFO));
+				PROCESS_INFORMATION created;
+				uint flags = 0x08000000;
+				if (haveEnvironment) {
+					flags |= 0x00000400;
+				}
+				StringBuilder command = new StringBuilder(commandLine, commandLine.Length + 1);
+				if (!CreateProcessAsUser(token, application, command, IntPtr.Zero, IntPtr.Zero, false, flags, haveEnvironment ? environment : IntPtr.Zero, directory, ref startup, out created)) {
+					throw new Win32Exception(Marshal.GetLastWin32Error());
+				}
+				CloseHandle(created.hThread);
+				FixtureProcess process = new FixtureProcess(token, profile, created.hProcess);
+				token = IntPtr.Zero;
+				profile = IntPtr.Zero;
+				return process;
+			} finally {
+				if (haveEnvironment && environment != IntPtr.Zero) {
+					DestroyEnvironmentBlock(environment);
+				}
+			}
+		} catch {
+			if (profile != IntPtr.Zero) {
+				UnloadUserProfile(token, profile);
+			}
+			if (token != IntPtr.Zero) {
+				CloseHandle(token);
+			}
+			throw;
+		}
+	}
+}
+
+public sealed class FixtureProcess : IDisposable {
+	IntPtr token;
+	IntPtr profile;
+	IntPtr process;
+
+	public FixtureProcess(IntPtr token, IntPtr profile, IntPtr process) {
+		this.token = token;
+		this.profile = profile;
+		this.process = process;
+	}
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	static extern bool CloseHandle(IntPtr handle);
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	static extern bool TerminateProcess(IntPtr process, uint exitCode);
+
+	[DllImport("userenv.dll", SetLastError = true)]
+	static extern bool UnloadUserProfile(IntPtr token, IntPtr profile);
+
+	public bool Wait(int milliseconds) {
+		return WaitForSingleObject(process, (uint)milliseconds) == 0;
+	}
+
+	public int GetExitCode() {
+		uint code;
+		if (!GetExitCodeProcess(process, out code)) {
+			throw new Win32Exception(Marshal.GetLastWin32Error());
+		}
+		return unchecked((int)code);
+	}
+
+	public void Kill() {
+		TerminateProcess(process, 1);
+	}
+
+	public void Dispose() {
+		if (process != IntPtr.Zero) {
+			CloseHandle(process);
+			process = IntPtr.Zero;
+		}
+		if (profile != IntPtr.Zero && token != IntPtr.Zero) {
+			UnloadUserProfile(token, profile);
+			profile = IntPtr.Zero;
+		}
+		if (token != IntPtr.Zero) {
+			CloseHandle(token);
+			token = IntPtr.Zero;
+		}
+	}
+}
+'@
+}
+
+function Add-Win32Code($Codes, $ErrorRecord) {
+	$ex = $ErrorRecord.Exception
+	while ($ex) {
+		$win = $ex -as [ComponentModel.Win32Exception]
+		if ($win) {
+			[void]$Codes.Add([int]$win.NativeErrorCode)
+			return
+		}
+		$match = [regex]::Match([string]$ex.Message, 'Win32 ([0-9]+)')
+		if ($match.Success) {
+			[void]$Codes.Add([int]$match.Groups[1].Value)
+			return
+		}
+		$ex = $ex.InnerException
+	}
+}
+
+function Format-FixtureStartNote($Codes) {
+	$seen = @{}
+	$parts = New-Object System.Collections.Generic.List[string]
+	foreach ($code in @($Codes)) {
+		$n = [int]$code
+		if ($n -le 0 -or $seen.ContainsKey([string]$n)) { continue }
+		$seen[[string]$n] = $true
+		[void]$parts.Add('Win32 ' + $n)
+	}
+	if ($parts.Count -eq 0) { return 'could not start msiexec as fixture user' }
+	return 'could not start msiexec as fixture user: ' + ($parts -join ' ')
+}
+
+function Enable-SecondaryLogon {
+	$key = 'HKLM:\SYSTEM\CurrentControlSet\Services\seclogon'
+	if (-not (Test-Path -LiteralPath $key)) { throw 'could not start msiexec as fixture user: Win32 1060' }
+	$start = [int](Get-ItemProperty -LiteralPath $key).Start
+	$running = (Get-Service -Name seclogon).Status -eq 'Running'
+	$script:SecLogonPriorStart = $start
+	$script:SecLogonPriorRunning = $running
+	if ($start -eq 4) {
+		& sc.exe config seclogon start= demand | Out-Null
+		if ($LASTEXITCODE -ne 0) { throw "could not start msiexec as fixture user: Win32 $LASTEXITCODE" }
+	}
+	if (-not $running) {
+		& sc.exe start seclogon | Out-Null
+		$code = [int]$LASTEXITCODE
+		if ($code -ne 0 -and $code -ne 1056) { throw "could not start msiexec as fixture user: Win32 $code" }
+		$deadline = (Get-Date).AddSeconds(30)
+		do {
+			if ((Get-Service -Name seclogon).Status -eq 'Running') { return }
+			if ((Get-Date) -ge $deadline) { throw 'could not start msiexec as fixture user: Win32 1053' }
+			Start-Sleep -Seconds 1
+		} while ($true)
+	}
+}
+
+function Restore-SecondaryLogon {
+	if ($null -eq $script:SecLogonPriorStart) { return }
+	$key = 'HKLM:\SYSTEM\CurrentControlSet\Services\seclogon'
+	try {
+		if (Test-Path -LiteralPath $key) {
+			$prior = [int]$script:SecLogonPriorStart
+			$current = [int](Get-ItemProperty -LiteralPath $key).Start
+			if ($current -ne $prior) {
+				$word = 'demand'
+				if ($prior -eq 2) { $word = 'auto' }
+				elseif ($prior -eq 4) { $word = 'disabled' }
+				& sc.exe config seclogon start= $word | Out-Null
+			}
+			if (-not $script:SecLogonPriorRunning) {
+				& sc.exe stop seclogon | Out-Null
+			}
+		}
+	} catch {
+		# The case result does not depend on restoring this service.
+	} finally {
+		$script:SecLogonPriorStart = $null
+	}
+}
+
+function Start-TokenMsiexec([string]$User, [Security.SecureString]$Password, [string]$Arguments, [int]$TimeoutSec, [int]$LogonType) {
+	$exe = Join-Path $env:SystemRoot 'System32\msiexec.exe'
+	$command = '"' + $exe + '" ' + $Arguments
+	$proc = [WinunitdFixture]::Start($User, $Password, $LogonType, $exe, $command, $env:SystemRoot)
+	try {
+		if (-not $proc.Wait($TimeoutSec * 1000)) {
+			try { $proc.Kill() } catch { }
+			throw 'msiexec timed out'
+		}
+		return $proc.GetExitCode()
+	} finally {
+		$proc.Dispose()
+	}
+}
+
+function Start-LogonMsiexec([string]$User, [Security.SecureString]$Password, [string]$Arguments, [int]$TimeoutSec) {
+	$info = New-MsiexecStartInfo $Arguments $false $true $User $Password $true
+	try {
+		$proc = [System.Diagnostics.Process]::Start($info)
+	} catch {
+		$first = $_
+		$info = New-MsiexecStartInfo $Arguments $false $true $User $Password $false
+		try {
+			$proc = [System.Diagnostics.Process]::Start($info)
+		} catch {
+			throw $first
+		}
+	}
+	if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
+		try { $proc.Kill() } catch { }
+		throw 'msiexec timed out'
+	}
+	$proc.Refresh()
+	return [int]$proc.ExitCode
+}
+
+function ConvertTo-PlainPassword([Security.SecureString]$Password) {
+	$ptr = [Runtime.InteropServices.Marshal]::SecureStringToGlobalAllocUnicode($Password)
+	try { return [Runtime.InteropServices.Marshal]::PtrToStringUni($ptr) }
+	finally { [Runtime.InteropServices.Marshal]::ZeroFreeGlobalAllocUnicode($ptr) }
+}
+
+function Start-TaskMsiexec([string]$User, [Security.SecureString]$Password, [string]$Arguments, [int]$TimeoutSec) {
+	$name = 'winunitd-acceptance-alice'
+	$service = New-Object -ComObject 'Schedule.Service'
+	$service.Connect()
+	$folder = $service.GetFolder('\')
+	try { $folder.DeleteTask($name, 0) } catch { }
+	$task = $service.NewTask(0)
+	$task.Principal.UserId = '.\' + $User
+	$task.Principal.LogonType = 1
+	$task.Principal.RunLevel = 0
+	$task.Settings.DisallowStartIfOnBatteries = $false
+	$task.Settings.StopIfGoingOnBatteries = $false
+	$task.Settings.ExecutionTimeLimit = 'PT4H'
+	$action = $task.Actions.Create(0)
+	$action.Path = Join-Path $env:SystemRoot 'System32\msiexec.exe'
+	$action.Arguments = $Arguments
+	$plain = ConvertTo-PlainPassword $Password
+	try {
+		try {
+			$registered = $folder.RegisterTaskDefinition($name, $task, 6, ('.\' + $User), $plain, 1, $null)
+		} catch {
+			$win = 0
+			if ($_.Exception -and $_.Exception.HResult) { $win = [int]($_.Exception.HResult -band 0xFFFF) }
+			if ($win -le 0) { $win = 1385 }
+			throw "could not start msiexec as fixture user: Win32 $win"
+		}
+	} finally {
+		$plain = $null
+	}
+	try {
+		$beforeRun = [datetime]$registered.LastRunTime
+		$registered.Run($null) | Out-Null
+		$deadline = (Get-Date).AddSeconds($TimeoutSec)
+		$sawRunning = $false
+		$code = 0
+		while ($true) {
+			$current = $folder.GetTask($name)
+			$state = [int]$current.State
+			$code = [int64]$current.LastTaskResult
+			$ran = ([datetime]$current.LastRunTime) -gt $beforeRun
+			if ($state -eq 4) { $sawRunning = $true }
+			$busy = $state -eq 4 -or $state -eq 2 -or $code -eq 267009 -or $code -eq 267011
+			if (($sawRunning -or $ran) -and -not $busy) { break }
+			if ((Get-Date) -ge $deadline) {
+				try { $current.Stop(0) } catch { }
+				throw 'msiexec timed out'
+			}
+			Start-Sleep -Seconds 1
+		}
+		if (($code -band 0x80000000) -ne 0) {
+			$win = [int]($code -band 0xFFFF)
+			if ($win -le 0) { $win = [int]$code }
+			throw "could not start msiexec as fixture user: Win32 $win"
+		}
+		return $code
+	} finally {
+		try { $folder.DeleteTask($name, 0) } catch { }
+	}
+}
+
+function Start-FixtureMsiexec([string]$User, [Security.SecureString]$Password, [string]$Arguments, [int]$TimeoutSec) {
+	Ensure-FixtureType
+	$codes = New-Object System.Collections.Generic.List[int]
+	$exit = 0
+	$started = $false
+	try {
+		try { Enable-SecondaryLogon } catch { Add-Win32Code $codes $_ }
+		$sidText = ([Security.Principal.NTAccount]::new($User)).Translate([Security.Principal.SecurityIdentifier]).Value
+		foreach ($logonType in @(4, 2)) {
+			if ($started) { break }
+			$granted = $false
+			try {
+				if ($logonType -eq 4) {
+					[WinunitdFixture]::GrantBatchLogon($sidText)
+					$granted = $true
+				}
+				$exit = Start-TokenMsiexec -User $User -Password $Password -Arguments $Arguments -TimeoutSec $TimeoutSec -LogonType $logonType
+				$started = $true
+			} catch {
+				if ($_.Exception.Message -eq 'msiexec timed out') { throw }
+				Add-Win32Code $codes $_
+			} finally {
+				if ($granted) {
+					try { [WinunitdFixture]::RevokeBatchLogon($sidText) } catch { }
+				}
+			}
+		}
+		if (-not $started) {
+			try {
+				$exit = Start-LogonMsiexec -User $User -Password $Password -Arguments $Arguments -TimeoutSec $TimeoutSec
+				$started = $true
+			} catch {
+				if ($_.Exception.Message -eq 'msiexec timed out') { throw }
+				Add-Win32Code $codes $_
+			}
+		}
+		if (-not $started) {
+			try {
+				$exit = Start-TaskMsiexec -User $User -Password $Password -Arguments $Arguments -TimeoutSec $TimeoutSec
+				$started = $true
+			} catch {
+				if ($_.Exception.Message -eq 'msiexec timed out') { throw }
+				Add-Win32Code $codes $_
+			}
+		}
+		if (-not $started) { throw (Format-FixtureStartNote $codes) }
+		return $exit
+	} finally {
+		Restore-SecondaryLogon
+	}
+}
+
 function Invoke-NonAdmin {
 	$before = Get-ServiceState
 	$created = $false
@@ -1289,10 +1870,17 @@ function Invoke-NonAdmin {
 			} catch {
 				$failure = $_
 				$errPath = Join-Path $EvidenceDirectory 'non-admin.err'
-				try { $failure | Out-File -FilePath $errPath -Encoding utf8 } catch { }
+				try {
+					$text = $failure | Out-String
+					if ($text -match 'Aa1!') { $text = [string]$failure.Exception.Message }
+					if ($text -match 'Aa1!') { $text = 'could not start msiexec as fixture user' }
+					$text | Out-File -FilePath $errPath -Encoding utf8
+				} catch { }
 				if (-not $result) {
 					$note = 'could not create fixture user'
-					if ($failure.Exception.Message -eq 'msiexec timed out') { $note = 'msiexec timed out' }
+					$message = [string]$failure.Exception.Message
+					if ($message -eq 'msiexec timed out') { $note = 'msiexec timed out' }
+					elseif ($message -match '^could not start msiexec as fixture user(?:: Win32 [0-9]+(?: Win32 [0-9]+)*)?$') { $note = $message }
 					elseif ($created) { $note = 'could not start msiexec as fixture user' }
 					$result = New-CaseResult 'failed' $note $null '' $false $before (Get-ServiceState) $null
 				}
@@ -1323,6 +1911,13 @@ function Invoke-NonAdmin {
 	return $result
 }
 
+function Stop-AcceptanceService {
+	$state = Get-ServiceState
+	if ($state -eq 'absent' -or $state -eq 'stopped') { return $true }
+	Stop-Service -Name winunitd -Force -ErrorAction SilentlyContinue
+	return Wait-ServiceState 'stopped' 180
+}
+
 function Invoke-BetaConflict {
 	$upgrade = ConvertTo-GuidText (Get-MsiProperty $BetaMsi 'UpgradeCode')
 	if ($upgrade -ne $BetaUpgradeCode) { return New-CaseResult 'failed' 'beta MSI upgrade identity mismatch' $null '' $false (Get-ServiceState) (Get-ServiceState) $null }
@@ -1337,8 +1932,21 @@ function Invoke-BetaConflict {
 	elseif ($run.ExitCode -ne 1603) { $note = 'unexpected exit' }
 	elseif (Test-Path -LiteralPath (Get-ProductExe)) { $note = 'product layout appeared' }
 	elseif (-not (Test-Path -LiteralPath (Get-BetaExe))) { $note = 'beta package was replaced' }
+	# The beta package rejects uninstall while winunitd is running.
+	# CheckStopped and PreparePolicy both run on REMOVE before StopServices.
+	$stopped = Stop-AcceptanceService
 	$remove = Invoke-Msiexec -LogName 'beta-conflict-remove' -Quiet -TimeoutSec 600 -Words @('/x', (ConvertTo-MsiArg $BetaMsi))
-	if (-not $note -and ($remove.ExitCode -ne 0 -or $remove.Reboot)) { $note = 'beta cleanup failed' }
+	$removeFailed = $remove.Reboot -or ($null -eq $remove.ExitCode) -or ($remove.ExitCode -ne 0)
+	$lingering = (Get-ServiceState) -eq 'running' -or (Get-ServiceState) -eq 'other'
+	if ((-not $stopped) -or $removeFailed -or $lingering) {
+		Stop-AcceptanceService | Out-Null
+		$lingering = (Get-ServiceState) -eq 'running' -or (Get-ServiceState) -eq 'other'
+		$cleanup = 'beta cleanup failed: remove exit ' + [string]$remove.ExitCode
+		if (-not $stopped) { $cleanup = 'beta cleanup failed: service did not stop; remove exit ' + [string]$remove.ExitCode }
+		elseif ($lingering) { $cleanup = 'beta cleanup failed: service still running; remove exit ' + [string]$remove.ExitCode }
+		if (-not $note) { $note = $cleanup }
+		elseif ($note -notlike '*remove exit*') { $note = $note + '; ' + $cleanup }
+	}
 	return New-CaseResult $(if ($note) { 'failed' } else { 'passed' }) $note $run.ExitCode $run.Log $run.Reboot $before (Get-ServiceState) $null
 }
 
