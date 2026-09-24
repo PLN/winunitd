@@ -444,13 +444,68 @@ Live cross-user rejection, unexpected-server-owner/pipe-squatting cases and
 privileged-path/reparse manipulation were not executed in this continuation.
 The wider R4.1/R4.4 security gates remain open.
 
+## Live manager cross-user rejection and production-client server-owner validation
+
+The live qualification used immutable source
+`344bf2d2e970a347b71f03c0da0ab456324f9f85`, whose source tree equals merged main
+(45e374a). The binaries came from successful
+[CI run 35987962097](https://github.com/PLN/winunitd/actions/runs/35987962097),
+with Windows artifact `10803655676` and cross-build manifest `10802544533`.
+The qualified tree is `629a6bd7d9b39d2d3c478aec38fe9994293e8c36`;
+the admitted binaries were unchanged.
+Preparation exposed the daemon-log startup regression [#253](https://github.com/PLN/winunitd/issues/253),
+fixed and separately qualified in [#255](https://github.com/PLN/winunitd/pull/255).
+
+Two standard callers and a filtered administrator used genuine interactive
+logons with native token/session checks. Each caller opened its own live manager
+pipe successfully, then attempted the peer manager and SYSTEM control and
+maintenance endpoints. Independent server identity and existence checks bound
+the negative observations to live endpoints. Production commands were also
+checked, and legitimate manager/workload identities and advancing heartbeats
+were observed across intervals of at least 16 seconds.
+
+For server validation, a private fixture held each canonical endpoint only while
+the legitimate listener was absent. The unmodified production client connected
+to the independently identified unexpected server. Each connection ended with
+an error, empty standard output and zero payload bytes. Listener exit and
+independent endpoint absence were verified before broker restart; bounded
+readiness checks preceded normal-client and stable-health positive controls.
+
+| Case | Observed result |
+| --- | --- |
+| First standard caller | PASS: own manager open succeeds; peer, control and maintenance native opens return access denied (WinError 5); production system commands fail with endpoint-specific denial. |
+| Second standard caller | PASS: the same own/peer/system checks pass under a distinct genuine logon. |
+| Filtered administrator | PASS: native token checks confirm deny-only administrator membership; own access succeeds and peer/system access is denied. |
+| Unexpected user-endpoint server | PASS: the production client fails closed when server-identity inspection is denied; no payload is sent. This is not an explicit owner-mismatch result. |
+| Unexpected control-endpoint server | PASS: the production client explicitly rejects the wrong server owner and sends no payload. |
+| Unexpected maintenance-endpoint server | PASS: the production client explicitly rejects the wrong server owner and sends no payload. |
+
+All six final cases passed their evidence validator with immutable archive and
+prerequisite bindings. A failed native open alone was not accepted as proof of
+client server-owner validation. The results qualify live cross-user rejection,
+filtered-token denial and production-client fail-closed server validation for
+these endpoints. Fixture accounts, sessions, grants, tasks, credentials and
+configuration were removed or restored; independent verification confirmed the
+baseline broker and normal client operation, with no fixture or wrapper lock
+remaining. Raw evidence, including unsuccessful fixture attempts and their
+corrections, remains private.
+
+Privileged-path mutation protection beyond the installer preflight, unsafe-root
+install/repair variants, reparse races and non-file handle classes were not
+exercised. Earlier file sentinels and
+intentional standard-I/O handles do not cover every socket, pipe, event, mutex,
+semaphore, section, registry, process, thread, token or job handle. It is not soak
+evidence or a resolution of recovery-backoff [#254](https://github.com/PLN/winunitd/issues/254).
+R4.4 remains unchecked; R4.1/R4.5 and the remaining release
+prerequisites are unchanged, and these results do not authorize R7 handoff.
+
 ## Current implementation and remaining identity matrix
 
 | Work package | Delivered behavior and evidence | Remaining qualification |
 | --- | --- | --- |
-| R4.1 Launch context | Interactive `CreateProcessAsUser` launch disables handle inheritance, obtains the target environment/known folders and retains a Windows-owned profile handle. Suspended creation and job ownership precede execution. Earlier genuine SYSTEM-to-interactive launch/crash/logoff observations are recorded in the [admission contract](USER-ADMISSION.md#implementation-evidence-and-limits). [Selected profile failures and redirection](#interactive-profile-failures-and-redirection) now cover unavailable hive access, local known-folder overrides and delegated UNC/reparse rejection. | Native WTS/S4U file-handle and filtered-token checks now pass as recorded [above](#native-inherited-handles-and-filtered-token-authorization). Complete the live-manager and privileged-filesystem security matrix; the selected local-profile cases do not qualify domain/cloud/roaming profiles. |
+| R4.1 Launch context | Interactive `CreateProcessAsUser` launch disables handle inheritance, obtains the target environment/known folders and retains a Windows-owned profile handle. Suspended creation and job ownership precede execution. Earlier genuine SYSTEM-to-interactive launch/crash/logoff observations are recorded in the [admission contract](USER-ADMISSION.md#implementation-evidence-and-limits). [Selected profile failures and redirection](#interactive-profile-failures-and-redirection) now cover unavailable hive access, local known-folder overrides and delegated UNC/reparse rejection. [Live cross-user and server-validation cases](#live-manager-cross-user-rejection-and-production-client-server-owner-validation) now pass. | Native WTS/S4U file-handle and filtered-token checks now pass as recorded [above](#native-inherited-handles-and-filtered-token-authorization). Protected privileged paths, reparse-point handling and inherited-handle isolation are partially covered by installer preflight, root-junction/symlink rejection and file sentinels. Runtime mutation attempts, unsafe-root install/repair variants, reparse races and non-file handle classes remain open; the selected local-profile cases do not qualify domain/cloud/roaming profiles. |
 | R4.2 User host | Protected explicit/delegated admission, per-SID overrides, session reconciliation, fresh-token recovery, bounded backoff and cancellation are implemented. [Policy/admission qualification](R2-EVIDENCE.md#user-policy-and-cleanup-admission-acceptance), [real S4U snapshot/recovery](R2-EVIDENCE.md#system-user-host-snapshot-qualification), [two concurrent headless users](#concurrent-local-headless-users), [cross-manager notification isolation](#notification-isolation-across-managers-and-restarts), [control during pending boot](#user-control-during-pending-boot), [repeated real interactive transitions](#repeated-real-interactive-transitions) and [multiple real sessions/concurrent users](#multiple-real-sessions-and-concurrent-interactive-users) cover their stated scopes. Daemon-log startup, rotation and legacy ACL repair are requalified in [the #253 diagnostics evidence](R5-EVIDENCE.md#diagnostics-and-event-resources); separate recovery-backoff issue [#254](https://github.com/PLN/winunitd/issues/254) remains open. Dedicated admission administration commands and installer controls remain separate work; protected file administration is available. | Technical acceptance complete with [native launch overlap and consolidated no-resurrection evidence](#native-launch-overlap-and-user-host-acceptance). R4.1/R4.4 security and R4.5 credential limits remain separate. |
-| R4.4 Security | Protected policy and pipe checks, bounded impersonation workers and reparse-point rejection are implemented. [Pipe failure handling](R2-EVIDENCE.md#september-12-pipe-impersonation-failure-handling), [genuine cross-user/system pipe denial](#concurrent-local-headless-users) and [native WTS/S4U/filtered-token probes](#native-inherited-handles-and-filtered-token-authorization) cover their stated scopes. | Live interactive manager cross-user/server-owner checks and privileged paths/reparse attacks remain. The new file-handle and isolated pipe cases do not close that wider matrix. |
+| R4.4 Security | Protected policy and pipe checks, bounded impersonation workers and reparse-point rejection are implemented. [Pipe failure handling](R2-EVIDENCE.md#september-12-pipe-impersonation-failure-handling), [genuine cross-user/system pipe denial](#concurrent-local-headless-users) and [native WTS/S4U/filtered-token probes](#native-inherited-handles-and-filtered-token-authorization) cover their stated scopes. [Pipe ownership/DACL/token checks, UAC-filtered users and cross-user rejection](#live-manager-cross-user-rejection-and-production-client-server-owner-validation) are qualified natively with live managers and anti-squatting, within the recorded endpoint scope. | Protected privileged paths, reparse-point handling and inherited-handle isolation are partially covered by installer preflight, root-junction/symlink rejection and file sentinels. Runtime mutation attempts, unsafe-root install/repair variants, reparse races and non-file handle classes remain open. R4.4 remains unchecked. |
 | R4.5 Linger | Headless local-account S4U launch uses `CreateProcessWithTokenW(LOGON_WITH_PROFILE)` and an exclusive private desktop helper. Windows owns profile lifetime; the old manual `LoadUserProfile` path is removed. [Production crash/recovery](R3-EVIDENCE.md#managed-bound-dependent-cleanup), [user-manager replacements](R2-EVIDENCE.md#system-user-host-snapshot-qualification) and [concurrent existing/first-created profiles](#concurrent-local-headless-users) verify profile/process cleanup in their scenarios. | Complete explicit mode/profile/session matrix and credential limitations. These observations do not qualify network authentication or domain/cloud/roaming profiles. Unqualified credential-store modes remain outside supported claims. |
 
 The R4 exit gate still requires the complete real-identity matrix. Hosted
