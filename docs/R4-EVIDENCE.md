@@ -447,11 +447,12 @@ The wider R4.1/R4.4 security gates remain open.
 ## Live manager cross-user rejection and production-client server-owner validation
 
 The live qualification used immutable source
-`344bf2d2e970a347b71f03c0da0ab456324f9f85` from successful
+`344bf2d2e970a347b71f03c0da0ab456324f9f85`, whose source tree equals merged main (45e374a),
+from successful
 [CI run 35987962097](https://github.com/PLN/winunitd/actions/runs/35987962097),
 with Windows artifact `10803655676` and cross-build manifest `10802544533`.
-Its tree `629a6bd7d9b39d2d3c478aec38fe9994293e8c36` equals runtime merge
-`45e374a0ba3bff3e44537c7069d2e273c190aa7d`; the admitted binaries were unchanged.
+The qualified tree is `629a6bd7d9b39d2d3c478aec38fe9994293e8c36`;
+the admitted binaries were unchanged.
 Preparation exposed the daemon-log startup regression [#253](https://github.com/PLN/winunitd/issues/253),
 fixed and separately qualified in [#255](https://github.com/PLN/winunitd/pull/255).
 
@@ -489,8 +490,9 @@ baseline broker and normal client operation, with no fixture or wrapper lock
 remaining. Raw evidence, including unsuccessful fixture attempts and their
 corrections, remains private.
 
-This does not qualify active privileged-path mutation, hostile pre-existing or
-custom installation/repair roots, or reparse races. Earlier file sentinels and
+Privileged-path mutation protection beyond the installer preflight, unsafe-root
+install/repair variants, reparse races and non-file handle classes were not
+exercised. Earlier file sentinels and
 intentional standard-I/O handles do not cover every socket, pipe, event, mutex,
 semaphore, section, registry, process, thread, token or job handle. It is not soak
 evidence or a resolution of recovery-backoff [#254](https://github.com/PLN/winunitd/issues/254).
