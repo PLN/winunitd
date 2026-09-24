@@ -290,6 +290,29 @@ root/reparse checks and nonblocking writer remain unchanged. Before changing
 a DACL, the fix rejects owners other than the process user, SYSTEM or
 Administrators, including a foreign owner that granted WRITE_DAC.
 
+Native qualification `qualification-344bf2d-daemonlog-acl` passed on source
+`344bf2d2e970a347b71f03c0da0ab456324f9f85`, clean tree
+`629a6bd7d9b39d2d3c478aec38fe9994293e8c36`, for
+[PR #255](https://github.com/PLN/winunitd/pull/255) and issue #253.
+[Exact-source CI run 35987962097](https://github.com/PLN/winunitd/actions/runs/35987962097)
+passed; Windows artifact `10803655676` and cross-manifest `10802544533` were
+verified with matching native/cross manifests. Five lanes passed: unchanged
+SYSTEM protection; standard WTS and genuine filtered-administrator startup,
+diagnostic persistence, protected directory/current/archive ACLs and product
+rotation (rotation was forced by an SCM stop/start of the broker); headless
+S4U via linger with profile unload; exact access-denied
+results on peer/SYSTEM daemon paths from a genuine standard-user token; and
+first-start repair of legacy user-owned directories without manual ACL grants.
+Native standard, filtered and headless security suites, their selective-
+inheritance positive controls and the privileged symlink regression recorded
+7 PASS, 0 skips and 0 race warnings. Native race-test binaries were built from
+the clean exact-source checkout with Go 1.27.1; source binding is established
+by the guarded build evidence, not an embedded VCS revision. The 65-second
+stability checks are bounded observations, not a soak or resolution of
+[#254](https://github.com/PLN/winunitd/issues/254). Separate live endpoint-open
+and server-owner cases (A/B) were not run; remaining release gates stay open.
+Raw fixture evidence remains private.
+
 R5.4b event resources and the product MSI merged at
 `59ec4d802f0346647eb39d45539fb84aa9cb5368`
 ([#238](https://github.com/PLN/winunitd/pull/238)). That tree matches the
