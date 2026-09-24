@@ -278,6 +278,18 @@ resolved path outside that root. Drop and write-error counters appear on
 machine status. Native SYSTEM and headless-user qualification of that tree
 passed. Raw logs stay private.
 
+The daemon-log ACL fix for [#253](https://github.com/PLN/winunitd/issues/253)
+changes the DACL after #236 because user managers
+could not open their diagnostics; this behavior was not present in that
+previously qualified tree. On Windows the directory, current log and rotated
+log use protected DACLs granting full access to the manager process user, SYSTEM and
+Administrators; a LocalSystem manager retains the SYSTEM/Administrators-only
+DACL. User managers therefore retain access to their own diagnostics across
+creation, rotation and restart without granting other users access. The
+root/reparse checks and nonblocking writer remain unchanged. Before changing
+a DACL, the fix rejects owners other than the process user, SYSTEM or
+Administrators, including a foreign owner that granted WRITE_DAC.
+
 R5.4b event resources and the product MSI merged at
 `59ec4d802f0346647eb39d45539fb84aa9cb5368`
 ([#238](https://github.com/PLN/winunitd/pull/238)). That tree matches the
