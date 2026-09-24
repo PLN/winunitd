@@ -447,8 +447,8 @@ The wider R4.1/R4.4 security gates remain open.
 ## Live manager cross-user rejection and production-client server-owner validation
 
 The live qualification used immutable source
-`344bf2d2e970a347b71f03c0da0ab456324f9f85`, whose source tree equals merged main (45e374a),
-from successful
+`344bf2d2e970a347b71f03c0da0ab456324f9f85`, whose source tree equals merged main
+(45e374a). The binaries came from successful
 [CI run 35987962097](https://github.com/PLN/winunitd/actions/runs/35987962097),
 with Windows artifact `10803655676` and cross-build manifest `10802544533`.
 The qualified tree is `629a6bd7d9b39d2d3c478aec38fe9994293e8c36`;
