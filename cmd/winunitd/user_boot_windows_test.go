@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/core"
+	"github.com/PLN/winunitd/internal/journal"
 	"github.com/PLN/winunitd/internal/manager"
 	"github.com/PLN/winunitd/internal/protocol"
 	"golang.org/x/sys/windows"
@@ -94,6 +95,19 @@ func TestWindowsUserControlRemainsAvailableDuringNotifyBoot(t *testing.T) {
 	}
 	if childPID <= 0 {
 		t.Fatal("enabled notify workload did not enter boot")
+	}
+	// The real user entry point must keep its diagnostics writable, not just
+	// reach the control listener. Startup enqueues daemon.open asynchronously.
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		data, err := os.ReadFile(journal.DaemonLogPath(base))
+		if err == nil && strings.Contains(string(data), journal.DaemonEventOpen) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("user startup did not persist daemon.open: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	process, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(childPID))
 	if err != nil {
