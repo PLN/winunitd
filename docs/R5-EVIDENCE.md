@@ -296,7 +296,7 @@ Native qualification `qualification-344bf2d-daemonlog-acl` passed on source
 [PR #255](https://github.com/PLN/winunitd/pull/255) and issue #253.
 [Exact-source CI run 35987962097](https://github.com/PLN/winunitd/actions/runs/35987962097)
 passed; Windows artifact `10803655676` and cross-manifest `10802544533` were
-verified with matching native/cross manifests. Lanes a–e passed: unchanged
+verified with matching native/cross manifests. Five lanes passed: unchanged
 SYSTEM protection; standard WTS and genuine filtered-administrator startup,
 diagnostic persistence, protected directory/current/archive ACLs and product
 rotation (rotation was forced by an SCM stop/start of the broker); headless
