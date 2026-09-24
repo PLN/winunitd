@@ -259,6 +259,15 @@ validation, pipe squatting, privileged filesystem paths, or every possible
 native handle type. Record those checks separately. Guest drivers own account,
 logon, payload ACL and restoration evidence; test output omits fixture SIDs.
 
+The [live-manager qualification](R4-EVIDENCE.md#live-manager-cross-user-rejection-and-production-client-server-owner-validation)
+adds genuine interactive callers, independent endpoint/server identity checks,
+own-manager positive controls and peer/system access-denied observations. A
+private fixture holds an unexpected server only while the legitimate listener
+is absent; production clients must fail server validation without sending
+payload. Verify listener exit and endpoint absence before restoring the broker,
+then gate normal-client and stable-health controls on readiness. Preserve failed
+attempts and independently verify fixture cleanup and baseline restoration.
+
 ## Suspended native user-manager overlap
 
 The Windows runtime tests `TestPolicyRevocationOverlapsNativeUserManagerCreation`
