@@ -499,13 +499,109 @@ evidence or a resolution of recovery-backoff [#254](https://github.com/PLN/winun
 R4.4 remains unchecked; R4.1/R4.5 and the remaining release
 prerequisites are unchanged, and these results do not authorize R7 handoff.
 
+## Privileged-path protection: runtime mutation attempts and unsafe-root install/repair
+
+Case C of the live security qualification covered privileged paths. The
+package was built with `packaging/wix/build.ps1` from a clean checkout of
+merged main `b290c63f2d6cf0485ce651eb16407b467b359fd1`, tree
+`e811c80a832e6d7ff0fdac173c1cdaa64c4ac00d`, which passed exact-source
+[CI run 36068345856](https://github.com/PLN/winunitd/actions/runs/36068345856).
+CI does not publish the MSI. The payload module and vendor manifests match the
+CI artifacts, but the locally built executables are not byte-equal to the CI
+executables; the package is therefore a local build from the CI-green source
+tree, not a package of CI artifact bytes. Both hash sets are retained privately.
+The pinned package manifest records a clean build of installer version 0.1.0.
+
+Two genuine interactive callers, a standard user and a UAC-filtered
+administrator, each ran 67 operations from their own logon session at medium
+integrity. A 64-bit `asInvoker` helper was used with no thread impersonation
+token and with UAC file virtualization disabled. Eight positive controls ran in
+caller-owned locations. The other 59 operations attempted create, write,
+append, same-parent rename and delete on bounded inert sentinels in the machine
+data root, `units`, `enabled`, `default.target`, `linger`, `daemon` and the
+installed `bin` directory. `default.target` received directory-only operations;
+the full set ran in an inert child directory that the unit loaders ignore. A
+SYSTEM observer recorded each sentinel's identity, content hash and security
+descriptor before and after. Manager and workload identities stayed stable and
+heartbeats advanced across 16-second intervals.
+
+Install and repair were then attempted against four unsafe-root fixtures: a
+data root owned by an untrusted user, a data root granting write access to a
+non-administrator, and a junction at the immediate `units` or `linger` child.
+Each shape ran in both install and repair, with plain `msiexec` servicing
+commands and no test-injection properties. One repair lane kept the service
+running; the others used a stopped service for byte stability. The pinned WiX
+sequence places the service preflight before service stop and file
+installation, so these are static preflight refusals, not rollback results.
+Finally, a registration using the packaged image path and LocalSystem with a
+custom base-directory argument was presented to install and repair.
+
+| Lane | Observed result |
+| --- | --- |
+| Standard caller, runtime mutation | PASS: 8 positive controls succeed; all 59 protected-tree operations return access denied (WinError 5). Sentinel identity, bytes and descriptors, unit and enable listings and workload health are unchanged; no virtualized write occurs. |
+| Filtered administrator, runtime mutation | PASS: the same 8 controls and 59 access-denied results under deny-only administrator membership. |
+| Untrusted-owner data root, install | PASS: MSI exit 1603 with the expected root-ownership preflight conflict. |
+| Untrusted-owner data root, repair (service running) | PASS: exit 1603 with the root-ownership conflict; the running service keeps the same process identity and SCM configuration. |
+| Non-administrator write grant on data root, install | PASS: exit 1603 with the expected root write-grant conflict. |
+| Non-administrator write grant on data root, repair | PASS: exit 1603 with the root write-grant conflict. |
+| `units` junction, install | PASS: exit 1603 with the expected reparse-point conflict; the junction and its external target are unchanged. |
+| `units` junction, repair | PASS: exit 1603 with the reparse-point conflict; junction and target unchanged. |
+| `linger` junction, install | PASS: exit 1603 with the expected reparse-point conflict; junction and target unchanged. |
+| `linger` junction, repair | PASS: exit 1603 with the reparse-point conflict; junction and target unchanged. |
+| Custom base directory, install | PASS: exit 1603 with the custom-base conflict; the base is neither adopted nor relocated. |
+| Custom base directory, repair | PASS: exit 1603 with the custom-base conflict; SCM configuration and both trees are unchanged. |
+
+Each refusal matched the exact diagnostic expected for its shape; any other
+preflight conflict would have failed the lane. After every refusal the service
+configuration and state, product registration, Installer cache, installed
+tree, transaction state files, `PATH`, event source and product registry
+matched the pre-attempt inventory. In the running repair lane only
+product-owned daemon, journal and runtime files were allowed to change size or
+content. All twelve lanes passed hashed acceptance with immutable archive and
+prerequisite bindings. Complementary `tools/msi-check` source tests from the
+same commit passed both symlink tests under SYSTEM; see the observations below
+for the user-owner test.
+
+These results qualify runtime denial of the tested create, write, append,
+rename and delete operations on the tested protected trees for standard and
+UAC-filtered interactive callers, and static install and repair refusal of
+untrusted-owner, unsafe-ACE, immediate `units`/`linger` junction and
+custom-base fixtures. They do not qualify reparse races, recursive
+descendant-junction handling, ancestor ACL policy or inherited-handle isolation
+beyond the tested file handles. Case C used local accounts only;
+domain/cloud/roaming profiles remain under R4.1. Cross-parent moves, other
+loader paths and non-file handle classes were not exercised. It is not soak
+evidence, does not close R4.4 or other R4/R7 prerequisites and does not
+authorize R7 handoff.
+
+Two observations were recorded without a product change:
+
+- Uninstall intentionally retains the `HKLM\SOFTWARE\PLN\winunitd` `DataRoot`
+  value, authored as the key path of the permanent `DataRoot` component in
+  [Package.wxs](../packaging/wix/Package.wxs), alongside the retained data
+  directories described in
+  [INSTALLATION.md](INSTALLATION.md#data-kept-across-repair-upgrade-and-remove).
+  Returning the lab to its pre-install baseline required removing that value
+  separately; uninstall retention was not changed.
+- `TestInspectDirectoryRejectsUserOwner` assumes `t.TempDir()` is owned by an
+  untrusted user. Under SYSTEM the temporary directory is trusted, so the test
+  observes no conflict and fails. It passes under a user token and in CI. This
+  is a test-fixture identity assumption, not a product finding; the SYSTEM
+  failure is retained, not counted as a pass.
+
+Fixture accounts, sessions, grants, junctions, owner and ACE changes, SCM
+arguments and the package were removed or restored, and independent
+verification confirmed the original service configuration, broker and normal
+client operation. Raw evidence, including unsuccessful fixture attempts and
+their corrections, remains private.
+
 ## Current implementation and remaining identity matrix
 
 | Work package | Delivered behavior and evidence | Remaining qualification |
 | --- | --- | --- |
-| R4.1 Launch context | Interactive `CreateProcessAsUser` launch disables handle inheritance, obtains the target environment/known folders and retains a Windows-owned profile handle. Suspended creation and job ownership precede execution. Earlier genuine SYSTEM-to-interactive launch/crash/logoff observations are recorded in the [admission contract](USER-ADMISSION.md#implementation-evidence-and-limits). [Selected profile failures and redirection](#interactive-profile-failures-and-redirection) now cover unavailable hive access, local known-folder overrides and delegated UNC/reparse rejection. [Live cross-user and server-validation cases](#live-manager-cross-user-rejection-and-production-client-server-owner-validation) now pass. | Native WTS/S4U file-handle and filtered-token checks now pass as recorded [above](#native-inherited-handles-and-filtered-token-authorization). Protected privileged paths, reparse-point handling and inherited-handle isolation are partially covered by installer preflight, root-junction/symlink rejection and file sentinels. Runtime mutation attempts, unsafe-root install/repair variants, reparse races and non-file handle classes remain open; the selected local-profile cases do not qualify domain/cloud/roaming profiles. |
+| R4.1 Launch context | Interactive `CreateProcessAsUser` launch disables handle inheritance, obtains the target environment/known folders and retains a Windows-owned profile handle. Suspended creation and job ownership precede execution. Earlier genuine SYSTEM-to-interactive launch/crash/logoff observations are recorded in the [admission contract](USER-ADMISSION.md#implementation-evidence-and-limits). [Selected profile failures and redirection](#interactive-profile-failures-and-redirection) now cover unavailable hive access, local known-folder overrides and delegated UNC/reparse rejection. [Live cross-user and server-validation cases](#live-manager-cross-user-rejection-and-production-client-server-owner-validation) now pass. | Native WTS/S4U file-handle and filtered-token checks now pass as recorded [above](#native-inherited-handles-and-filtered-token-authorization). [Runtime mutation denials and unsafe-root install/repair refusals](#privileged-path-protection-runtime-mutation-attempts-and-unsafe-root-installrepair) now pass for the tested trees and fixtures. Reparse races, recursive descendant-junction handling, ancestor ACL policy and inherited-handle isolation beyond the tested file handles remain open; the selected local-profile cases do not qualify domain/cloud/roaming profiles. |
 | R4.2 User host | Protected explicit/delegated admission, per-SID overrides, session reconciliation, fresh-token recovery, bounded backoff and cancellation are implemented. [Policy/admission qualification](R2-EVIDENCE.md#user-policy-and-cleanup-admission-acceptance), [real S4U snapshot/recovery](R2-EVIDENCE.md#system-user-host-snapshot-qualification), [two concurrent headless users](#concurrent-local-headless-users), [cross-manager notification isolation](#notification-isolation-across-managers-and-restarts), [control during pending boot](#user-control-during-pending-boot), [repeated real interactive transitions](#repeated-real-interactive-transitions) and [multiple real sessions/concurrent users](#multiple-real-sessions-and-concurrent-interactive-users) cover their stated scopes. Daemon-log startup, rotation and legacy ACL repair are requalified in [the #253 diagnostics evidence](R5-EVIDENCE.md#diagnostics-and-event-resources); separate recovery-backoff issue [#254](https://github.com/PLN/winunitd/issues/254) remains open. Dedicated admission administration commands and installer controls remain separate work; protected file administration is available. | Technical acceptance complete with [native launch overlap and consolidated no-resurrection evidence](#native-launch-overlap-and-user-host-acceptance). R4.1/R4.4 security and R4.5 credential limits remain separate. |
-| R4.4 Security | Protected policy and pipe checks, bounded impersonation workers and reparse-point rejection are implemented. [Pipe failure handling](R2-EVIDENCE.md#september-12-pipe-impersonation-failure-handling), [genuine cross-user/system pipe denial](#concurrent-local-headless-users) and [native WTS/S4U/filtered-token probes](#native-inherited-handles-and-filtered-token-authorization) cover their stated scopes. [Pipe ownership/DACL/token checks, UAC-filtered users and cross-user rejection](#live-manager-cross-user-rejection-and-production-client-server-owner-validation) are qualified natively with live managers and anti-squatting, within the recorded endpoint scope. | Protected privileged paths, reparse-point handling and inherited-handle isolation are partially covered by installer preflight, root-junction/symlink rejection and file sentinels. Runtime mutation attempts, unsafe-root install/repair variants, reparse races and non-file handle classes remain open. R4.4 remains unchecked. |
+| R4.4 Security | Protected policy and pipe checks, bounded impersonation workers and reparse-point rejection are implemented. [Pipe failure handling](R2-EVIDENCE.md#september-12-pipe-impersonation-failure-handling), [genuine cross-user/system pipe denial](#concurrent-local-headless-users) and [native WTS/S4U/filtered-token probes](#native-inherited-handles-and-filtered-token-authorization) cover their stated scopes. [Pipe ownership/DACL/token checks, UAC-filtered users and cross-user rejection](#live-manager-cross-user-rejection-and-production-client-server-owner-validation) are qualified natively with live managers and anti-squatting, within the recorded endpoint scope. [Protected-tree runtime mutation denials and static install/repair refusal of unsafe-root and custom-base fixtures](#privileged-path-protection-runtime-mutation-attempts-and-unsafe-root-installrepair) are qualified for the tested trees and fixtures. | Reparse races, recursive descendant-junction handling, ancestor ACL policy and inherited-handle isolation beyond the tested file handles remain unqualified. Domain/cloud/roaming profile qualification remains under R4.1. R4.4 remains unchecked. |
 | R4.5 Linger | Headless local-account S4U launch uses `CreateProcessWithTokenW(LOGON_WITH_PROFILE)` and an exclusive private desktop helper. Windows owns profile lifetime; the old manual `LoadUserProfile` path is removed. [Production crash/recovery](R3-EVIDENCE.md#managed-bound-dependent-cleanup), [user-manager replacements](R2-EVIDENCE.md#system-user-host-snapshot-qualification) and [concurrent existing/first-created profiles](#concurrent-local-headless-users) verify profile/process cleanup in their scenarios. | Complete explicit mode/profile/session matrix and credential limitations. These observations do not qualify network authentication or domain/cloud/roaming profiles. Unqualified credential-store modes remain outside supported claims. |
 
 The R4 exit gate still requires the complete real-identity matrix. Hosted
