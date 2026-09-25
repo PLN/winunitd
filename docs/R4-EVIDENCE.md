@@ -516,7 +516,7 @@ Two genuine interactive callers, a standard user and a UAC-filtered
 administrator, each ran 67 operations from their own logon session at medium
 integrity. A 64-bit `asInvoker` helper was used with no thread impersonation
 token and with UAC file virtualization disabled. Eight positive controls ran in
-caller-owned locations. The other 59 operations attempted create, write,
+caller-writable control directories. The other 59 operations attempted create, write,
 append, same-parent rename and delete on bounded inert sentinels in the machine
 data root, `units`, `enabled`, `default.target`, `linger`, `daemon` and the
 installed `bin` directory. `default.target` received directory-only operations;
