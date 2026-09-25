@@ -113,9 +113,10 @@ Before service stop, replacement, or start, the deferred helper rejects:
   whose paths already match the package
 - an unmanaged binary path or a service account other than LocalSystem
 - a custom `--base-dir`, which is not adopted or relocated
-- a machine scheduled task or machine Run value that launches
-  `winunitd.exe` (install, repair, and upgrade; uninstall still removes
-  this package)
+- a registered scheduled-task definition or a 64-bit machine `Run` or
+  `RunOnce` value that names `winunitd.exe` explicitly (install, repair,
+  and upgrade; uninstall still removes this package). Wrapper, script,
+  and per-user launchers are left to explicit migration
 - a reparse point, unexpected owner, or non-administrator write grant on
   the install directory, `bin`, the data root, or `units`, `enabled`,
   `journal`, `runtime`, `linger`, or `daemon`
@@ -133,6 +134,17 @@ fixture, and the fail-closed decisions. Native SYSTEM
 recorded as `9961798-r64-accept` in [Acceptance](#acceptance). Raw logs
 stay private. That record is one guest. This note does not close R6.1,
 R6.4, R6.5, or overall R6.
+
+The scheduled-task launcher case was not in that native record. Until the
+task-definition decoding fix, the scan matched raw bytes. Task Scheduler
+stores registered definitions as UTF-16LE with a byte order mark, so a
+direct task launcher was not detected on a real task store; only UTF-8
+fixtures matched. The scan now decodes UTF-8 and UTF-16 definitions before
+matching and refuses malformed ones. Its regressions cover every accepted
+encoding, malformed input, a mixed store, and the install/repair/upgrade
+conflict with the uninstall exemption. The R6.3 launcher case needs native
+re-qualification with a registered task on a disposable guest; its evidence
+id will be added here when it is recorded.
 
 ## Acceptance
 
