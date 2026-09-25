@@ -178,7 +178,8 @@ principal, trigger, or enabled state. The definition can be UTF-8 or
 UTF-16; Task Scheduler writes UTF-16LE with a byte order mark. It also
 reads the 64-bit machine `Run` and `RunOnce` values. It does not open
 scripts or follow wrappers, so a task that runs `wscript.exe`,
-`powershell.exe`, or `cmd.exe` with a script is not reported. The check
+`powershell.exe`, or `cmd.exe` with a script is not reported unless its
+task definition itself contains an explicit `winunitd.exe` reference. The check
 is not per-user launcher discovery. Before an MSI handoff, the explicit
 migration step must inventory per-user and indirect launchers, stop or
 disable them, and confirm that their manager processes have exited. A

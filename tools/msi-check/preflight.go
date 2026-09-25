@@ -314,11 +314,18 @@ var errTaskEncoding = errors.New("unsupported or malformed task definition encod
 // Accepted encodings:
 //   - UTF-8, with or without a byte order mark
 //   - UTF-16LE or UTF-16BE with a byte order mark
-//   - UTF-16LE or UTF-16BE without a byte order mark, recognized from an
-//     ASCII first character as in XML 1.0 Appendix F: an ASCII byte then
-//     NUL is UTF-16LE; NUL then an ASCII byte is UTF-16BE. A task
-//     definition is XML and starts with "<" or white space, and XML cannot
-//     contain U+0000, so valid UTF-8 text never starts with either pattern.
+//   - UTF-16LE or UTF-16BE without a byte order mark, recognized by this
+//     scanner's own two-byte heuristic, inspired by XML encoding
+//     autodetection but deliberately broader than the XML 1.0 Appendix F
+//     signatures: a nonzero ASCII byte then NUL is UTF-16LE; NUL then a
+//     nonzero ASCII byte is UTF-16BE. Full UTF-16 validation follows. A
+//     task definition is XML and starts with "<" or white space, and XML
+//     cannot contain U+0000, so valid UTF-8 XML never starts with either
+//     pattern.
+//
+// This is encoding validation for a substring scan, not an XML parser: the
+// encoding declaration, XML syntax and character references are not
+// checked.
 //
 // Anything else is refused rather than guessed: invalid UTF-8, an odd
 // UTF-16 byte length, an unpaired surrogate, or a U+0000 character. NUL

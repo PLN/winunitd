@@ -210,10 +210,11 @@ func TestTaskScanDoesNotFollowReparse(t *testing.T) {
 }
 
 // taskDefinition is a complete synthetic Task Scheduler definition with one
-// Exec action. The description carries a character outside the Basic
-// Multilingual Plane so UTF-16 encodings contain a surrogate pair.
-func taskDefinition(command, arguments string) string {
-	return `<?xml version="1.0" encoding="UTF-16"?>
+// Exec action. encoding is the XML declaration value and must match the
+// bytes the caller emits. The description carries a character outside the
+// Basic Multilingual Plane so UTF-16 encodings contain a surrogate pair.
+func taskDefinition(encoding, command, arguments string) string {
+	return `<?xml version="1.0" encoding="` + encoding + `"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Author>EXAMPLE\alice</Author>
@@ -271,27 +272,29 @@ func scanOneTask(t *testing.T, data []byte) (int, error) {
 // launcher check must see the same direct reference in every supported
 // encoding, not only in ASCII bytes.
 func TestTaskScanDecodesTaskDefinitions(t *testing.T) {
-	direct := taskDefinition(`C:\Program Files\WinUnitD\bin\WINUNITD.Exe`, `--base-dir "C:\Data"`)
-	safe := taskDefinition(`C:\Tools\winctl.exe`, `--user status`)
+	direct := func(encoding string) string {
+		return taskDefinition(encoding, `C:\Program Files\WinUnitD\bin\WINUNITD.Exe`, `--base-dir "C:\Data"`)
+	}
+	safe := func(encoding string) string { return taskDefinition(encoding, `C:\Tools\winctl.exe`, `--user status`) }
 	// Documented boundary: the scan matches an explicit winunitd.exe
 	// reference in the definition text only. It does not open a script
 	// or follow a wrapper, so this task counts zero even if its script
 	// starts a manager. Explicit migration owns per-user and indirect
 	// launcher discovery; this case does not qualify that behavior.
-	wrapper := taskDefinition(`C:\Windows\System32\wscript.exe`, `//B //Nologo "C:\Pilot\run-manager.vbs"`)
+	wrapper := taskDefinition("UTF-16", `C:\Windows\System32\wscript.exe`, `//B //Nologo "C:\Pilot\run-manager.vbs"`)
 	for _, tt := range []struct {
 		name string
 		data []byte
 		want int
 	}{
-		{"utf-8 direct mixed case", []byte(direct), 1},
-		{"utf-8 with bom direct", append([]byte{0xef, 0xbb, 0xbf}, direct...), 1},
-		{"utf-16le with bom direct", encodeUTF16(direct, binary.LittleEndian, true), 1},
-		{"utf-16be with bom direct", encodeUTF16(direct, binary.BigEndian, true), 1},
-		{"utf-16le without bom direct", encodeUTF16(direct, binary.LittleEndian, false), 1},
-		{"utf-16be without bom direct", encodeUTF16(direct, binary.BigEndian, false), 1},
-		{"utf-16le with bom safe", encodeUTF16(safe, binary.LittleEndian, true), 0},
-		{"utf-8 safe", []byte(safe), 0},
+		{"utf-8 direct mixed case", []byte(direct("UTF-8")), 1},
+		{"utf-8 with bom direct", append([]byte{0xef, 0xbb, 0xbf}, direct("UTF-8")...), 1},
+		{"utf-16le with bom direct", encodeUTF16(direct("UTF-16"), binary.LittleEndian, true), 1},
+		{"utf-16be with bom direct", encodeUTF16(direct("UTF-16"), binary.BigEndian, true), 1},
+		{"utf-16le without bom direct", encodeUTF16(direct("UTF-16LE"), binary.LittleEndian, false), 1},
+		{"utf-16be without bom direct", encodeUTF16(direct("UTF-16BE"), binary.BigEndian, false), 1},
+		{"utf-16le with bom safe", encodeUTF16(safe("UTF-16"), binary.LittleEndian, true), 0},
+		{"utf-8 safe", []byte(safe("UTF-8")), 0},
 		{"utf-16le with bom wrapper only", encodeUTF16(wrapper, binary.LittleEndian, true), 0},
 		{"empty definition", nil, 0},
 	} {
@@ -307,7 +310,7 @@ func TestTaskScanDecodesTaskDefinitions(t *testing.T) {
 // Malformed or unsupported encodings must refuse, never report zero
 // launchers, and never be matched after dropping NUL bytes.
 func TestTaskScanRefusesMalformedEncodings(t *testing.T) {
-	direct := taskDefinition(`C:\Tools\winunitd.exe`, ``)
+	direct := taskDefinition("UTF-16", `C:\Tools\winunitd.exe`, ``)
 	le := encodeUTF16(direct, binary.LittleEndian, true)
 	unpairedHigh := binary.LittleEndian.AppendUint16(append([]byte{}, le...), 0xd83d)
 	unpairedHighMid := append(binary.LittleEndian.AppendUint16([]byte{0xff, 0xfe}, 0xd83d), encodeUTF16("<x/>", binary.LittleEndian, false)...)
@@ -345,10 +348,10 @@ func TestTaskScanMixedStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	files := map[string][]byte{
-		filepath.Join(root, "DirectUTF16"):    encodeUTF16(taskDefinition(`C:\Tools\winunitd.exe`, ``), binary.LittleEndian, true),
-		filepath.Join(nested, "DirectUTF8"):   []byte(taskDefinition(`C:\Tools\WinUnitd.EXE`, ``)),
-		filepath.Join(root, "Safe"):           encodeUTF16(taskDefinition(`C:\Tools\winctl.exe`, ``), binary.LittleEndian, true),
-		filepath.Join(root, "Vendor", "Wrap"): encodeUTF16(taskDefinition(`wscript.exe`, `run.vbs`), binary.LittleEndian, true),
+		filepath.Join(root, "DirectUTF16"):    encodeUTF16(taskDefinition("UTF-16", `C:\Tools\winunitd.exe`, ``), binary.LittleEndian, true),
+		filepath.Join(nested, "DirectUTF8"):   []byte(taskDefinition("UTF-8", `C:\Tools\WinUnitd.EXE`, ``)),
+		filepath.Join(root, "Safe"):           encodeUTF16(taskDefinition("UTF-16", `C:\Tools\winctl.exe`, ``), binary.LittleEndian, true),
+		filepath.Join(root, "Vendor", "Wrap"): encodeUTF16(taskDefinition("UTF-16", `wscript.exe`, `run.vbs`), binary.LittleEndian, true),
 	}
 	for path, data := range files {
 		if err := os.WriteFile(path, data, 0o644); err != nil {
@@ -364,7 +367,7 @@ func TestTaskScanMixedStore(t *testing.T) {
 // A launcher found in a UTF-16 definition blocks install, repair and
 // upgrade with the exact migration conflict; uninstall stays exempt.
 func TestDecodedTaskLauncherClassification(t *testing.T) {
-	n, err := scanOneTask(t, encodeUTF16(taskDefinition(`C:\Tools\winunitd.exe`, ``), binary.LittleEndian, true))
+	n, err := scanOneTask(t, encodeUTF16(taskDefinition("UTF-16", `C:\Tools\winunitd.exe`, ``), binary.LittleEndian, true))
 	if err != nil || n != 1 {
 		t.Fatalf("launchers=%d err=%v", n, err)
 	}
