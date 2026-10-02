@@ -270,6 +270,13 @@ func TestRepeatableOneshotInterruptedWait(t *testing.T) {
 				}
 			}
 			// A completed stop/failure must not prevent an explicit fresh run.
+			// A timed-out start publishes its failure before workload cleanup
+			// is confirmed, and the replacement guard refuses a start until
+			// then; wait for confirmation instead of racing it.
+			waitCond(t, func() bool {
+				st, err := m.Status("work")
+				return err == nil && !st.Unit.TerminationUncertain && len(st.Unit.PendingCleanup) == 0
+			})
 			done = startOneshot(m, context.Background(), "work")
 			awaitOneshotProcess(t, l).die(0)
 			if r := awaitOneshotReply(t, done); r.err != nil || r.result.ActiveState != "inactive" {
