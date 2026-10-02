@@ -141,17 +141,18 @@ func (h *UserHost) applyUserLaunch(sid string, inst *userInstance, proc runtime.
 	return superseded
 }
 
-// observeUserAlive records a liveness check that saw proc running. A stale
-// observation of a replaced instance or process is ignored.
-func (h *UserHost) observeUserAlive(sid string, inst *userInstance, proc runtime.UserManagerProc) {
-	now := h.cfg.Now()
+// observeUserAlive records a liveness check that saw proc running. sampled is
+// taken before the check, so a slow positive result never credits time after
+// the process exited. A stale observation of a replaced instance or process is
+// ignored.
+func (h *UserHost) observeUserAlive(sid string, inst *userInstance, proc runtime.UserManagerProc, sampled time.Time) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.bySID[sid] != inst || inst.proc != proc || inst.startedAt.IsZero() || now.Before(inst.startedAt) {
+	if h.bySID[sid] != inst || inst.proc != proc || inst.startedAt.IsZero() || sampled.Before(inst.startedAt) {
 		return
 	}
-	if now.After(inst.aliveAt) {
-		inst.aliveAt = now
+	if sampled.After(inst.aliveAt) {
+		inst.aliveAt = sampled
 	}
 }
 

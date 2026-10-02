@@ -570,11 +570,12 @@ func (h *UserHost) ensureRunning(sid string, tok *runtime.UserToken, stillWanted
 		return err
 	}
 	// The SID gate retains this instance while liveness is observed outside h.mu.
-	if inst != nil && inst.proc != nil && inst.proc.Alive() {
-		h.observeUserAlive(sid, inst, inst.proc)
-		return nil
-	}
 	if inst != nil && inst.proc != nil {
+		sampled := h.cfg.Now()
+		if inst.proc.Alive() {
+			h.observeUserAlive(sid, inst, inst.proc, sampled)
+			return nil
+		}
 		if err := h.cleanupUserInstance(context.Background(), sid, inst, true); err != nil {
 			return err
 		}
@@ -687,10 +688,14 @@ func (h *UserHost) observeRunning(sid string) bool {
 		proc = inst.proc
 	}
 	h.mu.Unlock()
-	if proc == nil || !proc.Alive() {
+	if proc == nil {
 		return false
 	}
-	h.observeUserAlive(sid, inst, proc)
+	sampled := h.cfg.Now()
+	if !proc.Alive() {
+		return false
+	}
+	h.observeUserAlive(sid, inst, proc, sampled)
 	return true
 }
 

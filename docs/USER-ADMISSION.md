@@ -82,9 +82,11 @@ describe the bounded details and how recovery removes obsolete errors.
 
 Launch failures and rapid manager exits use per-SID exponential delays of 1, 2,
 4, 8, 16, 32 and at most 60 seconds. A minute of confirmed runtime resets the
-delay: the time from launch to the last reconciliation pass that saw the same
-manager process running. Time after an exit, including the wait for recovery,
-does not count, so a manager that exits at once stays at the 60-second cap.
+delay: the time from launch to the start of the last user-host liveness check,
+including session and linger reconciliation, that saw the same manager process
+running. Time after an exit, including the wait for recovery, does not count,
+so a manager that exits at once stays at the 60-second cap. Status queries do
+not count as liveness checks and cannot reset the delay.
 Reconciliation checks due recovery on its ten-second cadence; the delay
 is an earliest retry time, not a promise of an exact launch time. Known waiting
 sessions avoid another token acquisition before that time. Linger token failures
