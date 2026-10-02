@@ -69,18 +69,108 @@ func TestUserRecoveryResetsAfterStableRuntime(t *testing.T) {
 	if starts.Load() != 2 {
 		t.Fatal("due crash recovery did not start")
 	}
+	// Reconciliation confirms the manager is still running a minute later.
 	now = now.Add(userRecoveryStableTime)
+	h.Logon(1)
 	procs[testSIDA].alive.Store(false)
 	h.Logon(1)
 	if starts.Load() != 3 {
 		t.Fatal("stable runtime recovery did not start")
 	}
-	h.mu.Lock()
-	delay := h.bySID[testSIDA].restartDelay
-	h.mu.Unlock()
-	if delay != userRecoveryMinDelay {
-		t.Fatal("stable runtime did not reset restart delay")
+	if delay := userRestartDelay(h, testSIDA); delay != userRecoveryMinDelay {
+		t.Fatalf("confirmed stable runtime did not reset restart delay: %v", delay)
 	}
+}
+
+// #254: a manager that is created successfully but exits at once must keep
+// its capped backoff, however long recovery waits after the exit.
+func TestUserRecoveryImmediateExitKeepsCappedBackoff(t *testing.T) {
+	h, starts, procs := testUserHost(t, map[uint32]string{1: testSIDA}, nil)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	h.cfg.Now = func() time.Time { return now }
+	for i, delay := range []time.Duration{1, 2, 4, 8, 16, 32, 60, 60, 60} {
+		delay *= time.Second
+		h.Logon(1)
+		if starts.Load() != int32(i+1) {
+			t.Fatalf("launch %d did not start", i+1)
+		}
+		if got := userRestartDelay(h, testSIDA); got != delay {
+			t.Fatalf("launch %d delay = %v, want %v", i+1, got, delay)
+		}
+		launched := now
+		procs[testSIDA].alive.Store(false)
+		h.Logon(1)
+		r := h.RecoveryStatus()
+		if starts.Load() != int32(i+1) || len(r) != 1 || r[0].State != "waiting" || r[0].NextAttemptAt != launched.Add(delay).Format(time.RFC3339Nano) {
+			t.Fatalf("launch %d exit: starts %d, recovery %+v", i+1, starts.Load(), r)
+		}
+		// Recovery runs long after it is due, well beyond the stable threshold.
+		now = launched.Add(delay + 3*userRecoveryStableTime)
+	}
+}
+
+// Only observed running time counts: a manager last seen alive shortly after
+// launch does not reset its backoff, even when it is relaunched much later.
+func TestUserRecoveryCountsOnlyObservedRuntime(t *testing.T) {
+	h, starts, procs := testUserHost(t, map[uint32]string{1: testSIDA}, nil)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	h.cfg.Now = func() time.Time { return now }
+	h.Logon(1)
+	now = now.Add(userRecoveryStableTime / 2)
+	h.Logon(1) // observed alive at half the threshold
+	procs[testSIDA].alive.Store(false)
+	now = now.Add(10 * userRecoveryStableTime)
+	h.Logon(1)
+	if starts.Load() != 2 {
+		t.Fatal("due recovery did not start")
+	}
+	if delay := userRestartDelay(h, testSIDA); delay != 2*userRecoveryMinDelay {
+		t.Fatalf("unobserved runtime reset the delay: %v", delay)
+	}
+}
+
+// Lingering managers are observed by the linger scan, not by session logons.
+func TestUserRecoveryLingerScanConfirmsRuntime(t *testing.T) {
+	for _, observed := range []bool{false, true} {
+		h, _ := testLingerHost(t)
+		now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		h.cfg.Now = func() time.Time { return now }
+		if _, err := h.EnableLinger("alice"); err != nil {
+			t.Fatal(err)
+		}
+		h.mu.Lock()
+		first := h.bySID[testSIDA]
+		h.mu.Unlock()
+		if first == nil || first.proc == nil {
+			t.Fatal("linger did not start a manager")
+		}
+		now = now.Add(userRecoveryStableTime)
+		if observed {
+			h.StartLingering()
+		}
+		first.proc.(*fakeUserMgr).alive.Store(false)
+		now = now.Add(time.Minute)
+		h.StartLingering()
+		h.mu.Lock()
+		next := h.bySID[testSIDA]
+		h.mu.Unlock()
+		if next == nil || next == first || next.proc == nil {
+			t.Fatalf("observed=%t: linger scan did not relaunch", observed)
+		}
+		want := 2 * userRecoveryMinDelay
+		if observed {
+			want = userRecoveryMinDelay
+		}
+		if delay := userRestartDelay(h, testSIDA); delay != want {
+			t.Fatalf("observed=%t: delay %v, want %v", observed, delay, want)
+		}
+	}
+}
+
+func userRestartDelay(h *UserHost, sid string) time.Duration {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.bySID[sid].restartDelay
 }
 
 func TestUserRecoveryRevocationAndShutdownCancelWaiting(t *testing.T) {
@@ -169,5 +259,32 @@ func TestUserRecoveryLingerTokenFailureBackoff(t *testing.T) {
 	}
 	if h.ManagerCount() != 0 {
 		t.Fatal("disable-linger retained token recovery")
+	}
+}
+
+// A liveness result for a replaced process or instance is not running time.
+func TestUserRecoveryIgnoresStaleLivenessObservation(t *testing.T) {
+	h, _, procs := testUserHost(t, map[uint32]string{1: testSIDA}, nil)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	h.cfg.Now = func() time.Time { return now }
+	h.Logon(1)
+	h.mu.Lock()
+	inst := h.bySID[testSIDA]
+	h.mu.Unlock()
+	now = now.Add(userRecoveryStableTime)
+	h.observeUserAlive(testSIDA, inst, &fakeUserMgr{sid: testSIDA})
+	h.observeUserAlive(testSIDA, &userInstance{startedAt: inst.startedAt, proc: inst.proc}, inst.proc)
+	h.mu.Lock()
+	stale := inst.aliveAt
+	h.mu.Unlock()
+	if !stale.IsZero() {
+		t.Fatalf("stale observation recorded at %v", stale)
+	}
+	h.observeUserAlive(testSIDA, inst, procs[testSIDA])
+	h.mu.Lock()
+	current := inst.aliveAt
+	h.mu.Unlock()
+	if !current.Equal(now) {
+		t.Fatalf("current observation = %v, want %v", current, now)
 	}
 }

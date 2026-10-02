@@ -81,6 +81,9 @@ type userInstance struct {
 	restartDelay      time.Duration
 	nextStart         time.Time
 	startedAt         time.Time
+	// aliveAt is the last time a liveness check saw proc running. Recovery
+	// counts only startedAt..aliveAt as running time, never time after exit.
+	aliveAt time.Time
 }
 
 // NewUserHost creates a host. Call Listen after the system manager is up.
@@ -234,7 +237,7 @@ func (h *UserHost) StartLingering() {
 		h.cfg.Logf("list linger records: %v", err)
 	}
 	for _, rec := range recs {
-		if h.Alive(rec.SID) {
+		if h.observeRunning(rec.SID) {
 			continue
 		}
 		if err := h.startLinger(rec); err != nil {
@@ -568,6 +571,7 @@ func (h *UserHost) ensureRunning(sid string, tok *runtime.UserToken, stillWanted
 	}
 	// The SID gate retains this instance while liveness is observed outside h.mu.
 	if inst != nil && inst.proc != nil && inst.proc.Alive() {
+		h.observeUserAlive(sid, inst, inst.proc)
 		return nil
 	}
 	if inst != nil && inst.proc != nil {
@@ -672,6 +676,22 @@ func (h *UserHost) Alive(sid string) bool {
 	}
 	h.mu.Unlock()
 	return proc != nil && proc.Alive()
+}
+
+// observeRunning is Alive that also records the observation for recovery.
+func (h *UserHost) observeRunning(sid string) bool {
+	h.mu.Lock()
+	inst := h.bySID[sid]
+	var proc runtime.UserManagerProc
+	if inst != nil {
+		proc = inst.proc
+	}
+	h.mu.Unlock()
+	if proc == nil || !proc.Alive() {
+		return false
+	}
+	h.observeUserAlive(sid, inst, proc)
+	return true
 }
 
 // Running returns SIDs with a live manager.
