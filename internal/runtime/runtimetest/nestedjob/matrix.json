@@ -1,0 +1,183 @@
+{
+  "version": 1,
+  "issue": 265,
+  "rows": [
+    {
+      "id": "N01",
+      "action": "Establish MAIN, ENGINE, G1 and G2 and query both job layers.",
+      "expect": "MAIN in the unit job only; ENGINE, G1 and G2 in both jobs; exact creation times, parents, inner flags and token identity; children running, not merely created.",
+      "modes": ["assign", "job-list"],
+      "identities": ["system", "headless"],
+      "repeat": 1,
+      "lanes": ["owner", "daemon"],
+      "ownerPackage": "internal/runtime",
+      "ownerTest": "TestNativeNestedJobContainment"
+    },
+    {
+      "id": "N02",
+      "action": "MAIN closes its sole inner handle while it keeps running.",
+      "expect": "ENGINE, G1 and G2 signal without unit-job termination or an observer job duplicate; MAIN stays responsive and in the unit job until the final stop.",
+      "modes": ["assign", "job-list"],
+      "identities": ["system", "headless"],
+      "repeat": 1,
+      "lanes": ["owner", "daemon"],
+      "ownerPackage": "internal/runtime",
+      "ownerTest": "TestNativeNestedJobSoleClose"
+    },
+    {
+      "id": "N03",
+      "action": "Explicit stop with a cooperative ExecStop helper.",
+      "expect": "Helper runs once for the captured main; inner descendants, MAIN and helper exit; stop succeeds; no restart afterwards.",
+      "modes": ["assign", "job-list"],
+      "identities": ["system", "headless"],
+      "repeat": 3,
+      "lanes": ["owner", "daemon"],
+      "ownerPackage": "internal/manager",
+      "ownerTest": "TestWindowsNestedJobCooperativeStop"
+    },
+    {
+      "id": "N04",
+      "action": "Hung ExecStop helper and a MAIN that ignores the request, TimeoutStopSec=5s.",
+      "expect": "Forced cleanup removes both jobs' processes and the helper; stop reports failure within the budget; explicit stop stays down.",
+      "modes": ["assign", "job-list"],
+      "identities": ["system", "headless"],
+      "repeat": 3,
+      "lanes": ["owner", "daemon"],
+      "ownerPackage": "internal/manager",
+      "ownerTest": "TestWindowsNestedJobForcedStop"
+    },
+    {
+      "id": "N05",
+      "action": "Terminate the exact MAIN process under Restart=always.",
+      "expect": "Loss of the sole inner handle kills the engine tree; every old handle signals before the replacement launch; the new generation and invocation are contained.",
+      "modes": ["assign", "job-list"],
+      "identities": ["system", "headless"],
+      "repeat": 3,
+      "lanes": ["owner", "daemon"],
+      "ownerPackage": "internal/manager",
+      "ownerTest": "TestWindowsNestedJobMainCrashRestart"
+    },
+    {
+      "id": "N06",
+      "action": "Crash the exact headless user-manager process with the unit enabled.",
+      "expect": "Old manager, MAIN, ENGINE, G1 and G2 are gone before the replacement workload is accepted; a new S4U manager recovers enabled work.",
+      "modes": ["assign", "job-list"],
+      "identities": ["headless"],
+      "repeat": 3,
+      "lanes": ["daemon"]
+    },
+    {
+      "id": "N07",
+      "action": "Crash the process that owns the outer jobs (broker, or the owner-lane helper).",
+      "expect": "The old managed tree exits; with the installed daemon, recovery restores the enabled workload and no old generation survives at replacement acceptance.",
+      "modes": ["assign", "job-list"],
+      "identities": ["system", "headless"],
+      "repeat": 3,
+      "lanes": ["owner", "daemon"],
+      "ownerPackage": "internal/manager",
+      "ownerTest": "TestWindowsNestedJobOwnerCrash"
+    },
+    {
+      "id": "N08",
+      "action": "ENGINE, G1 and G2 commit 96 MiB each under MemoryMax=256M.",
+      "expect": "The unit-job commit limit is enforced and reported as a resource limit; the inner job has no limit to credit; the whole tree is cleaned up.",
+      "modes": ["assign", "job-list"],
+      "identities": ["system", "headless"],
+      "repeat": 1,
+      "lanes": ["owner", "daemon"],
+      "ownerPackage": "internal/manager",
+      "ownerTest": "TestWindowsNestedJobMemoryMax"
+    },
+    {
+      "id": "N09",
+      "action": "Format 1 CPUQuota=25% with busy descendants, compared with an uncapped control.",
+      "expect": "Native CpuRate 2500 with a hard cap on the unit job, none on the inner job; measured use within the declared bound, or explicitly inconclusive.",
+      "modes": ["assign", "job-list"],
+      "identities": ["system", "headless"],
+      "repeat": 1,
+      "lanes": ["owner", "daemon"],
+      "ownerPackage": "internal/manager",
+      "ownerTest": "TestWindowsNestedJobCPUQuota",
+      "ownerEnv": ["WINUNITD_NATIVE_NESTED_METER=1"]
+    },
+    {
+      "id": "N10",
+      "action": "Format 2 WindowsCPUQuota=25%, same control and measurement.",
+      "expect": "Same native and measured scope as N09 using the format 2 directive.",
+      "modes": ["assign", "job-list"],
+      "identities": ["system", "headless"],
+      "repeat": 1,
+      "lanes": ["owner", "daemon"],
+      "ownerPackage": "internal/manager",
+      "ownerTest": "TestWindowsNestedJobWindowsCPUQuota",
+      "ownerEnv": ["WINUNITD_NATIVE_NESTED_METER=1"]
+    },
+    {
+      "id": "N11",
+      "action": "MAIN, ENGINE and G1 request CREATE_BREAKAWAY_FROM_JOB with no inner breakaway flags.",
+      "expect": "No created process is outside the unit job; every attempt and its result is recorded.",
+      "modes": ["assign", "job-list"],
+      "identities": ["system", "headless"],
+      "repeat": 1,
+      "lanes": ["owner", "daemon"],
+      "ownerPackage": "internal/runtime",
+      "ownerTest": "TestNativeNestedJobBreakawayDenied"
+    },
+    {
+      "id": "N12",
+      "action": "After READY, set only inner BREAKAWAY_OK; ENGINE and G1 request breakaway for new probes.",
+      "expect": "Probes may leave the inner job but never the unit job; existing members keep inner membership; the unit stop removes every process.",
+      "modes": ["assign", "job-list"],
+      "identities": ["system", "headless"],
+      "repeat": 1,
+      "lanes": ["owner", "daemon"],
+      "ownerPackage": "internal/runtime",
+      "ownerTest": "TestNativeNestedJobInnerBreakaway"
+    },
+    {
+      "id": "N13",
+      "action": "After READY, set only inner SILENT_BREAKAWAY_OK; ENGINE and G1 create normal probes.",
+      "expect": "Probes stay in the unit job even when they leave the inner job; the unit stop removes every process.",
+      "modes": ["assign", "job-list"],
+      "identities": ["system", "headless"],
+      "repeat": 1,
+      "lanes": ["owner", "daemon"],
+      "ownerPackage": "internal/runtime",
+      "ownerTest": "TestNativeNestedJobInnerSilentBreakaway"
+    },
+    {
+      "id": "N14",
+      "action": "Kill MAIN at a held launch gate.",
+      "expect": "The child's primary thread is still suspended; an unassigned child remains contained by the unit job, an assigned or atomically created child dies with the inner job; every child is drained before replacement.",
+      "modes": ["assign", "job-list"],
+      "gates": {"assign": ["before-assign", "before-resume"], "job-list": ["before-resume"]},
+      "identities": ["system", "headless"],
+      "repeat": 1,
+      "lanes": ["owner", "daemon"],
+      "ownerPackage": "internal/runtime",
+      "ownerTest": "TestNativeNestedJobLaunchGate"
+    },
+    {
+      "id": "N15",
+      "action": "Sensitivity control: ENGINE deliberately inherits one inner-job duplicate; MAIN closes both of its copies, then ENGINE closes the last one.",
+      "expect": "The probe detects the inherited job; the tree survives MAIN's close and dies after ENGINE's. Not a safe production lane.",
+      "modes": ["assign", "job-list"],
+      "identities": ["system"],
+      "repeat": 1,
+      "lanes": ["owner"],
+      "ownerPackage": "internal/runtime",
+      "ownerTest": "TestNativeNestedJobInheritedHandleControl"
+    },
+    {
+      "id": "N16",
+      "action": "Test-only seam fails the first stop of a real nested tree; stop, start and retry.",
+      "expect": "Ownership is retained and replacement is refused while cleanup is unconfirmed; the retry drains every held process.",
+      "modes": ["assign", "job-list"],
+      "identities": ["system"],
+      "repeat": 1,
+      "lanes": ["owner"],
+      "ownerPackage": "internal/manager",
+      "ownerTest": "TestWindowsNestedJobCleanupUncertainty"
+    }
+  ]
+}
