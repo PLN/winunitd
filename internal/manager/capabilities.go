@@ -44,6 +44,21 @@ func (m *Manager) Capabilities() *protocol.CapabilitiesResult {
 	}
 }
 
+// buildReason identifies the build on the durable daemon.open record, so a
+// change of build across repair, upgrade, or rollback stays visible. It uses
+// the existing reason field: readers of any daemon-log version accept it, and
+// the Windows event text for daemon.open does not include it.
+func buildReason(b version.BuildInfo) string {
+	reason := "version " + b.Version
+	if b.Commit != "" {
+		reason += " commit " + b.Commit
+	}
+	if b.Modified != nil && *b.Modified {
+		reason += " modified"
+	}
+	return reason
+}
+
 // jobLimitDirectives are the [Service] directives that
 // runtime.JobLimitsFromSpec applies to a managed workload's Job Object.
 // Format rules still select which of them a file may use.

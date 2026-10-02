@@ -21,6 +21,7 @@ import (
 	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/timers"
 	"github.com/PLN/winunitd/internal/unit"
+	"github.com/PLN/winunitd/internal/version"
 )
 
 // Manager holds loaded units and serves the control protocol.
@@ -176,7 +177,7 @@ func New(cfg Config) (*Manager, error) {
 		m.pathExists = pathwatch.Exists
 	}
 	m.engine = timers.NewEngine(clk, store, m.onTimerElapsed)
-	dlog.Record(journal.DaemonEvent{Code: journal.DaemonEventOpen})
+	dlog.Record(journal.DaemonEvent{Code: journal.DaemonEventOpen, Reason: buildReason(version.Build())})
 	return m, nil
 }
 

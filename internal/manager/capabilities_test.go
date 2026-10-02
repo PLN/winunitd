@@ -9,6 +9,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/PLN/winunitd/internal/journal"
 	"github.com/PLN/winunitd/internal/protocol"
 	wruntime "github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/unit"
@@ -157,4 +158,57 @@ func serveCapabilities(t *testing.T, h protocol.Handler) *protocol.Client {
 		<-done
 	})
 	return protocol.NewClient(conn)
+}
+
+func TestDaemonOpenRecordsBuildIdentity(t *testing.T) {
+	t.Parallel()
+	commit := "0123456789abcdef0123456789abcdef01234567"
+	modified := true
+	for _, tc := range []struct {
+		build version.BuildInfo
+		want  string
+	}{
+		{version.BuildInfo{Version: "1.2.3-test"}, "version 1.2.3-test"},
+		{version.BuildInfo{Version: "1.2.3-test", Commit: commit, Modified: new(false)}, "version 1.2.3-test commit " + commit},
+		{version.BuildInfo{Version: "1.2.3-test", Commit: commit, Modified: &modified}, "version 1.2.3-test commit " + commit + " modified"},
+	} {
+		if got := buildReason(tc.build); got != tc.want {
+			t.Fatalf("buildReason(%+v) = %q, want %q", tc.build, got, tc.want)
+		}
+		if cleaned, ok := journal.PublicDetail(tc.want); !ok || cleaned != tc.want {
+			t.Fatalf("daemon log would drop %q", tc.want)
+		}
+	}
+
+	dir := t.TempDir()
+	m, err := New(Config{BaseDir: dir, Launch: &fakeLauncher{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := buildReason(version.Build())
+	st, err := m.Status("")
+	if err != nil || len(st.Machine.DaemonEvents) == 0 || st.Machine.DaemonEvents[0].Code != journal.DaemonEventOpen || st.Machine.DaemonEvents[0].Reason != want {
+		t.Fatalf("daemon.open = %+v %v", st, err)
+	}
+	m.Close()
+	// A later manager on the same data, as after servicing, reads the record
+	// back from the file tail.
+	next, err := New(Config{BaseDir: dir, Launch: &fakeLauncher{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(next.Close)
+	st, err = next.Status("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opens := 0
+	for _, ev := range st.Machine.DaemonEvents {
+		if ev.Code == journal.DaemonEventOpen && ev.Reason == want {
+			opens++
+		}
+	}
+	if opens != 2 {
+		t.Fatalf("daemon.open records with build identity = %d: %+v", opens, st.Machine.DaemonEvents)
+	}
 }
