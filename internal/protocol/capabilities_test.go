@@ -3,6 +3,7 @@ package protocol
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -66,6 +67,13 @@ func TestCapabilitiesValidate(t *testing.T) {
 // member; an empty raw omits it.
 func serveRawCapabilities(t *testing.T, raw string) *Client {
 	t.Helper()
+	return serveRawEnvelope(t, Name, Version, nil, raw)
+}
+
+// serveRawEnvelope answers one request with the given envelope identity,
+// error and raw result member.
+func serveRawEnvelope(t *testing.T, name string, version int, rpcErr *Error, raw string) *Client {
+	t.Helper()
 	server, client := net.Pipe()
 	t.Cleanup(func() { _ = client.Close() })
 	go func() {
@@ -74,7 +82,7 @@ func serveRawCapabilities(t *testing.T, raw string) *Client {
 		if err := json.NewDecoder(server).Decode(&req); err != nil {
 			return
 		}
-		resp := Response{Protocol: Name, Version: Version, ID: req.ID}
+		resp := Response{Protocol: name, Version: version, ID: req.ID, Error: rpcErr}
 		if raw != "" {
 			resp.Result = json.RawMessage(raw)
 		}
@@ -116,5 +124,37 @@ func TestClientCapabilitiesRejectsInvalidReplies(t *testing.T) {
 	got, err := serveRawCapabilities(t, withField("futureField", `{"added":true}`)).Capabilities(context.Background())
 	if err != nil || got.Product != "winunitd" {
 		t.Fatalf("unknown additional field rejected: %v", err)
+	}
+}
+
+// The response envelope must be this protocol and version, whatever the
+// result claims; a foreign envelope's error is never a typed *Error.
+func TestClientRejectsForeignResponseEnvelope(t *testing.T) {
+	t.Parallel()
+	valid, err := json.Marshal(validCapabilities())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, env := range []struct {
+		name    string
+		version int
+	}{{"other.control", Version}, {Name, Version + 1}, {"", 0}} {
+		if got, err := serveRawEnvelope(t, env.name, env.version, nil, string(valid)).Capabilities(context.Background()); err == nil || !strings.Contains(err.Error(), "response uses protocol") {
+			t.Errorf("envelope %q/%d: capabilities %+v accepted (%v)", env.name, env.version, got, err)
+		}
+		if _, err := serveRawEnvelope(t, env.name, env.version, nil, `{"units":[]}`).ListUnits(context.Background()); err == nil {
+			t.Errorf("envelope %q/%d: list-units accepted", env.name, env.version)
+		}
+		var pe *Error
+		err := serveRawEnvelope(t, env.name, env.version, ErrMethodNotFound(MethodCapabilities), "").Call(context.Background(), MethodCapabilities, struct{}{}, nil)
+		if err == nil || errors.As(err, &pe) || !strings.Contains(err.Error(), "peer reported") {
+			t.Errorf("envelope %q/%d: peer error mapped as %v", env.name, env.version, err)
+		}
+	}
+	// A matching envelope keeps typed errors, as from an older manager.
+	var pe *Error
+	err = serveRawEnvelope(t, Name, Version, ErrMethodNotFound(MethodCapabilities), "").Call(context.Background(), MethodCapabilities, struct{}{}, nil)
+	if !errors.As(err, &pe) || pe.Code != CodeMethodNotFound {
+		t.Fatalf("method-not-found from a matching envelope = %v", err)
 	}
 }

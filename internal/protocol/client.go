@@ -101,6 +101,15 @@ func (c *Client) Call(ctx context.Context, method string, params, out any) error
 	if err := decodeMessage(c.br, &resp); err != nil {
 		return fmt.Errorf("read response: %w", err)
 	}
+	// Accept neither the error nor the result of a foreign or unversioned
+	// envelope. A peer error is reported as text, never as a typed *Error.
+	if resp.Protocol != Name || resp.Version != Version {
+		detail := ""
+		if resp.Error != nil {
+			detail = "; peer reported: " + resp.Error.Error()
+		}
+		return fmt.Errorf("response uses protocol %q version %d, want %q version %d%s", resp.Protocol, resp.Version, Name, Version, detail)
+	}
 	if resp.ID != id {
 		return fmt.Errorf("response id %d does not match request %d", resp.ID, id)
 	}

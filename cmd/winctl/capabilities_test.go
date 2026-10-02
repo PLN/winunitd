@@ -55,6 +55,11 @@ func TestCapabilitiesRequireFailsClosed(t *testing.T) {
 // rawCapabilitiesDial answers one request per connection with either an RPC
 // error or a raw result member (empty omits it).
 func rawCapabilitiesDial(rpcErr *protocol.Error, raw string) func(context.Context) (net.Conn, error) {
+	return rawEnvelopeDial(protocol.Name, protocol.Version, rpcErr, raw)
+}
+
+// rawEnvelopeDial is rawCapabilitiesDial with a chosen envelope identity.
+func rawEnvelopeDial(name string, version int, rpcErr *protocol.Error, raw string) func(context.Context) (net.Conn, error) {
 	return func(context.Context) (net.Conn, error) {
 		server, client := net.Pipe()
 		go func() {
@@ -63,7 +68,7 @@ func rawCapabilitiesDial(rpcErr *protocol.Error, raw string) func(context.Contex
 			if err := json.NewDecoder(server).Decode(&req); err != nil {
 				return
 			}
-			resp := protocol.Response{Protocol: protocol.Name, Version: protocol.Version, ID: req.ID, Error: rpcErr}
+			resp := protocol.Response{Protocol: name, Version: version, ID: req.ID, Error: rpcErr}
 			if rpcErr == nil && raw != "" {
 				resp.Result = json.RawMessage(raw)
 			}
@@ -103,6 +108,27 @@ func TestCapabilitiesRejectsInvalidReplies(t *testing.T) {
 		code := runCLI([]string{"capabilities", "--require", "restart-backoff"}, &out, &errOut, rawCapabilitiesDial(nil, raw))
 		if code != 1 || out.Len() != 0 || !strings.Contains(errOut.String(), "invalid capability reply") {
 			t.Errorf("%s: exit %d stdout=%q stderr=%q", name, code, out.String(), errOut.String())
+		}
+	}
+}
+
+// A valid capability body inside a foreign, incompatible or unversioned
+// envelope is not a capability reply.
+func TestCapabilitiesRejectsForeignEnvelope(t *testing.T) {
+	_, dial, stop := startTestDaemon(t)
+	var valid bytes.Buffer
+	if code := runCLI([]string{"capabilities"}, &valid, &bytes.Buffer{}, dial); code != 0 {
+		t.Fatal("reference reply failed")
+	}
+	stop()
+	for _, env := range []struct {
+		name    string
+		version int
+	}{{"other.control", protocol.Version}, {protocol.Name, protocol.Version + 1}, {"", 0}} {
+		var out, errOut bytes.Buffer
+		code := runCLI([]string{"capabilities", "--require", protocol.FeatureRestartBackoff}, &out, &errOut, rawEnvelopeDial(env.name, env.version, nil, valid.String()))
+		if code != 1 || out.Len() != 0 || !strings.Contains(errOut.String(), "response uses protocol") {
+			t.Errorf("envelope %q/%d: exit %d stdout=%q stderr=%q", env.name, env.version, code, out.String(), errOut.String())
 		}
 	}
 }
