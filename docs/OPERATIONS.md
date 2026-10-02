@@ -32,7 +32,8 @@ History is private to each manager instance. Pending records are retained until
 completion; the most recent 256 completed records are retained in completion
 order. Errors in history are capped at 4,096 UTF-8 bytes with an explicit
 truncation flag. A status ID can refer to an evicted record. Restarting the
-manager loses history and creates a different ID namespace. There is no disk
+manager, including for repair, upgrade or rollback, loses history and creates
+a different ID namespace; an earlier ID then reports not found. There is no disk
 archive, global history shared between user/system managers, or automatic
 recovery-operation history yet.
 

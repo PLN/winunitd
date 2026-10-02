@@ -114,10 +114,11 @@ configuration and the previous running or stopped state.
 
 Restarting the manager after a successful upgrade starts enabled units.
 Units that were started manually and are not enabled are not restored.
-The restarted manager has new invocations and an empty operation history: an
-operation ID from before servicing reports not found, never another record.
-Journal lines and daemon-log records keep the invocation and operation IDs
-they were written with.
+Known limit: operation history does not survive servicing. The restarted
+manager has new invocations and an empty operation history, so an operation ID
+from before servicing reports not found, never another record. Identities
+survive only in the durable records: journal lines and daemon-log records keep
+the invocation and operation IDs they were written with.
 
 Every product package of one release has the same installer version, so
 Windows Installer cannot order two builds of that release. A reinstall with
