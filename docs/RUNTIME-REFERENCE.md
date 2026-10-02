@@ -120,7 +120,7 @@ These pending retries are not yet durable across a daemon crash.
 
 ### Invocation IDs
 
-Each unit start (including `Restart=` relaunch) gets a new UUID. `winctl status` prints `InvocationID=`. Journal lines for that run carry the same ID. The process env includes `WINUNIT_INVOCATION_ID`.
+Each unit start (including `Restart=` relaunch) gets a new UUID. `winctl status` prints `InvocationID=`. Journal lines for that run carry the same ID. The process env includes `WINUNIT_INVOCATION_ID`. An `ExecStop` helper receives that ID with `-stop` appended; see the [unit reference](UNIT-REFERENCE.md#core-directives) for the helper contract.
 
 ### Notify and watchdog
 
