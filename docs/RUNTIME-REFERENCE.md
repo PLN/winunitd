@@ -94,41 +94,53 @@ fields:
 | `product`, `version` | `winunitd` and the release string |
 | `commit`, `modified` | Source revision embedded at build time, and whether the tree had local changes; both are omitted for a binary built without version-control data |
 | `go`, `platform` | Compiler and `GOOS/GOARCH` |
-| `scope` | `system` or `user`: the manager that answered |
-| `protocol` | Control protocol name, version and methods |
+| `scope` | `system` or `user`: the endpoint that answered |
+| `protocol` | Control protocol name, version and the methods this endpoint implements |
 | `formatVersions` | Accepted `[Unit] FormatVersion=` values |
-| `features` | Contract names that this build enforces |
-| `jobLimits` | Directives applied to a managed unit's Job Object |
-| `userManagerModes` | User-manager token modes, as reported by status `mode` |
+| `features` | Contract names that this endpoint enforces |
+| `jobLimits` | Directives applied to the Job Object of a managed process service. `IoPriority` is a process setting on the main process and is not listed |
+| `userManagerModes` | User-manager token modes that the system endpoint launches, as reported by status `mode`; empty on user endpoints |
+| `experimentalUserManagerModes` | Implemented user-manager modes outside supported release claims, currently `headless-store-uri` (the optional credential-store fallback); empty on user endpoints |
 | `directives` | Recognized directive names per section |
 
 | Feature | Contract |
 | --- | --- |
 | `exec-stop` | `ExecStop=` runs one cooperative stop helper ([unit reference](UNIT-REFERENCE.md#core-directives)) |
 | `restart-backoff` | Format-2 `RestartBackoff=exponential` with `RestartMaxDelaySec=` ([recovery delay and backoff](UNIT-REFERENCE.md#recovery-delay-and-backoff)) |
-| `job-limits` | The `jobLimits` directives are applied to each managed unit's Job Object |
-| `linger-s4u` | Lingering users get a headless user manager through an S4U logon |
+| `job-limits` | The `jobLimits` directives are applied to the Job Object of each managed process service; native SCM and task proxies do not reach this path |
+| `linger-s4u` | System endpoint only: lingering users get a headless user manager through an S4U logon |
 
-A name is listed only when the build enforces that contract. Windows builds
-list all four. Builds for other systems are test stand-ins with stub launchers
-and list only `restart-backoff`, with empty `jobLimits` and `userManagerModes`.
-A name is never reused for different behavior; a new contract gets a new name.
-The result describes the build, not qualification: the limits recorded in
-[milestones](MILESTONES.md) and the evidence documents still apply. System and
-user managers of one build give the same answer apart from `scope`; linger and
-user-manager launch are system-manager functions. A recognized directive can
-still be rejected by format, kind or type rules, so use `verify` for a
+A name is listed only when the answering endpoint enforces that contract. On
+Windows the system endpoint lists all four and user endpoints omit
+`linger-s4u`. Builds for other systems are test stand-ins with stub launchers
+and list only `restart-backoff`, with empty `jobLimits` and mode lists. A name
+is never reused for different behavior; a new contract gets a new name. The
+result describes the build, not qualification: the limits recorded in
+[milestones](MILESTONES.md) and the evidence documents still apply, and
+experimental entries are not release support. Build fields (`product`,
+`version`, `commit`, `modified`, `go`, `platform`, `formatVersions` and
+`directives`) are the same on both endpoints of one binary. Methods, features
+and modes describe the answering endpoint and do not depend on the caller's
+permission to use them. A user endpoint's answer does not attest the system
+manager's build; query the system endpoint for that. A recognized directive
+can still be rejected by format, kind or type rules, so use `verify` for a
 concrete file.
 
 `--require NAME` (repeatable or comma-separated) exits 1 unless every name is
 listed; the JSON is still printed. A manager built before this query,
 including `0.2.1-beta`, answers `method-not-found`. winctl then reports that
-the manager is below any capability floor and exits 1.
+the manager is below any capability floor and exits 1. A missing, malformed or
+foreign reply also exits 1.
 
-An external installer or supervisor that must bind to an exact build should
-compare `version` and `commit` with the build manifest of the package it
-installed, require the features its units depend on, and refuse to hand over
-ownership otherwise. Repeat the check after every install, repair, upgrade or
+An external installer or supervisor that must bind to an exact clean build
+should require, on the system endpoint: the expected `version`; a present
+`commit` equal to the package's build-manifest commit; and an explicit
+`modified: false`. A missing commit or modified state cannot satisfy that
+floor, and a development build from a changed tree keeps its commit but reports
+`modified: true`. It should also require the features its units depend on, and
+refuse to hand over ownership otherwise. Source identity is not artifact
+identity: hash the installed files against the package's build manifest to bind
+the exact bytes. Repeat these checks after every install, repair, upgrade or
 rollback ([servicing](INSTALLATION.md#servicing-a-running-manager)). Release
 binaries carry the revision because `tools/build` builds with version-control
 data and rejects a binary whose embedded revision differs from the manifest
@@ -166,12 +178,17 @@ directives added since: `ExecStop`, `ExecStopArg`, `FormatVersion`,
 `RemainAfterExit`, `RestartBackoff`, `RestartMaxDelaySec`,
 `WatchdogFailureThreshold`, `WatchdogGraceSec`, `WatchdogTimeoutSec`,
 `WindowsCPUQuota` and `WindowsCPUWeight`. A unit that uses one fails there:
-its reload is rejected, and verify by name reports the unit as not loaded.
+reload rejects the candidate, so verify by name reports a new unit, or any unit
+after a rejected cold load, as not loaded. An already accepted unit whose file
+gained such a directive stays loaded and verifies with `ok: false`.
 
 Path verify uses the parser of the `winctl` that runs it, so use the `winctl`
 installed with the manager. Behavior that changed without a new directive,
-such as the oneshot completion default, is not visible to `verify`; compare
-`directives` and `features` from `winctl capabilities`. Warnings, such as
+such as the oneshot completion default, is visible neither to `verify` nor in
+the capability result: recognizing a directive does not promise its default,
+and no feature names that default. Set such directives explicitly (for example
+`RemainAfterExit=no`); a release that lacks them then rejects the unit.
+Warnings, such as
 `MemoryMax=` with `Type=scm` or an omitted `WorkingDirectory=`, report
 settings that are ignored or defaulted and do not fail verification. Treat
 them as failures when every written setting must take effect.
