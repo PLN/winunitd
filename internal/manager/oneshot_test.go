@@ -2,8 +2,10 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -69,29 +71,41 @@ func TestRepeatableOneshotCompletionAndRetainedState(t *testing.T) {
 type heldOneshotLauncher struct {
 	fakeLauncher
 	created chan *fakeProc
-	// stopGate, when set, lets the first Stop of a launched oneshot through
-	// and holds later ones until closed. The first is the interrupted start's
+	// The first Stop of a launched oneshot is the interrupted start's
 	// teardown; a later one belongs to an exit or failed-state cleanup worker,
-	// which keeps workload cleanup unconfirmed while it is held. cleanupHeld
-	// receives once when such a worker is inside Stop.
-	stopGate    chan struct{}
-	cleanupHeld chan struct{}
+	// which owns the unit gate and keeps workload cleanup unconfirmed until it
+	// returns. stopGate holds such later Stops until closed; cleanupHeld
+	// receives when a worker is held. While failCleanup is set, later Stops
+	// fail instead, leaving cleanup pending with the gate released;
+	// cleanupFailed receives after such a failure.
+	stopGate      chan struct{}
+	cleanupHeld   chan struct{}
+	failCleanup   *atomic.Bool
+	cleanupFailed chan struct{}
 }
 
 type gatedStopProcess struct {
 	*fakeProc
-	gate  <-chan struct{}
-	held  chan<- struct{}
+	l     *heldOneshotLauncher
 	stops atomic.Int32
 }
 
 func (p *gatedStopProcess) Stop(timeout time.Duration) error {
 	if p.stops.Add(1) > 1 {
-		select {
-		case p.held <- struct{}{}:
-		default:
+		if p.l.failCleanup != nil && p.l.failCleanup.Load() {
+			select {
+			case p.l.cleanupFailed <- struct{}{}:
+			default:
+			}
+			return errors.New("injected cleanup failure")
 		}
-		<-p.gate
+		if p.l.stopGate != nil {
+			select {
+			case p.l.cleanupHeld <- struct{}{}:
+			default:
+			}
+			<-p.l.stopGate
+		}
 	}
 	return p.fakeProc.Stop(timeout)
 }
@@ -104,8 +118,8 @@ func (l *heldOneshotLauncher) Start(ctx context.Context, spec runtime.StartSpec)
 	p, err := l.fakeLauncher.Start(ctx, spec)
 	if err == nil {
 		l.created <- p.(*fakeProc)
-		if l.stopGate != nil {
-			p = &gatedStopProcess{fakeProc: p.(*fakeProc), gate: l.stopGate, held: l.cleanupHeld}
+		if l.stopGate != nil || l.failCleanup != nil {
+			p = &gatedStopProcess{fakeProc: p.(*fakeProc), l: l}
 		}
 	}
 	return p, err
@@ -261,13 +275,29 @@ func TestRepeatableOneshotReloadCapturesCompletionPolicy(t *testing.T) {
 }
 
 func TestRepeatableOneshotInterruptedWait(t *testing.T) {
-	for _, action := range []string{"stop", "cancel", "timeout", "restart"} {
+	for _, action := range []string{"stop", "cancel", "timeout", "timeout-refused", "restart"} {
 		t.Run(action, func(t *testing.T) {
 			l := &heldOneshotLauncher{created: make(chan *fakeProc, 3)}
-			if action == "timeout" {
+			switch action {
+			case "timeout":
 				l.stopGate, l.cleanupHeld = make(chan struct{}), make(chan struct{}, 1)
+			case "timeout-refused":
+				l.failCleanup, l.cleanupFailed = &atomic.Bool{}, make(chan struct{}, 1)
+				l.failCleanup.Store(true)
 			}
 			m, clock := managerWithFake(t, l, map[string]string{"work.service": oneshotBody})
+			// Registered after managerWithFake, so it runs before the manager's
+			// teardown on every exit, including a failed assertion while a
+			// cleanup worker is held.
+			releaseCleanup := sync.OnceFunc(func() {
+				if l.stopGate != nil {
+					close(l.stopGate)
+				}
+				if l.failCleanup != nil {
+					l.failCleanup.Store(false)
+				}
+			})
+			t.Cleanup(releaseCleanup)
 			done := startOneshot(m, context.Background(), "work")
 			p := awaitOneshotProcess(t, l)
 			waitCond(t, func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.units["work.service"].startCancel != nil })
@@ -282,7 +312,7 @@ func TestRepeatableOneshotInterruptedWait(t *testing.T) {
 				if _, err := m.CancelOperation(context.Background(), st.Unit.LastOperationID); err != nil {
 					t.Fatal(err)
 				}
-			case "timeout":
+			case "timeout", "timeout-refused":
 				clock.Advance(time.Hour)
 			case "restart":
 				restarted = make(chan oneshotReply, 1)
@@ -292,41 +322,15 @@ func TestRepeatableOneshotInterruptedWait(t *testing.T) {
 			if r.err == nil {
 				t.Fatal("interrupted start succeeded")
 			}
-			waitOperationErrorCompleted(t, m, r.err)
-			var early <-chan oneshotReply
-			if l.stopGate != nil {
-				// A timed-out start publishes its failure before workload
-				// cleanup is confirmed (#261). While a cleanup worker is held,
-				// the replacement guard must not launch a fresh run: it either
-				// refuses at once or waits for the unit gate.
-				select {
-				case <-l.cleanupHeld:
-				case <-time.After(3 * time.Second):
-					t.Fatal("cleanup worker did not reach Stop")
-				}
-				st, err := m.Status("work")
-				if err != nil || !st.Unit.TerminationUncertain || !containsEnv(st.Unit.PendingCleanup, "workload") {
-					t.Fatalf("timed-out cleanup not pending: %+v %v", st, err)
-				}
-				early = startOneshot(m, context.Background(), "work")
-				select {
-				case r := <-early:
-					if r.err == nil || !strings.Contains(r.err.Error(), "termination is unconfirmed") {
-						t.Fatalf("start during pending cleanup: %+v", r)
-					}
-					early = nil
-				case p := <-l.created:
-					t.Fatalf("replacement %d launched before cleanup was confirmed", p.PID())
-				case <-time.After(100 * time.Millisecond):
-				}
-				if len(l.created) != 0 {
-					t.Fatal("replacement launched before cleanup was confirmed")
-				}
-				close(l.stopGate)
-				waitCond(t, func() bool {
-					st, err := m.Status("work")
-					return err == nil && !st.Unit.TerminationUncertain && len(st.Unit.PendingCleanup) == 0
-				})
+			interrupted := waitOperationErrorCompleted(t, m, r.err)
+			// A timed-out start publishes its failure before workload cleanup
+			// is confirmed (#261); a fresh start must not launch before then.
+			var waiting <-chan oneshotReply
+			switch action {
+			case "timeout":
+				waiting = startBehindHeldCleanup(t, m, l, interrupted.ID, releaseCleanup)
+			case "timeout-refused":
+				refuseStartWhileCleanupFailed(t, m, l, releaseCleanup)
 			}
 			if p.Alive() {
 				t.Fatal("interrupted invocation survived")
@@ -337,9 +341,9 @@ func TestRepeatableOneshotInterruptedWait(t *testing.T) {
 					t.Fatalf("restart: %+v", r)
 				}
 			}
-			// A completed stop/failure must not prevent an explicit fresh run.
-			// A start that waited behind the cleanup is that fresh run.
-			done = early
+			// A completed stop/failure must not prevent an explicit fresh run;
+			// the start that waited behind the held cleanup is that run.
+			done = waiting
 			if done == nil {
 				done = startOneshot(m, context.Background(), "work")
 			}
@@ -349,6 +353,81 @@ func TestRepeatableOneshotInterruptedWait(t *testing.T) {
 			}
 		})
 	}
+}
+
+func assertWorkloadCleanupPending(t *testing.T, m *Manager) {
+	t.Helper()
+	st, err := m.Status("work")
+	if err != nil || !st.Unit.TerminationUncertain || !containsEnv(st.Unit.PendingCleanup, "workload") {
+		t.Fatalf("timed-out workload cleanup not pending: %+v %v", st, err)
+	}
+}
+
+func waitWorkloadCleanupConfirmed(t *testing.T, m *Manager) {
+	t.Helper()
+	waitCond(t, func() bool {
+		st, err := m.Status("work")
+		return err == nil && !st.Unit.TerminationUncertain && len(st.Unit.PendingCleanup) == 0
+	})
+}
+
+// A cleanup worker held inside Stop owns the unit gate. A start issued then is
+// admitted as an operation but cannot reach launch admission; once the worker
+// confirms cleanup it launches. Returns that start's reply channel.
+func startBehindHeldCleanup(t *testing.T, m *Manager, l *heldOneshotLauncher, interrupted string, release func()) <-chan oneshotReply {
+	t.Helper()
+	select {
+	case <-l.cleanupHeld:
+	case <-time.After(3 * time.Second):
+		t.Fatal("cleanup worker did not reach Stop")
+	}
+	assertWorkloadCleanupPending(t, m)
+	done := startOneshot(m, context.Background(), "work")
+	var op *protocol.OperationResult
+	waitCond(t, func() bool {
+		st, err := m.Status("work")
+		if err != nil || st.Unit.LastOperationID == interrupted {
+			return false
+		}
+		op, err = m.Operation(st.Unit.LastOperationID)
+		return err == nil
+	})
+	select {
+	case r := <-done:
+		t.Fatalf("start finished while cleanup was held: %+v", r)
+	default:
+	}
+	if op.State != "running" || op.Action != "start" || len(l.created) != 0 {
+		t.Fatalf("start behind held cleanup: %+v, launched %d", op, len(l.created))
+	}
+	release()
+	waitWorkloadCleanupConfirmed(t, m)
+	return done
+}
+
+// A failed cleanup worker leaves workload cleanup pending and releases the
+// unit gate, so a start reaches launch admission and is refused there without
+// launching. A retried stop then confirms cleanup.
+func refuseStartWhileCleanupFailed(t *testing.T, m *Manager, l *heldOneshotLauncher, release func()) {
+	t.Helper()
+	select {
+	case <-l.cleanupFailed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("cleanup worker did not fail")
+	}
+	assertWorkloadCleanupPending(t, m)
+	if r, err := m.Start(context.Background(), "work"); err == nil || !strings.Contains(err.Error(), "termination is unconfirmed") {
+		t.Fatalf("start with unconfirmed cleanup: %+v %v", r, err)
+	}
+	if len(l.created) != 0 {
+		t.Fatal("refused start launched a process")
+	}
+	assertWorkloadCleanupPending(t, m)
+	release()
+	if _, err := m.Stop("work"); err != nil {
+		t.Fatalf("retry stop: %v", err)
+	}
+	waitWorkloadCleanupConfirmed(t, m)
 }
 
 func TestRepeatableOneshotCleanupFailureRetainsOwnership(t *testing.T) {
