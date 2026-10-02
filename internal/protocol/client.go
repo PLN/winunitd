@@ -32,11 +32,22 @@ func (c *Client) Maintenance(ctx context.Context, params MaintenanceParams) (*Ma
 }
 
 // Capabilities queries the manager build. An older manager answers
-// CodeMethodNotFound and reports no capability.
+// CodeMethodNotFound and reports no capability. An absent, null or invalid
+// reply is an error, never an empty capability set.
 func (c *Client) Capabilities(ctx context.Context) (*CapabilitiesResult, error) {
-	var out CapabilitiesResult
-	if err := c.Call(ctx, MethodCapabilities, struct{}{}, &out); err != nil {
+	var raw json.RawMessage
+	if err := c.Call(ctx, MethodCapabilities, struct{}{}, &raw); err != nil {
 		return nil, err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, fmt.Errorf("invalid capability reply: no result")
+	}
+	var out CapabilitiesResult
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("invalid capability reply: %w", err)
+	}
+	if err := out.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid capability reply: %w", err)
 	}
 	return &out, nil
 }

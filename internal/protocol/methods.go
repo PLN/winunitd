@@ -1,5 +1,11 @@
 package protocol
 
+import (
+	"fmt"
+	"regexp"
+	"slices"
+)
+
 // Control methods match the winctl verbs (DESIGN.md §13, §74).
 const (
 	MethodStart           = "start"
@@ -81,12 +87,14 @@ type MaintenanceResult struct {
 	Error     string `json:"error,omitempty"`
 }
 
-// CapabilitiesResult identifies the answering manager's build and the
-// contracts that build enforces. It is static for the process lifetime and
-// does not query units, Windows state, or files. A name is listed only when
-// the build enforces it; names are never reused with another meaning.
-// Capabilities describe the build, not qualification. A daemon that answers
-// method-not-found predates this query and reports no capability.
+// CapabilitiesResult identifies the answering manager's build and what this
+// endpoint enforces. It is static for the process lifetime and does not query
+// units, Windows state, or files. Build fields are the same on every endpoint
+// of one binary; methods, features and user-manager modes describe the
+// answering endpoint. A name is listed only when the endpoint enforces it;
+// names are never reused with another meaning. Capabilities describe the
+// build, not qualification. A daemon that answers method-not-found predates
+// this query and reports no capability.
 type CapabilitiesResult struct {
 	Product string `json:"product"`
 	Version string `json:"version"`
@@ -96,17 +104,24 @@ type CapabilitiesResult struct {
 	Modified *bool  `json:"modified,omitempty"`
 	Go       string `json:"go"`
 	Platform string `json:"platform"`
-	// Scope is "system" or "user": the manager that answered.
-	Scope    string               `json:"scope"`
+	// Scope is "system" or "user": the endpoint that answered.
+	Scope string `json:"scope"`
+	// Protocol lists the methods this endpoint implements, independent of the
+	// caller's permission to invoke them.
 	Protocol ProtocolCapabilities `json:"protocol"`
 	// FormatVersions are the accepted [Unit] FormatVersion values.
 	FormatVersions []int `json:"formatVersions"`
 	// Features are sorted contract names such as exec-stop.
 	Features []string `json:"features"`
-	// JobLimits are directives applied to a managed workload's Job Object.
+	// JobLimits are directives applied to a managed process service's Job
+	// Object. Process-level settings such as IoPriority are not listed.
 	JobLimits []string `json:"jobLimits"`
-	// UserManagerModes are the user-manager token modes reported by status.
+	// UserManagerModes are the user-manager token modes, as reported by
+	// status, that the system endpoint launches. Empty on user endpoints.
 	UserManagerModes []string `json:"userManagerModes"`
+	// ExperimentalUserManagerModes are implemented token modes outside
+	// supported release claims. Empty on user endpoints.
+	ExperimentalUserManagerModes []string `json:"experimentalUserManagerModes"`
 	// Directives are the recognized names per section. Format, kind, and
 	// type rules still apply; verify reports them for a concrete file.
 	Directives map[string][]string `json:"directives"`
@@ -119,11 +134,46 @@ const (
 	FeatureExecStop = "exec-stop"
 	// FeatureRestartBackoff: format-2 RestartBackoff=exponential with RestartMaxDelaySec=.
 	FeatureRestartBackoff = "restart-backoff"
-	// FeatureJobLimits: JobLimits directives are applied to the unit Job Object.
+	// FeatureJobLimits: JobLimits directives are applied to the Job Object of
+	// each managed process service. Native proxies do not reach this path.
 	FeatureJobLimits = "job-limits"
-	// FeatureLingerS4U: lingering users get a headless user manager from an S4U logon.
+	// FeatureLingerS4U (system endpoint): lingering users get a headless user
+	// manager from an S4U logon.
 	FeatureLingerS4U = "linger-s4u"
 )
+
+// Validate checks the identity and structure of a capability reply.
+// Unknown additional fields are accepted. A reply without a commit comes from
+// a binary built without version-control data: it is valid, but it cannot
+// satisfy a clean-release floor, which needs a matching commit and an
+// explicit modified=false.
+func (r *CapabilitiesResult) Validate() error {
+	switch {
+	case r == nil:
+		return fmt.Errorf("empty capability reply")
+	case r.Product != "winunitd":
+		return fmt.Errorf("capability reply names product %q", r.Product)
+	case r.Version == "" || r.Go == "" || r.Platform == "":
+		return fmt.Errorf("capability reply lacks version, compiler or platform")
+	case r.Scope != "system" && r.Scope != "user":
+		return fmt.Errorf("capability reply has scope %q", r.Scope)
+	case r.Protocol.Name != Name || r.Protocol.Version != Version:
+		return fmt.Errorf("capability reply describes protocol %q version %d", r.Protocol.Name, r.Protocol.Version)
+	case !slices.Contains(r.Protocol.Methods, MethodCapabilities):
+		return fmt.Errorf("capability reply does not list its own method")
+	case len(r.FormatVersions) == 0 || r.Directives == nil:
+		return fmt.Errorf("capability reply lacks unit format information")
+	case r.Features == nil || r.JobLimits == nil || r.UserManagerModes == nil || r.ExperimentalUserManagerModes == nil:
+		return fmt.Errorf("capability reply lacks feature lists")
+	case r.Commit == "" && r.Modified != nil:
+		return fmt.Errorf("capability reply reports a modified state without a commit")
+	case r.Commit != "" && !revisionPattern.MatchString(r.Commit):
+		return fmt.Errorf("capability reply has malformed commit %q", r.Commit)
+	}
+	return nil
+}
+
+var revisionPattern = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 
 // ProtocolCapabilities is the control protocol this manager serves.
 type ProtocolCapabilities struct {

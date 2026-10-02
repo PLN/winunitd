@@ -4,12 +4,15 @@ package manager
 
 import "github.com/PLN/winunitd/internal/protocol"
 
-// Windows builds run the stop helper, apply unit Job Object limits, and
-// obtain linger tokens through S4U (with the optional store-URI fallback).
+// Windows builds run the stop helper and apply unit Job Object limits on
+// every endpoint. The system endpoint also starts lingering users' managers
+// through S4U; the named credential-store fallback is experimental.
 func platformCapabilities() platformCapability {
 	return platformCapability{
-		features:  []string{protocol.FeatureExecStop, protocol.FeatureJobLimits, protocol.FeatureLingerS4U},
-		jobLimits: jobLimitDirectives,
-		userModes: []string{userModeHeadlessS4U, userModeHeadlessStoreURI, userModeInteractive},
+		workloadFeatures:      []string{protocol.FeatureExecStop, protocol.FeatureJobLimits},
+		jobLimits:             jobLimitDirectives,
+		systemFeatures:        []string{protocol.FeatureLingerS4U},
+		userModes:             []string{userModeHeadlessS4U, userModeInteractive},
+		experimentalUserModes: []string{userModeHeadlessStoreURI},
 	}
 }

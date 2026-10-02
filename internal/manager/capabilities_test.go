@@ -2,9 +2,12 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"strings"
@@ -44,21 +47,11 @@ func TestCapabilitiesOverControlWithoutStartingUnits(t *testing.T) {
 		got.Platform != runtime.GOOS+"/"+runtime.GOARCH || got.Scope != "system" {
 		t.Fatalf("identity = %+v", got)
 	}
-	if got.Protocol.Name != protocol.Name || got.Protocol.Version != protocol.Version ||
-		!slices.Equal(got.Protocol.Methods, protocol.Methods) || !slices.Contains(got.Protocol.Methods, protocol.MethodCapabilities) {
-		t.Fatalf("protocol = %+v", got.Protocol)
+	if got.Protocol.Name != protocol.Name || got.Protocol.Version != protocol.Version || !slices.Equal(got.Protocol.Methods, protocol.Methods) {
+		t.Fatalf("system protocol = %+v", got.Protocol)
 	}
-	if !slices.Equal(got.FormatVersions, unit.FormatVersions()) {
-		t.Fatalf("formatVersions = %v", got.FormatVersions)
-	}
-	want := platformCapabilities()
-	features := append([]string{protocol.FeatureRestartBackoff}, want.features...)
-	slices.Sort(features)
-	if !slices.Equal(got.Features, features) || !slices.IsSorted(got.Features) {
-		t.Fatalf("features = %v, want %v", got.Features, features)
-	}
-	if got.JobLimits == nil || got.UserManagerModes == nil || !slices.Equal(got.JobLimits, nonNil(want.jobLimits)) || !slices.Equal(got.UserManagerModes, nonNil(want.userModes)) {
-		t.Fatalf("platform lists = %v %v", got.JobLimits, got.UserManagerModes)
+	if !slices.Equal(got.FormatVersions, unit.FormatVersions()) || !slices.IsSorted(got.Features) || !slices.Contains(got.Features, protocol.FeatureRestartBackoff) {
+		t.Fatalf("formats/features = %v %v", got.FormatVersions, got.Features)
 	}
 	for section, names := range unit.Directives() {
 		if !slices.Equal(got.Directives[section], names) {
@@ -77,6 +70,93 @@ func TestCapabilitiesOverControlWithoutStartingUnits(t *testing.T) {
 	}
 }
 
+// The reported methods are exactly those the endpoint dispatches. Invalid
+// params keep every probe free of side effects.
+func TestCapabilitiesListOnlyImplementedMethods(t *testing.T) {
+	t.Parallel()
+	user, err := New(Config{BaseDir: t.TempDir(), Launch: &fakeLauncher{}, UserScope: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopAll(user) })
+	system, err := New(Config{BaseDir: t.TempDir(), Launch: &fakeLauncher{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopAll(system) })
+	control := &Control{Units: system}
+	for _, tc := range []struct {
+		name    string
+		handler protocol.Handler
+		methods []string
+	}{
+		{"user", user, user.Capabilities().Protocol.Methods},
+		{"system", control, control.Capabilities().Protocol.Methods},
+	} {
+		for _, method := range protocol.Methods {
+			_, err := tc.handler.Handle(context.Background(), method, json.RawMessage(`[]`))
+			var pe *protocol.Error
+			missing := errors.As(err, &pe) && pe.Code == protocol.CodeMethodNotFound
+			if listed := slices.Contains(tc.methods, method); listed == missing {
+				t.Errorf("%s endpoint: %s listed=%t, method-not-found=%t", tc.name, method, listed, missing)
+			}
+		}
+	}
+}
+
+// A user endpoint answers owners and administrators alike: build metadata as
+// on the system endpoint, but only its own methods and features.
+func TestUserEndpointCapabilitiesOverRPC(t *testing.T) {
+	t.Parallel()
+	user, err := New(Config{BaseDir: t.TempDir(), Launch: &fakeLauncher{}, UserScope: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopAll(user) })
+	system, err := New(Config{BaseDir: t.TempDir(), Launch: &fakeLauncher{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopAll(system) })
+	sys := (&Control{Units: system, Users: &UserHost{}}).Capabilities()
+	var replies []*protocol.CapabilitiesResult
+	for _, tc := range []struct {
+		name   string
+		auth   protocol.Authorizer
+		linger string
+	}{
+		{"owner", protocol.AllowOwner, protocol.CodePermissionDenied},
+		{"administrator", protocol.AllowAdmin, protocol.CodeMethodNotFound},
+	} {
+		client := serveCapabilitiesAs(t, user, tc.auth)
+		got, err := client.Capabilities(context.Background())
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got.Scope != "user" || got.Product != sys.Product || got.Version != sys.Version || got.Commit != sys.Commit ||
+			!reflect.DeepEqual(got.Modified, sys.Modified) || got.Go != sys.Go || got.Platform != sys.Platform ||
+			!slices.Equal(got.FormatVersions, sys.FormatVersions) || !reflect.DeepEqual(got.Directives, sys.Directives) {
+			t.Fatalf("%s: build metadata differs from the system endpoint: %+v", tc.name, got)
+		}
+		for _, method := range controlMethods {
+			if slices.Contains(got.Protocol.Methods, method) {
+				t.Fatalf("%s: user endpoint lists %s", tc.name, method)
+			}
+		}
+		if slices.Contains(got.Features, protocol.FeatureLingerS4U) || len(got.UserManagerModes) != 0 || len(got.ExperimentalUserManagerModes) != 0 {
+			t.Fatalf("%s: user endpoint lists system features: %v %v %v", tc.name, got.Features, got.UserManagerModes, got.ExperimentalUserManagerModes)
+		}
+		var pe *protocol.Error
+		if _, err := client.EnableLinger(context.Background(), "alice"); !errors.As(err, &pe) || pe.Code != tc.linger {
+			t.Fatalf("%s: enable-linger on the user endpoint = %v, want %s", tc.name, err, tc.linger)
+		}
+		replies = append(replies, got)
+	}
+	if !reflect.DeepEqual(replies[0], replies[1]) {
+		t.Fatalf("user reply depends on the caller: %+v vs %+v", replies[0], replies[1])
+	}
+}
+
 func TestCapabilitiesReportUserScopeAndStayStatic(t *testing.T) {
 	t.Parallel()
 	m, err := New(Config{BaseDir: t.TempDir(), Launch: &fakeLauncher{}, UserScope: true})
@@ -85,8 +165,8 @@ func TestCapabilitiesReportUserScopeAndStayStatic(t *testing.T) {
 	}
 	t.Cleanup(func() { stopAll(m) })
 	first := m.Capabilities()
-	if first.Scope != "user" {
-		t.Fatalf("scope = %q", first.Scope)
+	if first.Scope != "user" || first.Validate() != nil {
+		t.Fatalf("user capabilities = %+v (%v)", first, first.Validate())
 	}
 	first.Features = append(first.Features, "mutated")
 	first.Directives["Service"][0] = "Mutated"
@@ -98,41 +178,54 @@ func TestCapabilitiesReportUserScopeAndStayStatic(t *testing.T) {
 	if protocol.Methods[0] == "mutated" {
 		t.Fatal("capabilities exposed protocol.Methods")
 	}
+	control := (&Control{Units: m}).Capabilities()
+	control.Protocol.Methods[0] = "mutated"
+	if protocol.Methods[0] == "mutated" {
+		t.Fatal("control capabilities exposed protocol.Methods")
+	}
 }
 
-// Every advertised job limit must reach runtime.JobLimits for a valid file.
+// Each advertised job limit reaches exactly its runtime.JobLimits field.
+// IoPriority is a process setting and is not advertised as a job limit.
 func TestJobLimitDirectivesReachTheJob(t *testing.T) {
 	t.Parallel()
-	settings := map[string]string{
-		"CPUQuota":         "CPUQuota=25%",
-		"CPUWeight":        "CPUWeight=100",
-		"IoPriority":       "IoPriority=low",
-		"MemoryMax":        "MemoryMax=1G",
-		"PriorityClass":    "PriorityClass=idle",
-		"ProcessLimit":     "ProcessLimit=4",
-		"WindowsCPUQuota":  "WindowsCPUQuota=25%",
-		"WindowsCPUWeight": "WindowsCPUWeight=5",
+	cases := map[string]struct {
+		line   string
+		format string
+		want   wruntime.JobLimits
+	}{
+		"CPUQuota":         {"CPUQuota=25%", "1", wruntime.JobLimits{CPURate: 2500}},
+		"CPUWeight":        {"CPUWeight=5000", "1", wruntime.JobLimits{CPUWeight: 5}},
+		"MemoryMax":        {"MemoryMax=1G", "1", wruntime.JobLimits{MemoryMax: 1 << 30}},
+		"PriorityClass":    {"PriorityClass=idle", "1", wruntime.JobLimits{PriorityClass: wruntime.PriorityIdle}},
+		"ProcessLimit":     {"ProcessLimit=4", "1", wruntime.JobLimits{ProcessLimit: 4}},
+		"WindowsCPUQuota":  {"WindowsCPUQuota=40%", "2", wruntime.JobLimits{CPURate: 4000}},
+		"WindowsCPUWeight": {"WindowsCPUWeight=7", "2", wruntime.JobLimits{CPUWeight: 7}},
 	}
-	if len(settings) != len(jobLimitDirectives) {
-		t.Fatalf("settings cover %d directives, list has %d", len(settings), len(jobLimitDirectives))
+	if len(cases) != len(jobLimitDirectives) || slices.Contains(jobLimitDirectives, "IoPriority") {
+		t.Fatalf("job limit list = %v", jobLimitDirectives)
+	}
+	limitsFor := func(format, line string) wruntime.JobLimits {
+		t.Helper()
+		r := unit.ParseUnit("limit.service", "[Unit]\nFormatVersion="+format+"\n[Service]\nExecStart=C:\\Tools\\foo.exe\nWorkingDirectory=C:\\Tools\n"+line+"\n")
+		if r.HasError() || r.Unit.Service == nil {
+			t.Fatalf("%s: %+v", line, r.Issues)
+		}
+		return wruntime.JobLimitsFromSpec(r.Unit.Service)
 	}
 	recognized := unit.Directives()["Service"]
 	for _, name := range jobLimitDirectives {
-		line, ok := settings[name]
+		tc, ok := cases[name]
 		if !ok || !slices.Contains(recognized, name) {
-			t.Fatalf("%s: no setting or not recognized", name)
+			t.Fatalf("%s: no case or not recognized", name)
 		}
-		format := "1"
-		if name == "WindowsCPUQuota" || name == "WindowsCPUWeight" {
-			format = "2"
+		if got := limitsFor(tc.format, tc.line); got != tc.want {
+			t.Fatalf("%s: limits %+v, want %+v", name, got, tc.want)
 		}
-		r := unit.ParseUnit("limit.service", "[Unit]\nFormatVersion="+format+"\n[Service]\nExecStart=C:\\Tools\\foo.exe\nWorkingDirectory=C:\\Tools\n"+line+"\n")
-		if r.HasError() || r.Unit.Service == nil {
-			t.Fatalf("%s: %+v", name, r.Issues)
-		}
-		if wruntime.JobLimitsFromSpec(r.Unit.Service) == (wruntime.JobLimits{}) {
-			t.Fatalf("%s does not reach the Job Object limits", name)
-		}
+	}
+	io := limitsFor("1", "IoPriority=low")
+	if !io.IoPrioritySet || io.MemoryMax != 0 || io.ProcessLimit != 0 || io.PriorityClass != 0 || io.CPUWeight != 0 || io.CPURate != 0 {
+		t.Fatalf("IoPriority limits = %+v", io)
 	}
 }
 
@@ -151,6 +244,11 @@ func TestRuntimeReferenceDocumentsFeatures(t *testing.T) {
 
 func serveCapabilities(t *testing.T, h protocol.Handler) *protocol.Client {
 	t.Helper()
+	return serveCapabilitiesAs(t, h, protocol.AllowAdmin)
+}
+
+func serveCapabilitiesAs(t *testing.T, h protocol.Handler, auth protocol.Authorizer) *protocol.Client {
+	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -159,7 +257,7 @@ func serveCapabilities(t *testing.T, h protocol.Handler) *protocol.Client {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = protocol.Serve(ctx, lis, h, protocol.AllowAdmin)
+		_ = protocol.Serve(ctx, lis, h, auth)
 	}()
 	conn, err := net.Dial(lis.Addr().Network(), lis.Addr().String())
 	if err != nil {

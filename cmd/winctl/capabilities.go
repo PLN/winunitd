@@ -16,16 +16,19 @@ Usage:
   winctl capabilities [--require NAME[,NAME...]]...
   winctl --user capabilities [--require NAME[,NAME...]]...
 
-Prints the answering manager's version, source commit, protocol methods,
-accepted FormatVersion values, features, job limits, user-manager modes, and
-recognized directives as JSON. No unit is started or queried. winctl
---version reports only this winctl executable.
+Prints the answering manager's version, source commit, the methods this
+endpoint implements, accepted FormatVersion values, features, job limits,
+user-manager modes, and recognized directives as JSON. No unit is started or
+queried. winctl --version reports only this winctl executable.
 
-A feature is listed only when the build enforces it. Features describe the
-build, not qualification. --require exits 1 unless every named feature is
-listed; the JSON is still printed. A manager that predates this query answers
-method-not-found; winctl then reports that it is below any capability floor
-and exits 1. Usage errors exit 2.
+Build fields are the same on the system and user endpoints of one binary.
+Features describe the answering endpoint: linger and user-manager modes appear
+only on the system endpoint. A feature is listed only when the endpoint
+enforces it; features describe the build, not qualification. --require exits
+1 unless every named feature is listed; the JSON is still printed. A manager
+that predates this query answers method-not-found; winctl then reports that it
+is below any capability floor and exits 1. A missing, malformed or foreign
+reply also exits 1. Usage errors exit 2.
 `
 
 func (c *cli) capabilities(args []string) int {

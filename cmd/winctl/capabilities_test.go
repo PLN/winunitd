@@ -52,10 +52,10 @@ func TestCapabilitiesRequireFailsClosed(t *testing.T) {
 	}
 }
 
-// A manager from before the query (such as 0.2.1-beta) answers
-// method-not-found from its dispatcher. winctl must treat that as below floor.
-func TestCapabilitiesOlderManagerIsBelowFloor(t *testing.T) {
-	dial := func(context.Context) (net.Conn, error) {
+// rawCapabilitiesDial answers one request per connection with either an RPC
+// error or a raw result member (empty omits it).
+func rawCapabilitiesDial(rpcErr *protocol.Error, raw string) func(context.Context) (net.Conn, error) {
+	return func(context.Context) (net.Conn, error) {
 		server, client := net.Pipe()
 		go func() {
 			defer server.Close()
@@ -63,12 +63,21 @@ func TestCapabilitiesOlderManagerIsBelowFloor(t *testing.T) {
 			if err := json.NewDecoder(server).Decode(&req); err != nil {
 				return
 			}
-			resp := protocol.Response{Protocol: protocol.Name, Version: protocol.Version, ID: req.ID, Error: protocol.ErrMethodNotFound(req.Method)}
+			resp := protocol.Response{Protocol: protocol.Name, Version: protocol.Version, ID: req.ID, Error: rpcErr}
+			if rpcErr == nil && raw != "" {
+				resp.Result = json.RawMessage(raw)
+			}
 			data, _ := json.Marshal(resp)
 			_, _ = server.Write(append(data, '\n'))
 		}()
 		return client, nil
 	}
+}
+
+// A manager from before the query (such as 0.2.1-beta) answers
+// method-not-found from its dispatcher. winctl must treat that as below floor.
+func TestCapabilitiesOlderManagerIsBelowFloor(t *testing.T) {
+	dial := rawCapabilitiesDial(protocol.ErrMethodNotFound(protocol.MethodCapabilities), "")
 	for _, args := range [][]string{{"capabilities"}, {"capabilities", "--require", "exec-stop"}} {
 		var out, errOut bytes.Buffer
 		if code := runCLI(args, &out, &errOut, dial); code != 1 {
@@ -77,6 +86,23 @@ func TestCapabilitiesOlderManagerIsBelowFloor(t *testing.T) {
 		if out.Len() != 0 || !strings.Contains(errOut.String(), `unknown method "capabilities"`) ||
 			!strings.Contains(errOut.String(), "below any capability floor") {
 			t.Fatalf("%v stdout=%q stderr=%q", args, out.String(), errOut.String())
+		}
+	}
+}
+
+// Malformed or foreign replies are failures, never an empty capability set.
+func TestCapabilitiesRejectsInvalidReplies(t *testing.T) {
+	for name, raw := range map[string]string{
+		"absent":         "",
+		"null":           "null",
+		"features only":  `{"features":["restart-backoff"]}`,
+		"wrong product":  `{"product":"other","version":"1","go":"go1","platform":"windows/amd64","scope":"system","protocol":{"name":"winunitd.control","version":1,"methods":["capabilities"]},"formatVersions":[1],"features":["restart-backoff"],"jobLimits":[],"userManagerModes":[],"experimentalUserManagerModes":[],"directives":{}}`,
+		"wrong protocol": `{"product":"winunitd","version":"1","go":"go1","platform":"windows/amd64","scope":"system","protocol":{"name":"other.control","version":1,"methods":["capabilities"]},"formatVersions":[1],"features":["restart-backoff"],"jobLimits":[],"userManagerModes":[],"experimentalUserManagerModes":[],"directives":{}}`,
+	} {
+		var out, errOut bytes.Buffer
+		code := runCLI([]string{"capabilities", "--require", "restart-backoff"}, &out, &errOut, rawCapabilitiesDial(nil, raw))
+		if code != 1 || out.Len() != 0 || !strings.Contains(errOut.String(), "invalid capability reply") {
+			t.Errorf("%s: exit %d stdout=%q stderr=%q", name, code, out.String(), errOut.String())
 		}
 	}
 }

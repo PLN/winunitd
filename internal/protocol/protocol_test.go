@@ -214,7 +214,9 @@ func TestAllMethodsRoundTrip(t *testing.T) {
 			}
 			return MaintenanceResult{State: "quiesced"}, nil
 		case MethodCapabilities:
-			return CapabilitiesResult{Product: "winunitd", Version: "1.2.3", Features: []string{FeatureExecStop}}, nil
+			r := validCapabilities()
+			r.Version, r.Features = "1.2.3", []string{FeatureExecStop}
+			return r, nil
 		default:
 			return nil, ErrMethodNotFound(method)
 		}
