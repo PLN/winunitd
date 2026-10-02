@@ -49,6 +49,9 @@ type Row struct {
 	OwnerPackage string              `json:"ownerPackage,omitempty"`
 	OwnerTest    string              `json:"ownerTest,omitempty"`
 	OwnerEnv     []string            `json:"ownerEnv,omitempty"`
+	// OwnerIdentities limits the owner lane to some of Identities; omitted
+	// means every identity of the row requires owner-lane evidence.
+	OwnerIdentities []string `json:"ownerIdentities,omitempty"`
 }
 
 // Matrix is the versioned case table.
@@ -158,6 +161,9 @@ func (r Row) validate() error {
 			return fmt.Errorf("owner environment %q", e)
 		}
 	}
+	if r.OwnerIdentities != nil && (!owner || !uniqueSubset(r.OwnerIdentities, r.Identities)) {
+		return fmt.Errorf("owner identities %v", r.OwnerIdentities)
+	}
 	for mode, gates := range r.Gates {
 		if !slices.Contains(r.Modes, mode) {
 			return fmt.Errorf("gates for unused mode %q", mode)
@@ -172,6 +178,9 @@ func (r Row) validate() error {
 	}
 	if r.Gates != nil && len(r.Gates) != len(r.Modes) {
 		return errors.New("a gated row needs gates for every mode")
+	}
+	if len(r.Lanes) == 1 && owner && r.OwnerIdentities != nil && len(r.OwnerIdentities) != len(r.Identities) {
+		return errors.New("an owner-only row cannot exclude identities from its only lane")
 	}
 	return nil
 }
@@ -195,9 +204,18 @@ func (m *Matrix) Expand() []Execution {
 						parts = append(parts, id, fmt.Sprint(rep))
 						e := Execution{
 							Key: strings.Join(parts, "/"), Row: r.ID, Mode: mode, Gate: gate,
-							Identity: id, Repetition: rep, Lanes: slices.Clone(r.Lanes),
+							Identity: id, Repetition: rep,
 						}
-						if r.OwnerTest != "" {
+						owner := r.OwnerTest != "" && (r.OwnerIdentities == nil || slices.Contains(r.OwnerIdentities, id))
+						for _, lane := range r.Lanes {
+							if lane != LaneOwner || owner {
+								e.Lanes = append(e.Lanes, lane)
+							}
+						}
+						if len(e.Lanes) == 0 {
+							continue
+						}
+						if owner {
 							e.OwnerPackage = r.OwnerPackage
 							e.OwnerRun = "^" + r.OwnerTest + "$/^" + mode + "$"
 							if gate != "" {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -424,6 +425,8 @@ func TestDecodeMatrixRejectsInvalidRows(t *testing.T) {
 		"owner package":      doc(edit(`"internal/runtime"`, `"cmd/winunitd"`)),
 		"gate mode":          doc(edit(`"lanes"`, `"gates":{"job-list":["before-resume"]},"lanes"`)),
 		"env":                doc(edit(`"lanes"`, `"ownerEnv":["PATH=x"],"lanes"`)),
+		"owner identity":     doc(edit(`"lanes"`, `"ownerIdentities":["headless"],"lanes"`)),
+		"owner-only subset":  doc(strings.Replace(edit(`["system"]`, `["system","headless"]`), `"lanes"`, `"ownerIdentities":["system"],"lanes"`, 1)),
 		"unknown field":      doc(edit(`"lanes"`, `"shell":"cmd","lanes"`)),
 	}
 	// before-assign exists only in assign mode.
@@ -431,6 +434,25 @@ func TestDecodeMatrixRejectsInvalidRows(t *testing.T) {
 	for name, data := range cases {
 		if _, err := DecodeMatrix(data); err == nil {
 			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+func TestOwnerIdentitiesLimitTheOwnerLane(t *testing.T) {
+	m, err := DecodeMatrix([]byte(`{"version":1,"issue":265,"rows":[{"id":"N01","action":"a","expect":"e",
+		"modes":["assign","job-list"],"identities":["system","headless"],"repeat":1,"lanes":["owner","daemon"],
+		"ownerPackage":"internal/runtime","ownerTest":"TestX","ownerIdentities":["system"]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	execs := m.Expand()
+	if len(execs) != 4 {
+		t.Fatalf("expanded %d executions", len(execs))
+	}
+	for _, e := range execs {
+		owner := slices.Contains(e.Lanes, LaneOwner)
+		if owner != (e.Identity == IdentitySystem) || !slices.Contains(e.Lanes, LaneDaemon) || owner != (e.OwnerRun != "") {
+			t.Fatalf("execution %+v", e)
 		}
 	}
 }
