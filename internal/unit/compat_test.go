@@ -2,6 +2,8 @@ package unit
 
 import (
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -58,6 +60,30 @@ func TestBetaDirectivesStayRecognized(t *testing.T) {
 	slices.Sort(added)
 	if !slices.Equal(added, postBetaDirectives) {
 		t.Fatalf("directives added after 0.2.1-beta = %v, want %v", added, postBetaDirectives)
+	}
+}
+
+func TestRuntimeReferenceListsPostBetaDirectives(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "RUNTIME-REFERENCE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Windows checkouts may convert Markdown to CRLF.
+	doc := strings.ReplaceAll(string(data), "\r\n", "\n")
+	start := strings.Index(doc, "does not recognize the\ndirectives added since:")
+	end := strings.Index(doc, "A unit that uses one fails there")
+	if start < 0 || end < start {
+		t.Fatal("RUNTIME-REFERENCE.md lacks the 0.2.1-beta directive list")
+	}
+	var listed []string
+	for _, field := range strings.Split(doc[start:end], "`")[1:] {
+		if field != "" && !strings.ContainsAny(field, " ,\n") {
+			listed = append(listed, field)
+		}
+	}
+	if !slices.Equal(listed, postBetaDirectives) {
+		t.Fatalf("documented list = %v, want %v", listed, postBetaDirectives)
 	}
 }
 

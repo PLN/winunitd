@@ -114,6 +114,20 @@ configuration and the previous running or stopped state.
 
 Restarting the manager after a successful upgrade starts enabled units.
 Units that were started manually and are not enabled are not restored.
+The restarted manager has new invocations and an empty operation history: an
+operation ID from before servicing reports not found, never another record.
+Journal lines and daemon-log records keep the invocation and operation IDs
+they were written with.
+
+Every product package of one release has the same installer version, so
+Windows Installer cannot order two builds of that release. A reinstall with
+`REINSTALL=ALL` installs whichever build the package carries, and a failed
+upgrade rolls back to the previous files. After install, repair, upgrade or
+rollback, run `winctl capabilities` and compare `version` and `commit` with
+the build manifest of the package you meant to install. Add `--require` for
+the features that the installed units depend on. A manager that answers
+`method-not-found` predates the query and is below any capability floor. See
+[build identity and capabilities](RUNTIME-REFERENCE.md#build-identity-and-capabilities).
 
 On a disposable machine, `WINUNITD_TEST_FAIL=1` fails the transaction after
 the replacement service has started. That property is a qualification hook.

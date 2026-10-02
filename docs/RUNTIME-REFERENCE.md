@@ -62,7 +62,7 @@ Versioned JSON-RPC on `\\.\pipe\winunitd\control` (LocalSystem and Administrator
 
 ### `winctl` commands
 
-`start`, `stop`, `restart`, `status`, `operation`, `cancel`, `snapshot`, `migrate`, `enable`, `disable`, `list-units`, `list-timers`, `logs`, `daemon-reload`, `enable-linger`, `disable-linger`, `verify`.
+`start`, `stop`, `restart`, `status`, `operation`, `cancel`, `snapshot`, `migrate`, `enable`, `disable`, `list-units`, `list-timers`, `logs`, `daemon-reload`, `enable-linger`, `disable-linger`, `verify`, `capabilities`.
 
 Unit status and list-units responses add optional `subState` and
 `terminationUncertain` fields. `winctl status` shows the manager phase and
@@ -80,6 +80,61 @@ transaction's outcome independently of current unit state. The manager retains
 pending operations and its latest 256 completed records; history resets when
 the manager exits. See [operation history](OPERATIONS.md) for admission
 budgets, query exit codes, compatibility, and current limits.
+
+### Build identity and capabilities
+
+`winctl capabilities` asks the running manager on the selected pipe which
+build it is and which contracts that build enforces. `winctl --version` and
+`winunitd --version` only print the release string of the local executable.
+The query does not start, stop or query units. The JSON result has these
+fields:
+
+| Field | Meaning |
+| --- | --- |
+| `product`, `version` | `winunitd` and the release string |
+| `commit`, `modified` | Source revision embedded at build time, and whether the tree had local changes; both are omitted for a binary built without version-control data |
+| `go`, `platform` | Compiler and `GOOS/GOARCH` |
+| `scope` | `system` or `user`: the manager that answered |
+| `protocol` | Control protocol name, version and methods |
+| `formatVersions` | Accepted `[Unit] FormatVersion=` values |
+| `features` | Contract names that this build enforces |
+| `jobLimits` | Directives applied to a managed unit's Job Object |
+| `userManagerModes` | User-manager token modes, as reported by status `mode` |
+| `directives` | Recognized directive names per section |
+
+| Feature | Contract |
+| --- | --- |
+| `exec-stop` | `ExecStop=` runs one cooperative stop helper ([unit reference](UNIT-REFERENCE.md#core-directives)) |
+| `restart-backoff` | Format-2 `RestartBackoff=exponential` with `RestartMaxDelaySec=` ([recovery delay and backoff](UNIT-REFERENCE.md#recovery-delay-and-backoff)) |
+| `job-limits` | The `jobLimits` directives are applied to each managed unit's Job Object |
+| `linger-s4u` | Lingering users get a headless user manager through an S4U logon |
+
+A name is listed only when the build enforces that contract. Windows builds
+list all four. Builds for other systems are test stand-ins with stub launchers
+and list only `restart-backoff`, with empty `jobLimits` and `userManagerModes`.
+A name is never reused for different behavior; a new contract gets a new name.
+The result describes the build, not qualification: the limits recorded in
+[milestones](MILESTONES.md) and the evidence documents still apply. System and
+user managers of one build give the same answer apart from `scope`; linger and
+user-manager launch are system-manager functions. A recognized directive can
+still be rejected by format, kind or type rules, so use `verify` for a
+concrete file.
+
+`--require NAME` (repeatable or comma-separated) exits 1 unless every name is
+listed; the JSON is still printed. A manager built before this query,
+including `0.2.1-beta`, answers `method-not-found`. winctl then reports that
+the manager is below any capability floor and exits 1.
+
+An external installer or supervisor that must bind to an exact build should
+compare `version` and `commit` with the build manifest of the package it
+installed, require the features its units depend on, and refuse to hand over
+ownership otherwise. Repeat the check after every install, repair, upgrade or
+rollback ([servicing](INSTALLATION.md#servicing-a-running-manager)). Release
+binaries carry the revision because `tools/build` builds with version-control
+data and rejects a binary whose embedded revision differs from the manifest
+commit ([building](BUILDING.md)). Each manager start also records its version
+and commit on the `daemon.open` record of the
+[daemon log](OPERATIONS.md#durable-daemon-log).
 
 ### Enable links
 
@@ -101,6 +156,26 @@ winctl verify C:\path\foo.path
 
 Unknown directives are errors. `ExecStart=` must be an absolute Windows path (`SearchPath=no`). An omitted `WorkingDirectory=` is a warning (System32 is not the default). `Environment=` values are literals (`${}` is not expanded).
 
+Unknown sections are errors too, and neither is ever a warning: path verify
+exits 1, `daemon-reload` rejects the whole candidate and keeps the accepted
+revision, and verify of a loaded unit whose file gained one reports
+`ok: false`. `0.2.1-beta` applies the same rule but does not recognize the
+directives added since: `ExecStop`, `ExecStopArg`, `FormatVersion`,
+`PathExistsAll`, `ReadinessEndpoint`, `ReadinessExpectedStatus`,
+`ReadinessIntervalSec`, `ReadinessMode`, `ReadinessTimeoutSec`,
+`RemainAfterExit`, `RestartBackoff`, `RestartMaxDelaySec`,
+`WatchdogFailureThreshold`, `WatchdogGraceSec`, `WatchdogTimeoutSec`,
+`WindowsCPUQuota` and `WindowsCPUWeight`. A unit that uses one fails there:
+its reload is rejected, and verify by name reports the unit as not loaded.
+
+Path verify uses the parser of the `winctl` that runs it, so use the `winctl`
+installed with the manager. Behavior that changed without a new directive,
+such as the oneshot completion default, is not visible to `verify`; compare
+`directives` and `features` from `winctl capabilities`. Warnings, such as
+`MemoryMax=` with `Type=scm` or an omitted `WorkingDirectory=`, report
+settings that are ignored or defaulted and do not fail verification. Treat
+them as failures when every written setting must take effect.
+
 Path vs unit name: a name with no `/`, `\`, or drive prefix is always a unit name, even if a same-named file exists in the cwd. Use `./foo.service`, `.\foo.service`, `C:\path\foo.service`, or `winctl verify --file foo.service` (`-f`). Mixing unit names and paths in one invocation is a usage error. `winctl verify foo.service` (unit name) talks to the daemon.
 
 ### Restart and start limits
@@ -109,7 +184,8 @@ Path vs unit name: a name with no `/`, `\`, or drive prefix is always a unit nam
 
 `[Unit]` `StartLimitIntervalSec=` / `StartLimitBurst=` default to 10s / 5. `StartLimitBurst=0` is unlimited. Burst starts inside the interval fail with reason `start-limit`. Timer/watch activations and automatic recovery share this budget; a redundant activation of an already-running process does not consume another start. Explicit `winctl start` resets the limit.
 
-`RestartMaxDelaySec=` and `RestartBackoff=` are not parsed.
+Format 2 adds capped exponential recovery with `RestartBackoff=` and
+`RestartMaxDelaySec=`; see [recovery delay and backoff](UNIT-REFERENCE.md#recovery-delay-and-backoff).
 
 The daemon admits up to 32 simultaneous start transactions, with up to 16
 concurrent adapter calls per transaction. Excess operator starts report capacity

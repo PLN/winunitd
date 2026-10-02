@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/PLN/winunitd/internal/journal"
@@ -131,6 +132,19 @@ func TestJobLimitDirectivesReachTheJob(t *testing.T) {
 		}
 		if wruntime.JobLimitsFromSpec(r.Unit.Service) == (wruntime.JobLimits{}) {
 			t.Fatalf("%s does not reach the Job Object limits", name)
+		}
+	}
+}
+
+func TestRuntimeReferenceDocumentsFeatures(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "RUNTIME-REFERENCE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{protocol.FeatureExecStop, protocol.FeatureRestartBackoff, protocol.FeatureJobLimits, protocol.FeatureLingerS4U} {
+		if !strings.Contains(string(data), "| `"+name+"` |") {
+			t.Fatalf("RUNTIME-REFERENCE.md does not document feature %s", name)
 		}
 	}
 }
