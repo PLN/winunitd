@@ -313,3 +313,36 @@ process/thread start and stop events to corroborate each held interval. ETW does
 not identify `ResumeThread`; the suspend-count assertion provides that boundary.
 Qualification of an immutable daemon binary requires separate observations;
 the instrumented test binary alone does not establish that evidence.
+
+## Workload-created nested jobs
+
+Issue #265 asks whether a unit main may create its own kill-on-close job for an
+engine and grandchildren inside the WinUnit unit job. The test-only fixture in
+`internal/runtime/runtimetest/nestedjob` creates that shape: MAIN stays in the
+unit job only, and ENGINE, G1 and G2 are in both jobs. MAIN creates the inner
+job unnamed, with kill-on-close only and a noninheritable handle it never
+exports. `--launch-mode assign` assigns a suspended ENGINE before resuming it;
+`--launch-mode job-list` creates ENGINE with `PROC_THREAD_ATTRIBUTE_JOB_LIST`.
+There is no fallback between them. The runtime and manager test binaries run it
+through `-winunitd-helper=nested-job`; `tests/native/nested-job` builds the same
+code as a standalone executable for installed-daemon cases. Neither is a
+release payload.
+
+Each execution uses a fresh case directory. MAIN writes a bounded, sequenced
+report and a generation manifest of process identities (PID plus creation
+time). Observers hold process handles, never job handles, and treat only a
+signaled held handle as exit. Commands are a closed set of verbs in atomic
+files. The case matrix (`nestedjob/matrix.json`) lists each case, its modes,
+identities, repetitions and lanes; `nested-job-fixture matrix --lane owner
+--identity system` prints the expanded executions with their `-test.run`
+selectors. A summary passes only when every required lane of every execution
+passed; skipped, inconclusive and missing lanes are not passes.
+
+Owner-lane tests run in the ordinary Windows test lane:
+`TestNativeNestedJob*` in `internal/runtime` and `TestWindowsNestedJob*` in
+`internal/manager`. The CPU quota cases check native settings by default. Set
+`WINUNITD_NATIVE_NESTED_METER=1` to add a 30-second measurement against an
+uncapped control; a control below 60% of all processors makes the case
+inconclusive (skipped). Genuine headless-user, user-manager crash and broker
+recovery cases need the installed daemon and a guest driver, which are not yet
+part of this fixture. No native result is recorded here until those runs pass.
