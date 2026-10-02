@@ -204,8 +204,9 @@ if (-not $env:MAINPID) { exit 0 }   # the main process has already exited
 The helper owns a separate job and writes to the unit journal. At most 32
 helper attempts may remain owned. The cooperative phase gets the remaining stop
 budget minus a forced-cleanup reserve of `min(total/2, max(1s, total/5))`,
-where `total` is the remaining budget: 10 seconds reserve 2, 5 seconds and 2
-seconds reserve 1, and 500 milliseconds reserve 250. Expiry or helper
+where `total` is the remaining budget: 10 seconds reserve 2 seconds, 5
+seconds and 2 seconds reserve 1 second, and 500 milliseconds reserve 250
+milliseconds. Expiry or helper
 failure proceeds to forced workload cleanup and reports failure. Late helper
 creation and unfinished helper output remain owned; replacement is refused until
 cleanup is confirmed. A stop retry joins cleanup without rerunning the command.
