@@ -19,6 +19,7 @@ const (
 	MethodOperation       = "operation"
 	MethodCancelOperation = "cancel-operation"
 	MethodMaintenance     = "maintenance"
+	MethodCapabilities    = "capabilities"
 )
 
 // Methods is the full set of control verbs.
@@ -40,6 +41,7 @@ var Methods = []string{
 	MethodOperation,
 	MethodCancelOperation,
 	MethodMaintenance,
+	MethodCapabilities,
 }
 
 var knownMethods = func() map[string]bool {
@@ -77,6 +79,57 @@ type MaintenanceResult struct {
 	StartedAt string `json:"startedAt"`
 	Deadline  string `json:"deadline"`
 	Error     string `json:"error,omitempty"`
+}
+
+// CapabilitiesResult identifies the answering manager's build and the
+// contracts that build enforces. It is static for the process lifetime and
+// does not query units, Windows state, or files. A name is listed only when
+// the build enforces it; names are never reused with another meaning.
+// Capabilities describe the build, not qualification. A daemon that answers
+// method-not-found predates this query and reports no capability.
+type CapabilitiesResult struct {
+	Product string `json:"product"`
+	Version string `json:"version"`
+	// Commit is the VCS revision embedded at build time. It is omitted, and
+	// Modified is unknown, for a binary built without VCS data.
+	Commit   string `json:"commit,omitempty"`
+	Modified *bool  `json:"modified,omitempty"`
+	Go       string `json:"go"`
+	Platform string `json:"platform"`
+	// Scope is "system" or "user": the manager that answered.
+	Scope    string               `json:"scope"`
+	Protocol ProtocolCapabilities `json:"protocol"`
+	// FormatVersions are the accepted [Unit] FormatVersion values.
+	FormatVersions []int `json:"formatVersions"`
+	// Features are sorted contract names such as exec-stop.
+	Features []string `json:"features"`
+	// JobLimits are directives applied to a managed workload's Job Object.
+	JobLimits []string `json:"jobLimits"`
+	// UserManagerModes are the user-manager token modes reported by status.
+	UserManagerModes []string `json:"userManagerModes"`
+	// Directives are the recognized names per section. Format, kind, and
+	// type rules still apply; verify reports them for a concrete file.
+	Directives map[string][]string `json:"directives"`
+}
+
+// Feature names in CapabilitiesResult.Features. A build lists a name only
+// when it enforces that contract.
+const (
+	// FeatureExecStop: ExecStop= runs one cooperative stop helper.
+	FeatureExecStop = "exec-stop"
+	// FeatureRestartBackoff: format-2 RestartBackoff=exponential with RestartMaxDelaySec=.
+	FeatureRestartBackoff = "restart-backoff"
+	// FeatureJobLimits: JobLimits directives are applied to the unit Job Object.
+	FeatureJobLimits = "job-limits"
+	// FeatureLingerS4U: lingering users get a headless user manager from an S4U logon.
+	FeatureLingerS4U = "linger-s4u"
+)
+
+// ProtocolCapabilities is the control protocol this manager serves.
+type ProtocolCapabilities struct {
+	Name    string   `json:"name"`
+	Version int      `json:"version"`
+	Methods []string `json:"methods"`
 }
 
 // UnitParams is the body for verbs that take a unit name.

@@ -414,6 +414,12 @@ func (m *Manager) Handle(ctx context.Context, method string, params json.RawMess
 			return nil, err
 		}
 		return m.Verify(p.Unit)
+	case protocol.MethodCapabilities:
+		var p struct{}
+		if err := protocol.DecodeParams(params, &p); err != nil {
+			return nil, err
+		}
+		return m.Capabilities(), nil
 	default:
 		return nil, protocol.ErrMethodNotFound(method)
 	}

@@ -31,6 +31,16 @@ func (c *Client) Maintenance(ctx context.Context, params MaintenanceParams) (*Ma
 	return &out, nil
 }
 
+// Capabilities queries the manager build. An older manager answers
+// CodeMethodNotFound and reports no capability.
+func (c *Client) Capabilities(ctx context.Context) (*CapabilitiesResult, error) {
+	var out CapabilitiesResult
+	if err := c.Call(ctx, MethodCapabilities, struct{}{}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 func (c *Client) Operation(ctx context.Context, id string) (*OperationResult, error) {
 	var out OperationResult
 	if err := c.Call(ctx, MethodOperation, OperationParams{ID: id}, &out); err != nil {
