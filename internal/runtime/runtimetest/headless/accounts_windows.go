@@ -526,7 +526,7 @@ func runUnitStatus(args []string) error {
 	defer cancel()
 	data, err := exec.CommandContext(ctx, cfg.Winctl, "--user", "snapshot").Output()
 	if err != nil {
-		return fmt.Errorf("winctl snapshot: %w", err)
+		return fmt.Errorf("winctl snapshot: %w", baseOnly(err))
 	}
 	var snap protocol.SnapshotResult
 	if err := json.Unmarshal(data, &snap); err != nil {
@@ -562,7 +562,7 @@ func runStartUnit(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 	defer cancel()
 	if err := exec.CommandContext(ctx, cfg.Winctl, "--user", "start", cfg.OutsideUnit).Run(); err != nil {
-		return fmt.Errorf("start the outside unit: %w", err)
+		return fmt.Errorf("start the outside unit: %w", baseOnly(err))
 	}
 	return writeJSONFile(*out, map[string]bool{"started": true})
 }

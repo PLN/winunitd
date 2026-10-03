@@ -136,14 +136,14 @@ func (w *workload) runProbe(name string) (json.RawMessage, error) {
 		return nil, fmt.Errorf("unknown probe %q", name)
 	}
 	if err := os.MkdirAll(filepath.Dir(out), 0o700); err != nil {
-		return nil, err
+		return nil, baseOnly(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*probeTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, w.exe, args...)
 	cmd.SysProcAttr = &windows.SysProcAttr{HideWindow: true}
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("probe %s: %w", name, err)
+		return nil, fmt.Errorf("probe %s: %w", name, baseOnly(err))
 	}
 	data, err := readBounded(out)
 	return json.RawMessage(data), err

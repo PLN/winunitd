@@ -1,7 +1,9 @@
 package headless
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,6 +24,26 @@ func TestLogTail(t *testing.T) {
 	tail, err := logTail(path)
 	if err != nil || len(tail) != 2 || tail[0].Code != "daemon.close" || tail[1].Code != daemonOpenCode || tail[1].At != ft(1.5) {
 		t.Fatalf("tail %+v %v", tail, err)
+	}
+}
+
+// Starting a configured executable that is missing reports its name, never
+// the private directory that holds it.
+func TestMissingExecutableDiagnosticNamesNoDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "private-profile")
+	for _, name := range []string{"winctl.exe", "test2json.exe"} {
+		err := exec.Command(filepath.Join(dir, name), "--user", "snapshot").Run()
+		if err == nil {
+			t.Fatal("a missing executable ran")
+		}
+		msg := fmt.Errorf("winctl snapshot: %w", baseOnly(err)).Error()
+		if strings.Contains(msg, "private-profile") || !strings.Contains(msg, name) {
+			t.Errorf("diagnostic %q", msg)
+		}
+	}
+	lookup := baseOnly(&exec.Error{Name: filepath.Join(dir, "winctl.exe"), Err: exec.ErrNotFound}).Error()
+	if strings.Contains(lookup, "private-profile") || !strings.Contains(lookup, "winctl.exe") {
+		t.Errorf("lookup diagnostic %q", lookup)
 	}
 }
 

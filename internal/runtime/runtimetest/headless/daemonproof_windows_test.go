@@ -4,6 +4,10 @@ package headless
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/PLN/winunitd/internal/journal"
@@ -20,11 +24,11 @@ func TestDaemonLogFactsOfTheProductLog(t *testing.T) {
 		t.Helper()
 		l, err := journal.OpenDaemonLog(root, nil)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatal(baseOnly(err))
 		}
 		l.Record(journal.DaemonEvent{Code: journal.DaemonEventOpen})
 		if err := l.CloseContext(context.Background()); err != nil {
-			t.Fatal(err)
+			t.Fatal(baseOnly(err))
 		}
 	}
 	open()
@@ -34,10 +38,13 @@ func TestDaemonLogFactsOfTheProductLog(t *testing.T) {
 	}
 	p := &DaemonLogProof{SID: self, Root: root, After: first}
 	for _, problem := range CheckDaemonLog(p, CheckProtection, self, "", ModeSystem, nil) {
-		t.Errorf("the product's own log: %s", problem)
+		// A SYSTEM runner's scratch root is not the system data root.
+		if problem != "the daemon-log facts are not the system manager's data root" {
+			t.Errorf("the product's own log: %s", problem)
+		}
 	}
 	if _, err := PadLog(DaemonLogPath(root), RotationBytes+1, RotationBytes+4096); err != nil {
-		t.Fatal(err)
+		t.Fatal(baseOnly(err))
 	}
 	before := daemonLogFacts(root)
 	open()
@@ -54,3 +61,26 @@ func TestDaemonLogFactsOfTheProductLog(t *testing.T) {
 
 // DaemonLogPath is the product's current log under a data root.
 func DaemonLogPath(root string) string { return journal.DaemonLogPath(root) }
+
+// unit-status names a missing configured winctl by its file name only; the
+// directory, which can be an account's profile, stays out of the error.
+func TestUnitStatusMissingWinctlNamesNoDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "private-profile")
+	config := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(ProbeConfig{Winctl: filepath.Join(dir, "winctl.exe"), StatusUnit: "failing.service"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, data, 0o600); err != nil {
+		t.Fatal(baseOnly(err))
+	}
+	err = runUnitStatus([]string{"--config", config, "--out", filepath.Join(t.TempDir(), "status.json")})
+	switch {
+	case err == nil:
+		t.Fatal("a missing winctl produced a status")
+	case strings.Contains(err.Error(), "private-profile"):
+		t.Fatal("the diagnostic names the private directory")
+	case !strings.Contains(err.Error(), "winctl.exe"):
+		t.Fatal("the diagnostic does not name the executable")
+	}
+}
