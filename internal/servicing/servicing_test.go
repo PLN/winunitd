@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/PLN/winunitd/internal/servicing/servicingtest"
 )
 
 func TestReleasePrecedence(t *testing.T) {
@@ -181,13 +183,12 @@ func TestBuildFromInfo(t *testing.T) {
 
 func floorDir(t *testing.T) (string, string) {
 	t.Helper()
-	base := t.TempDir()
-	if err := os.Mkdir(filepath.Join(base, "daemon"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	base := servicingtest.DataRoot(t)
 	return base, FloorPath(base)
 }
 
+// TestFloorStore covers the store's semantics on every system; the
+// protection of the record and its directories is tested per system.
 func TestFloorStore(t *testing.T) {
 	_, path := floorDir(t)
 	if f, err := ReadFloor(path); err != nil || f != nil {
@@ -200,9 +201,6 @@ func TestFloorStore(t *testing.T) {
 	got, err := ReadFloor(path)
 	if err != nil || got.MinVersion != "0.2.0" || !slices.Equal(got.RequireFeatures, []string{"exec-stop", "restart-backoff"}) {
 		t.Fatalf("round trip %+v %v", got, err)
-	}
-	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o600 {
-		t.Fatalf("record mode %v %v", fi.Mode(), err)
 	}
 	if err := WriteFloor(path, &Floor{Schema: 1, MinVersion: "0.3.0"}); err != nil {
 		t.Fatal(err)
@@ -226,55 +224,40 @@ func TestFloorStore(t *testing.T) {
 	if f, err := ReadFloor(path); err != nil || f != nil {
 		t.Fatalf("removed record: %+v %v", f, err)
 	}
-	// No daemon directory yet: no floor, but nothing can be written either.
-	missing := FloorPath(t.TempDir())
-	if f, err := ReadFloor(missing); err != nil || f != nil {
-		t.Fatalf("missing directory: %+v %v", f, err)
-	}
-	if err := WriteFloor(missing, want); err == nil {
-		t.Fatal("wrote into a missing directory")
+}
+
+// A missing data root or daemon directory under a safe container is a
+// first install: no floor, and nothing can be written there.
+func TestFloorStoreSafeAbsence(t *testing.T) {
+	for name, base := range map[string]string{
+		"no data root":        filepath.Join(servicingtest.Root(t), "winunitd"),
+		"no daemon directory": servicingtest.Root(t),
+	} {
+		path := FloorPath(base)
+		if f, err := ReadFloor(path); err != nil || f != nil {
+			t.Fatalf("%s: %+v %v", name, f, err)
+		}
+		if hold := AdmissionHold(path, Build{Version: "0.1.0"}); hold != "" {
+			t.Fatalf("%s held admission: %s", name, hold)
+		}
+		if err := WriteFloor(path, &Floor{Schema: 1, MinVersion: "0.1.0"}); err == nil {
+			t.Fatalf("%s: wrote a record", name)
+		}
+		if err := RemoveFloor(path); err != nil {
+			t.Fatalf("%s: remove: %v", name, err)
+		}
 	}
 }
 
-func TestFloorStoreRejectsUntrustedRecords(t *testing.T) {
-	_, path := floorDir(t)
-	write := func(data string, mode os.FileMode) {
-		t.Helper()
-		_ = os.Remove(path)
-		if err := os.WriteFile(path, []byte(data), mode); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chmod(path, mode); err != nil {
-			t.Fatal(err)
-		}
+func TestRunningBuildReportsNoFeaturesYet(t *testing.T) {
+	b := Running()
+	if b.Features != nil || b.Version == "" {
+		t.Fatalf("running build %+v", b)
 	}
-	write(`{"schema":1,"minVersion":"0.2.0"}`, 0o666)
-	if _, err := ReadFloor(path); err == nil {
-		t.Error("world-writable record trusted")
-	}
-	write(`{"schema":1,"minVersion":`, 0o600)
-	if _, err := ReadFloor(path); err == nil {
-		t.Error("truncated record accepted")
-	}
-	_ = os.Remove(path)
-	target := filepath.Join(t.TempDir(), "elsewhere.json")
-	if err := os.WriteFile(target, []byte(`{"schema":1,"minVersion":"0.0.1"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(target, path); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ReadFloor(path); err == nil {
-		t.Error("record followed a link")
-	}
-	_ = os.Remove(path)
-	if err := os.Chmod(filepath.Dir(path), 0o777); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(path), 0o755) })
-	write(`{"schema":1,"minVersion":"0.2.0"}`, 0o600)
-	if _, err := ReadFloor(path); err == nil {
-		t.Error("record in a writable directory trusted")
+	// Until the capability features are wired, a feature floor holds this
+	// build: the gate stays closed rather than guessing.
+	if v := Evaluate(&Floor{Schema: 1, RequireFeatures: []string{"exec-stop"}}, b); v.Satisfied || v.Reasons[0] != "build reports no features; requires exec-stop" {
+		t.Fatalf("feature floor %+v", v)
 	}
 }
 
@@ -302,18 +285,6 @@ func TestAdmissionHold(t *testing.T) {
 	}
 	if hold := AdmissionHold(path, build); !strings.HasPrefix(hold, "compatibility floor record is unusable: ") {
 		t.Fatalf("malformed record: %q", hold)
-	}
-}
-
-func TestRunningBuildReportsNoFeaturesYet(t *testing.T) {
-	b := Running()
-	if b.Features != nil || b.Version == "" {
-		t.Fatalf("running build %+v", b)
-	}
-	// Until the capability features are wired, a feature floor holds this
-	// build: the gate stays closed rather than guessing.
-	if v := Evaluate(&Floor{Schema: 1, RequireFeatures: []string{"exec-stop"}}, b); v.Satisfied || v.Reasons[0] != "build reports no features; requires exec-stop" {
-		t.Fatalf("feature floor %+v", v)
 	}
 }
 

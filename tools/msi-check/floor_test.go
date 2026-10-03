@@ -2,18 +2,15 @@ package main
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/PLN/winunitd/internal/servicing"
+	"github.com/PLN/winunitd/internal/servicing/servicingtest"
 )
 
 func TestFloorPreflight(t *testing.T) {
-	dataDir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dataDir, "daemon"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	dataDir := servicingtest.DataRoot(t)
 	clean := false
 	build := servicing.Build{Version: "0.1.0-alpha", Commit: "abc", Modified: &clean}
 	for _, mode := range []string{modeInstall, modeRepair, modeUpgrade, modeUninstall} {
