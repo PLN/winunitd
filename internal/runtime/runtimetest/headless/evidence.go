@@ -124,8 +124,10 @@ func metrics(ev Lifecycle, status *UnitStatusProof, capSec, capTol float64) map[
 		}
 	}
 	// A waiting recovery to cancel: before the window opens, failed
-	// launches grew the delay to the cap, and the last one failed recently
-	// enough that its retry was still pending when the window opened.
+	// launches grew the delay from short gaps to the cap, capped gaps stayed
+	// within the scheduler tolerance, and the last launch failed less than
+	// one capped delay before the window opened, so its retry was still
+	// pending at the intervention.
 	if w := ev.Negative; w != nil && capSec > 0 {
 		var before []Attempt
 		for _, a := range att {
@@ -134,20 +136,38 @@ func metrics(ev Lifecycle, status *UnitStatusProof, capSec, capTol float64) map[
 			}
 		}
 		if len(before) > 0 {
-			failed, capped := 0, 0
+			failed, capped, grew, reached := 0, 0, true, false
 			for i, a := range before {
 				if !a.Exited.IsZero() && (a.Crashed || a.ExitCode != 0) {
 					failed++
 				}
-				if i > 0 && a.Launched.Sub(before[i-1].Launched).Seconds() >= capSec {
+				if i == 0 {
+					continue
+				}
+				g := a.Launched.Sub(before[i-1].Launched).Seconds()
+				if i == 1 && g >= capSec/4 {
+					grew = false // the delay did not start short
+				}
+				switch {
+				case g >= capSec && g <= capSec+capTol:
 					capped++
+					reached = true
+				case g > capSec+capTol:
+					grew = false
+				case reached:
+					// The delay fell back below the cap before the
+					// intervention.
+					grew = false
+				case i > 1 && g < 0.9*before[i-1].Launched.Sub(before[i-2].Launched).Seconds():
+					grew = false
 				}
 			}
 			last := before[len(before)-1]
 			waiting := !last.Exited.IsZero() && (last.Crashed || last.ExitCode != 0) && last.Exited.Before(w.Since) &&
-				w.Since.Sub(last.Exited).Seconds() < capSec+capTol
+				w.Since.Sub(last.Exited).Seconds() < capSec
 			out["failedBeforeQuiet"] = float64(failed)
 			out["cappedBeforeQuiet"] = float64(capped)
+			out["grewBeforeQuiet"] = boolMetric(grew && reached)
 			out["waitingAtQuiet"] = boolMetric(waiting)
 		}
 	}

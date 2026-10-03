@@ -75,6 +75,7 @@ var knownMetrics = []string{
 	"maxExitedLifeSec", "recovered", "postResetGrowth", "unlimited", "restartAttempts", "withinBurst",
 	"bootStarted", "progressing", "profileCreated", "profileExisting", "interactiveSessions", "sessionCycle", "profileUnloaded",
 	"lingerKept", "sessionRetained", "overlongGaps", "failedBeforeQuiet", "cappedBeforeQuiet", "waitingAtQuiet",
+	"grewBeforeQuiet",
 }
 
 // The observer report derivation each lifecycle metric needs: launches of
@@ -88,6 +89,7 @@ var metricNeeds = map[string]string{
 	"bootStarted": "boot", "progressing": "boot", "profileCreated": "boot", "profileExisting": "boot", "interactiveSessions": "sessions",
 	"sessionCycle": "session", "profileUnloaded": "unloaded", "lingerKept": "independent", "sessionRetained": "independent",
 	"overlongGaps": "role", "failedBeforeQuiet": "negative", "cappedBeforeQuiet": "negative", "waitingAtQuiet": "negative",
+	"grewBeforeQuiet": "negative",
 }
 
 //go:embed matrix.json
@@ -163,6 +165,9 @@ type ObserveSpec struct {
 	Peer bool `json:"peer,omitempty"`
 	// Drained requires every process of the account to have exited.
 	Drained bool `json:"drained,omitempty"`
+	// Restart requires the broker to stop and start again inside the
+	// negative window, which nonetheless relaunches nothing.
+	Restart bool `json:"restart,omitempty"`
 	// Subject binds the record's probes to a process the observer held as
 	// the account's workload or one of its children.
 	Subject bool `json:"subject,omitempty"`
@@ -400,6 +405,9 @@ func validObserveSpec(o *ObserveSpec, requires []Requirement, plane string) erro
 		if !validRole(r, false) {
 			return fmt.Errorf("kept role %q", r)
 		}
+	}
+	if o.Restart && o.Negative == "" {
+		return errors.New("a broker restart is checked inside a negative window")
 	}
 	if o.Boot != "" && o.Boot != BootCreated && o.Boot != BootExisting {
 		return fmt.Errorf("boot %q", o.Boot)

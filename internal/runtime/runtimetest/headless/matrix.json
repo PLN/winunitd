@@ -49,11 +49,11 @@
         {"id": "admission-B", "account": "B", "mode": "wts", "phase": 3},
         {"id": "linger-A", "account": "A", "mode": "s4u"},
         {"id": "linger-B", "account": "B", "mode": "s4u"},
-        {"id": "stop-A", "account": "A", "mode": "s4u"},
-        {"id": "stop-B", "account": "B", "mode": "s4u"},
+        {"id": "stop-A", "account": "A", "mode": "s4u", "observe": {"role": "manager", "negative": "quiet", "drained": true, "restart": true}},
+        {"id": "stop-B", "account": "B", "mode": "s4u", "observe": {"role": "manager", "negative": "quiet", "drained": true, "restart": true}},
         {"id": "crash", "refs": ["H09/A", "H09/B"]}
       ],
-      "requires": [{"metric": "negativeSec", "min": 120}, {"metric": "drained", "min": 1}, {"metric": "failedBeforeQuiet", "min": 7}, {"metric": "cappedBeforeQuiet", "min": 1}, {"metric": "waitingAtQuiet", "min": 1}],
+      "requires": [{"metric": "negativeSec", "min": 120}, {"metric": "drained", "min": 1}, {"metric": "failedBeforeQuiet", "min": 7}, {"metric": "cappedBeforeQuiet", "min": 1}, {"metric": "grewBeforeQuiet", "min": 1}, {"metric": "waitingAtQuiet", "min": 1}, {"metric": "overlongGaps", "max": 0}],
       "observe": {"role": "manager", "negative": "quiet", "drained": true}
     },
     "G5": {

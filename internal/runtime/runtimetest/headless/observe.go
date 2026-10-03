@@ -562,6 +562,19 @@ func DeriveLifecycle(r *ObserverReport, spec ObserveSpec, account, sid, mode str
 		} else {
 			l.Negative = &Window{Since: FiletimeTime(since), Until: FiletimeTime(r.Ended)}
 		}
+		// An orderly stop of the broker the observer held, and a new broker
+		// that started after it and still runs, all inside the window.
+		if spec.Restart && since != 0 {
+			brokers := of(RoleBroker, "")
+			restarted := slices.ContainsFunc(brokers, func(old Generation) bool {
+				return old.Exited > since && old.Crashed == 0 && slices.ContainsFunc(brokers, func(g Generation) bool {
+					return g.Created >= old.Exited && g.Created < r.Ended && g.Exited == 0
+				})
+			})
+			if !restarted {
+				problems = append(problems, "the broker was not stopped and restarted inside the window")
+			}
+		}
 	}
 	if spec.Crash != "" {
 		var target *Generation

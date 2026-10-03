@@ -537,6 +537,19 @@ func TestProtectedDACL(t *testing.T) {
 
 // A crash loop needs failed launches, a capped delay within its tolerance
 // and recovery; a cancellation needs a recovery that was actually waiting.
+// spread relaunches an account's failing managers every gap seconds and
+// moves the quiet mark and the observation end after the last failure.
+func spread(r *ObserverReport, account string, gap float64) {
+	gs := gensOf(r, RoleManager, account)
+	for i, g := range gs {
+		at := ft(float64(i) * gap)
+		life, seen, crash := g.Exited-g.Created, g.Seen-g.Created, g.Exited-g.Crashed
+		g.Created, g.Seen, g.Exited, g.Crashed = at, at+seen, at+life, at+life-crash
+	}
+	r.Marks[0].At = gs[len(gs)-1].Exited + 10e7
+	r.Ended = r.Marks[0].At + 200e7
+}
+
 func TestSummarizeRequiresFailureAndWaiting(t *testing.T) {
 	succeeded := func(r *ObserverReport, account string) {
 		for _, g := range gensOf(r, RoleManager, account) {
@@ -561,6 +574,31 @@ func TestSummarizeRequiresFailureAndWaiting(t *testing.T) {
 			life := last.Exited - last.Created
 			last.Created = gs[len(gs)-2].Created + 40e7
 			last.Seen, last.Exited, last.Crashed = last.Created+5e5, last.Created+life, last.Created+life-1000
+		}},
+		{"waiting failures 600 s apart", "G4/linger-A: overlongGaps above its maximum", func(rs []Record) {
+			spread(ev(t, rs, "G4/linger-A").Observer, AccountA, 600)
+		}},
+		{"waiting failures 600 s apart, not capped", "G4/linger-A: cappedBeforeQuiet below its minimum", func(rs []Record) {
+			spread(ev(t, rs, "G4/linger-A").Observer, AccountA, 600)
+		}},
+		{"no growth before the cap", "G4/stop-A: grewBeforeQuiet below its minimum", func(rs []Record) {
+			spread(ev(t, rs, "G4/stop-A").Observer, AccountA, 60)
+		}},
+		{"stop without a broker restart", "G4/stop-A: observer: the broker was not stopped and restarted inside the window", func(rs []Record) {
+			r := ev(t, rs, "G4/stop-A").Observer
+			r.Generations = slices.DeleteFunc(r.Generations, func(g Generation) bool { return g.Role == RoleBroker && g.Exited == 0 })
+		}},
+		{"broker crashed instead of stopping", "G4/stop-B: observer: the broker was not stopped and restarted inside the window", func(rs []Record) {
+			for i := range ev(t, rs, "G4/stop-B").Observer.Generations {
+				if g := &ev(t, rs, "G4/stop-B").Observer.Generations[i]; g.Role == RoleBroker && g.Exited != 0 {
+					crash(g)
+				}
+			}
+		}},
+		{"cancellation after the retry was due", "G4/stop-B: waitingAtQuiet below its minimum", func(rs []Record) {
+			r := ev(t, rs, "G4/stop-B").Observer
+			r.Marks[0].At += 55e7
+			r.Ended += 55e7
 		}},
 		{"capped gap far past the cap", "G2/B: overlongGaps above its maximum", func(rs []Record) {
 			r := ev(t, rs, "G2/B").Observer

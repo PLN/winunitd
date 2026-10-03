@@ -305,6 +305,11 @@ func observerFor(e Entry) *ObserverReport {
 			crash(o.gen(RoleManager, e.Account, e.Mode, a.Launched.Sub(t0).Seconds(), a.Exited.Sub(t0).Seconds(), 0))
 		}
 		o.Marks = []Mark{{Name: "quiet", At: ft(end + 10)}}
+		if strings.HasPrefix(e.Variant, "stop-") {
+			// The broker stops after the grant is revoked and starts again.
+			o.gen(RoleBroker, "", ModeSystem, -3000, end+12, 0)
+			o.gen(RoleBroker, "", ModeSystem, end+14, -1, 0)
+		}
 		return o.ObserverReport
 	case "G5":
 		gaps := []float64{0.6, 0.7, 0.9, 1.3}
