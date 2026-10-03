@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,66 +68,102 @@ type driverLayout struct {
 	EnablePath *string
 }
 
+// psLiteral quotes s as a PowerShell single-quoted string.
+func psLiteral(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+// driverRoots returns host-native absolute roots for the layout functions:
+// the fixture, case root, data directory and headless manager directory.
+// The roots contain a quote character, so a test fails if they are not
+// passed as PowerShell literals.
+func driverRoots(t *testing.T) (fixture, cases, data, base string) {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "qualifier's root")
+	return filepath.Join(root, "fixture", "nested-job.exe"), filepath.Join(root, "cases"), filepath.Join(root, "data"), filepath.Join(root, "profile", "winunitd")
+}
+
+// samePath compares a path PowerShell built with the host-native spelling.
+func samePath(got, want string) bool {
+	return filepath.Clean(got) == filepath.Clean(want)
+}
+
 // A SYSTEM case needs no headless account or manager directory: its
 // parameters pass and its layout has no enable link (the default path once
 // failed on an empty HeadlessBase before running its case).
 func TestNestedJobDriverSystemLayoutNeedsNoHeadlessArguments(t *testing.T) {
+	fixture, cases, data, _ := driverRoots(t)
 	var layout driverLayout
-	err := runDriverFunctions(t, `
-Test-NestedJobParameters -Case N07 -Identity system -HeadlessSid '' -HeadlessAccount '' -HeadlessBase '' -Paths @('/fixture/nested-job.exe', '/cases', '/data')
-Get-NestedJobLayout -Case N07 -Mode job-list -Identity system -Repetition r1 -CaseRoot '/cases' -DataDir '/data' -HeadlessBase '' | ConvertTo-Json -Compress
-`, &layout)
+	err := runDriverFunctions(t, fmt.Sprintf(`
+Test-NestedJobParameters -Case N07 -Identity system -HeadlessSid '' -HeadlessAccount '' -HeadlessBase '' -Paths @(%s, %s, %s)
+Get-NestedJobLayout -Case N07 -Mode job-list -Identity system -Repetition r1 -CaseRoot %s -DataDir %s -HeadlessBase '' | ConvertTo-Json -Compress
+`, psLiteral(fixture), psLiteral(cases), psLiteral(data), psLiteral(cases), psLiteral(data)), &layout)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if layout.Name != "nested-n07-job-list-r1.service" || layout.EnablePath != nil || !strings.HasSuffix(layout.UnitPath, "units/nested-n07-job-list-r1.service") ||
-		!strings.HasPrefix(layout.UnitDir, "/data") || !strings.HasSuffix(layout.CaseDir, "n07-job-list-system-r1") {
+	const name = "nested-n07-job-list-r1.service"
+	if layout.Name != name || layout.EnablePath != nil ||
+		!samePath(layout.CaseDir, filepath.Join(cases, "n07-job-list-system-r1")) ||
+		!samePath(layout.UnitDir, filepath.Join(data, "units")) ||
+		!samePath(layout.UnitPath, filepath.Join(data, "units", name)) {
 		t.Fatalf("SYSTEM layout %+v", layout)
 	}
 }
 
 func TestNestedJobDriverHeadlessLayout(t *testing.T) {
+	fixture, cases, data, base := driverRoots(t)
 	var layout driverLayout
-	err := runDriverFunctions(t, `
-Test-NestedJobParameters -Case N06 -Identity headless -HeadlessSid 'S-1-5-21-1-2-3-1001' -HeadlessAccount 'qualifier' -HeadlessBase '/profile/winunitd' -Paths @('/fixture/nested-job.exe', '/cases', '/data')
-Get-NestedJobLayout -Case N06 -Mode assign -Identity headless -Repetition r2 -CaseRoot '/cases' -DataDir '/data' -HeadlessBase '/profile/winunitd' | ConvertTo-Json -Compress
-`, &layout)
+	err := runDriverFunctions(t, fmt.Sprintf(`
+Test-NestedJobParameters -Case N06 -Identity headless -HeadlessSid 'S-1-5-21-1-2-3-1001' -HeadlessAccount 'qualifier' -HeadlessBase %s -Paths @(%s, %s, %s)
+Get-NestedJobLayout -Case N06 -Mode assign -Identity headless -Repetition r2 -CaseRoot %s -DataDir %s -HeadlessBase %s | ConvertTo-Json -Compress
+`, psLiteral(base), psLiteral(fixture), psLiteral(cases), psLiteral(data), psLiteral(cases), psLiteral(data), psLiteral(base)), &layout)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if layout.EnablePath == nil || !strings.HasPrefix(*layout.EnablePath, "/profile/winunitd") ||
-		!strings.HasSuffix(*layout.EnablePath, "default.target/nested-n06-assign-r2.service") || !strings.HasPrefix(layout.UnitDir, "/profile/winunitd") {
+	const name = "nested-n06-assign-r2.service"
+	if layout.Name != name || layout.EnablePath == nil ||
+		!samePath(*layout.EnablePath, filepath.Join(base, "enabled", "default.target", name)) ||
+		!samePath(layout.CaseDir, filepath.Join(cases, "n06-assign-headless-r2")) ||
+		!samePath(layout.UnitDir, filepath.Join(base, "units")) ||
+		!samePath(layout.UnitPath, filepath.Join(base, "units", name)) {
 		t.Fatalf("headless layout %+v", layout)
 	}
 }
 
 func TestNestedJobDriverRejectsInvalidParameters(t *testing.T) {
+	_, cases, _, base := driverRoots(t)
+	c, b := psLiteral(cases), psLiteral(base)
 	for name, call := range map[string]string{
-		"headless without a manager directory": `Test-NestedJobParameters -Case N06 -Identity headless -HeadlessSid 'S-1-5-21-1-2-3-1001' -HeadlessAccount 'qualifier' -HeadlessBase '' -Paths @('/cases')`,
-		"headless without an account":          `Test-NestedJobParameters -Case N07 -Identity headless -HeadlessSid '' -HeadlessAccount '' -HeadlessBase '/profile' -Paths @('/cases')`,
-		"N06 as SYSTEM":                        `Test-NestedJobParameters -Case N06 -Identity system -HeadlessSid '' -HeadlessAccount '' -HeadlessBase '' -Paths @('/cases')`,
+		"headless without a manager directory": `Test-NestedJobParameters -Case N06 -Identity headless -HeadlessSid 'S-1-5-21-1-2-3-1001' -HeadlessAccount 'qualifier' -HeadlessBase '' -Paths @(` + c + `)`,
+		"headless without an account":          `Test-NestedJobParameters -Case N07 -Identity headless -HeadlessSid '' -HeadlessAccount '' -HeadlessBase ` + b + ` -Paths @(` + c + `)`,
+		"N06 as SYSTEM":                        `Test-NestedJobParameters -Case N06 -Identity system -HeadlessSid '' -HeadlessAccount '' -HeadlessBase '' -Paths @(` + c + `)`,
 		"relative path":                        `Test-NestedJobParameters -Case N07 -Identity system -HeadlessSid '' -HeadlessAccount '' -HeadlessBase '' -Paths @('cases')`,
 		"empty path":                           `Test-NestedJobParameters -Case N07 -Identity system -HeadlessSid '' -HeadlessAccount '' -HeadlessBase '' -Paths @('')`,
+		"relative manager directory":           `Test-NestedJobParameters -Case N07 -Identity headless -HeadlessSid 'S-1-5-21-1-2-3-1001' -HeadlessAccount 'qualifier' -HeadlessBase 'profile' -Paths @(` + c + `)`,
 	} {
 		var ignored any
 		if err := runDriverFunctions(t, call+"\n'null'", &ignored); err == nil {
 			t.Errorf("%s accepted", name)
 		}
 	}
+	// The same parameters with valid values pass, so each rejection above
+	// is its own.
+	var ok any
+	if err := runDriverFunctions(t, `Test-NestedJobParameters -Case N07 -Identity headless -HeadlessSid 'S-1-5-21-1-2-3-1001' -HeadlessAccount 'qualifier' -HeadlessBase `+b+` -Paths @(`+c+`)`+"\n'null'", &ok); err != nil {
+		t.Fatalf("valid headless parameters: %v", err)
+	}
 }
 
 // A process the driver kills counts as stopped only once its exit is
-// confirmed.
+// confirmed. The child is this PowerShell's own executable, sleeping, so
+// the test runs the same way on every system.
 func TestNestedJobDriverConfirmsKilledProcesses(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("uses a POSIX sleep process")
-	}
 	var got struct {
 		State  string
 		Exited bool
 	}
 	err := runDriverFunctions(t, `
-$p = Start-Process -FilePath 'sleep' -ArgumentList '60' -PassThru
+$p = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 60' -NoNewWindow -PassThru
 $state = Stop-ExactProcess $p 'the command'
 @{ State = $state; Exited = $p.HasExited } | ConvertTo-Json -Compress
 `, &got)
