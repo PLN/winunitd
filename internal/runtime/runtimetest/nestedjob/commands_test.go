@@ -279,3 +279,33 @@ func TestManagerOwnerCommandsAreEnumerated(t *testing.T) {
 		t.Error("the runtime owner accepted a manager verb")
 	}
 }
+
+// A view whose observation failed is never read as an empty or stopped
+// unit; a unit without a process deliberately has no job.
+func TestManagerViewValidate(t *testing.T) {
+	good := []ManagerView{
+		{ActiveState: "inactive"},
+		{ActiveState: "active", HasJob: true, JobMemory: 256 << 20, LimitFlags: 0x2200},
+		{ActiveState: "inactive", Helpers: []HelperState{{PID: 10, Created: 100, Exited: true}}},
+	}
+	for _, v := range good {
+		if err := v.Validate(); err != nil {
+			t.Errorf("%+v: %v", v, err)
+		}
+	}
+	bad := map[string]ManagerView{
+		"failed status":           {InspectError: &Failure{Op: "status", Win32: 5}},
+		"failed limits":           {ActiveState: "active", InspectError: &Failure{Op: "query-limits", Win32: 6}},
+		"no state":                {},
+		"limits without a job":    {ActiveState: "active", PeakJobMemory: 1},
+		"unobserved helper":       {ActiveState: "inactive", Helpers: []HelperState{{PID: 10, Created: 100, Error: &Failure{Op: "helper", Win32: 5}}}},
+		"helper without identity": {ActiveState: "inactive", Helpers: []HelperState{{PID: 10, Exited: true}}},
+	}
+	for name, v := range bad {
+		if err := v.Validate(); err == nil {
+			t.Errorf("%s accepted", name)
+		} else if strings.Contains(err.Error(), "access") {
+			t.Errorf("%s: diagnostic carries a raw message: %v", name, err)
+		}
+	}
+}
