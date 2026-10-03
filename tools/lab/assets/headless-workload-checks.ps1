@@ -1024,20 +1024,20 @@ try {
 					# The exiting caller writes nothing; the server's entry is
 					# its evidence.
 					try { Invoke-Workload $sid @{ verb = 'probe'; probe = 'pipe-exited' } | Out-Null } catch { $checks.Add('the exiting caller left no client report, as expected') }
-					Confirm-Child $server 330000 'the pipe server' 
+					Confirm-Child $server 330000 'the pipe server'
 					$peerSid = $sidOf[$peerRole]
 					$serverWide = Join-Path $caseDir 'pipe-server-wide.json'
 					$wide = Start-Child $Fixture @('pipe-serve', '--name', "$pipe-wide", '--allow', $sid, '--acl', $sid, '--acl', $peerSid, '--report', $serverWide, '--max', '1', '--duration', '120s')
 					Wait-PipeReady "$pipe-wide" $wide
 					Set-ProbeConfig $peerRole @{ pipe = "$pipe-wide" }
 					$results += (Get-Probe $peerSid 'pipe-wrong-decision').result
-					Confirm-Child $wide 150000 'the wide pipe server' 
+					Confirm-Child $wide 150000 'the wide pipe server'
 					$serverAcl = Join-Path $caseDir 'pipe-server-acl.json'
 					$aclServer = Start-Child $Fixture @('pipe-serve', '--name', "$pipe-acl", '--allow', $sid, '--report', $serverAcl, '--max', '1', '--duration', '60s')
 					Wait-PipeReady "$pipe-acl" $aclServer
 					Set-ProbeConfig $peerRole @{ pipe = "$pipe-acl" }
 					$results += (Get-Probe $peerSid 'pipe-wrong-acl').result
-					Confirm-Child $aclServer 90000 'the ACL pipe server' 
+					Confirm-Child $aclServer 90000 'the ACL pipe server'
 					$evidence.pipe = $results
 					$evidence.pipeServers = @(foreach ($f in @($serverOwn, $serverWide, $serverAcl)) { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json })
 				}
@@ -1060,7 +1060,7 @@ try {
 						Invoke-Native -File $Fixture -Arguments @('probe-endpoint', '--pipe', $h.pipe, '--client', $h.client, '--out', $out) | Out-Null
 						$h.after = (Get-Content -LiteralPath $out -Raw | ConvertFrom-Json).server
 					}
-					Confirm-Child $systemOnly 330000 'the SYSTEM-only pipe server' 
+					Confirm-Child $systemOnly 330000 'the SYSTEM-only pipe server'
 					Add-Record "$key#pipe-health" 'control' (Get-HeadlessToken 'system' '' 0) ([ordered]@{ endpoints = $health })
 				}
 			}
