@@ -406,10 +406,18 @@ that it cannot open is recorded as unidentified. Its plan names the role and
 account to crash and how long each generation may live before it terminates
 exactly that process; it timestamps marks the driver creates in a marks
 directory, creates a declared release file after a number of failed workload
-generations, and stops at a stop file or its duration. About once a second it
-samples the interactive sessions that have a user and the watched accounts'
-password-bearing logon sessions (interactive, batch, network cleartext,
-remote interactive and cached interactive). At the end it reads each watched
+generations, and stops at a stop file or its duration. It records its own
+process and token; only an observer that ran as SYSTEM in session zero
+yields qualification evidence. Before it starts it admits the daemon and
+workload images it watches against their named manifest entries. About once
+a second it samples the interactive sessions that have a user and the
+watched accounts' password-bearing logon sessions (interactive, network
+cleartext, remote interactive and cached interactive), and records how the
+sampling went: a failed query makes the report incomplete instead of
+reading as absence. At the end it reads the Security log's logon history
+since the boot, with the oldest event the log holds and whether it was
+cleared; batch logons are counted from that history, which names the logon
+process, so the product's own S4U logons are not counted. At the end it reads each watched
 account's profile registration, profile directory creation time and loaded
 hive, and the workload's own progress record. Its report also records the
 boot (kernel boot time and boot counter) and the longest interval between two
@@ -422,8 +430,10 @@ every record of the matrix passed with its proof and confirmed cleanup and
 nothing is wrong. It recomputes every judgement from raw evidence instead of
 trusting a record's claim:
 
-- durations, capped retries, short delays after the cap, the longest life of
-  a crashed generation, recovery after the injected failures stop,
+- failed launches (crashed or nonzero exit), durations, capped retries
+  within the declared scheduler tolerance of the cap, short delays after the
+  cap, the longest life of a crashed generation, recovery after the injected
+  failures stop, a recovery actually waiting when a cancellation began,
   confirmed stable runtime, the reset after it and the delays growing again,
   relaunches in a closed cancellation window (a launch at either end counts),
   failures and starts in one ten-second window, from the observed
@@ -465,7 +475,8 @@ trusting a record's claim:
   and distinct accounts;
 - phase order; the first phase on one fresh boot and the first two phases with
   no password-bearing logon since their boot, counted from the observer's
-  logon sessions, so bare S4U network and EFS probes precede every credential
+  samples and the Security log's history, which must reach back past the
+  boot uncleared, so bare S4U network and EFS probes precede every credential
   control; the first-use check immediately before the first-use cold boot;
   shared executions only where declared and with one observer report; five
   distinct test runners for the held native-launch repetitions.
@@ -520,7 +531,10 @@ The characterizations are deliberately narrow. TCP counts only with the nonce
 echoed and recorded by the peer, and qualifies that isolated route only. SMB
 access under bare S4U, with no supplied credentials, counts as refused only
 when the share is reachable and the same account's password-bearing logon
-reads the same nonce file, and as succeeded only when the server attributes
+succeeds on the operation that failed, at the same place (reading the same
+nonce file, or writing beside it: a write both are denied is a share
+permission, not a credential refusal), and as succeeded only when the server
+attributes
 that access, on that file and within the probe's time, to the account's SID;
 guest, anonymous and machine access, an unreachable share or a name, path or
 transport error is inconclusive. EFS counts as refused only when the volume
