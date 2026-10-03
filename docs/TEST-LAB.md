@@ -313,3 +313,102 @@ process/thread start and stop events to corroborate each held interval. ETW does
 not identify `ResumeThread`; the suspend-count assertion provides that boundary.
 Qualification of an immutable daemon binary requires separate observations;
 the instrumented test binary alone does not establish that evidence.
+
+## Headless background workloads
+
+Issue #266 qualifies a long-running background workload under explicit
+local-account S4U linger, with no interactive logon. The test-only harness in
+`internal/runtime/runtimetest/headless`, built standalone as
+`tests/native/headless-workload`, is not a release payload and adds no product
+IPC method.
+
+The case matrix (`headless/matrix.json`) has three ledgers on one admitted
+artifact: the six approved #254 recovery groups (23 records), B01-B04 for two
+accounts (8 records that refer to the matching #254 records) and H01-H22 (55
+records), plus 14 separately keyed controls. Records are logical claims;
+executions are what ran. H01 and H02 share one cold boot, H03's two accounts
+one reboot and H09's two accounts one broker crash; reference records, such as
+B01-B04, H10, H11 and the headless #253 lanes, cite other records and carry no
+execution. `headless-workload matrix [--ledger L] [--case C] [--account A]
+[--phase N]` prints the expected records; `--counts` and `--hash` print the
+totals and the matrix hash.
+
+Records are written by `headless-workload record --observation FILE --results
+DIR --admission FILE`. The record binds the driver's observation to the
+admitted run manifest (a full clean source commit and the SHA-256 of every
+admitted executable), the recording executable's hash and the matrix. Each
+record carries its token context, an execution ID, a run-wide sequence, a boot
+ID, the number of password-bearing logons since that boot, confirmed cleanup,
+its linked controls and raw evidence: launch and exit times, a negative
+observation window, old and replacement process identities, probe results and
+pipe sub-results.
+
+`headless-workload summarize --results DIR --admission FILE` exits 0 only when
+every record of the matrix passed with confirmed cleanup and nothing is wrong.
+It recomputes every judgement from raw evidence instead of trusting a record's
+claim:
+
+- durations, capped retries, short delays after the cap, confirmed stable
+  runtime, the reset after it, relaunches in a cancellation window, failures
+  and starts in one ten-second window, from the attempt times;
+- that every old process exited strictly before its replacement was created;
+- TCP, SMB and EFS characterizations, from the probe results and controls;
+- the qualification-pipe and path sub-results, by their native codes;
+- each record's token against its account and mode: genuine session-zero S4U
+  standard tokens for the two accounts, a nonzero session for interactive
+  rows, SYSTEM for SYSTEM rows, one SID per account and distinct accounts;
+- phase order; the first phase on one fresh boot with no password-bearing
+  logon, so bare S4U network and EFS probes precede every credential control;
+  the first-use check immediately before the first-use cold boot; shared
+  executions only where declared; five distinct test runners for the held
+  native-launch repetitions.
+
+A selection is partial and exits 3 even when everything selected passed.
+
+The workload's `serve` role keeps a flushed progress record in a state root it
+derives from its own token and answers enumerated commands (health, a named
+probe, exit) on a pipe that only SYSTEM and its own account may open. Probes
+run as bounded child processes inside the unit's job, with targets read from a
+configuration file in that state root, never from the command. `fail --code 7
+--until FILE` exits with code 7 until FILE exists, then serves. Probes record
+exact native results: `probe-token` (SID, logon ID, session, integrity,
+elevation, groups, privileges, logon type and package where LSA allows, and the
+known folders from the token), `probe-path`, `probe-tcp`, `probe-smb` and
+`probe-efs`.
+
+`pipe-serve` is the SYSTEM qualification pipe. For each caller it takes the
+PID from Windows, opens and holds that process, records its creation time and
+account, impersonates the caller at Identification level on a dedicated
+thread, reads an optional claim of the caller's own incarnation and decides:
+accepted only for the allowed account, on a live held process whose tokens
+agree and whose claim, if sent, is the held one. A caller that exits within a
+one-second settle window after its claim is rejected. Any process of the
+account is accepted; the pipe establishes the account and a held caller
+incarnation, not a unit, definition or launch, and it is not a WinUnit
+endpoint.
+
+The characterizations are deliberately narrow. TCP counts only with the nonce
+echoed and recorded by the peer, and qualifies that isolated route only. SMB
+access under bare S4U, with no supplied credentials, counts as refused only
+when the share is reachable and a password-bearing control reaches it, and as
+succeeded only when the server attributes the access to the account; an
+unreachable share or a name, path or transport error is inconclusive. EFS
+counts as refused only when the volume supports encryption, the fixture is
+encrypted, an unencrypted sibling with the same ACL is readable and a
+same-account password logon decrypts it. Transport success does not supply
+outbound Windows credentials or decryption keys.
+
+`provision-linger` writes an explicit grant through the product's linger
+store, with no credential URI, and refuses while the winunitd service runs: a
+running broker would launch the account at once and could create its profile
+before the cold boot. `provision-unit` validates a unit with the product
+parser and `Manager.Enable` on a scratch base and copies exactly the unit file
+and its enable links into a target base, such as a Default-profile template or
+an existing profile. `pad-log` appends only spaces and a newline to a stopped
+log until it exceeds the rotation size, bounded, with its security unchanged;
+it is a declared fixture intervention, not daemon output.
+
+Case configurations, probe outputs, server reports and records contain account
+SIDs, profile paths and peer addresses. They are private qualification
+evidence and must not be published as CI artifacts or attached to issues or
+pull requests. No native result is recorded here until those runs pass.
