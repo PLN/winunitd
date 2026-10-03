@@ -75,10 +75,10 @@ const (
 // a SYSTEM consumer impersonating the case's account, as the delegated
 // admission probe does; or one impersonating the peer account.
 const (
-	ContextActor             = "actor"
-	ContextSystem            = "system"
-	ContextUserImpersonated  = "user-impersonated"
-	ContextPeerImpersonated  = "peer-impersonated"
+	ContextActor            = "actor"
+	ContextSystem           = "system"
+	ContextUserImpersonated = "user-impersonated"
+	ContextPeerImpersonated = "peer-impersonated"
 )
 
 // Witnesses: the consumer's own result a step must show.
@@ -88,7 +88,7 @@ var (
 )
 
 var (
-	trees      = []string{"data-root", "units", "enabled", "journal", "runtime", "linger", "daemon", "install", "user-root", "user-units", "programdata",
+	trees = []string{"data-root", "units", "enabled", "journal", "runtime", "linger", "daemon", "install", "user-root", "user-units", "programdata",
 		"programfiles"}
 	shapes     = []string{"descendant-junction", "descendant-file-link", "component-junction", "ancestor-rename"}
 	actors     = []string{ActorStandard, ActorFilteredAdmin, ActorUser, ActorSystemFixture}
@@ -122,29 +122,29 @@ type Policy struct {
 
 // Case is one path case.
 type Case struct {
-	ID         string   `json:"id"`
-	Title      string   `json:"title"`
-	Tree       string   `json:"tree"`
-	Shape      string   `json:"shape"`
-	Depth      int      `json:"depth"`
-	Path       string   `json:"path"`
-	Actor      string   `json:"actor"`
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	Tree  string `json:"tree"`
+	Shape string `json:"shape"`
+	Depth int    `json:"depth"`
+	Path  string `json:"path"`
+	Actor string `json:"actor"`
 	// Mode is the actor's logon: wts for an interactive caller, or wts or
 	// s4u for the account's own context; empty for a fixture-made state.
 	Mode     string `json:"mode,omitempty"`
 	Consumer string `json:"consumer"`
 	// Ancestor names the leaf's parent an ancestor case acts through.
-	Ancestor string `json:"ancestor,omitempty"`
-	Outcome    string   `json:"outcome"`
-	Policy     string   `json:"policy,omitempty"`
-	Diagnostic string   `json:"diagnostic,omitempty"`
-	Question   string   `json:"question,omitempty"`
+	Ancestor   string `json:"ancestor,omitempty"`
+	Outcome    string `json:"outcome"`
+	Policy     string `json:"policy,omitempty"`
+	Diagnostic string `json:"diagnostic,omitempty"`
+	Question   string `json:"question,omitempty"`
 	// Recommendation is the reviewer's recommended answer to the question,
 	// for the maintainer; it decides nothing.
-	Recommendation string `json:"recommendation,omitempty"`
-	Basis          string `json:"basis"`
-	Roles      []string `json:"roles"`
-	Steps      []Step   `json:"steps"`
+	Recommendation string   `json:"recommendation,omitempty"`
+	Basis          string   `json:"basis"`
+	Roles          []string `json:"roles"`
+	Steps          []Step   `json:"steps"`
 }
 
 // Step is one operation of a case: by the actor, by the consumer, or a
