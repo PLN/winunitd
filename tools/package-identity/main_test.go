@@ -5,7 +5,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -39,18 +42,18 @@ func linked(info *debug.BuildInfo, release string) executable {
 	return executable{info: info, release: release, linked: true}
 }
 
-func TestCheckRequiresOneBuild(t *testing.T) {
-	payload := func(helper executable) map[string]executable {
-		daemon := linked(testInfo(nil), "0.1.0-alpha")
-		daemon.needsRelease = true
-		helper.needsRelease = true
-		return map[string]executable{
-			"winunitd.exe":         daemon,
-			"winctl.exe":           linked(testInfo(nil), "0.1.0-alpha"),
-			"winunit-notify.exe":   {info: testInfo(nil)},
-			"helper msi-check.exe": helper,
-		}
+// testPayload is a complete set of checked binaries of one build.
+func testPayload(helper executable) map[string]executable {
+	return map[string]executable{
+		"winunitd.exe":       linked(testInfo(nil), "0.1.0-alpha"),
+		"winctl.exe":         linked(testInfo(nil), "0.1.0-alpha"),
+		"winunit-notify.exe": {info: testInfo(nil)},
+		helperKey:            helper,
 	}
+}
+
+func TestCheckRequiresOneBuild(t *testing.T) {
+	payload := testPayload
 	id, err := check(testManifest(false), "0.1.0-alpha", payload(linked(testInfo(nil), "0.1.0-alpha")), "abc", false)
 	if err != nil || !id.Admissible || id.Modified || id.Commit != testCommit || id.Release != "0.1.0-alpha" || id.Helper != "abc" {
 		t.Fatalf("one build: %+v %v", id, err)
@@ -75,14 +78,29 @@ func TestCheckRequiresOneBuild(t *testing.T) {
 	// A payload binary that links another release fails even when it is not
 	// one that evaluates the floor.
 	mixed := payload(linked(testInfo(nil), "0.1.0-alpha"))
-	mixed["winctl.exe"] = linked(testInfo(nil), "0.0.9")
+	mixed["winunit-notify.exe"] = linked(testInfo(nil), "0.0.9")
 	if _, err := check(testManifest(false), "0.1.0-alpha", mixed, "abc", false); err == nil {
 		t.Error("a payload binary of another release accepted")
 	}
-	unlinked := payload(linked(testInfo(nil), "0.1.0-alpha"))
-	unlinked["winunitd.exe"] = executable{info: testInfo(nil), needsRelease: true}
-	if _, err := check(testManifest(false), "0.1.0-alpha", unlinked, "abc", false); err == nil {
-		t.Error("a daemon without a linked release accepted")
+	for _, name := range []string{"winunitd.exe", "winctl.exe"} {
+		unlinked := payload(linked(testInfo(nil), "0.1.0-alpha"))
+		unlinked[name] = executable{info: testInfo(nil)}
+		if _, err := check(testManifest(false), "0.1.0-alpha", unlinked, "abc", false); err == nil || !strings.Contains(err.Error(), "does not link a release value") {
+			t.Errorf("%s without a linked release: %v", name, err)
+		}
+	}
+	// Every payload executable and the helper are checked, and nothing else.
+	for _, name := range []string{"winunitd.exe", "winctl.exe", "winunit-notify.exe", helperKey} {
+		missing := payload(linked(testInfo(nil), "0.1.0-alpha"))
+		delete(missing, name)
+		if _, err := check(testManifest(false), "0.1.0-alpha", missing, "abc", false); err == nil || !strings.Contains(err.Error(), name+" was not checked") {
+			t.Errorf("without %s: %v", name, err)
+		}
+	}
+	extra := payload(linked(testInfo(nil), "0.1.0-alpha"))
+	extra["other.exe"] = linked(testInfo(nil), "0.1.0-alpha")
+	if _, err := check(testManifest(false), "0.1.0-alpha", extra, "abc", false); err == nil {
+		t.Error("a binary outside the package accepted")
 	}
 	if _, err := check(testManifest(false), "0.2.0", payload(linked(testInfo(nil), "0.2.0")), "abc", false); err == nil {
 		t.Error("a manifest of another release accepted")
@@ -92,16 +110,55 @@ func TestCheckRequiresOneBuild(t *testing.T) {
 	if _, err := check(short, "0.1.0-alpha", payload(linked(testInfo(nil), "0.1.0-alpha")), "abc", false); err == nil {
 		t.Error("an abbreviated revision accepted")
 	}
-	if _, err := check(testManifest(false), "0.1.0-alpha", map[string]executable{"helper msi-check.exe": linked(testInfo(nil), "0.1.0-alpha")}, "abc", false); err == nil {
-		t.Error("a helper without payload accepted")
+}
+
+// The manifest lists exactly the installer's payload, each file once under
+// its own name.
+func TestPayloadArtifacts(t *testing.T) {
+	full := func() []artifact {
+		var out []artifact
+		for _, f := range installerPayload {
+			out = append(out, artifact{Name: f.name, SHA256: strings.Repeat("a", 64)})
+		}
+		return out
+	}
+	m := testManifest(false)
+	m.Artifacts = full()
+	if listed, err := payloadArtifacts(m); err != nil || len(listed) != len(installerPayload) {
+		t.Fatalf("complete payload: %v %v", listed, err)
+	}
+	for _, f := range installerPayload {
+		m.Artifacts = slices.DeleteFunc(full(), func(a artifact) bool { return a.Name == f.name })
+		if _, err := payloadArtifacts(m); err == nil || !strings.Contains(err.Error(), "omits "+f.name) {
+			t.Errorf("omitted %s: %v", f.name, err)
+		}
+	}
+	for _, name := range []string{
+		"winunitd.exe", "WinUnitD.exe", "WINCTL.EXE", "winunitd.exe.", "winunitd.exe ", "winunitd.exe::$DATA", "winunitd",
+		"bin/winunitd.exe", `bin\winunitd.exe`, `..\winunitd.exe`, "C:winunitd.exe", "msi-check.exe", "extra.exe", "notes.txt", "",
+	} {
+		m.Artifacts = append(full(), artifact{Name: name, SHA256: strings.Repeat("a", 64)})
+		if _, err := payloadArtifacts(m); err == nil {
+			t.Errorf("an added %q accepted", name)
+		}
+		// In place of the file it aliases, too.
+		m.Artifacts = full()
+		m.Artifacts[0].Name = name
+		if name != "winunitd.exe" {
+			if _, err := payloadArtifacts(m); err == nil {
+				t.Errorf("%q in place of winunitd.exe accepted", name)
+			}
+		}
 	}
 }
 
 func TestCheckModifiedTreeIsDevelopmentOnly(t *testing.T) {
 	modified := func(s map[string]string) { s["vcs.modified"] = "true" }
 	binaries := map[string]executable{
-		"winunitd.exe":         linked(testInfo(modified), "0.1.0-alpha"),
-		"helper msi-check.exe": linked(testInfo(modified), "0.1.0-alpha"),
+		"winunitd.exe":       linked(testInfo(modified), "0.1.0-alpha"),
+		"winctl.exe":         linked(testInfo(modified), "0.1.0-alpha"),
+		"winunit-notify.exe": {info: testInfo(modified)},
+		helperKey:            linked(testInfo(modified), "0.1.0-alpha"),
 	}
 	if _, err := check(testManifest(true), "0.1.0-alpha", binaries, "abc", false); err == nil || !strings.Contains(err.Error(), "development only") {
 		t.Fatalf("modified tree without -development: %v", err)
@@ -111,10 +168,24 @@ func TestCheckModifiedTreeIsDevelopmentOnly(t *testing.T) {
 		t.Fatalf("development identity %+v %v", id, err)
 	}
 	// Development mode still requires one build.
-	binaries["helper msi-check.exe"] = linked(testInfo(func(s map[string]string) { modified(s); s["vcs.revision"] = strings.Repeat("e", 40) }), "0.1.0-alpha")
+	binaries[helperKey] = linked(testInfo(func(s map[string]string) { modified(s); s["vcs.revision"] = strings.Repeat("e", 40) }), "0.1.0-alpha")
 	if _, err := check(testManifest(true), "0.1.0-alpha", binaries, "abc", true); err == nil {
 		t.Fatal("development mode accepted a helper from another revision")
 	}
+}
+
+// writeManifest writes m beside the payload files in dir.
+func writeManifest(t *testing.T, dir, file string, m buildManifest) string {
+	t.Helper()
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, file)
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 // run reads identities from the produced files and their hashes from the
@@ -129,64 +200,165 @@ func TestRunReadsProducedBinaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	payload := filepath.Join(dir, "winunitd.exe")
-	if err := os.WriteFile(payload, data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	sum, err := fileSHA256(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	write := func(m buildManifest) string {
-		t.Helper()
-		raw, err := json.Marshal(m)
+	m := testManifest(false)
+	for _, f := range installerPayload {
+		content := data
+		if !f.executable {
+			content = []byte("notices\n")
+		}
+		path := filepath.Join(dir, f.name)
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		sum, err := fileSHA256(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		path := filepath.Join(dir, "build-manifest.json")
-		if err := os.WriteFile(path, raw, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		return path
+		m.Artifacts = append(m.Artifacts, artifact{Name: f.name, SHA256: sum})
 	}
-	m := testManifest(false)
-	m.Artifacts = []artifact{{Name: "winunitd.exe", SHA256: sum}}
-	if _, err := run(write(m), "0.1.0-alpha", exe, false); err == nil {
+	if _, err := run(writeManifest(t, dir, "build-manifest.json", m), "0.1.0-alpha", exe, false); err == nil {
 		t.Fatal("test binary accepted as a package build")
 	}
-	m.Artifacts[0].SHA256 = strings.Repeat("0", 64)
-	if _, err := run(write(m), "0.1.0-alpha", exe, false); err == nil || !strings.Contains(err.Error(), "does not match its build manifest") {
+	changed := m
+	changed.Artifacts = slices.Clone(m.Artifacts)
+	changed.Artifacts[0].SHA256 = strings.Repeat("0", 64)
+	if _, err := run(writeManifest(t, dir, "build-manifest.json", changed), "0.1.0-alpha", exe, false); err == nil || !strings.Contains(err.Error(), "winunitd.exe does not match its build manifest") {
 		t.Fatalf("changed payload accepted: %v", err)
+	}
+	// The daemon file is in the payload directory, but a manifest that
+	// omits it is refused before anything is compared.
+	omitted := m
+	omitted.Artifacts = m.Artifacts[1:]
+	if _, err := run(writeManifest(t, dir, "build-manifest.json", omitted), "0.1.0-alpha", exe, false); err == nil || !strings.Contains(err.Error(), "omits winunitd.exe") {
+		t.Fatalf("manifest without the daemon: %v", err)
 	}
 }
 
-// linkedRelease reads the value -X linked into a real Windows executable,
-// and reports a binary that does not link the version variable.
-func TestLinkedReleaseOfABuiltExecutable(t *testing.T) {
-	if testing.Short() {
-		t.Skip("builds Windows executables")
+// goBuild cross-builds a Windows package from the repository root.
+func goBuild(t *testing.T, out, release, pkg string) {
+	t.Helper()
+	args := []string{"build", "-trimpath", "-buildvcs=true", "-o", out}
+	if release != "" {
+		args = append(args, "-ldflags", "-X "+versionSymbol+"="+release)
 	}
+	cmd := exec.Command("go", append(args, pkg)...)
+	cmd.Dir = filepath.Join("..", "..")
+	cmd.Env = append(os.Environ(), "GOOS=windows", "GOARCH=amd64", "CGO_ENABLED=0")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build %s: %v\n%s", pkg, err, out)
+	}
+}
+
+// A payload produced by tools/build and a helper built as the packaging
+// scripts build it are one build. Omitting any packaged file from the
+// manifest, although the file stays in the payload directory, and a daemon
+// linked with another release are refused.
+func TestRunWithAProducedPayload(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a Windows payload")
+	}
+	root := filepath.Join("..", "..")
+	if err := exec.Command("git", "-C", root, "rev-parse", "HEAD").Run(); err != nil {
+		t.Skip("building a payload needs a Git checkout")
+	}
+	const release = "9.9.9-test"
 	dir := t.TempDir()
-	build := func(out string, args ...string) {
-		t.Helper()
-		cmd := exec.Command("go", append([]string{"build", "-trimpath", "-o", out}, args...)...)
-		cmd.Dir = filepath.Join("..", "..")
-		cmd.Env = append(os.Environ(), "GOOS=windows", "GOARCH=amd64", "CGO_ENABLED=0")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("build: %v\n%s", err, out)
+	cmd := exec.Command("go", "run", "./tools/build", "-goos", "windows", "-goarch", "amd64", "-version", release, "-out", dir)
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("payload build: %v\n%s", err, out)
+	}
+	helper := filepath.Join(t.TempDir(), "msi-check.exe")
+	goBuild(t, helper, release, "./tools/msi-check")
+	manifestPath := filepath.Join(dir, "build-manifest.json")
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m buildManifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	// A modified checkout produces a development payload; the identity
+	// checks are the same.
+	id, err := run(manifestPath, release, helper, m.Dirty)
+	if err != nil || id.Commit != m.Commit || id.Release != release || id.Admissible == m.Dirty {
+		t.Fatalf("produced payload: %+v %v", id, err)
+	}
+	for name, want := range map[string]bool{"winunitd.exe": true, "winctl.exe": true, "winunit-notify.exe": false} {
+		got, ok, err := linkedRelease(filepath.Join(dir, name))
+		if err != nil || ok != want || (want && got != release) {
+			t.Errorf("%s links %q %t %v", name, got, ok, err)
 		}
 	}
-	helper := filepath.Join(dir, "msi-check.exe")
-	build(helper, "-ldflags", "-X "+versionSymbol+"=9.9.9-test", "./tools/msi-check")
-	if release, ok, err := linkedRelease(helper); err != nil || !ok || release != "9.9.9-test" {
-		t.Fatalf("linked release %q %t %v", release, ok, err)
+	if got, ok, err := linkedRelease(helper); err != nil || !ok || got != release {
+		t.Errorf("helper links %q %t %v", got, ok, err)
 	}
-	notify := filepath.Join(dir, "winunit-notify.exe")
-	build(notify, "./cmd/winunit-notify")
-	if release, ok, err := linkedRelease(notify); err != nil || ok {
-		t.Fatalf("notify helper release %q %t %v", release, ok, err)
+	for _, f := range installerPayload {
+		omitted := m
+		omitted.Artifacts = slices.DeleteFunc(slices.Clone(m.Artifacts), func(a artifact) bool { return a.Name == f.name })
+		if _, err := run(writeManifest(t, dir, "omitted.json", omitted), release, helper, m.Dirty); err == nil || !strings.Contains(err.Error(), "omits "+f.name) {
+			t.Errorf("manifest without %s: %v", f.name, err)
+		}
 	}
-	if _, _, err := linkedRelease(os.Args[0]); err == nil {
+	// A daemon of another release, listed with its own hash, is refused.
+	daemon := filepath.Join(dir, "winunitd.exe")
+	goBuild(t, daemon, "0.0.1", "./cmd/winunitd")
+	sum, err := fileSHA256(daemon)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := m
+	other.Artifacts = slices.Clone(m.Artifacts)
+	for i := range other.Artifacts {
+		if other.Artifacts[i].Name == "winunitd.exe" {
+			other.Artifacts[i].SHA256 = sum
+		}
+	}
+	if _, err := run(writeManifest(t, dir, "other.json", other), release, helper, m.Dirty); err == nil || !strings.Contains(err.Error(), `winunitd.exe links release "0.0.1"`) {
+		t.Fatalf("daemon of another release: %v", err)
+	}
+	if _, _, err := linkedRelease(os.Args[0]); err == nil && runtime.GOOS != "windows" {
 		t.Fatal("a non-PE file read as an executable")
+	}
+}
+
+// The installer packages exactly installerPayload from the payload
+// directory, in both package definitions, plus the helper this check
+// compares and the token library the packaging script builds and records.
+func TestInstallerPayloadMatchesThePackages(t *testing.T) {
+	ref := regexp.MustCompile(`(\w+)="\$\(Payload\)\\([^"]+)"`)
+	var want []string
+	for _, f := range installerPayload {
+		want = append(want, f.name)
+	}
+	slices.Sort(want)
+	for _, wxs := range []string{"wix", "beta"} {
+		data, err := os.ReadFile(filepath.Join("..", "..", "packaging", wxs, "Package.wxs"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var files, binaries []string
+		for _, m := range ref.FindAllStringSubmatch(string(data), -1) {
+			switch m[1] {
+			case "Source":
+				files = append(files, m[2])
+			case "SourceFile":
+				binaries = append(binaries, m[2])
+			default:
+				t.Errorf("%s: payload reference %s", wxs, m[0])
+			}
+		}
+		if n := strings.Count(string(data), "$(Payload)"); n != len(files)+len(binaries) {
+			t.Errorf("%s: %d payload references, %d understood", wxs, n, len(files)+len(binaries))
+		}
+		slices.Sort(files)
+		slices.Sort(binaries)
+		if !slices.Equal(files, want) {
+			t.Errorf("%s packages %q, the check requires %q", wxs, files, want)
+		}
+		if !slices.Equal(binaries, []string{"msi-check.exe", "msi-token.dll"}) {
+			t.Errorf("%s package-build binaries %q", wxs, binaries)
+		}
 	}
 }

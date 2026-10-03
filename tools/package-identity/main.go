@@ -4,10 +4,12 @@
 // embedded build information, and the same release value, read from the
 // version variable linked into each binary that has one. -trimpath keeps
 // the linker flags out of the build information, so the value itself is
-// read. The payload files must match their build manifest. The helper
-// evaluates the compatibility floor with its own identity on the package's
-// behalf, so a package whose helper differs from its payload is not
-// admissible. It prints the shared identity as JSON.
+// read. The build manifest must list every file the installer packages from
+// the payload directory, each once under its own name and nothing else, and
+// each file must match its listed hash. The helper evaluates the
+// compatibility floor with its own identity on the package's behalf, so a
+// package whose helper differs from its payload is not admissible. It prints
+// the shared identity as JSON.
 //
 // With -development, a modified tree is accepted and the identity is marked
 // not admissible: such a package is for development only and must not enter
@@ -30,7 +32,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime/debug"
-	"strings"
+	"slices"
 )
 
 // versionSymbol is the release variable the build sets with -X.
@@ -42,10 +44,29 @@ type executable struct {
 	info    *debug.BuildInfo
 	release string
 	linked  bool
-	// needsRelease marks the daemon and the helper, which evaluate the
-	// floor with their linked release.
-	needsRelease bool
 }
+
+// payloadFile is one file the installer packages from the payload
+// directory. packaging/wix/Package.wxs and packaging/beta/Package.wxs
+// package exactly these, and a test keeps them in step.
+type payloadFile struct {
+	name string
+	// executable files carry the build's identity; release marks those
+	// that must link the release value: the daemon evaluates the floor
+	// with it and the CLI reports it.
+	executable, release bool
+}
+
+var installerPayload = []payloadFile{
+	{name: "winunitd.exe", executable: true, release: true},
+	{name: "winctl.exe", executable: true, release: true},
+	{name: "winunit-notify.exe", executable: true},
+	{name: "THIRD-PARTY-NOTICES.txt"},
+}
+
+// helperKey names the package helper among the checked binaries. The helper
+// evaluates the floor with its linked release.
+const helperKey = "package helper"
 
 type artifact struct {
 	Name   string `json:"name"`
@@ -105,38 +126,63 @@ func run(manifestPath, release, helper string, development bool) (Identity, erro
 	if err := json.Unmarshal(data, &m); err != nil {
 		return Identity{}, fmt.Errorf("build manifest: %w", err)
 	}
+	listed, err := payloadArtifacts(m)
+	if err != nil {
+		return Identity{}, err
+	}
 	binaries := map[string]executable{}
 	dir := filepath.Dir(manifestPath)
-	for _, a := range m.Artifacts {
-		path := filepath.Join(dir, a.Name)
+	for _, f := range installerPayload {
+		path := filepath.Join(dir, f.name)
 		sum, err := fileSHA256(path)
 		if err != nil {
 			return Identity{}, err
 		}
-		if sum != a.SHA256 {
-			return Identity{}, fmt.Errorf("%s does not match its build manifest", a.Name)
+		if sum != listed[f.name].SHA256 {
+			return Identity{}, fmt.Errorf("%s does not match its build manifest", f.name)
 		}
-		if !strings.EqualFold(filepath.Ext(a.Name), ".exe") {
+		if !f.executable {
 			continue
 		}
 		b, err := readBinary(path)
 		if err != nil {
-			return Identity{}, fmt.Errorf("%s: %w", a.Name, err)
+			return Identity{}, fmt.Errorf("%s: %w", f.name, err)
 		}
-		b.needsRelease = strings.EqualFold(a.Name, "winunitd.exe")
-		binaries[a.Name] = b
+		binaries[f.name] = b
 	}
 	b, err := readBinary(helper)
 	if err != nil {
 		return Identity{}, fmt.Errorf("helper: %w", err)
 	}
-	b.needsRelease = true
-	binaries["helper "+filepath.Base(helper)] = b
+	binaries[helperKey] = b
 	helperSum, err := fileSHA256(helper)
 	if err != nil {
 		return Identity{}, err
 	}
 	return check(m, release, binaries, helperSum, development)
+}
+
+// payloadArtifacts requires the manifest to list exactly the installer's
+// payload: each file once, under its own name. Any other name, including a
+// path, a case or trailing-character alias of a payload file, or a file the
+// installer does not package, is refused rather than checked in its place.
+func payloadArtifacts(m buildManifest) (map[string]artifact, error) {
+	listed := map[string]artifact{}
+	for _, a := range m.Artifacts {
+		if !slices.ContainsFunc(installerPayload, func(f payloadFile) bool { return f.name == a.Name }) {
+			return nil, fmt.Errorf("build manifest lists %q, which is not a file the installer packages", a.Name)
+		}
+		if _, ok := listed[a.Name]; ok {
+			return nil, fmt.Errorf("build manifest lists %s more than once", a.Name)
+		}
+		listed[a.Name] = a
+	}
+	for _, f := range installerPayload {
+		if _, ok := listed[f.name]; !ok {
+			return nil, fmt.Errorf("build manifest omits %s, which the installer packages", f.name)
+		}
+	}
+	return listed, nil
 }
 
 func readBinary(path string) (executable, error) {
@@ -210,8 +256,9 @@ func sectionBytes(s *pe.Section, off, n uint32) ([]byte, error) {
 	return data[off : off+n], nil
 }
 
-// check requires every binary to carry the manifest's build identity and
-// the release value; the daemon and the helper must link it.
+// check requires the helper and every payload executable, and nothing else,
+// each carrying the manifest's build identity and the release value; the
+// daemon, the CLI and the helper must link it.
 func check(m buildManifest, release string, binaries map[string]executable, helperSum string, development bool) (Identity, error) {
 	if m.Schema != 2 || m.Version != release || !fullCommit.MatchString(m.Commit) {
 		return Identity{}, errors.New("build manifest does not name this release and a full source revision")
@@ -219,8 +266,19 @@ func check(m buildManifest, release string, binaries map[string]executable, help
 	if m.Dirty && !development {
 		return Identity{}, errors.New("payload was built from a modified tree; a modified build is development only (-development)")
 	}
-	if len(binaries) < 2 {
-		return Identity{}, errors.New("no payload executable to compare with the helper")
+	needsRelease := map[string]bool{helperKey: true}
+	for _, f := range installerPayload {
+		if f.executable {
+			needsRelease[f.name] = f.release
+		}
+	}
+	for name := range needsRelease {
+		if _, ok := binaries[name]; !ok {
+			return Identity{}, fmt.Errorf("%s was not checked", name)
+		}
+	}
+	if len(binaries) != len(needsRelease) {
+		return Identity{}, errors.New("a checked binary is not part of the package")
 	}
 	want := map[string]string{
 		"vcs.revision": m.Commit,
@@ -246,7 +304,7 @@ func check(m buildManifest, release string, binaries map[string]executable, help
 		switch {
 		case b.linked && b.release != release:
 			return Identity{}, fmt.Errorf("%s links release %q, not %s", name, b.release, release)
-		case !b.linked && b.needsRelease:
+		case !b.linked && needsRelease[name]:
 			return Identity{}, fmt.Errorf("%s does not link a release value", name)
 		}
 	}
