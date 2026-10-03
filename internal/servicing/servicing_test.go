@@ -81,6 +81,27 @@ func TestDecodeFloor(t *testing.T) {
 		"feature name":     `{"schema":1,"requireFeatures":["Exec Stop"]}`,
 		"repeated feature": `{"schema":1,"requireFeatures":["exec-stop","exec-stop"]}`,
 		"trailing data":    `{"schema":1,"minVersion":"0.2.0"} {}`,
+		"trailing ]":       `{"schema":1,"minVersion":"0.1.0"}]`,
+		"trailing }":       `{"schema":1,"minVersion":"0.1.0"}}`,
+		"trailing text":    `{"schema":1,"minVersion":"0.1.0"} x`,
+		"unterminated":     `{"schema":1,"minVersion":"0.1.0"`,
+		"repeated version": `{"schema":1,"minVersion":"9.0.0","minVersion":"0.1.0"}`,
+		"repeated clean":   `{"schema":1,"minVersion":"0.1.0","requireCleanBuild":true,"requireCleanBuild":false}`,
+		"repeated schema":  `{"schema":1,"schema":1,"minVersion":"0.1.0"}`,
+		"null clean":       `{"schema":1,"minVersion":"0.1.0","requireCleanBuild":null}`,
+		"null version":     `{"schema":1,"minVersion":null,"requireCleanBuild":true}`,
+		"null features":    `{"schema":1,"minVersion":"0.1.0","requireFeatures":null}`,
+		"null feature":     `{"schema":1,"requireFeatures":["exec-stop",null]}`,
+		"null schema":      `{"schema":null,"minVersion":"0.1.0"}`,
+		"no schema":        `{"minVersion":"0.1.0"}`,
+		"key case":         `{"schema":1,"MinVersion":"0.1.0"}`,
+		"lower-case key":   `{"schema":1,"minversion":"0.1.0"}`,
+		"clean as string":  `{"schema":1,"requireCleanBuild":"true"}`,
+		"version number":   `{"schema":1,"minVersion":2}`,
+		"schema string":    `{"schema":"1","minVersion":"0.1.0"}`,
+		"schema fraction":  `{"schema":1.0,"minVersion":"0.1.0"}`,
+		"features object":  `{"schema":1,"requireFeatures":{"exec-stop":true}}`,
+		"byte order mark":  "\ufeff" + `{"schema":1,"minVersion":"0.1.0"}`,
 		"not an object":    `["0.2.0"]`,
 		"oversize":         `{"schema":1,"minVersion":"0.2.0"}` + strings.Repeat(" ", MaxFloorBytes),
 	}
@@ -281,5 +302,52 @@ func TestAdmissionHold(t *testing.T) {
 	}
 	if hold := AdmissionHold(path, build); !strings.HasPrefix(hold, "compatibility floor record is unusable: ") {
 		t.Fatalf("malformed record: %q", hold)
+	}
+}
+
+func TestRunningBuildReportsNoFeaturesYet(t *testing.T) {
+	b := Running()
+	if b.Features != nil || b.Version == "" {
+		t.Fatalf("running build %+v", b)
+	}
+	// Until the capability features are wired, a feature floor holds this
+	// build: the gate stays closed rather than guessing.
+	if v := Evaluate(&Floor{Schema: 1, RequireFeatures: []string{"exec-stop"}}, b); v.Satisfied || v.Reasons[0] != "build reports no features; requires exec-stop" {
+		t.Fatalf("feature floor %+v", v)
+	}
+}
+
+func TestFloorWithin(t *testing.T) {
+	prev := &Floor{Schema: 1, MinVersion: "0.2.0", RequireFeatures: []string{"exec-stop", "job-limits"}, RequireCleanBuild: true}
+	within := []*Floor{
+		{Schema: 1, MinVersion: "0.2.0"},
+		{Schema: 1, MinVersion: "0.1.0", RequireFeatures: []string{"exec-stop"}},
+		{Schema: 1, MinVersion: "0.2.0-beta", RequireCleanBuild: true},
+		{Schema: 1, RequireFeatures: []string{"job-limits", "exec-stop"}, RequireCleanBuild: true},
+		prev,
+	}
+	for _, f := range within {
+		if !f.Within(prev) {
+			t.Errorf("%+v is not within %+v", f, prev)
+		}
+	}
+	raises := []*Floor{
+		{Schema: 1, MinVersion: "0.2.1"},
+		{Schema: 1, MinVersion: "0.2.0", RequireFeatures: []string{"linger-s4u"}},
+		{Schema: 1, MinVersion: "1.0.0-alpha"},
+	}
+	for _, f := range raises {
+		if f.Within(prev) {
+			t.Errorf("%+v counted as a lowering of %+v", f, prev)
+		}
+	}
+	if (&Floor{Schema: 1, RequireCleanBuild: true}).Within(&Floor{Schema: 1, MinVersion: "0.1.0"}) {
+		t.Error("adding the clean-build requirement counted as a lowering")
+	}
+	if (&Floor{Schema: 1, MinVersion: "0.1.0"}).Within(&Floor{Schema: 1, RequireCleanBuild: true}) {
+		t.Error("adding a version requirement counted as a lowering")
+	}
+	if (&Floor{Schema: 1, MinVersion: "0.1.0"}).Within(nil) {
+		t.Error("a first floor counted as a lowering")
 	}
 }

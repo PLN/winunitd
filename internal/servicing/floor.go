@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"runtime/debug"
 	"slices"
 	"strings"
+
+	"github.com/PLN/winunitd/internal/version"
 )
 
 // FloorSchema is the only accepted floor record schema.
@@ -68,24 +71,110 @@ func (f *Floor) Validate() error {
 	return nil
 }
 
-// DecodeFloor strictly decodes and validates one floor record.
+// DecodeFloor strictly decodes and validates one floor record: exactly one
+// JSON object, then only whitespace; each known key at most once, spelled
+// exactly; no unknown key; and no null. No field is nullable: omit an
+// optional field instead. A present record that fails any of this is
+// unusable and holds admission; it is never read as a weaker floor.
 func DecodeFloor(data []byte) (*Floor, error) {
 	if len(data) > MaxFloorBytes {
 		return nil, fmt.Errorf("floor record exceeds %d bytes", MaxFloorBytes)
 	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	var f Floor
-	if err := dec.Decode(&f); err != nil {
+	fields, err := decodeObject(data)
+	if err != nil {
 		return nil, fmt.Errorf("floor record: %w", err)
 	}
-	if dec.More() {
-		return nil, errors.New("floor record has trailing data")
+	var f Floor
+	for key, raw := range fields {
+		var err error
+		switch key {
+		case "schema":
+			err = json.Unmarshal(raw, &f.Schema)
+		case "minVersion":
+			err = json.Unmarshal(raw, &f.MinVersion)
+		case "requireFeatures":
+			err = json.Unmarshal(raw, &f.RequireFeatures)
+		case "requireCleanBuild":
+			err = json.Unmarshal(raw, &f.RequireCleanBuild)
+		default:
+			err = errors.New("unknown field")
+		}
+		if err != nil {
+			return nil, fmt.Errorf("floor record field %q: %w", key, err)
+		}
+	}
+	if _, ok := fields["schema"]; !ok {
+		return nil, errors.New("floor record has no schema")
 	}
 	if err := f.Validate(); err != nil {
 		return nil, err
 	}
 	return &f, nil
+}
+
+// decodeObject reads one top-level JSON object into its raw values,
+// rejecting a repeated key, a null value and anything after the object.
+// encoding/json alone keeps the last of repeated keys, matches keys without
+// regard to case and turns null into a zero value.
+func decodeObject(data []byte) (map[string]json.RawMessage, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return nil, errors.New("not a JSON object")
+	}
+	fields := map[string]json.RawMessage{}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		key, ok := tok.(string)
+		if !ok {
+			return nil, errors.New("object key is not a string")
+		}
+		if _, dup := fields[key]; dup {
+			return nil, fmt.Errorf("repeated key %q", key)
+		}
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return nil, err
+		}
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return nil, fmt.Errorf("key %q is null", key)
+		}
+		fields[key] = raw
+	}
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('}') {
+		return nil, errors.New("unterminated object")
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, errors.New("trailing data after the object")
+	}
+	return fields, nil
+}
+
+// Within reports whether f requires nothing that prev did not, so every
+// build prev admits also meets f. Replacing prev by such a floor only lowers
+// it; anything else raises it in some respect. Nothing is within no floor.
+func (f *Floor) Within(prev *Floor) bool {
+	if prev == nil {
+		return false
+	}
+	if f.MinVersion != "" {
+		if prev.MinVersion == "" {
+			return false
+		}
+		min, err := ParseRelease(f.MinVersion)
+		was, prevErr := ParseRelease(prev.MinVersion)
+		if err != nil || prevErr != nil || min.Compare(was) > 0 {
+			return false
+		}
+	}
+	for _, name := range f.RequireFeatures {
+		if !slices.Contains(prev.RequireFeatures, name) {
+			return false
+		}
+	}
+	return !f.RequireCleanBuild || prev.RequireCleanBuild
 }
 
 // EncodeFloor validates f and returns its record with sorted features.
@@ -112,6 +201,20 @@ type Build struct {
 	// Features lists the capability contracts the binary enforces. Nil means
 	// the binary reports none, so it cannot satisfy a feature requirement.
 	Features []string
+}
+
+// runningFeatures is the capability feature list of this build. It stays
+// nil until the capability query provides the system endpoint's features;
+// until then a floor that requires features holds admission and refuses
+// packages, and floor set refuses it.
+var runningFeatures []string
+
+// Running identifies this binary for the compatibility floor. The system
+// manager, the offline floor verbs and the package helper all use it, so
+// they evaluate one identity: the release linked into the binary, the
+// version-control state the toolchain embedded and the capability features.
+func Running() Build {
+	return CurrentBuild(version.Version, runningFeatures)
 }
 
 // CurrentBuild describes the running binary from its release string and the
