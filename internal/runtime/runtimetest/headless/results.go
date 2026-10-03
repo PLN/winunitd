@@ -460,7 +460,7 @@ func (ev *evaluation) evaluate(e Entry) (status, bool, string) {
 	default:
 		open("proof %q", e.Proof)
 	}
-	for _, p := range CheckStatus(r.Evidence.Status, r.Evidence.Observer, e.Account) {
+	for _, p := range CheckStatus(r.Evidence.Status, r.Evidence.Observer, e.Account, e.StatusUnit) {
 		open("%s", p)
 	}
 	for _, f := range meets(e.Requires, metrics(life, r.Evidence.Status, e.CapSec, e.CapToleranceSec)) {
@@ -599,7 +599,7 @@ func (ev *evaluation) control(e Entry, r Record, c ControlEntry, cr Record, open
 	default:
 		fail("proof %q", c.Proof)
 	}
-	for _, p := range CheckStatus(cr.Evidence.Status, cr.Evidence.Observer, e.Account) {
+	for _, p := range CheckStatus(cr.Evidence.Status, cr.Evidence.Observer, e.Account, c.StatusUnit) {
 		fail("%s", p)
 	}
 	for _, f := range meets(c.Requires, metrics(life, cr.Evidence.Status, 0, 0)) {

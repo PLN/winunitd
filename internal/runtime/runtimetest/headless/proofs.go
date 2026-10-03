@@ -298,14 +298,27 @@ type UnitStatusProof struct {
 // read.
 const StatusLag = 5 * time.Minute
 
-// CheckStatus binds a unit status snapshot to the observation: read during
-// it or just after, and, for an active unit, naming as its main process the
-// account's running workload the observer held.
-func CheckStatus(s *UnitStatusProof, rep *ObserverReport, account string) []string {
+// CheckStatus binds a unit status snapshot to the declared unit and the
+// observation: the snapshot is of that unit, read during the observation or
+// just after it; an active unit names as its main process the account's
+// running workload the observer held, and a stopped one was read after the
+// last observed exit of the unit's processes.
+func CheckStatus(s *UnitStatusProof, rep *ObserverReport, account, unit string) []string {
 	if s == nil || rep == nil {
 		return nil
 	}
 	var problems []string
+	if unit == "" || s.Unit != unit {
+		problems = append(problems, "the status is not of the declared unit")
+	}
+	if s.ActiveState != "active" {
+		for _, g := range rep.Generations {
+			if g.Role == RoleWorkload && g.Account == account && (g.Exited == 0 || g.Exited > s.At) {
+				problems = append(problems, "the stopped unit's status was read before its observed processes ended")
+				break
+			}
+		}
+	}
 	if s.At < rep.Started || s.At > rep.Ended+uint64(StatusLag/100) {
 		problems = append(problems, "the status was not read during or just after the observation")
 	}

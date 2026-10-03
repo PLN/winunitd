@@ -143,6 +143,8 @@ type Case struct {
 	Package string `json:"package,omitempty"`
 	// Check is what a daemon-log proof is held to.
 	Check string `json:"check,omitempty"`
+	// StatusUnit is the unit a status snapshot must be of.
+	StatusUnit string `json:"statusUnit,omitempty"`
 }
 
 // ObserveSpec names the lifecycle values derived from an observer report.
@@ -217,6 +219,7 @@ type ControlDef struct {
 	Proof             string        `json:"proof"`
 	Observe           *ObserveSpec  `json:"observe,omitempty"`
 	Paths             string        `json:"paths,omitempty"`
+	StatusUnit        string        `json:"statusUnit,omitempty"`
 }
 
 // Requirement bounds one metric computed from a record's raw evidence.
@@ -252,6 +255,7 @@ type Entry struct {
 	Package         string         `json:"package,omitempty"`
 	Tests           []string       `json:"tests,omitempty"`
 	Check           string         `json:"check,omitempty"`
+	StatusUnit      string         `json:"statusUnit,omitempty"`
 }
 
 // ControlEntry is one expected control record.
@@ -266,6 +270,7 @@ type ControlEntry struct {
 	Proof             string        `json:"proof"`
 	Observe           *ObserveSpec  `json:"observe,omitempty"`
 	Paths             string        `json:"paths,omitempty"`
+	StatusUnit        string        `json:"statusUnit,omitempty"`
 }
 
 var (
@@ -474,6 +479,12 @@ func (m *Matrix) validateCase(id string, c Case) error {
 		if err := validControlProof(ctl, c.Plane); err != nil {
 			return fmt.Errorf("control %s: %w", ctl.Name, err)
 		}
+		if err := validStatusUnit(ctl.StatusUnit, ctl.Requires); err != nil {
+			return fmt.Errorf("control %s: %w", ctl.Name, err)
+		}
+	}
+	if err := validStatusUnit(c.StatusUnit, c.Requires); err != nil {
+		return err
 	}
 	seen := map[string]bool{}
 	for _, v := range c.Variants {
@@ -662,13 +673,14 @@ func (m *Matrix) expand() ([]Entry, error) {
 		for _, v := range c.Variants {
 			e := Entry{Case: id, Variant: v.ID, Ledger: c.Ledger, Account: v.Account, Mode: v.Mode, Execution: v.Execution,
 				Refs: slices.Clone(v.Refs), Test: v.Test, CapSec: c.CapSec, CapToleranceSec: c.CapToleranceSec, Requires: c.Requires,
-				Characterize: c.Characterize, Paths: c.Paths, Pipe: c.Pipe, Observe: c.Observe, Proof: c.Proof, Package: c.Package}
+				Characterize: c.Characterize, Paths: c.Paths, Pipe: c.Pipe, Observe: c.Observe, Proof: c.Proof, Package: c.Package, StatusUnit: c.StatusUnit}
 			eff := effective(c, v)
 			e.Proof, e.Package, e.Check, e.Paths, e.Observe, e.Tests = eff.Proof, eff.Package, eff.Check, eff.Paths, eff.Observe, slices.Clone(v.Tests)
 			if len(v.Refs) > 0 {
 				e.Plane = PlaneReference
 				e.Key = id + "/" + v.ID
 				e.Requires, e.Characterize, e.Paths, e.Pipe, e.CapSec, e.CapToleranceSec, e.Observe, e.Proof, e.Package, e.Check, e.Tests = nil, "", "", "", 0, 0, nil, "", "", "", nil
+				e.StatusUnit = ""
 				out = append(out, e)
 				continue
 			}
@@ -695,7 +707,8 @@ func (m *Matrix) expand() ([]Entry, error) {
 				}
 				for _, ctl := range c.Controls {
 					ce := ControlEntry{Key: x.Key + "#" + ctl.Name, Name: ctl.Name, Account: x.Account, Mode: x.Mode, Phase: x.Phase,
-						ImmediatelyBefore: ctl.ImmediatelyBefore, Requires: ctl.Requires, Proof: ctl.Proof, Observe: ctl.Observe, Paths: ctl.Paths}
+						ImmediatelyBefore: ctl.ImmediatelyBefore, Requires: ctl.Requires, Proof: ctl.Proof, Observe: ctl.Observe, Paths: ctl.Paths,
+						StatusUnit: ctl.StatusUnit}
 					if ctl.Mode != "" {
 						ce.Mode = ctl.Mode
 					}
@@ -813,4 +826,22 @@ func (m *Matrix) Select(s Selection) []Entry {
 func primaryOf(key string) string {
 	k, _, _ := strings.Cut(key, "#")
 	return k
+}
+
+// statusMetrics are read from a unit status snapshot.
+var statusMetrics = []string{"startLimited", "restartAttempts", "unlimited"}
+
+var unitNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}\.service$`)
+
+// validStatusUnit requires a case or control that reads a status snapshot to
+// name the unit the snapshot must be of, and only such a one to name one.
+func validStatusUnit(unit string, requires []Requirement) error {
+	reads := slices.ContainsFunc(requires, func(r Requirement) bool { return slices.Contains(statusMetrics, r.Metric) })
+	switch {
+	case reads && !unitNamePattern.MatchString(unit):
+		return errors.New("a status requirement needs the unit its snapshot is of")
+	case !reads && unit != "":
+		return fmt.Errorf("status unit %q without a status requirement", unit)
+	}
+	return nil
 }

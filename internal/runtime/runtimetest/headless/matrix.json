@@ -58,13 +58,13 @@
     },
     "G5": {
       "proof": "observer",
-      "ledger": "C3", "plane": "daemon", "phase": 2, "capSec": 1, "capToleranceSec": 2,
+      "ledger": "C3", "plane": "daemon", "phase": 2, "capSec": 1, "capToleranceSec": 2, "statusUnit": "failing.service",
       "title": "Unlimited unit recovery under a healthy headless manager",
       "expect": "A short-lived nonzero-exit unit with StartLimitBurst=0 and a short capped exponential delay keeps retrying for ten minutes and more than twenty failures, more than five accepted starts in one real ten-second window, unlimited status and a confirmed stop. The finite control stops at its start limit.",
       "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}],
       "requires": [{"metric": "durationSec", "min": 600}, {"metric": "failures", "min": 21}, {"metric": "maxStartsIn10s", "min": 6}, {"metric": "cappedGaps", "min": 10}, {"metric": "shortGapsAfterCap", "max": 0}, {"metric": "overlongGaps", "max": 0}, {"metric": "unlimited", "min": 1}, {"metric": "restartAttempts", "min": 21}, {"metric": "recovered", "min": 1}],
       "observe": {"role": "workload"},
-      "controls": [{"name": "finite-limit", "proof": "observer", "observe": {"role": "workload"}, "requires": [{"metric": "startLimited", "min": 1}, {"metric": "withinBurst", "min": 1}]}]
+      "controls": [{"name": "finite-limit", "proof": "observer", "observe": {"role": "workload"}, "statusUnit": "finite.service", "requires": [{"metric": "startLimited", "min": 1}, {"metric": "withinBurst", "min": 1}]}]
     },
     "G6": {
       "ledger": "C3", "plane": "daemon", "phase": 3,

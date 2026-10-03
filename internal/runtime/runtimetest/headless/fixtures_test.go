@@ -504,7 +504,8 @@ func daemonLogFor(e Entry) *DaemonLogProof {
 	obj := func(size int64, sha string) *ObjectFacts {
 		return &ObjectFacts{Owner: sid, DACL: protectedFor(sid), Size: size, SHA256: sha}
 	}
-	after := DaemonLogFacts{At: ft(40), Dir: obj(0, ""), Current: obj(300, freshSHA), Tail: []LogRecord{{Code: daemonOpenCode, At: ft(15.5)}}}
+	// Read right after the observation, which ends at 60 s.
+	after := DaemonLogFacts{At: ft(62), Dir: obj(0, ""), Current: obj(300, freshSHA), Tail: []LogRecord{{Code: daemonOpenCode, At: ft(15.5)}}}
 	p := &DaemonLogProof{SID: sid, Root: profileOf(e.Account) + `\AppData\Local\winunitd`, After: after}
 	if e.Mode == ModeSystem {
 		p.Root = `C:\ProgramData\winunitd`

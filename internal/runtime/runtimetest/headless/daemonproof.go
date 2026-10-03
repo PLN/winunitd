@@ -34,6 +34,10 @@ const (
 // filetimeEpoch is the Unix epoch as a FILETIME.
 const filetimeEpoch = 116444736000000000
 
+// DaemonLogLag bounds how long after the observation the final daemon-log
+// facts may be read.
+const DaemonLogLag = 2 * time.Minute
+
 // RotationBytes is the product's daemon-log rotation size.
 const RotationBytes = 256 << 10
 
@@ -81,8 +85,8 @@ type DaemonLogProof struct {
 }
 
 // legacyDACL reports whether a DACL is the declared legacy descriptor: not
-// protected, full control for the account and write for an ordinary
-// principal (Users, Authenticated Users or Everyone).
+// protected, no deny entry, full control for the account and write for an
+// ordinary principal (Users, Authenticated Users or Everyone).
 func legacyDACL(dacl, sid string) bool {
 	if !strings.HasPrefix(dacl, "D:") {
 		return false
@@ -95,6 +99,9 @@ func legacyDACL(dacl, sid string) bool {
 		return false
 	}
 	aces := aceToken.FindAllString(dacl, -1)
+	if slices.ContainsFunc(aces, func(a string) bool { return !strings.HasPrefix(a, "(A;") }) {
+		return false
+	}
 	grants := func(who string) bool {
 		return slices.ContainsFunc(aces, func(a string) bool {
 			f := strings.Split(strings.Trim(a, "()"), ";")
@@ -249,6 +256,9 @@ func CheckDaemonLog(p *DaemonLogProof, check, sid, account, mode string, rep *Ob
 	}
 	if ok && (openAt < rep.Started || openAt > rep.Ended) {
 		add("the open record is outside the observation")
+	}
+	if a.At < rep.Ended || a.At > rep.Ended+uint64(DaemonLogLag/100) {
+		add("the final facts were not read right after the observation")
 	}
 	started := slices.ContainsFunc(rep.Generations, func(g Generation) bool {
 		return g.Role == RoleManager && g.Account == account && g.Created > b.At && (!ok || g.Created <= openAt) && g.Exited == 0 &&

@@ -86,14 +86,21 @@ func TestDecodeMatrixRejectsInvalidTables(t *testing.T) {
 		return cases(m)[id].(map[string]any)["variants"].([]any)[i].(map[string]any)
 	}
 	mutations := map[string]func(map[string]any){
-		"version":       func(m map[string]any) { m["version"] = 2 },
-		"unknown field": func(m map[string]any) { m["extra"] = true },
-		"phase gap":     func(m map[string]any) { m["phases"] = m["phases"].([]any)[1:] },
-		"case id":       func(m map[string]any) { cases(m)["H23"] = cases(m)["H22"] },
-		"ledger":        func(m map[string]any) { cases(m)["H07"].(map[string]any)["ledger"] = "C3" },
-		"account mode":  func(m map[string]any) { variant(m, "H07", 0)["mode"] = ModeSystem },
-		"plane":         func(m map[string]any) { cases(m)["H07"].(map[string]any)["plane"] = "remote" },
-		"phase":         func(m map[string]any) { cases(m)["H07"].(map[string]any)["phase"] = 9 },
+		"status requirement without its unit": func(m map[string]any) { delete(cases(m)["G5"].(map[string]any), "statusUnit") },
+		"control status without its unit": func(m map[string]any) {
+			ctl := cases(m)["G5"].(map[string]any)["controls"].([]any)[0].(map[string]any)
+			delete(ctl, "statusUnit")
+		},
+		"status unit without a status requirement": func(m map[string]any) { cases(m)["H07"].(map[string]any)["statusUnit"] = "x.service" },
+		"status unit name":                         func(m map[string]any) { cases(m)["G5"].(map[string]any)["statusUnit"] = `..\\x.service` },
+		"version":                                  func(m map[string]any) { m["version"] = 2 },
+		"unknown field":                            func(m map[string]any) { m["extra"] = true },
+		"phase gap":                                func(m map[string]any) { m["phases"] = m["phases"].([]any)[1:] },
+		"case id":                                  func(m map[string]any) { cases(m)["H23"] = cases(m)["H22"] },
+		"ledger":                                   func(m map[string]any) { cases(m)["H07"].(map[string]any)["ledger"] = "C3" },
+		"account mode":                             func(m map[string]any) { variant(m, "H07", 0)["mode"] = ModeSystem },
+		"plane":                                    func(m map[string]any) { cases(m)["H07"].(map[string]any)["plane"] = "remote" },
+		"phase":                                    func(m map[string]any) { cases(m)["H07"].(map[string]any)["phase"] = 9 },
 		"metric": func(m map[string]any) {
 			cases(m)["H07"].(map[string]any)["requires"] = []any{map[string]any{"metric": "speed", "min": 1}}
 		},

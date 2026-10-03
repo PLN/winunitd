@@ -220,6 +220,15 @@ func TestSummarizeRequiresCaseProofs(t *testing.T) {
 			e := ev(t, rs, "G5/A")
 			e.Status.At = e.Observer.Ended + 600e7
 		}},
+		{"finite status of an unrelated unit", "G5/A: control finite-limit the status is not of the declared unit", func(rs []Record) {
+			ev(t, rs, "G5/A#finite-limit").Status.Unit = "unrelated.service"
+		}},
+		{"unlimited status of an unrelated unit", "G5/B: the status is not of the declared unit", func(rs []Record) {
+			ev(t, rs, "G5/B").Status.Unit = "other.service"
+		}},
+		{"finite status read before its unit stopped", "G5/B: control finite-limit the stopped unit's status was read before its observed processes ended", func(rs []Record) {
+			ev(t, rs, "G5/B#finite-limit").Status.At = ft(2)
+		}},
 		{"status of another process", "G5/B: the active unit's main process is not the running workload the observer held", func(rs []Record) {
 			ev(t, rs, "G5/B").Status.MainPID = 4
 		}},
@@ -457,6 +466,19 @@ func TestSummarizeRequiresDiagnosticsProofs(t *testing.T) {
 		}},
 		{"legacy directory denying everyone", "G6/legacy-repair: the directory was not the declared legacy", func(rs []Record) {
 			ev(t, rs, "G6/legacy-repair").DaemonLog.Before.Dir.DACL = "D:(D;OICI;FA;;;WD)"
+		}},
+		{"legacy directory with a deny before its allows", "G6/legacy-repair: the directory was not the declared legacy", func(rs []Record) {
+			ev(t, rs, "G6/legacy-repair").DaemonLog.Before.Dir.DACL = "D:(D;;FA;;;WD)(A;;FA;;;" + sidA + ")(A;;FA;;;BU)"
+		}},
+		{"legacy directory with a deny after its allows", "G6/legacy-repair: the directory was not the declared legacy", func(rs []Record) {
+			ev(t, rs, "G6/legacy-repair").DaemonLog.Before.Dir.DACL = "D:AI(A;OICI;FA;;;" + sidA + ")(A;OICIID;FA;;;BU)(D;;WD;;;BU)"
+		}},
+		{"final facts read long after the observation", "H12/A: the final facts were not read right after the observation", func(rs []Record) {
+			d := ev(t, rs, "H12/A").DaemonLog
+			d.After.At += 3600e7
+		}},
+		{"final facts read before the observation ended", "H12/B: the final facts were not read right after the observation", func(rs []Record) {
+			ev(t, rs, "H12/B").DaemonLog.After.At = ft(40)
 		}},
 		{"legacy directory not openly writable", "G6/legacy-repair: the directory was not the declared legacy", func(rs []Record) {
 			ev(t, rs, "G6/legacy-repair").DaemonLog.Before.Dir.DACL = "D:AI(A;OICI;FA;;;" + sidA + ")(A;OICIID;FR;;;BU)"
