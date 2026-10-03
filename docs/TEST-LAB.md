@@ -333,15 +333,34 @@ execution. `headless-workload matrix [--ledger L] [--case C] [--account A]
 [--phase N]` prints the expected records; `--counts` and `--hash` print the
 totals and the matrix hash.
 
-Records are written by `headless-workload record --observation FILE --results
-DIR --admission FILE`. The record binds the driver's observation to the
-admitted run manifest (a full clean source commit and the SHA-256 of every
-admitted executable), the recording executable's hash and the matrix. Each
-record carries its token context, an execution ID, a run-wide sequence, a boot
-ID, the number of password-bearing logons since that boot, confirmed cleanup,
-its linked controls and raw evidence: launch and exit times, a negative
-observation window, old and replacement process identities, probe results and
-pipe sub-results.
+Records are written by `headless-workload record --observation FILE
+[--observer FILE] --results DIR --admission FILE`. The record binds the
+driver's observation to the admitted run manifest (a full clean source commit
+and the SHA-256 of every admitted executable), the recording executable's hash
+and the matrix. Each record carries its token context, an execution ID, a
+run-wide sequence, a boot ID, the number of password-bearing logons since that
+boot, confirmed cleanup, its linked controls and raw evidence: probe results,
+pipe sub-results and, for lifecycle cases, the observer's report.
+
+Lifecycle evidence comes only from `headless-workload observe`, run as SYSTEM.
+It launches nothing. It scans every 50 ms by default, at most 125 ms, and
+holds every process of the installed daemon and workload images: the winunitd
+service process as the broker, the daemon image under a watched account as
+that account's manager, the workload image started by one of its held
+managers as a workload, and anything else of the workload image under the
+account as a child. For each it
+records the PID, parent, kernel creation and exit times, exit code, and the
+token's account, session, elevation, source and logon type, all read from its
+own handle. A process of a watched image that it cannot open is recorded as
+unidentified. Its plan names the role and account to crash and how long each
+generation may live before it terminates exactly that process; it timestamps
+marks the driver creates in a marks directory, creates a declared release file
+after a number of failed workload generations, and stops at a stop file or
+its duration. Its report also records the boot (kernel boot time and boot
+counter) and the longest interval between two scans. An observation must not
+carry lifecycle values itself; `record --observer` validates the report,
+requires an admitted observer and the record's boot, and embeds it, and a
+passing lifecycle record needs one.
 
 `headless-workload summarize --results DIR --admission FILE` exits 0 only when
 every record of the matrix passed with confirmed cleanup and nothing is wrong.
@@ -350,8 +369,17 @@ claim:
 
 - durations, capped retries, short delays after the cap, confirmed stable
   runtime, the reset after it, relaunches in a cancellation window, failures
-  and starts in one ten-second window, from the attempt times;
-- that every old process exited strictly before its replacement was created;
+  and starts in one ten-second window, from the observed generations' kernel
+  times; a generation that lived no longer than two scan intervals, a scan
+  gap over 250 ms or an unidentified process leaves the record unproven,
+  because a process shorter than the scan interval can run unseen;
+- that every process of the declared roles alive when the observer crashed
+  its target exited strictly before the first replacement was created; that
+  the account's kept processes and the peer account's manager and workload
+  stayed the same processes; and that revoked accounts drained;
+- that every generation used ran under the account's genuine session-zero S4U
+  token (the product's token source, a network or batch logon) or, for
+  interactive rows, an interactive session token;
 - TCP, SMB and EFS characterizations, from the probe results and controls;
 - the qualification-pipe and path sub-results, by their native codes;
 - each record's token against its account and mode: genuine session-zero S4U
@@ -370,7 +398,9 @@ derives from its own token and answers enumerated commands (health, a named
 probe, exit) on a pipe that only SYSTEM and its own account may open. Probes
 run as bounded child processes inside the unit's job, with targets read from a
 configuration file in that state root, never from the command. `fail --code 7
---until FILE` exits with code 7 until FILE exists, then serves. Probes record
+--until FILE [--hold D]` lives for D and exits with code 7 until FILE exists,
+then serves; lifecycle units use a hold well above the scan interval so the
+observer holds every failing run. Probes record
 exact native results: `probe-token` (SID, logon ID, session, integrity,
 elevation, groups, privileges, logon type and package where LSA allows, and the
 known folders from the token), `probe-path`, `probe-tcp`, `probe-smb` and
