@@ -242,6 +242,12 @@ func testNativeUserManagerSecurity(t *testing.T, tok *runtime.UserToken, session
 	if r.PID != uint32(proc.PID()) || r.SID != tok.Info.SID || r.Session != session || r.Elevated != 0 {
 		t.Fatal("child token/process identity mismatch or elevated child")
 	}
+	if subject, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(proc.PID())); err != nil {
+		t.Fatal(err)
+	} else {
+		reportQualSubject(t, subject)
+		windows.CloseHandle(subject)
+	}
 	if len(r.Files) != len(ids) {
 		t.Fatal("missing sentinel handle observations")
 	}

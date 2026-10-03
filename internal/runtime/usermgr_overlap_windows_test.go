@@ -272,6 +272,9 @@ func awaitSuspended(t *testing.T, s *suspendedLaunch) (int, windows.Handle) {
 			t.Fatal("created process did not enter the selected session")
 		}
 	}
+	if s.headless {
+		reportQualSubject(t, probe)
+	}
 	if s.headless && !overlapProfileLoaded(t, s.sid) {
 		t.Fatal("headless profile was not loaded while native creation was held")
 	}
