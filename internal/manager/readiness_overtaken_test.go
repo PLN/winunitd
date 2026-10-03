@@ -14,6 +14,7 @@ import (
 	"github.com/PLN/winunitd/internal/notify"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/timers"
 )
 
 // aliveHookLauncher runs an armed hook once, inside the next Alive call on a
@@ -75,6 +76,9 @@ func assertOvertakenStart(t *testing.T, m *Manager, name string, admitted *atomi
 	if err == nil {
 		t.Fatal("Start succeeded although an accepted Stop overtook its activation")
 	}
+	if !strings.Contains(err.Error(), "start superseded after readiness") {
+		t.Fatalf("Start error = %v, want the refused-activation error", err)
+	}
 	var perr *protocol.Error
 	if !errors.As(err, &perr) || perr.OperationID == "" {
 		t.Fatalf("Start error carries no operation: %v", err)
@@ -102,42 +106,58 @@ func assertOvertakenStart(t *testing.T, m *Manager, name string, admitted *atomi
 	}
 }
 
-// READY=1 that arrives after Stop was accepted, before waitReady's next
-// stopping check, must not complete the start (#278).
+// stopHookTimer runs a shared one-shot hook when a timer is stopped.
+type stopHookTimer struct {
+	timers.Timer
+	hook *atomic.Pointer[func()]
+}
+
+func (t *stopHookTimer) Stop() bool {
+	if hook := t.hook.Swap(nil); hook != nil {
+		(*hook)()
+	}
+	return t.Timer.Stop()
+}
+
+// READY=1 delivered over the notify endpoint completes waitReady, and Stop is
+// accepted before the activation is. The start must fail (#278).
 func TestNotifyReadyAfterAcceptedStopFailsStart(t *testing.T) {
 	t.Parallel()
-	launch := &aliveHookLauncher{fakeLauncher: fakeNotifyLaunch()}
-	m, _ := managerWithFake(t, launch, map[string]string{"worker.service": `
+	launch := fakeNotifyLaunch()
+	clk := timers.NewFake(time.Time{}).Clock()
+	newTimer := clk.NewTimer
+	var hook atomic.Pointer[func()]
+	// Only waitReady's TimeoutStartSec budget lasts 5m; the operation budget is
+	// longer. waitReady stops that timer as it returns, after it has selected
+	// READY=1 and stopped its periodic stopping check, and before the launch
+	// path decides the activation. Stop is accepted there.
+	clk.NewTimer = func(d time.Duration) timers.Timer {
+		timer := newTimer(d)
+		if d != 5*time.Minute {
+			return timer
+		}
+		return &stopHookTimer{Timer: timer, hook: &hook}
+	}
+	m := managerWithClock(t, launch, clk, map[string]string{"worker.service": `
 [Service]
 Type=notify
 ExecStart=C:\App\worker.exe
 WorkingDirectory=C:\App
 TimeoutStartSec=5m
 `})
-	errc := make(chan error, 1)
-	go func() { _, err := m.Start(context.Background(), "worker"); errc <- err }()
-	waitNotifyPipe(t, launch.fakeLauncher, "worker.service")
-	waitUntil(t, 2*time.Second, func() bool {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		return m.procOfLocked("worker.service") != nil && m.stateOfLocked("worker.service") == core.Activating
-	})
-	// The next Alive call is waitReady's periodic check after it has found the
-	// unit not stopping. Stop is accepted there, then READY=1 arrives.
 	stopped := make(chan error, 1)
 	var admitted atomic.Bool
-	launch.arm(func() {
-		if !admitStop(m, "worker.service", stopped) {
-			return
-		}
-		m.mu.Lock()
-		nrt := m.units["worker.service"].notify
-		m.mu.Unlock()
-		if nrt != nil {
-			nrt.onMessage(notify.Message{Ready: true})
-			admitted.Store(true)
-		}
-	})
+	accept := func() { admitted.Store(admitStop(m, "worker.service", stopped)) }
+	hook.Store(&accept)
+	errc := make(chan error, 1)
+	go func() { _, err := m.Start(context.Background(), "worker"); errc <- err }()
+	pipe := waitNotifyPipe(t, launch, "worker.service")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	err := notify.Send(ctx, pipe, notify.Message{Ready: true})
+	cancel()
+	if err != nil {
+		t.Fatal(err)
+	}
 	assertOvertakenStart(t, m, "worker.service", &admitted, errc, stopped)
 }
 
