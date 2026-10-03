@@ -345,15 +345,17 @@ func observerFor(e Entry) *ObserverReport {
 	case "H03":
 		return newObserved(e.Phase, 130).ObserverReport
 	case "H06":
-		// Admission revoked at 10 s, a logon at 20 s, linger disabled at
-		// 30 s, logoff at 50 s; everything drains and stays gone.
+		// Admission revoked at 10 s and restored at 15 s, a logon at 20 s,
+		// linger disabled at 30 s, logoff at 50 s; everything drains and
+		// stays gone.
 		o := newObserved(e.Phase, 140)
 		o.stable(peerOf(e.Account))
 		sid := roleSID[e.Account]
 		m := o.gen(RoleManager, e.Account, ModeS4U, -60, 35, 1).PID
 		o.gen(RoleWorkload, e.Account, ModeS4U, -59, 35, 1).ParentPID = m
 		o.gen(RoleManager, e.Account, ModeWTS, 20, 51, 0)
-		o.Marks = []Mark{{Name: MarkAdmissionRevoked, At: ft(10)}, {Name: MarkLingerDisabled, At: ft(30)}, {Name: MarkLogoff, At: ft(50)}}
+		o.Marks = []Mark{{Name: MarkAdmissionRevoked, At: ft(10)}, {Name: MarkAdmissionRestored, At: ft(15)}, {Name: MarkLingerDisabled, At: ft(30)},
+			{Name: MarkLogoff, At: ft(50)}}
 		o.Sessions = []SessionSample{{At: o.Started}, {At: ft(20), Users: []SessionUser{{Session: 2, SID: sid}}}, {At: ft(50.5)}}
 		o.Logons = []LogonFact{{ID: "00000000:00020000", SID: sid, Type: logonInteractive, LogonTime: ft(19), Source: "audit", Process: "User32"}}
 		return o.ObserverReport

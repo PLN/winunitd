@@ -701,18 +701,24 @@ func DeriveLifecycle(r *ObserverReport, spec ObserveSpec, account, sid, mode str
 
 // The marks H06's driver creates, in this order.
 const (
-	MarkAdmissionRevoked = "admission-revoked"
-	MarkLingerDisabled   = "linger-disabled"
-	MarkLogoff           = "logoff"
+	MarkAdmissionRevoked  = "admission-revoked"
+	MarkAdmissionRestored = "admission-restored"
+	MarkLingerDisabled    = "linger-disabled"
+	MarkLogoff            = "logoff"
 )
 
-// independent derives H06's sequence. Linger stays effective when only
-// interactive admission is revoked: a headless S4U manager running at that
-// mark still runs at the linger mark. A session-backed manager outlives
-// disabling linger while the account's session remains: a session manager
-// running at the linger mark still runs at logoff, and the session is seen
-// between them. Final drain and the quiet window after logoff are the
-// drained and negative metrics.
+// independent derives H06's sequence from its declared interventions:
+// interactive admission revoked, then restored before the account's
+// session logs on; linger disabled while that admitted session runs; then
+// the logoff.
+//
+// lingerKept: the account's headless S4U manager and a workload it started,
+// both held before the revocation, run across the admission-only change
+// until linger is disabled. sessionRetained: the account's session, which
+// logged on after admission was restored, is present at the linger change;
+// a session manager started in it outlives that change until the logoff;
+// and a session sample after the logoff verifies the session is gone, with
+// none of the account's sessions later.
 func independent(r *ObserverReport, account, sid string) map[string]float64 {
 	marks := map[string]uint64{}
 	for _, m := range r.Marks {
@@ -720,27 +726,40 @@ func independent(r *ObserverReport, account, sid string) map[string]float64 {
 			marks[m.Name] = m.At
 		}
 	}
-	admission, linger, logoff := marks[MarkAdmissionRevoked], marks[MarkLingerDisabled], marks[MarkLogoff]
-	if admission == 0 || linger <= admission || logoff <= linger {
+	revoked, restored, linger, logoff := marks[MarkAdmissionRevoked], marks[MarkAdmissionRestored], marks[MarkLingerDisabled], marks[MarkLogoff]
+	if revoked == 0 || restored <= revoked || linger <= restored || logoff <= linger {
 		return nil
 	}
-	aliveAcross := func(class string, from, to uint64) bool {
-		return slices.ContainsFunc(r.Generations, func(g Generation) bool {
-			return g.Role == RoleManager && g.Account == account && ClassifyToken(g.Token) == class && g.Seen <= from && (g.Exited == 0 || g.Exited >= to)
-		})
-	}
+	across := func(g Generation, from, to uint64) bool { return g.Seen <= from && (g.Exited == 0 || g.Exited >= to) }
+	background := slices.ContainsFunc(r.Generations, func(m Generation) bool {
+		return m.Role == RoleManager && m.Account == account && ClassifyToken(m.Token) == SourceS4U && across(m, revoked, linger) &&
+			slices.ContainsFunc(r.Generations, func(w Generation) bool {
+				return w.Role == RoleWorkload && w.Account == account && w.ParentPID == m.PID && w.Created >= m.Created &&
+					ClassifyToken(w.Token) == SourceS4U && across(w, revoked, linger)
+			})
+	})
+	sessionManager := slices.ContainsFunc(r.Generations, func(g Generation) bool {
+		return g.Role == RoleManager && g.Account == account && ClassifyToken(g.Token) == SourceWTS && g.Created > restored && across(g, linger, logoff)
+	})
 	// Samples are recorded when the sessions change, so the last one at or
-	// before the linger mark is the state at that mark.
-	sessionSeen := false
+	// before a time is the state at that time.
+	has := func(sm SessionSample) bool {
+		return slices.ContainsFunc(sm.Users, func(u SessionUser) bool { return u.SID == sid })
+	}
+	atLinger, before, gone := false, false, false
 	for _, sm := range r.Sessions {
-		if sm.At > linger {
-			break
+		switch {
+		case sm.At <= restored:
+			before = has(sm)
+		case sm.At <= linger:
+			atLinger = has(sm)
+		case sm.At > logoff:
+			gone = !has(sm)
 		}
-		sessionSeen = slices.ContainsFunc(sm.Users, func(u SessionUser) bool { return u.SID == sid })
 	}
 	return map[string]float64{
-		"lingerKept":      boolMetric(aliveAcross(SourceS4U, admission, linger)),
-		"sessionRetained": boolMetric(aliveAcross(SourceWTS, linger, logoff) && sessionSeen),
+		"lingerKept":      boolMetric(background),
+		"sessionRetained": boolMetric(sessionManager && !before && atLinger && gone),
 	}
 }
 

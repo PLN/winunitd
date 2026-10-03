@@ -667,7 +667,9 @@ try {
 			Start-Sleep -Seconds 10
 			New-Mark $marks 'admission-revoked'; Set-InteractiveAdmission $sid 'disabled'
 			Start-Sleep -Seconds 20
-			Set-InteractiveAdmission $sid 'enabled'
+			# Restoring admission before the session is its own declared step.
+			New-Mark $marks 'admission-restored'; Set-InteractiveAdmission $sid 'enabled'
+			Start-Sleep -Seconds 5
 			Invoke-Wts 'logon' $role; $sessionOpen += $role
 			Start-Sleep -Seconds 20
 			New-Mark $marks 'linger-disabled'; Set-Linger $role $false; $lingerChanged += $role

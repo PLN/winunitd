@@ -178,8 +178,9 @@ type ObserveSpec struct {
 	Session  bool   `json:"session,omitempty"`
 	Unloaded bool   `json:"unloaded,omitempty"`
 	// Independent derives H06's sequence from the marks admission-revoked,
-	// linger-disabled and logoff: the headless manager outlives the
-	// admission change, a session manager the linger change, until logoff.
+	// admission-restored, linger-disabled and logoff: the headless tree
+	// outlives the admission change, and a session manager in the admitted
+	// session the linger change, until the verified logoff.
 	Independent bool `json:"independent,omitempty"`
 }
 

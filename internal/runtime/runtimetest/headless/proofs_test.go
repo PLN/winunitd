@@ -428,7 +428,30 @@ func TestSummarizeRequiresDiagnosticsProofs(t *testing.T) {
 				Token: tokenFacts(AccountB, ModeS4U)})
 		}},
 		{"marks out of order", "H06/A: lingerKept not supported by the evidence", func(rs []Record) {
-			ev(t, rs, "H06/A").Observer.Marks[1].At = ft(5)
+			ev(t, rs, "H06/A").Observer.Marks[2].At = ft(5)
+		}},
+		{"admission restored without a declared intervention", "H06/B: lingerKept not supported by the evidence", func(rs []Record) {
+			r := ev(t, rs, "H06/B").Observer
+			r.Marks = slices.DeleteFunc(r.Marks, func(m Mark) bool { return m.Name == MarkAdmissionRestored })
+		}},
+		{"logoff never verified", "H06/A: sessionRetained below its minimum", func(rs []Record) {
+			r := ev(t, rs, "H06/A").Observer
+			r.Sessions = r.Sessions[:len(r.Sessions)-1]
+		}},
+		{"session still present after the logoff", "H06/B: sessionRetained below its minimum", func(rs []Record) {
+			r := ev(t, rs, "H06/B").Observer
+			r.Sessions = append(r.Sessions, SessionSample{At: ft(60), Users: []SessionUser{{Session: 2, SID: sidB}}})
+		}},
+		{"session from before the admission was restored", "H06/A: sessionRetained below its minimum", func(rs []Record) {
+			r := ev(t, rs, "H06/A").Observer
+			r.Sessions[1].At = ft(12)
+		}},
+		{"every target workload removed", "H06/B: lingerKept below its minimum", func(rs []Record) {
+			r := ev(t, rs, "H06/B").Observer
+			r.Generations = slices.DeleteFunc(r.Generations, func(g Generation) bool { return g.Role == RoleWorkload && g.Account == AccountB })
+		}},
+		{"workload lost on admission change", "H06/A: lingerKept below its minimum", func(rs []Record) {
+			gen(ev(t, rs, "H06/A").Observer, RoleWorkload, AccountA, 0).Exited = ft(12)
 		}},
 		// Final inventory.
 		{"no inventory", "H22/all: no final inventory", func(rs []Record) { ev(t, rs, "H22/all").Inventory = nil }},
