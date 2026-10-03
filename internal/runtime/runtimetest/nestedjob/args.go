@@ -44,6 +44,9 @@ const (
 	// RoleOwner is a native-owner agent: it owns the unit job of a scenario
 	// that runs under another identity, such as a genuine S4U process.
 	RoleOwner = "owner"
+	// RoleManagerOwner runs an isolated Manager for one nested unit under
+	// another identity and answers enumerated questions about it.
+	RoleManagerOwner = "manager-owner"
 )
 
 // Work selects what ENGINE, G1 and G2 do after the observer's start-work

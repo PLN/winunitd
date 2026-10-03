@@ -164,3 +164,35 @@ func TestRecordFinishWritesBoundRecords(t *testing.T) {
 		t.Fatal("SYSTEM accepted as the headless account")
 	}
 }
+
+func TestManagerOwnerCommandsAreEnumerated(t *testing.T) {
+	held := []Identity{{Role: RoleMain, PID: 4, Created: 5}}
+	for _, c := range []Command{
+		{Seq: 1, Verb: VerbStart}, {Seq: 2, Verb: VerbStopUnit}, {Seq: 3, Verb: VerbInspect},
+		{Seq: 4, Verb: VerbInUnitJob, PID: 4, Created: 5}, {Seq: 5, Verb: VerbExpectDrained, Held: held}, {Seq: 6, Verb: VerbExit},
+	} {
+		if err := ValidateCommand(RoleManagerOwner, c); err != nil {
+			t.Errorf("%+v: %v", c, err)
+		}
+	}
+	many := make([]Identity, MaxHeldIdentities+1)
+	for i := range many {
+		many[i] = Identity{PID: uint32(i + 1), Created: 1}
+	}
+	for _, c := range []Command{
+		{Seq: 1, Verb: VerbExpectDrained},
+		{Seq: 1, Verb: VerbExpectDrained, Held: many},
+		{Seq: 1, Verb: VerbExpectDrained, Held: []Identity{{PID: 4}}},
+		{Seq: 1, Verb: VerbInspect, Held: held},
+		{Seq: 1, Verb: VerbStart, Args: []string{"main"}},
+		{Seq: 1, Verb: VerbLaunch},
+		{Seq: 1, Verb: VerbStop, TimeoutMS: 10},
+	} {
+		if err := ValidateCommand(RoleManagerOwner, c); err == nil {
+			t.Errorf("%+v accepted", c)
+		}
+	}
+	if err := ValidateCommand(RoleOwner, Command{Seq: 1, Verb: VerbInspect}); err == nil {
+		t.Error("the runtime owner accepted a manager verb")
+	}
+}

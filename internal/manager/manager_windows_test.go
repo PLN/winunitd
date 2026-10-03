@@ -221,8 +221,15 @@ func TestMain(m *testing.M) {
 			fmt.Fprintln(os.Stderr, "nested-owner:", err)
 		}
 		os.Exit(1)
+	case "nested-manager-owner":
+		os.Exit(nestedManagerAgentMain(os.Args))
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	if err := closeNestedBroker(); err != nil {
+		fmt.Fprintln(os.Stderr, "nested broker root cleanup:", err)
+		code = 1
+	}
+	os.Exit(code)
 }
 
 // Keep a timer pending: a bare select {} makes non-race helper binaries

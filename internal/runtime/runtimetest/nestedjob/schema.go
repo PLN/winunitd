@@ -76,7 +76,7 @@ func (id Identity) Same(other Identity) bool {
 
 func (id Identity) validate(self bool) error {
 	switch id.Role {
-	case RoleMain, RoleEngine, RoleG1, RoleG2, RoleProbe, RoleStop, RoleOwner:
+	case RoleMain, RoleEngine, RoleG1, RoleG2, RoleProbe, RoleStop, RoleOwner, RoleManagerOwner:
 	default:
 		return fmt.Errorf("identity role %q", id.Role)
 	}
@@ -504,7 +504,38 @@ const (
 	VerbPIDs      = "pids"
 	VerbStop      = "stop"
 	VerbExit      = "exit"
+	// Manager-owner verbs.
+	VerbStart         = "start"
+	VerbStopUnit      = "stop-unit"
+	VerbInspect       = "inspect"
+	VerbExpectDrained = "expect-drained"
 )
+
+// MaxHeldIdentities bounds an expect-drained request.
+const MaxHeldIdentities = 16
+
+// ManagerView is a manager owner's bounded answer about its nested unit:
+// lifecycle status, the unit job's native limits and the launches its
+// observing launcher saw.
+type ManagerView struct {
+	ActiveState          string   `json:"activeState"`
+	Reason               string   `json:"reason,omitempty"`
+	Error                string   `json:"error,omitempty"`
+	InvocationID         string   `json:"invocationId,omitempty"`
+	TerminationUncertain bool     `json:"terminationUncertain"`
+	MainPID              int      `json:"mainPid,omitempty"`
+	CPUQuota             uint32   `json:"cpuQuota,omitempty"`
+	WindowsCPUQuota      uint32   `json:"windowsCPUQuota,omitempty"`
+	StopHelpers          int      `json:"stopHelpers"`
+	Launches             int      `json:"launches"`
+	Violations           []string `json:"violations,omitempty"`
+	HasJob               bool     `json:"hasJob"`
+	JobMemory            uint64   `json:"jobMemory,omitempty"`
+	PeakJobMemory        uint64   `json:"peakJobMemory,omitempty"`
+	LimitFlags           uint32   `json:"limitFlags,omitempty"`
+	CPURate              uint32   `json:"cpuRate,omitempty"`
+	CPUControlFlags      uint32   `json:"cpuControlFlags,omitempty"`
+}
 
 // MaxOwnerStopMS bounds an owner agent's unit stop.
 const MaxOwnerStopMS = 60000
@@ -517,24 +548,26 @@ const (
 
 // Command is one observer request.
 type Command struct {
-	Seq            int      `json:"seq"`
-	Verb           string   `json:"verb"`
-	Breakaway      bool     `json:"breakaway,omitempty"`
-	InnerBreakaway string   `json:"innerBreakaway,omitempty"`
-	PID            uint32   `json:"pid,omitempty"`
-	Created        uint64   `json:"created,omitempty"`
-	Args           []string `json:"args,omitempty"`
-	TimeoutMS      int64    `json:"timeoutMs,omitempty"`
+	Seq            int        `json:"seq"`
+	Verb           string     `json:"verb"`
+	Breakaway      bool       `json:"breakaway,omitempty"`
+	InnerBreakaway string     `json:"innerBreakaway,omitempty"`
+	PID            uint32     `json:"pid,omitempty"`
+	Created        uint64     `json:"created,omitempty"`
+	Args           []string   `json:"args,omitempty"`
+	TimeoutMS      int64      `json:"timeoutMs,omitempty"`
+	Held           []Identity `json:"held,omitempty"`
 }
 
 // ValidateCommand checks that role accepts cmd with well-formed arguments.
 func ValidateCommand(role string, cmd Command) error {
 	allowed := map[string][]string{
-		RoleMain:   {VerbObserved, VerbPing, VerbCloseInner, VerbSetInnerBreakaway, VerbCheckInner, VerbProbe},
-		RoleEngine: {VerbPing, VerbProbe, VerbStartWork, VerbCloseInherited},
-		RoleG1:     {VerbPing, VerbProbe, VerbStartWork},
-		RoleG2:     {VerbPing, VerbProbe, VerbStartWork},
-		RoleOwner:  {VerbPing, VerbLaunch, VerbInUnitJob, VerbPIDs, VerbStop, VerbExit},
+		RoleMain:         {VerbObserved, VerbPing, VerbCloseInner, VerbSetInnerBreakaway, VerbCheckInner, VerbProbe},
+		RoleEngine:       {VerbPing, VerbProbe, VerbStartWork, VerbCloseInherited},
+		RoleG1:           {VerbPing, VerbProbe, VerbStartWork},
+		RoleG2:           {VerbPing, VerbProbe, VerbStartWork},
+		RoleOwner:        {VerbPing, VerbLaunch, VerbInUnitJob, VerbPIDs, VerbStop, VerbExit},
+		RoleManagerOwner: {VerbPing, VerbStart, VerbStopUnit, VerbInspect, VerbInUnitJob, VerbExpectDrained, VerbExit},
 	}[role]
 	ok := false
 	for _, v := range allowed {
@@ -564,12 +597,22 @@ func ValidateCommand(role string, cmd Command) error {
 		if cmd.TimeoutMS < 1 || cmd.TimeoutMS > MaxOwnerStopMS {
 			return fmt.Errorf("stop timeout %d ms", cmd.TimeoutMS)
 		}
+	case VerbExpectDrained:
+		if len(cmd.Held) == 0 || len(cmd.Held) > MaxHeldIdentities {
+			return fmt.Errorf("expect-drained needs 1 to %d identities", MaxHeldIdentities)
+		}
+		for _, id := range cmd.Held {
+			if id.PID == 0 || id.Created == 0 {
+				return errors.New("expect-drained identities need pid and creation time")
+			}
+		}
 	}
 	if cmd.Verb != VerbSetInnerBreakaway && cmd.InnerBreakaway != "" ||
 		cmd.Verb != VerbCheckInner && cmd.Verb != VerbInUnitJob && (cmd.PID != 0 || cmd.Created != 0) ||
 		cmd.Verb != VerbProbe && cmd.Breakaway ||
 		cmd.Verb != VerbLaunch && len(cmd.Args) > 0 ||
-		cmd.Verb != VerbStop && cmd.TimeoutMS != 0 {
+		cmd.Verb != VerbStop && cmd.TimeoutMS != 0 ||
+		cmd.Verb != VerbExpectDrained && len(cmd.Held) > 0 {
 		return fmt.Errorf("%s has arguments of another verb", cmd.Verb)
 	}
 	return nil
@@ -597,9 +640,11 @@ type Ack struct {
 	LimitFlags uint32       `json:"limitFlags,omitempty"`
 	Closed     int          `json:"closed,omitempty"`
 	// Owner-agent results.
-	Identity  *Identity `json:"identity,omitempty"`
-	InUnitJob *bool     `json:"inUnitJob,omitempty"`
-	PIDs      []int     `json:"pids,omitempty"`
+	Identity  *Identity    `json:"identity,omitempty"`
+	InUnitJob *bool        `json:"inUnitJob,omitempty"`
+	PIDs      []int        `json:"pids,omitempty"`
+	Manager   *ManagerView `json:"manager,omitempty"`
+	ElapsedMS int64        `json:"elapsedMs,omitempty"`
 }
 
 // HandleProbe is the negative inheritance probe at a numeric handle value.

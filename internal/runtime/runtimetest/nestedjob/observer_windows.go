@@ -165,6 +165,12 @@ func (o *Observer) CommandIn(dir, role string, cmd Command, timeout time.Duratio
 	if err != nil {
 		return Ack{}, err
 	}
+	return o.AwaitAck(dir, role, seq, timeout)
+}
+
+// AwaitAck waits for the acknowledgment of a command sent with SendIn. A
+// negative acknowledgment is returned with its failure as the error.
+func (o *Observer) AwaitAck(dir, role string, seq int, timeout time.Duration) (Ack, error) {
 	path := filepath.Join(dir, AckFile(role, seq))
 	deadline := time.Now().Add(timeout)
 	for {
@@ -172,7 +178,7 @@ func (o *Observer) CommandIn(dir, role string, cmd Command, timeout time.Duratio
 		err := ReadJSON(path, &ack)
 		if err == nil {
 			if !ack.OK || ack.Seq != seq {
-				return ack, fmt.Errorf("%s %s rejected: %s", role, cmd.Verb, ack.Failure.Error())
+				return ack, fmt.Errorf("%s %s rejected: %s", role, ack.Verb, ack.Failure.Error())
 			}
 			return ack, nil
 		}
@@ -181,7 +187,7 @@ func (o *Observer) CommandIn(dir, role string, cmd Command, timeout time.Duratio
 			return Ack{}, err
 		}
 		if time.Now().After(deadline) {
-			return Ack{}, fmt.Errorf("timed out waiting for %s %s acknowledgment (last read: %v)", role, cmd.Verb, err)
+			return Ack{}, fmt.Errorf("timed out waiting for %s command %d acknowledgment (last read: %v)", role, seq, err)
 		}
 		time.Sleep(pollInterval)
 	}
