@@ -4,11 +4,15 @@ package runtime_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
@@ -58,7 +62,7 @@ func TestNativeObjectProbeDetectsSelectiveInheritance(t *testing.T) {
 	cmd.SysProcAttr = &windows.SysProcAttr{HideWindow: true,
 		AdditionalInheritedHandles: []syscall.Handle{syscall.Handle(handles[0]), syscall.Handle(handles[2])}}
 	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
+		t.Fatal("start the security helper:", launchFailure(err))
 	}
 	t.Cleanup(func() {
 		if cmd.ProcessState == nil {
@@ -68,7 +72,7 @@ func TestNativeObjectProbeDetectsSelectiveInheritance(t *testing.T) {
 	})
 	r := awaitSecurityReport(t, reports).report
 	if err := cmd.Wait(); err != nil {
-		t.Fatal(err)
+		t.Fatal("the security helper:", launchFailure(err))
 	}
 	inherited, err := runtime.InheritedSentinels(ids, r.Objects)
 	if err != nil {
@@ -84,12 +88,12 @@ func TestNativeInteractiveUserManagerObjectIsolation(t *testing.T) {
 		t.Skip("requires disposable SYSTEM/WTS qualification fixture")
 	}
 	tok, session, broker := overlapToken(t)
-	testNativeUserManagerObjectIsolation(t, tok, session, broker)
+	testNativeUserManagerObjectIsolation(t, tok, session, broker, false)
 }
 
 func TestNativeHeadlessUserManagerObjectIsolation(t *testing.T) {
 	tok, broker := headlessOverlapToken(t)
-	testNativeUserManagerObjectIsolation(t, tok, 0, broker)
+	testNativeUserManagerObjectIsolation(t, tok, 0, broker, true)
 	deadline := time.Now().Add(15 * time.Second)
 	for overlapProfileLoaded(t, tok.Info.SID) {
 		if time.Now().After(deadline) {
@@ -103,8 +107,12 @@ func TestNativeHeadlessUserManagerObjectIsolation(t *testing.T) {
 // with the security helper and inheritable event and section sentinels in
 // the broker. The child must hold none of them. Its token identity is
 // checked; the file, environment, stdio and pipe-denial cases are the
-// separately qualified security test's and do not run here.
-func testNativeUserManagerObjectIsolation(t *testing.T, tok *runtime.UserToken, session uint32, broker *runtime.DaemonJob) {
+// separately qualified security test's and do not run here. The child's
+// own token, read from its process, must be the genuine one of its mode:
+// the product's S4U logon in session zero, or an interactive logon in the
+// selected session. When the qualification runner asks for it, the test
+// reports that subject with this test process as its owner.
+func testNativeUserManagerObjectIsolation(t *testing.T, tok *runtime.UserToken, session uint32, broker *runtime.DaemonJob, headless bool) {
 	t.Helper()
 	_, ids, objectArg := objectSentinels(t)
 	sddl, err := protocol.UserPipeSDDL(tok.Info.SID)
@@ -125,7 +133,7 @@ func testNativeUserManagerObjectIsolation(t *testing.T, tok *runtime.UserToken, 
 		})
 	}
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal("start the user manager:", launchFailure(err))
 	}
 	result := awaitSecurityReport(t, reports)
 	r := result.report
@@ -140,6 +148,16 @@ func testNativeUserManagerObjectIsolation(t *testing.T, tok *runtime.UserToken, 
 	} else if r.AdminFlags != 0 {
 		t.Fatal("standard-user fixture unexpectedly contains Administrators group")
 	}
+	subject := objectSubject(t, uint32(proc.PID()))
+	switch {
+	case subject.Token.SID != tok.Info.SID || subject.Token.Session != session || subject.Token.AuthenticationID == "":
+		t.Fatal("the child's own token is not the selected account's")
+	case headless && (subject.Token.Source != "winunitd" || subject.Token.LogonType != 3 && subject.Token.LogonType != 4):
+		t.Fatal("the headless child does not hold the product's S4U logon")
+	case !headless && subject.Token.LogonType != 2 && subject.Token.LogonType != 10 && subject.Token.LogonType != 11:
+		t.Fatal("the interactive child does not hold an interactive logon")
+	}
+	reportObjectSubject(t, subject)
 	inherited, err := runtime.InheritedSentinels(ids, r.Objects)
 	if err != nil {
 		t.Fatal(err)
@@ -158,4 +176,143 @@ func testNativeUserManagerObjectIsolation(t *testing.T, tok *runtime.UserToken, 
 		t.Fatal(err)
 	}
 	t.Logf("native child object isolation passed: session=%d elevation-type=%d event-sentinels=2 section-sentinels=2", r.Session, r.ElevationType)
+}
+
+// objectSubjectEnv names the file a qualification runner asks for: the
+// launched child's process incarnation and token, with this test process,
+// the SYSTEM test owner, as its owner. The format is the qualification
+// receipt's subject report.
+const objectSubjectEnv = "WINUNITD_QUAL_SUBJECT_OUT"
+
+type objectSubjectToken struct {
+	SID              string `json:"sid"`
+	Session          uint32 `json:"session"`
+	Elevated         bool   `json:"elevated"`
+	Source           string `json:"source"`
+	LogonType        uint32 `json:"logonType,omitempty"`
+	AuthPackage      string `json:"authPackage,omitempty"`
+	AuthenticationID string `json:"authenticationId"`
+	ElevationType    uint32 `json:"elevationType,omitempty"`
+}
+
+type objectSubjectReport struct {
+	Test         string             `json:"test"`
+	OwnerPID     uint32             `json:"ownerPid"`
+	OwnerCreated uint64             `json:"ownerCreated"`
+	PID          uint32             `json:"pid"`
+	Created      uint64             `json:"created"`
+	Token        objectSubjectToken `json:"token"`
+}
+
+var (
+	objectSecur32             = windows.NewLazySystemDLL("secur32.dll")
+	objectLsaGetLogonSession  = objectSecur32.NewProc("LsaGetLogonSessionData")
+	objectLsaFreeReturnBuffer = objectSecur32.NewProc("LsaFreeReturnBuffer")
+)
+
+// objectSubject reads the child's incarnation and its own primary token.
+// The user-manager handle keeps the process object, so the PID cannot name
+// another process meanwhile.
+func objectSubject(t *testing.T, pid uint32) objectSubjectReport {
+	t.Helper()
+	r := objectSubjectReport{Test: t.Name(), OwnerPID: windows.GetCurrentProcessId(), PID: pid}
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		t.Fatal("open the child:", err)
+	}
+	defer windows.CloseHandle(h)
+	if r.OwnerCreated, err = objectProcessCreated(windows.CurrentProcess()); err == nil {
+		if r.Created, err = objectProcessCreated(h); err == nil {
+			r.Token, err = objectTokenFacts(h)
+		}
+	}
+	if err != nil {
+		t.Fatal("the child's identity:", err)
+	}
+	return r
+}
+
+func objectProcessCreated(h windows.Handle) (uint64, error) {
+	var created, exited, kernel, user windows.Filetime
+	if err := windows.GetProcessTimes(h, &created, &exited, &kernel, &user); err != nil {
+		return 0, err
+	}
+	return uint64(created.HighDateTime)<<32 | uint64(created.LowDateTime), nil
+}
+
+func objectTokenFacts(process windows.Handle) (objectSubjectToken, error) {
+	var s objectSubjectToken
+	var tok windows.Token
+	if err := windows.OpenProcessToken(process, windows.TOKEN_QUERY|windows.TOKEN_QUERY_SOURCE, &tok); err != nil {
+		return s, err
+	}
+	defer tok.Close()
+	user, err := tok.GetTokenUser()
+	if err != nil {
+		return s, err
+	}
+	s.SID, s.Elevated = user.User.Sid.String(), tok.IsElevated()
+	var n uint32
+	if err := windows.GetTokenInformation(tok, windows.TokenSessionId, (*byte)(unsafe.Pointer(&s.Session)), 4, &n); err != nil {
+		return s, err
+	}
+	if err := windows.GetTokenInformation(tok, windows.TokenElevationType, (*byte)(unsafe.Pointer(&s.ElevationType)), 4, &n); err != nil {
+		return s, err
+	}
+	var source struct {
+		Name [8]byte
+		ID   windows.LUID
+	}
+	if err := windows.GetTokenInformation(tok, windows.TokenSource, (*byte)(unsafe.Pointer(&source)), uint32(unsafe.Sizeof(source)), &n); err != nil {
+		return s, err
+	}
+	s.Source = strings.TrimRight(string(source.Name[:]), "\x00 ")
+	var stats struct {
+		TokenID            windows.LUID
+		AuthenticationID   windows.LUID
+		ExpirationTime     int64
+		TokenType          uint32
+		ImpersonationLevel uint32
+		DynamicCharged     uint32
+		DynamicAvailable   uint32
+		GroupCount         uint32
+		PrivilegeCount     uint32
+		ModifiedID         windows.LUID
+	}
+	if err := windows.GetTokenInformation(tok, windows.TokenStatistics, (*byte)(unsafe.Pointer(&stats)), uint32(unsafe.Sizeof(stats)), &n); err != nil {
+		return s, err
+	}
+	id := stats.AuthenticationID
+	s.AuthenticationID = fmt.Sprintf("%08x:%08x", id.HighPart, id.LowPart)
+	var data *struct {
+		Size                  uint32
+		LogonID               windows.LUID
+		UserName              windows.NTUnicodeString
+		LogonDomain           windows.NTUnicodeString
+		AuthenticationPackage windows.NTUnicodeString
+		LogonType             uint32
+	}
+	if r, _, _ := objectLsaGetLogonSession.Call(uintptr(unsafe.Pointer(&id)), uintptr(unsafe.Pointer(&data))); r != 0 || data == nil {
+		return s, fmt.Errorf("logon session data: status %#x", r)
+	}
+	s.LogonType, s.AuthPackage = data.LogonType, data.AuthenticationPackage.String()
+	objectLsaFreeReturnBuffer.Call(uintptr(unsafe.Pointer(data)))
+	return s, nil
+}
+
+// reportObjectSubject writes the subject report when the runner asked for
+// it. A requested report that cannot be written fails the test.
+func reportObjectSubject(t *testing.T, r objectSubjectReport) {
+	t.Helper()
+	path := os.Getenv(objectSubjectEnv)
+	if path == "" {
+		return
+	}
+	data, err := json.Marshal(r)
+	if err == nil {
+		err = os.WriteFile(path, append(data, '\n'), 0o600)
+	}
+	if err != nil {
+		t.Fatal("the qualification subject report could not be written")
+	}
 }

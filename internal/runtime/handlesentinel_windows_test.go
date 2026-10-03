@@ -49,42 +49,79 @@ func leadingString(buf []byte) string {
 	return (*windows.NTUnicodeString)(unsafe.Pointer(&buf[0])).String()
 }
 
-// ObjectIdentityOf reads the identity of the object a handle refers to,
-// asking about a sentinel kind. The type is read first, which cannot block;
-// the name and contents are read only for the expected type, so a pipe or
-// other file handle at a reused number is never name-queried.
+// ObjectIdentityOf reads the identity of the object a handle number names,
+// asking about a sentinel kind. It first duplicates the handle into one this
+// process holds, so every later query is of that one object even if the
+// number is closed or reused meanwhile; a number that names no handle is
+// absent. The type is read first, and the name and, for a section, the
+// contents through a read-only view only for the expected type, so a pipe
+// or other file handle is not name-queried; that the type query returns
+// promptly is the observed behavior the native run must confirm. Any failed
+// query leaves the identity unknown, with the query and its code.
 func ObjectIdentityOf(h windows.Handle, kind string) ObjectIdentity {
-	id := ObjectIdentity{Kind: kind}
+	id := ObjectIdentity{Kind: kind, Status: ObjectUnknown}
 	want, ok := sentinelTypes[kind]
 	if !ok {
+		id.Error = "kind"
 		return id
 	}
-	buf, err := objectInformation(h, objectTypeInformation)
+	self := windows.CurrentProcess()
+	var held windows.Handle
+	if err := windows.DuplicateHandle(self, h, self, &held, 0, false, windows.DUPLICATE_SAME_ACCESS); err != nil {
+		if errors.Is(err, windows.ERROR_INVALID_HANDLE) {
+			return ObjectIdentity{Kind: kind, Status: ObjectAbsent}
+		}
+		id.Error = queryError("duplicate", err)
+		return id
+	}
+	defer windows.CloseHandle(held)
+	buf, err := objectInformation(held, objectTypeInformation)
 	if err != nil {
+		id.Error = queryError("type", err)
 		return id
 	}
 	if id.Type = leadingString(buf); id.Type != want {
+		id.Status = ObjectOtherType
 		return id
 	}
-	if buf, err := objectInformation(h, objectNameInformation); err == nil {
-		id.Name = leadingString(buf)
+	if buf, err = objectInformation(held, objectNameInformation); err != nil {
+		id.Error = queryError("name", err)
+		return id
 	}
+	id.Name = leadingString(buf)
 	if kind == SentinelSection {
-		id.Content = sectionContent(h)
+		if id.Content, err = sectionContent(held); err != nil {
+			id.Name, id.Error = "", queryError("view", err)
+			return id
+		}
 	}
+	id.Status = ObjectIdentified
 	return id
 }
 
+// queryError names a failed query and its numeric code.
+func queryError(op string, err error) string {
+	var status windows.NTStatus
+	var errno windows.Errno
+	switch {
+	case errors.As(err, &status):
+		return fmt.Sprintf("%s %#x", op, uint32(status))
+	case errors.As(err, &errno):
+		return fmt.Sprintf("%s %d", op, uint32(errno))
+	}
+	return op
+}
+
 // sectionContent is the nonce at the start of a section, read through a
-// read-only view, or "" when no view can be mapped.
-func sectionContent(h windows.Handle) string {
+// read-only view.
+func sectionContent(h windows.Handle) (string, error) {
 	addr, err := windows.MapViewOfFile(h, windows.FILE_MAP_READ, 0, 0, sectionNonceBytes)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	defer windows.UnmapViewOfFile(addr)
 	view := unsafe.Slice(*(**byte)(unsafe.Pointer(&addr)), sectionNonceBytes)
-	return strings.TrimRight(string(view), "\x00")
+	return strings.TrimRight(string(view), "\x00"), nil
 }
 
 // NewObjectSentinel creates an inheritable named sentinel of a kind with

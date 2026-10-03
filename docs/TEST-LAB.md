@@ -262,11 +262,19 @@ logon, payload ACL and restoration evidence; test output omits fixture SIDs.
 Non-file handle classes have their own tests, so a native run of them does not
 repeat the file, environment, stdio and pipe-denial cases above. Each event and
 section sentinel is a named object whose name carries a fresh nonce; a section
-also holds a second nonce in its contents. The child reads the object type at
-each handle number first and reads the name, and for a section the contents
-through a read-only view, only for the expected type. The parent counts a
-sentinel as inherited only when type, full name and contents all match its own
-reading. `TestNativeObjectProbeDetectsSelectiveInheritance` is the positive
+also holds a second nonce in its contents. The child first duplicates the
+handle at each number into one it holds, so every query concerns one object,
+and reports a number that names no handle as absent. It reads the object type
+first and the name, and for a section the contents through a read-only view,
+only for the expected type; that the type query returns promptly is observed
+behavior the native run must confirm. The parent counts a sentinel as
+inherited only when type, full name and contents all match its own reading.
+Any failed query makes the observation unknown, and an unknown observation
+fails the test rather than counting as absence. With
+`WINUNITD_QUAL_SUBJECT_OUT` set, the isolation tests check the child's own
+token (the product's S4U logon in session zero, or an interactive logon in
+the selected session) and write it, with the SYSTEM test process as its
+owner, in the qualification receipt's subject format. `TestNativeObjectProbeDetectsSelectiveInheritance` is the positive
 control: two inheritable sentinels of each kind, only the first of each in the
 explicit inherit list, so the child must find exactly those two. It runs under
 any token. `TestNativeInteractiveUserManagerObjectIsolation` and
