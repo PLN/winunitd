@@ -1097,6 +1097,14 @@ try {
 			Wait-Until { @(@($SidA, $SidB, $AdminSid) | ForEach-Object { Get-UserManagerPids $_ }).Count -eq 0 } 'the user managers to exit' 180
 			Get-ScheduledTask -TaskPath '\winunitd-qual\' -ErrorAction SilentlyContinue | Unregister-ScheduledTask -Confirm:$false
 			Restore-AdmissionBaseline
+			# Each account's qualification state (probe configurations and
+			# outputs) goes, and its profile hive must unload.
+			foreach ($r in @('A', 'B', 'admin')) {
+				if (!$baseOf[$r]) { throw "H22 needs the $r account's base" }
+				$state = [IO.Path]::GetFullPath((Join-Path $baseOf[$r] '..\winunitd-qual'))
+				if (Test-Path -LiteralPath $state) { Remove-Item -LiteralPath $state -Recurse -Force }
+			}
+			Wait-Until { @(@($SidA, $SidB, $AdminSid) | Where-Object { $_ -and (Test-Path -LiteralPath "Registry::HKEY_USERS\$_") }).Count -eq 0 } 'the accounts'' profile hives to unload' 300
 			# The Default profile template had no WinUnit files at the
 			# baseline unless the receipt says so.
 			if (@((Get-Content -LiteralPath $BaselineReceipt -Raw | ConvertFrom-Json).facts.PSObject.Properties.Name) -notcontains 'templateFiles') {

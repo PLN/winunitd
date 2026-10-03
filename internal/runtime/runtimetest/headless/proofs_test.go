@@ -636,6 +636,41 @@ func TestSummarizeRequiresDiagnosticsProofs(t *testing.T) {
 		{"data root opened", "H22/all: the machine state differs from the baseline", func(rs []Record) {
 			ev(t, rs, "H22/all").Inventory.Facts.DataDir.DACL += "(A;OICI;FA;;;BU)"
 		}},
+		{"a firewall rule kept from an unsealed baseline", "H22/all: the sealed baseline already held fixture tasks, firewall rules or template files", func(rs []Record) {
+			inv := ev(t, rs, "H22/all").Inventory
+			inv.Facts.FirewallRules, inv.Baseline.Facts.FirewallRules = []string{"winunitd-qual-echo"}, []string{"winunitd-qual-echo"}
+		}},
+		{"a retained task changed under its name", "H22/all: fixture tasks, firewall rules or template files remain", func(rs []Record) {
+			inv := ev(t, rs, "H22/all").Inventory
+			inv.Facts.Tasks, inv.Baseline.Facts.Tasks = []string{`\winunitd-qual\observer`}, []string{`\winunitd-qual\observer`}
+		}},
+		{"template files at both ends", "H22/all: fixture tasks, firewall rules or template files remain", func(rs []Record) {
+			inv := ev(t, rs, "H22/all").Inventory
+			inv.Facts.TemplateFiles, inv.Baseline.Facts.TemplateFiles = []string{`units\background.service`}, []string{`units\background.service`}
+		}},
+		{"audit policy not read", "H22/all: the audit policy was not read", func(rs []Record) {
+			inv := ev(t, rs, "H22/all").Inventory
+			inv.Facts.Audit, inv.Baseline.Facts.Audit = nil, nil
+		}},
+		{"per-user audit exclusion left behind", "H22/all: the machine state differs from the baseline", func(rs []Record) {
+			ev(t, rs, "H22/all").Inventory.Facts.Audit.Accounts[sidB] = false
+		}},
+		{"system audit policy changed", "H22/all: the machine state differs from the baseline", func(rs []Record) {
+			ev(t, rs, "H22/all").Inventory.Facts.Audit.System.PolicyChangeSuccess = false
+		}},
+		{"a profile hive still loaded", "H22/all: an account's profile hive is still loaded", func(rs []Record) {
+			ev(t, rs, "H22/all").Inventory.Accounts[sidB] = AccountState{HiveLoaded: true}
+		}},
+		{"probe configuration left in an account", "H22/all: an account's qualification state remains", func(rs []Record) {
+			ev(t, rs, "H22/all").Inventory.Accounts[sidA] = AccountState{StateRoot: true}
+		}},
+		{"an account's final state missing", "H22/all: an account's final state was not read", func(rs []Record) {
+			delete(ev(t, rs, "H22/all").Inventory.Accounts, sidAdmin)
+		}},
+		{"accounts not inventoried", "H22/all: the inventory does not cover every account, image and resource", func(rs []Record) {
+			sc := &ev(t, rs, "H22/all").Inventory.Scope
+			sc.Resources = slices.DeleteFunc(sc.Resources, func(s string) bool { return s == ResourceAccounts })
+		}},
 		{"data root not read", "H22/all: the data root's security was not read", func(rs []Record) {
 			inv := ev(t, rs, "H22/all").Inventory
 			inv.Facts.DataDir, inv.Baseline.Facts.DataDir = nil, nil

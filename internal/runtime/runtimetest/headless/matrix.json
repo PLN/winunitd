@@ -146,6 +146,6 @@
         {"id": "sensitivity-B", "account": "system", "mode": "system", "test": "TestNativeSecurityProbeDetectsSelectiveInheritance"}
       ]
     },
-    "H22": {"proof": "inventory", "ledger": "H", "plane": "daemon", "phase": 5, "title": "Final cleanup", "expect": "No owned daemon, helper, workload, client, task or grant remains; configuration, template, ACL, network and SCM state are restored and verified before the snapshot revert.", "variants": [{"id": "all", "account": "system", "mode": "system"}]}
+    "H22": {"proof": "inventory", "ledger": "H", "plane": "daemon", "phase": 5, "title": "Final cleanup", "expect": "Before the snapshot revert, no owned daemon, helper, workload or client process, fixture pipe or grant remains; every account's profile hive is unloaded and its qualification state removed; the fixture's tasks, firewall rules and Default-template files are absent, as the sealed baseline requires; and the service configuration, the data root, linger and admission-policy security and content, and the audit policy equal the baseline receipt. Peer and network-route restoration is the lab controller's own record.", "variants": [{"id": "all", "account": "system", "mode": "system"}]}
   }
 }

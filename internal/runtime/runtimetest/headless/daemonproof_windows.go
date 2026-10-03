@@ -253,6 +253,11 @@ func runInventory(args []string) error {
 	} else {
 		resources = append(resources, ResourcePipes)
 	}
+	if p.Accounts, err = accountStates(sids); err != nil {
+		fail("accounts", err)
+	} else {
+		resources = append(resources, ResourceAccounts)
+	}
 	var machine []string
 	var errs []NativeError
 	p.Facts, machine, errs = machineFacts(*dataDir, *linger, sids)
@@ -306,7 +311,56 @@ func machineFacts(dataDir, linger string, sids []string) (MachineFacts, []string
 	read(ResourceFirewall, err)
 	f.TemplateFiles, err = templateFiles()
 	read(ResourceTemplate, err)
+	f.Audit, err = machineAudit(sids)
+	read(ResourceAudit, err)
 	return f, resources, errs
+}
+
+// machineAudit is the system audit policy and each account's effective
+// logon success auditing.
+func machineAudit(sids []string) (*MachineAudit, error) {
+	sys, err := auditPolicy()
+	if err != nil {
+		return nil, err
+	}
+	a := &MachineAudit{System: *sys, Accounts: map[string]bool{}}
+	for _, sid := range sids {
+		if a.Accounts[sid], err = effectiveLogonAudit(sid); err != nil {
+			return nil, err
+		}
+	}
+	return a, nil
+}
+
+// accountStates is each account's final state: whether its profile hive is
+// loaded and whether its qualification state root, beside its winunitd
+// data root, remains.
+func accountStates(sids []string) (map[string]AccountState, error) {
+	out := map[string]AccountState{}
+	for _, sid := range sids {
+		var st AccountState
+		hive, err := registry.OpenKey(registry.USERS, sid, registry.QUERY_VALUE)
+		switch {
+		case err == nil:
+			st.HiveLoaded = true
+			_ = hive.Close()
+		case !notFound(err):
+			return nil, err
+		}
+		facts, dir := profileFacts(sid)
+		if len(facts.Errors) > 0 {
+			return nil, errors.New("a profile could not be read")
+		}
+		if dir != "" {
+			if _, err := os.Lstat(filepath.Join(dir, "AppData", "Local", "winunitd-qual")); err == nil {
+				st.StateRoot = true
+			} else if !notFound(err) {
+				return nil, err
+			}
+		}
+		out[sid] = st
+	}
+	return out, nil
 }
 
 // admissionPolicyName is the interactive admission policy file under the

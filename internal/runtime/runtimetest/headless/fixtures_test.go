@@ -478,6 +478,8 @@ func inventoryFor() *InventoryProof {
 			DataDir:   &ObjectFacts{Owner: SystemSID, DACL: "D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)"},
 			Linger:    &ObjectFacts{Owner: SystemSID, DACL: "D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"},
 			Admission: &ObjectFacts{Owner: "S-1-5-32-544", DACL: "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;BU)", Size: 48, SHA256: freshSHA},
+			Audit: &MachineAudit{System: AuditPolicy{LogonSuccess: true, PolicyChangeSuccess: true},
+				Accounts: map[string]bool{sidA: true, sidB: true, sidAdmin: true}},
 		}
 	}
 	scope := func() InventoryScope {
@@ -489,6 +491,7 @@ func inventoryFor() *InventoryProof {
 			Scope: InventoryScope{Accounts: []string{sidA, sidB, sidAdmin}, Resources: slices.Clone(MachineResources)}, Facts: facts()},
 		BaselineSHA256: baselineSHA, At: ft(90000), Boot: testBoot(5), Scope: scope(),
 		Broker: &InventoryProcess{Image: daemonImage, SID: SystemSID, PID: 603}, Facts: facts(),
+		Accounts: map[string]AccountState{sidA: {}, sidB: {}, sidAdmin: {}},
 	}
 }
 

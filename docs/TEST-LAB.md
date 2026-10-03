@@ -393,13 +393,18 @@ its result says:
   bytes it read. Both declare their scope, which must cover the run's
   accounts, every admitted image and each resource. Nothing of those images
   remains running besides the process the service control manager names as
-  the installed, running winunitd service, and no fixture pipe remains. The
-  machine state must equal the baseline's: the service's start type, binary
-  path and recovery actions; the system data root's, linger directory's and
-  interactive admission policy's security and content; the accounts' linger
-  grants; and the fixture's scheduled tasks, firewall rules and Default
-  profile template files. Firewall and task queries fail on any error
-  instead of reading as empty;
+  the installed, running winunitd service, and no fixture pipe remains.
+  Every account's profile hive is unloaded and its qualification state root
+  (probe configurations and outputs) removed. The fixture's scheduled tasks,
+  firewall rules and Default profile template files must be absent both at
+  the sealed baseline and at the end, so a retained object is never taken
+  for a restored one by its name. The machine state must equal the
+  baseline's: the service's start type, binary path and recovery actions;
+  the system data root's, linger directory's and interactive admission
+  policy's security and content; the accounts' linger grants; and the
+  system audit policy and each account's effective logon auditing. Firewall
+  and task queries fail on any error instead of reading as empty. Peer and
+  network-route restoration belongs to the lab controller's own record;
 - `pending`: a proof with no producer or validator; such a record never
   passes, and neither does a reference that cites it. No case of the
   current matrix is pending.

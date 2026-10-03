@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"maps"
 	"os"
 	"regexp"
 	"slices"
@@ -295,13 +296,16 @@ const (
 	ResourceService   = "service"
 	ResourceDataACL   = "data-acl"
 	ResourceAdmission = "admission"
+	ResourceAudit     = "audit"
+	ResourceAccounts  = "accounts"
 )
 
 var (
 	// MachineResources is the machine state a baseline receipt must cover.
-	MachineResources = []string{ResourceTasks, ResourceFirewall, ResourceGrants, ResourceTemplate, ResourceService, ResourceDataACL, ResourceAdmission}
+	MachineResources = []string{ResourceTasks, ResourceFirewall, ResourceGrants, ResourceTemplate, ResourceService, ResourceDataACL, ResourceAdmission,
+		ResourceAudit}
 	// InventoryResources is every resource a final inventory must cover.
-	InventoryResources = append([]string{ResourceProcesses, ResourcePipes}, MachineResources...)
+	InventoryResources = append([]string{ResourceProcesses, ResourcePipes, ResourceAccounts}, MachineResources...)
 )
 
 // InventoryScope is what an inventory covered: the accounts whose grants it
@@ -315,24 +319,50 @@ type InventoryScope struct {
 // MachineFacts is the machine state the qualification may change and must
 // restore: the winunitd service configuration, the system data root's and
 // linger directory's security, the interactive admission policy file (nil
-// when absent), the scope accounts' linger grants, and the fixture's
-// scheduled tasks, firewall rules and Default profile template files.
+// when absent), the scope accounts' linger grants, the audit policy the
+// logon history depends on, and the fixture's scheduled tasks, firewall
+// rules and Default profile template files, which the sealed baseline must
+// not hold at all.
 type MachineFacts struct {
-	Service       ServiceFacts `json:"service"`
-	DataDir       *ObjectFacts `json:"dataDir,omitempty"`
-	Linger        *ObjectFacts `json:"linger,omitempty"`
-	Admission     *ObjectFacts `json:"admission,omitempty"`
-	Grants        []string     `json:"grants,omitempty"`
-	Tasks         []string     `json:"tasks,omitempty"`
-	FirewallRules []string     `json:"firewallRules,omitempty"`
-	TemplateFiles []string     `json:"templateFiles,omitempty"`
+	Service       ServiceFacts  `json:"service"`
+	DataDir       *ObjectFacts  `json:"dataDir,omitempty"`
+	Linger        *ObjectFacts  `json:"linger,omitempty"`
+	Admission     *ObjectFacts  `json:"admission,omitempty"`
+	Grants        []string      `json:"grants,omitempty"`
+	Audit         *MachineAudit `json:"audit,omitempty"`
+	Tasks         []string      `json:"tasks,omitempty"`
+	FirewallRules []string      `json:"firewallRules,omitempty"`
+	TemplateFiles []string      `json:"templateFiles,omitempty"`
+}
+
+// MachineAudit is the system audit policy and each scope account's
+// effective logon success auditing, by SID.
+type MachineAudit struct {
+	System   AuditPolicy     `json:"system"`
+	Accounts map[string]bool `json:"accounts"`
 }
 
 func (f *MachineFacts) equal(o *MachineFacts) bool {
 	obj := func(a, b *ObjectFacts) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
+	audit := func(a, b *MachineAudit) bool {
+		return a == nil && b == nil || a != nil && b != nil && a.System == b.System && maps.Equal(a.Accounts, b.Accounts)
+	}
 	return f.Service == o.Service && obj(f.DataDir, o.DataDir) && obj(f.Linger, o.Linger) && obj(f.Admission, o.Admission) &&
-		slices.Equal(f.Grants, o.Grants) && slices.Equal(f.Tasks, o.Tasks) && slices.Equal(f.FirewallRules, o.FirewallRules) &&
-		slices.Equal(f.TemplateFiles, o.TemplateFiles)
+		slices.Equal(f.Grants, o.Grants) && audit(f.Audit, o.Audit) && slices.Equal(f.Tasks, o.Tasks) &&
+		slices.Equal(f.FirewallRules, o.FirewallRules) && slices.Equal(f.TemplateFiles, o.TemplateFiles)
+}
+
+// fixtureObjects reports whether facts hold any of the fixture's own
+// tasks, firewall rules or template files.
+func (f *MachineFacts) fixtureObjects() bool {
+	return len(f.Tasks)+len(f.FirewallRules)+len(f.TemplateFiles) > 0
+}
+
+// AccountState is a scope account's final state: whether its profile hive
+// is still loaded and whether its qualification state root remains.
+type AccountState struct {
+	HiveLoaded bool `json:"hiveLoaded"`
+	StateRoot  bool `json:"stateRoot"`
 }
 
 // InventoryBaseline is SYSTEM's receipt of the machine state before any
@@ -361,8 +391,10 @@ type InventoryProof struct {
 	Broker    *InventoryProcess  `json:"broker,omitempty"`
 	Processes []InventoryProcess `json:"processes,omitempty"`
 	Pipes     []string           `json:"pipes,omitempty"`
-	Facts     MachineFacts       `json:"facts"`
-	Errors    []NativeError      `json:"errors,omitempty"`
+	// Accounts is each scope account's final state, by SID.
+	Accounts map[string]AccountState `json:"accounts,omitempty"`
+	Facts    MachineFacts            `json:"facts"`
+	Errors   []NativeError           `json:"errors,omitempty"`
 }
 
 // InventoryProcess is one process of an inventoried image.
@@ -441,6 +473,25 @@ func CheckInventory(p *InventoryProof, c InventoryContext) []string {
 	}
 	if p.Facts.DataDir == nil {
 		add("the data root's security was not read")
+	}
+	if p.Facts.Audit == nil {
+		add("the audit policy was not read")
+	}
+	if b.Facts.fixtureObjects() {
+		add("the sealed baseline already held fixture tasks, firewall rules or template files")
+	}
+	if p.Facts.fixtureObjects() {
+		add("fixture tasks, firewall rules or template files remain")
+	}
+	for _, sid := range c.Accounts {
+		switch st, ok := p.Accounts[sid]; {
+		case !ok:
+			add("an account's final state was not read")
+		case st.HiveLoaded:
+			add("an account's profile hive is still loaded")
+		case st.StateRoot:
+			add("an account's qualification state remains")
+		}
 	}
 	if !p.Facts.equal(&b.Facts) {
 		add("the machine state differs from the baseline")
