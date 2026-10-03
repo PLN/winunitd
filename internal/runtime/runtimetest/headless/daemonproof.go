@@ -429,7 +429,7 @@ func CheckInventory(p *InventoryProof, c InventoryContext) []string {
 	if len(p.Pipes) > 0 {
 		add("fixture pipes remain")
 	}
-	if p.Facts.DataDir == nil || p.Facts.Linger == nil {
+	if p.Facts.DataDir == nil {
 		add("the data root's security was not read")
 	}
 	if !p.Facts.equal(&b.Facts) {

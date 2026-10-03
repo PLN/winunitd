@@ -593,12 +593,15 @@ func TestSummarizeRequiresDiagnosticsProofs(t *testing.T) {
 		{"admission policy removed", "H22/all: the machine state differs from the baseline", func(rs []Record) {
 			ev(t, rs, "H22/all").Inventory.Facts.Admission = nil
 		}},
+		{"linger directory created since the baseline", "H22/all: the machine state differs from the baseline", func(rs []Record) {
+			ev(t, rs, "H22/all").Inventory.Baseline.Facts.Linger = nil
+		}},
 		{"data root opened", "H22/all: the machine state differs from the baseline", func(rs []Record) {
 			ev(t, rs, "H22/all").Inventory.Facts.DataDir.DACL += "(A;OICI;FA;;;BU)"
 		}},
 		{"data root not read", "H22/all: the data root's security was not read", func(rs []Record) {
 			inv := ev(t, rs, "H22/all").Inventory
-			inv.Facts.Linger, inv.Baseline.Facts.Linger = nil, nil
+			inv.Facts.DataDir, inv.Baseline.Facts.DataDir = nil, nil
 		}},
 		{"failed inventory query", "H22/all: an inventory query failed", func(rs []Record) {
 			ev(t, rs, "H22/all").Inventory.Errors = []NativeError{{Op: "tasks", Win32: 2}}

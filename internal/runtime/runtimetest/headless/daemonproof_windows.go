@@ -279,7 +279,10 @@ func machineFacts(dataDir, linger string, sids []string) (MachineFacts, []string
 	read(ResourceService, err)
 	f.DataDir, err = objectFacts(dataDir, false)
 	if err == nil {
-		f.Linger, err = objectFacts(linger, false)
+		// An absent linger directory is recorded as absent.
+		if f.Linger, err = objectFacts(linger, false); notFound(err) {
+			f.Linger, err = nil, nil
+		}
 	}
 	read(ResourceDataACL, err)
 	f.Admission, err = objectFacts(filepath.Join(dataDir, admissionPolicyName), true)
