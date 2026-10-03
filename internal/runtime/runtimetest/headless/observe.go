@@ -165,12 +165,14 @@ type SamplingFacts struct {
 
 // AuditFacts is the Security log's logon history since the boot: whether
 // it was read, the oldest event it still holds, whether it was cleared
-// since the boot, the audit policy when the observer started and after its
-// final scan, how many changes to that policy were logged since the boot,
-// and the time up to which the read covers the log. Only a log that
-// reaches back past the boot, uncleared, under a policy that audited
-// successful logons and policy changes throughout, lists every logon since
-// then.
+// since the boot, the system audit policy and each watched account's
+// effective logon auditing (system and per-user policy combined) when the
+// observer started and after its final scan, how many changes to that
+// policy were logged since the boot, and the marker logon that bounds what
+// the read covers. Only a log that reaches back past the boot, uncleared,
+// under a policy that audited every watched account's successful logons and
+// all policy changes throughout, read after its own marker appeared, lists
+// every logon since then.
 type AuditFacts struct {
 	Read             bool         `json:"read"`
 	Oldest           uint64       `json:"oldest,omitempty"`
@@ -179,9 +181,35 @@ type AuditFacts struct {
 	PolicyEnd        *AuditPolicy `json:"policyEnd,omitempty"`
 	// PolicyChanges counts logged changes to the logon or audit-policy
 	// change subcategories since the boot.
-	PolicyChanges int           `json:"policyChanges"`
-	To            uint64        `json:"to,omitempty"`
-	Errors        []NativeError `json:"errors,omitempty"`
+	PolicyChanges int `json:"policyChanges"`
+	// UserPolicyChanges counts logged per-user audit policy changes for the
+	// watched accounts since the boot.
+	UserPolicyChanges int `json:"userPolicyChanges"`
+	// Accounts is each watched account's effective logon success auditing,
+	// by SID.
+	Accounts map[string]AccountAudit `json:"accounts,omitempty"`
+	// Marker is the attributable logon the observer made after its final
+	// scan and then found in the log.
+	Marker *AuditMarker `json:"marker,omitempty"`
+	// To is the marker's event time: the read covers the log up to it.
+	To     uint64        `json:"to,omitempty"`
+	Errors []NativeError `json:"errors,omitempty"`
+}
+
+// AccountAudit is one account's effective logon success auditing when the
+// observer started and after its final scan.
+type AccountAudit struct {
+	Start bool `json:"start"`
+	End   bool `json:"end"`
+}
+
+// AuditMarker is a logon the observer makes after its final scan so that
+// its own audited event, found in the log, bounds the collection: the
+// logon's ID, when the observer asked for it and the event's time.
+type AuditMarker struct {
+	LogonID   string `json:"logonId"`
+	Requested uint64 `json:"requested"`
+	Logged    uint64 `json:"logged"`
 }
 
 // AuditPolicy is the system audit policy the logon history depends on:
@@ -199,13 +227,25 @@ const MaxSampleInterval = 5 * time.Second
 
 // LogonHistoryKnown reports whether the report lists every password-bearing
 // logon of the watched accounts since its boot: sampling covered the
-// observation, and the audited history reaches back past the boot,
-// uncleared, under an unchanged policy auditing successful logons, and
-// covers the log until after the observation ended.
+// observation; the audited history reaches back past the boot, uncleared;
+// the system policy and every watched account's effective policy audited
+// successful logons at both ends, with no system or per-user policy change
+// logged since the boot; and the observer's own marker logon, made after the
+// final scan, appeared in the log before the history was read, which bounds
+// the collection.
 func (r *ObserverReport) LogonHistoryKnown() bool {
 	a := r.Audit
 	if !r.samplingComplete() || a == nil || !a.Read || len(a.Errors) > 0 || a.ClearedSinceBoot || a.Oldest == 0 || a.Oldest > r.Boot.Time ||
-		!a.PolicyStart.audits() || !a.PolicyEnd.audits() || a.PolicyChanges != 0 || a.To < r.Ended {
+		!a.PolicyStart.audits() || !a.PolicyEnd.audits() || a.PolicyChanges != 0 || a.UserPolicyChanges != 0 {
+		return false
+	}
+	for _, sid := range r.Accounts {
+		if acct, ok := a.Accounts[sid]; !ok || !acct.Start || !acct.End {
+			return false
+		}
+	}
+	m := a.Marker
+	if m == nil || m.LogonID == "" || m.Requested < r.Ended || m.Logged < m.Requested || a.To != m.Logged {
 		return false
 	}
 	return !slices.ContainsFunc(r.Logons, func(l LogonFact) bool { return l.Source == "audit" && l.LogonTime > a.To })

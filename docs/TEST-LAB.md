@@ -442,13 +442,21 @@ sample and reads each watched account's profile registration, profile path,
 directory creation time and loaded hive and the workload's own progress
 record; then a final scan, which terminates and releases nothing, ends the
 observation at its boundary. A held process whose kernel exit time follows
-that boundary was running at it. Afterwards it reads the Security log's
-logon history since the boot, with the oldest event the log holds, whether
-it was cleared, changes to the Logon and Audit Policy Change subcategories
-logged since the boot, and the audit policy, which it also read when it
-started; the read waits for events to settle and records how far it covers
-the log. Batch logons are counted from that history, which names the logon
-process, so the product's own S4U logons are not counted. Its report also
+that boundary was running at it. It reads the system audit policy and each
+watched account's effective logon auditing (system and per-user policy
+combined) when it starts and again after the final scan. It then makes an
+attributable marker logon, a service logon of the local service account,
+and waits up to two minutes for that logon's audit event to appear in the
+Security log; the marker's event time is how far the history read covers
+the log. Only then does it read the logon history since the boot: the
+oldest event the log holds, whether it was cleared, changes to the Logon and
+Audit Policy Change subcategories and per-user policy changes for the
+watched accounts since the boot, and the watched accounts' logons. A marker
+that does not appear leaves the history unknown. The marker bound rests on
+the audit path writing logons in order; it is a fixture claim until the
+native procedure shows it on the selected OS. Batch logons are counted from
+that history, which names the logon process, so the product's own S4U logons
+are not counted. Its report also
 records the boot (kernel boot time and boot counter), the longest interval
 between two scans and the crash class of its plan. An observation must not carry lifecycle values itself; `record
 --observer` validates the report, requires the admitted observer and the
@@ -512,9 +520,11 @@ trusting a record's claim:
 - phase order; the first phase on one fresh boot and the first two phases with
   no password-bearing logon since their boot, counted from the observer's
   samples and the Security log's history, which must reach back past the
-  boot uncleared, under a policy that audited successful logons and audit
-  policy changes at both ends with no such change logged since the boot,
-  and cover the log past the observation's end, so bare S4U network and EFS
+  boot uncleared, under a system policy that audited successful logons and
+  audit policy changes and an effective policy that audited each watched
+  account's successful logons at both ends, with no system or per-user
+  policy change logged since the boot, and cover the log up to the
+  observer's own marker logon after the final scan, so bare S4U network and EFS
   probes precede every credential
   control; the first-use check immediately before the first-use cold boot;
   shared executions only where declared and with one observer report; five
@@ -643,9 +653,11 @@ What the lab provides for this driver:
   run (`-PeerAudit`); B's encrypted EFS fixture and its plain sibling.
 - On the guest: success auditing of the Logon and Audit Policy Change
   subcategories, set before the qualification's first boot and unchanged
-  through it, and a Security log large enough and never cleared during the
-  qualification, so the logon history reaches back past each boot;
-  otherwise the no-password phases stay unproven.
+  through it, with no per-user audit policy that excludes a qualification
+  account; logon success auditing for the local service account, whose
+  service logon is the observer's marker; and a Security log large enough
+  and never cleared during the qualification, so the logon history reaches
+  back past each boot. Otherwise the no-password phases stay unproven.
 - The run manifest admits `winunitd.exe`, `winctl.exe`,
   `headless-workload.exe`, `runtime.test.exe`, `journal.test.exe` and
   `test2json.exe` of the one integration artifact; `-Baseline` names the

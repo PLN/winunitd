@@ -22,8 +22,10 @@ var (
 	procEvtRender = wevtapi.NewProc("EvtRender")
 	procEvtClose  = wevtapi.NewProc("EvtClose")
 
-	procAuditQuerySystemPolicy = advapi32.NewProc("AuditQuerySystemPolicy")
-	procAuditFree              = advapi32.NewProc("AuditFree")
+	procAuditQuerySystemPolicy           = advapi32.NewProc("AuditQuerySystemPolicy")
+	procAuditComputeEffectivePolicyBySid = advapi32.NewProc("AuditComputeEffectivePolicyBySid")
+	procAuditFree                        = advapi32.NewProc("AuditFree")
+	procLogonUserW                       = advapi32.NewProc("LogonUserW")
 )
 
 // The advanced audit policy subcategories the logon history depends on:
@@ -62,6 +64,99 @@ func auditPolicy() (*AuditPolicy, error) {
 	}
 	return &AuditPolicy{LogonSuccess: info[0].AuditingInformation&policyAuditSuccess != 0,
 		PolicyChangeSuccess: info[1].AuditingInformation&policyAuditSuccess != 0}, nil
+}
+
+// effectiveLogonAudit reports whether an account's successful logons are
+// audited under its effective policy, the system policy combined with the
+// account's per-user policy.
+func effectiveLogonAudit(sid string) (bool, error) {
+	if err := enablePrivilege("SeSecurityPrivilege"); err != nil {
+		return false, err
+	}
+	s, err := windows.StringToSid(sid)
+	if err != nil {
+		return false, err
+	}
+	guid := subcategoryLogon
+	var out *auditPolicyInformation
+	r, _, err := procAuditComputeEffectivePolicyBySid.Call(uintptr(unsafe.Pointer(s)), uintptr(unsafe.Pointer(&guid)), 1, uintptr(unsafe.Pointer(&out)))
+	if byte(r) == 0 || out == nil {
+		return false, fmt.Errorf("compute the effective audit policy: %w", err)
+	}
+	defer procAuditFree.Call(uintptr(unsafe.Pointer(out)))
+	if out.SubCategory != guid {
+		return false, errors.New("the effective policy names another subcategory")
+	}
+	return out.AuditingInformation&policyAuditSuccess != 0, nil
+}
+
+// accountAudits records each watched account's effective logon auditing at
+// the start or the end into a.
+func accountAudits(a *AuditFacts, sids []string, end bool) {
+	if a.Accounts == nil {
+		a.Accounts = map[string]AccountAudit{}
+	}
+	for _, sid := range sids {
+		ok, err := effectiveLogonAudit(sid)
+		if err != nil {
+			op := "audit-account-start"
+			if end {
+				op = "audit-account-end"
+			}
+			a.Errors = append(a.Errors, NativeError{Op: op, Win32: win32Code(err)})
+		}
+		acct := a.Accounts[sid]
+		if end {
+			acct.End = ok
+		} else {
+			acct.Start = ok
+		}
+		a.Accounts[sid] = acct
+	}
+}
+
+// auditMarker makes a service logon of the local service account, an
+// attributable successful logon, and waits until the Security log holds its
+// audit event: the log then holds every logon the audit path wrote before
+// it.
+func auditMarker() (*AuditMarker, error) {
+	user, _ := windows.UTF16PtrFromString("LocalService")
+	domain, _ := windows.UTF16PtrFromString("NT AUTHORITY")
+	m := &AuditMarker{Requested: filetimeNow()}
+	var tok windows.Token
+	r, _, err := procLogonUserW.Call(uintptr(unsafe.Pointer(user)), uintptr(unsafe.Pointer(domain)), 0, logon32LogonService, logon32ProviderDefault,
+		uintptr(unsafe.Pointer(&tok)))
+	if r == 0 {
+		return nil, fmt.Errorf("marker logon: %w", err)
+	}
+	var stats tokenStatistics
+	var n uint32
+	err = windows.GetTokenInformation(tok, windows.TokenStatistics, (*byte)(unsafe.Pointer(&stats)), uint32(unsafe.Sizeof(stats)), &n)
+	_ = tok.Close()
+	if err != nil {
+		return nil, err
+	}
+	id := uint64(uint32(stats.AuthenticationID.HighPart))<<32 | uint64(stats.AuthenticationID.LowPart)
+	m.LogonID = fmt.Sprintf("%08x:%08x", id>>32, id&0xffffffff)
+	query := fmt.Sprintf("*[System[EventID=%d] and EventData[Data[@Name='TargetLogonId']='0x%x']]", eventLogon, id)
+	deadline := time.Now().Add(markerWait)
+	for m.Logged == 0 {
+		err := evtEach(query, func(e *auditEvent) (bool, error) {
+			at, err := e.at()
+			m.Logged = at
+			return false, err
+		})
+		if err != nil {
+			return nil, err
+		}
+		if m.Logged == 0 {
+			if time.Now().After(deadline) {
+				return nil, errors.New("the marker logon did not appear in the Security log")
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+	}
+	return m, nil
 }
 
 // enablePrivilege enables a privilege the process token holds.
@@ -115,14 +210,19 @@ const (
 	evtBatch                 = 64
 	// maxAuditEvents bounds what one history read examines.
 	maxAuditEvents = 1 << 20
-	// Security log events: a successful logon, the log being cleared and
-	// a change to the system audit policy.
-	eventLogon        = 4624
-	eventCleared      = 1102
-	eventPolicyChange = 4719
-	// auditSettle is how long a logged event can take to appear in the
-	// log; the history read covers the log until that long before it began.
-	auditSettle = 2 * time.Second
+	// Security log events: a successful logon, the log being cleared, a
+	// change to the system audit policy and a change to a user's per-user
+	// audit policy.
+	eventLogon            = 4624
+	eventCleared          = 1102
+	eventPolicyChange     = 4719
+	eventUserPolicyChange = 4912
+	// markerWait bounds how long the observer waits for its marker logon
+	// to appear in the log; one that does not leaves the history unknown.
+	markerWait = 2 * time.Minute
+	// Logon types and provider for the marker's service logon.
+	logon32LogonService    = 5
+	logon32ProviderDefault = 0
 )
 
 // auditEvent is the part of a rendered Security event the history reads.
@@ -226,20 +326,31 @@ func logonID(s string) (string, bool) {
 	return fmt.Sprintf("%08x:%08x", v>>32, v&0xffffffff), true
 }
 
-// auditedLogons reads the Security log's logon history since the boot into
-// a: the oldest event the log still holds, whether it was cleared since the
-// boot, changes to the logon or audit-policy change subcategories since
-// then, the audit policy now, and every password-bearing logon of the
-// watched accounts since the boot with its logon process. It waits for
-// events to settle and records how far the read covers the log.
+// auditedLogons completes the Security log's logon history since the boot
+// in a, after the final scan: the system policy and each watched account's
+// effective policy now, the marker logon that bounds the collection, then,
+// once the marker is in the log, the oldest event the log holds, whether it
+// was cleared since the boot, changes to the logon or audit-policy change
+// subcategories and to the watched accounts' per-user policy since then,
+// and every password-bearing logon of the watched accounts since the boot
+// with its logon process.
 func auditedLogons(a *AuditFacts, boot uint64, sids map[string]bool) []LogonFact {
 	fail := func(op string, err error) { a.Errors = append(a.Errors, NativeError{Op: op, Win32: win32Code(err)}) }
 	var err error
 	if a.PolicyEnd, err = auditPolicy(); err != nil {
 		fail("audit-policy-end", err)
 	}
-	time.Sleep(auditSettle)
-	a.To = filetimeNow() - uint64(auditSettle/100)
+	watched := make([]string, 0, len(sids))
+	for sid := range sids {
+		watched = append(watched, sid)
+	}
+	slices.Sort(watched)
+	accountAudits(a, watched, true)
+	if a.Marker, err = auditMarker(); err != nil {
+		fail("audit-marker", err)
+	} else {
+		a.To = a.Marker.Logged
+	}
 	err = evtEach("*", func(e *auditEvent) (bool, error) {
 		at, err := e.at()
 		a.Oldest = at
@@ -248,9 +359,10 @@ func auditedLogons(a *AuditFacts, boot uint64, sids map[string]bool) []LogonFact
 	if err != nil {
 		fail("audit-oldest", err)
 	}
-	watched := map[string]bool{strings.ToLower(subcategoryLogon.String()): true, strings.ToLower(subcategoryPolicyChange.String()): true}
+	subcategories := map[string]bool{strings.ToLower(subcategoryLogon.String()): true, strings.ToLower(subcategoryPolicyChange.String()): true}
 	since := FiletimeTime(boot).Format("2006-01-02T15:04:05.000Z")
-	query := fmt.Sprintf("*[System[(EventID=%d or EventID=%d or EventID=%d) and TimeCreated[@SystemTime>='%s']]]", eventLogon, eventCleared, eventPolicyChange, since)
+	query := fmt.Sprintf("*[System[(EventID=%d or EventID=%d or EventID=%d or EventID=%d) and TimeCreated[@SystemTime>='%s']]]",
+		eventLogon, eventCleared, eventPolicyChange, eventUserPolicyChange, since)
 	var logons []LogonFact
 	err = evtEach(query, func(e *auditEvent) (bool, error) {
 		at, err := e.at()
@@ -261,8 +373,12 @@ func auditedLogons(a *AuditFacts, boot uint64, sids map[string]bool) []LogonFact
 		case eventCleared:
 			a.ClearedSinceBoot = true
 		case eventPolicyChange:
-			if watched[strings.ToLower(e.field("SubcategoryGuid"))] {
+			if subcategories[strings.ToLower(e.field("SubcategoryGuid"))] {
 				a.PolicyChanges++
+			}
+		case eventUserPolicyChange:
+			if sids[e.field("TargetUserSid")] {
+				a.UserPolicyChanges++
 			}
 		case eventLogon:
 			sid := e.field("TargetUserSid")

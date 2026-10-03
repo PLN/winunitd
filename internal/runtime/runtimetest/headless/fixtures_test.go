@@ -162,7 +162,9 @@ func newObserved(phase int, end float64) *observed {
 		Sampling: &SamplingFacts{Samples: int(math.Ceil(end+5)) + 1, First: ft(-5), Last: ft(end), MaxInterval: 1e7},
 		Sessions: []SessionSample{{At: ft(-5)}},
 		Audit: &AuditFacts{Read: true, Oldest: boot.Time - 1e7, PolicyStart: &AuditPolicy{LogonSuccess: true, PolicyChangeSuccess: true},
-			PolicyEnd: &AuditPolicy{LogonSuccess: true, PolicyChangeSuccess: true}, To: ft(end + 3)},
+			PolicyEnd: &AuditPolicy{LogonSuccess: true, PolicyChangeSuccess: true},
+			Accounts:  map[string]AccountAudit{sidA: {true, true}, sidB: {true, true}, sidAdmin: {true, true}},
+			Marker:    &AuditMarker{LogonID: "00000000:000a0001", Requested: ft(end + 0.5), Logged: ft(end + 1)}, To: ft(end + 1)},
 		Stage: ObserverFinished}, pid: 1000}
 }
 
@@ -225,7 +227,7 @@ func (o *observed) loop(account, mode string, att []Attempt) {
 func (o *observed) endAt(sec float64) {
 	o.Ended, o.FinalScan = ft(sec), ft(sec)
 	o.Sampling.Samples, o.Sampling.Last = int(math.Ceil(sec+5))+1, ft(sec)
-	o.Audit.To = ft(sec + 3)
+	o.Audit.Marker.Requested, o.Audit.Marker.Logged, o.Audit.To = ft(sec+0.5), ft(sec+1), ft(sec+1)
 }
 
 func lastLaunch(att []Attempt) float64 { return att[len(att)-1].Launched.Sub(t0).Seconds() }

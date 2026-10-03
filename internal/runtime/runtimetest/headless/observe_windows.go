@@ -172,6 +172,12 @@ func (o *observer) start(qualification bool) error {
 	if o.rep.Audit.PolicyStart, err = auditPolicy(); err != nil {
 		o.rep.Audit.Errors = append(o.rep.Audit.Errors, NativeError{Op: "audit-policy-start", Win32: win32Code(err)})
 	}
+	watched := make([]string, 0, len(o.cfg.Accounts))
+	for _, sid := range o.cfg.Accounts {
+		watched = append(watched, sid)
+	}
+	slices.Sort(watched)
+	accountAudits(o.rep.Audit, watched, false)
 	o.rep.Boot, err = bootIdentity()
 	return err
 }

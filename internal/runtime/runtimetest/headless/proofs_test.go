@@ -812,6 +812,32 @@ func TestSummarizeRequiresCompleteObservation(t *testing.T) {
 		{"audit policy changed since the boot", "H08/A: phase lifecycle has no complete observed logon history since its boot", func(rs []Record) {
 			ev(t, rs, "H08/A").Observer.Audit.PolicyChanges = 1
 		}},
+		{"account excluded by per-user policy", "H13/A: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+			ev(t, rs, "H13/A").Observer.Audit.Accounts[sidA] = AccountAudit{Start: false, End: true}
+		}},
+		{"account policy not read at the end", "H13/B: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+			ev(t, rs, "H13/B").Observer.Audit.Accounts[sidB] = AccountAudit{Start: true}
+		}},
+		{"no effective policy for a watched account", "H14/A: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+			delete(ev(t, rs, "H14/A").Observer.Audit.Accounts, sidB)
+		}},
+		{"per-user policy changed since the boot", "H07/A: phase lifecycle has no complete observed logon history since its boot", func(rs []Record) {
+			ev(t, rs, "H07/A").Observer.Audit.UserPolicyChanges = 1
+		}},
+		{"no marker logon", "H15/B: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+			ev(t, rs, "H15/B").Observer.Audit.Marker = nil
+		}},
+		{"marker made before the final scan", "H16/A: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+			r := ev(t, rs, "H16/A").Observer
+			r.Audit.Marker.Requested = r.Ended - 1e7
+		}},
+		{"coverage claimed past the marker", "H17/A: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+			r := ev(t, rs, "H17/A").Observer
+			r.Audit.To = r.Audit.Marker.Logged + 60e7
+		}},
+		{"marker never found in the log", "H18/A: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+			ev(t, rs, "H18/A").Observer.Audit.Marker.Logged = 0
+		}},
 		{"history read before the observation ended", "H15/A: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
 			r := ev(t, rs, "H15/A").Observer
 			r.Audit.To = r.Ended - 1
