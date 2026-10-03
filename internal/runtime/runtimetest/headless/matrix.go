@@ -61,8 +61,11 @@ const (
 const (
 	PathsOwnRoots         = "own-roots"
 	PathsMissingAndDenied = "missing-and-denied"
-	PipeAuthorized        = "authorized"
-	PipeDenied            = "denied"
+	// PathsDaemonDenial: the account reads its own daemon log and is denied
+	// the peer's and the system manager's daemon directories and logs.
+	PathsDaemonDenial = "daemon-denial"
+	PipeAuthorized    = "authorized"
+	PipeDenied        = "denied"
 )
 
 // Metrics a case can require; they are computed from raw evidence.
@@ -71,6 +74,7 @@ var knownMetrics = []string{
 	"negativeSec", "failures", "maxStartsIn10s", "orderedReplacement", "startLimited", "peerUnchanged", "drained", "kept",
 	"maxExitedLifeSec", "recovered", "postResetGrowth", "unlimited", "restartAttempts", "withinBurst",
 	"bootStarted", "progressing", "profileCreated", "profileExisting", "interactiveSessions", "sessionCycle", "profileUnloaded",
+	"lingerKept", "sessionRetained",
 }
 
 // The observer report derivation each lifecycle metric needs: launches of
@@ -82,7 +86,7 @@ var metricNeeds = map[string]string{
 	"orderedReplacement": "crash", "peerUnchanged": "peer", "drained": "drained", "kept": "kept",
 	"maxExitedLifeSec": "role", "recovered": "role", "postResetGrowth": "role", "withinBurst": "role",
 	"bootStarted": "boot", "progressing": "boot", "profileCreated": "boot", "profileExisting": "boot", "interactiveSessions": "sessions",
-	"sessionCycle": "session", "profileUnloaded": "unloaded",
+	"sessionCycle": "session", "profileUnloaded": "unloaded", "lingerKept": "independent", "sessionRetained": "independent",
 }
 
 //go:embed matrix.json
@@ -131,6 +135,8 @@ type Case struct {
 	Proof string `json:"proof,omitempty"`
 	// Package is the product package whose test binary runs a named test.
 	Package string `json:"package,omitempty"`
+	// Check is what a daemon-log proof is held to.
+	Check string `json:"check,omitempty"`
 }
 
 // ObserveSpec names the lifecycle values derived from an observer report.
@@ -162,6 +168,10 @@ type ObserveSpec struct {
 	Boot     string `json:"boot,omitempty"`
 	Session  bool   `json:"session,omitempty"`
 	Unloaded bool   `json:"unloaded,omitempty"`
+	// Independent derives H06's sequence from the marks admission-revoked,
+	// linger-disabled and logoff: the headless manager outlives the
+	// admission change, a session manager the linger change, until logoff.
+	Independent bool `json:"independent,omitempty"`
 }
 
 // Variant is one account, mode or subcase of a case.
@@ -175,7 +185,13 @@ type Variant struct {
 	Refs        []string `json:"refs,omitempty"`
 	Repetitions int      `json:"repetitions,omitempty"`
 	Test        string   `json:"test,omitempty"`
-	Proof       string   `json:"proof,omitempty"`
+	// Tests are several named tests of one run.
+	Tests   []string     `json:"tests,omitempty"`
+	Proof   string       `json:"proof,omitempty"`
+	Package string       `json:"package,omitempty"`
+	Check   string       `json:"check,omitempty"`
+	Paths   string       `json:"paths,omitempty"`
+	Observe *ObserveSpec `json:"observe,omitempty"`
 }
 
 // ControlDef is a separately keyed control a case's records require.
@@ -223,6 +239,8 @@ type Entry struct {
 	Observe      *ObserveSpec   `json:"observe,omitempty"`
 	Proof        string         `json:"proof,omitempty"`
 	Package      string         `json:"package,omitempty"`
+	Tests        []string       `json:"tests,omitempty"`
+	Check        string         `json:"check,omitempty"`
 }
 
 // ControlEntry is one expected control record.
@@ -329,6 +347,14 @@ func validRequirements(reqs []Requirement) error {
 	return nil
 }
 
+func validPaths(set string) bool {
+	switch set {
+	case "", PathsOwnRoots, PathsMissingAndDenied, PathsDaemonDenial:
+		return true
+	}
+	return false
+}
+
 func validRole(role string, broker bool) bool {
 	return role == RoleManager || role == RoleWorkload || role == RoleChild || broker && role == RoleBroker
 }
@@ -374,7 +400,8 @@ func validObserveSpec(o *ObserveSpec, requires []Requirement, plane string) erro
 		return fmt.Errorf("boot %q", o.Boot)
 	}
 	has := map[string]bool{"role": o.Role != "", "negative": o.Negative != "", "crash": o.Crash != "", "peer": o.Peer, "drained": o.Drained,
-		"kept": len(o.Kept) > 0, "boot": o.Boot != "", "session": o.Session, "unloaded": o.Unloaded, "sessions": o.Boot != "" || o.Session}
+		"kept": len(o.Kept) > 0, "boot": o.Boot != "", "session": o.Session, "unloaded": o.Unloaded, "sessions": o.Boot != "" || o.Session,
+		"independent": o.Independent}
 	for _, r := range requires {
 		if need := metricNeeds[r.Metric]; need != "" && !has[need] {
 			return fmt.Errorf("requirement %s needs the observer's %s", r.Metric, need)
@@ -402,9 +429,7 @@ func (m *Matrix) validateCase(id string, c Case) error {
 	default:
 		return fmt.Errorf("characterize %q", c.Characterize)
 	}
-	switch c.Paths {
-	case "", PathsOwnRoots, PathsMissingAndDenied:
-	default:
+	if !validPaths(c.Paths) {
 		return fmt.Errorf("paths %q", c.Paths)
 	}
 	switch c.Pipe {
@@ -443,7 +468,8 @@ func (m *Matrix) validateCase(id string, c Case) error {
 		}
 		seen[v.ID] = true
 		if len(v.Refs) > 0 {
-			if v.Account != "" || v.Mode != "" || v.Execution != "" || v.Repetitions != 0 || v.Phase != 0 || v.Test != "" || v.Proof != "" {
+			if v.Account != "" || v.Mode != "" || v.Execution != "" || v.Repetitions != 0 || v.Phase != 0 || v.Test != "" || v.Proof != "" ||
+				len(v.Tests) > 0 || v.Package != "" || v.Check != "" || v.Paths != "" || v.Observe != nil {
 				return fmt.Errorf("reference variant %s has execution fields", v.ID)
 			}
 			continue
@@ -458,8 +484,25 @@ func (m *Matrix) validateCase(id string, c Case) error {
 		if v.Plane != "" {
 			plane = v.Plane
 		}
-		if c.Observe != nil && plane != PlaneDaemon {
+		eff := effective(c, v)
+		if eff.Observe != nil && plane != PlaneDaemon {
 			return fmt.Errorf("variant %s of an observed case is not a daemon record", v.ID)
+		}
+		if v.Observe != nil {
+			if err := validObserveSpec(v.Observe, c.Requires, plane); err != nil {
+				return fmt.Errorf("variant %s: %w", v.ID, err)
+			}
+		}
+		if !validPaths(v.Paths) {
+			return fmt.Errorf("variant %s paths %q", v.ID, v.Paths)
+		}
+		if v.Test != "" && len(v.Tests) > 0 {
+			return fmt.Errorf("variant %s names a test and a test list", v.ID)
+		}
+		for _, name := range v.Tests {
+			if !testPattern.MatchString(name) {
+				return fmt.Errorf("variant %s test %q", v.ID, name)
+			}
 		}
 		if plane != PlaneDaemon && plane != PlaneOwnerTest {
 			return fmt.Errorf("variant %s plane %q", v.ID, plane)
@@ -474,45 +517,80 @@ func (m *Matrix) validateCase(id string, c Case) error {
 		if v.Repetitions < 0 || v.Repetitions > 9 || c.Runners != 0 && v.Repetitions != c.Runners {
 			return fmt.Errorf("variant %s repetitions %d", v.ID, v.Repetitions)
 		}
-		if v.Test != "" && (!testPattern.MatchString(v.Test) || plane != PlaneOwnerTest) {
+		if (v.Test != "" || len(v.Tests) > 0) && plane != PlaneOwnerTest || v.Test != "" && !testPattern.MatchString(v.Test) {
 			return fmt.Errorf("variant %s test %q", v.ID, v.Test)
 		}
 		if v.Execution != "" && !controlPattern.MatchString(v.Execution) {
 			return fmt.Errorf("variant %s execution %q", v.ID, v.Execution)
 		}
-		proof := c.Proof
-		if v.Proof != "" {
-			proof = v.Proof
-		}
-		if err := validProof(proof, plane, c, v); err != nil {
+		if err := validProof(eff, plane, v); err != nil {
 			return fmt.Errorf("variant %s: %w", v.ID, err)
 		}
 	}
 	return nil
 }
 
+// variantView is a variant's fields after the case's defaults apply.
+type variantView struct {
+	Proof, Package, Check, Paths string
+	Observe                      *ObserveSpec
+}
+
+func effective(c Case, v Variant) variantView {
+	pick := func(variant, kase string) string {
+		if variant != "" {
+			return variant
+		}
+		return kase
+	}
+	e := variantView{Proof: pick(v.Proof, c.Proof), Package: pick(v.Package, c.Package), Check: pick(v.Check, c.Check),
+		Paths: pick(v.Paths, c.Paths), Observe: c.Observe}
+	if v.Observe != nil {
+		e.Observe = v.Observe
+	}
+	return e
+}
+
 // validProof requires each executed variant to declare the proof its
 // records carry, and the case to define what that proof needs.
-func validProof(proof, plane string, c Case, v Variant) error {
-	switch proof {
+func validProof(e variantView, plane string, v Variant) error {
+	if e.Check != "" && e.Proof != ProofDaemonLog {
+		return errors.New("only a daemon-log proof has a check")
+	}
+	switch e.Proof {
 	case ProofPending:
 		return nil
 	case ProofObserver:
-		if c.Observe == nil {
+		if e.Observe == nil {
 			return errors.New("an observer proof needs an observer derivation")
 		}
 	case ProofProbe:
-		if c.Observe == nil || !c.Observe.Subject {
+		if e.Observe == nil || !e.Observe.Subject {
 			return errors.New("a probe proof needs the observer to hold its subject")
 		}
 	case ProofNamedTest:
-		if plane != PlaneOwnerTest || v.Test == "" || !packagePattern.MatchString(c.Package) {
-			return errors.New("a named-test proof needs an owner test, its name and its package")
+		if plane != PlaneOwnerTest || v.Test == "" && len(v.Tests) == 0 || !packagePattern.MatchString(e.Package) {
+			return errors.New("a named-test proof needs an owner test, its names and its package")
+		}
+	case ProofDaemonLog:
+		switch {
+		case e.Check == CheckProtection && v.Mode == ModeSystem && e.Observe == nil:
+		case (e.Check == CheckRotation || e.Check == CheckRepair) && v.Mode != ModeSystem && e.Observe != nil:
+		default:
+			return errors.New("a daemon-log proof needs a check that fits its account, and an observer for a manager's start")
+		}
+	case ProofSessionProbe:
+		if v.Mode != ModeWTS && v.Mode != ModeFilteredAdmin || e.Paths == "" {
+			return errors.New("a session probe needs a session mode and a path set")
+		}
+	case ProofInventory:
+		if v.Mode != ModeSystem {
+			return errors.New("the inventory is SYSTEM's")
 		}
 	default:
-		return fmt.Errorf("proof %q", proof)
+		return fmt.Errorf("proof %q", e.Proof)
 	}
-	if plane == PlaneOwnerTest && proof != ProofNamedTest {
+	if plane == PlaneOwnerTest && e.Proof != ProofNamedTest {
 		return errors.New("an owner test needs a named-test proof")
 	}
 	return nil
@@ -571,13 +649,12 @@ func (m *Matrix) expand() ([]Entry, error) {
 			e := Entry{Case: id, Variant: v.ID, Ledger: c.Ledger, Account: v.Account, Mode: v.Mode, Execution: v.Execution,
 				Refs: slices.Clone(v.Refs), Test: v.Test, CapSec: c.CapSec, Requires: c.Requires,
 				Characterize: c.Characterize, Paths: c.Paths, Pipe: c.Pipe, Observe: c.Observe, Proof: c.Proof, Package: c.Package}
-			if v.Proof != "" {
-				e.Proof = v.Proof
-			}
+			eff := effective(c, v)
+			e.Proof, e.Package, e.Check, e.Paths, e.Observe, e.Tests = eff.Proof, eff.Package, eff.Check, eff.Paths, eff.Observe, slices.Clone(v.Tests)
 			if len(v.Refs) > 0 {
 				e.Plane = PlaneReference
 				e.Key = id + "/" + v.ID
-				e.Requires, e.Characterize, e.Paths, e.Pipe, e.CapSec, e.Observe, e.Proof, e.Package = nil, "", "", "", 0, nil, "", ""
+				e.Requires, e.Characterize, e.Paths, e.Pipe, e.CapSec, e.Observe, e.Proof, e.Package, e.Check, e.Tests = nil, "", "", "", 0, nil, "", "", "", nil
 				out = append(out, e)
 				continue
 			}

@@ -1,6 +1,7 @@
 package headless
 
 import (
+	"encoding/json"
 	"slices"
 	"sort"
 	"strings"
@@ -59,20 +60,13 @@ func countIn(pending map[string]bool, m *Matrix, s Summary) int {
 	return n
 }
 
-// A full realistic record set passes every case with a producer; the
-// pending cases stay incomplete with only their own problems, so the
-// summary is never complete until they have one.
-func TestSummarizeCompleteSetLeavesOnlyPendingCases(t *testing.T) {
+// A full realistic record set, every record with its proof, is complete.
+func TestSummarizeCompleteSet(t *testing.T) {
 	m := testMatrix(t)
 	run := testRun(t)
 	s := Summarize(m, allPassing(t, m), run, Selection{})
-	if s.Complete || s.Required != 86 || s.Controls != 14 || !onlyPending(m, s) {
+	if !s.Complete || s.Passed != 86 || s.Required != 86 || s.Controls != 14 || len(s.Problems) != 0 || !onlyPending(m, s) {
 		t.Fatalf("complete set: %+v", s)
-	}
-	for key := range pendingKeys(m) {
-		if !strings.Contains(strings.Join(s.Problems, "\n"), key+": ") && !strings.HasPrefix(key, "G6/headless") {
-			t.Errorf("%s is not reported", key)
-		}
 	}
 	// Shared events count once: 86 records, 15 references, three pairs.
 	if s.Executions != 86-15-3 {
@@ -80,6 +74,32 @@ func TestSummarizeCompleteSetLeavesOnlyPendingCases(t *testing.T) {
 	}
 	if s.Characterizations["H18/A"] != Refused || s.Characterizations["H19/B"] != Refused || s.Characterizations["H17/B"] != Succeeded {
 		t.Fatalf("characterizations %v", s.Characterizations)
+	}
+}
+
+// A case whose proof has no producer never passes, and neither does a
+// reference that cites it, whatever their records say.
+func TestSummarizePendingProofNeverPasses(t *testing.T) {
+	var raw map[string]any
+	if err := json.Unmarshal(matrixJSON, &raw); err != nil {
+		t.Fatal(err)
+	}
+	h12 := raw["cases"].(map[string]any)["H12"].(map[string]any)
+	h12["proof"] = ProofPending
+	delete(h12, "check")
+	delete(h12, "observe")
+	data, _ := json.Marshal(raw)
+	m, err := DecodeMatrix(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pendingKeys(m)["G6/headless-A"] {
+		t.Fatal("a reference to a pending case is not pending")
+	}
+	s := Summarize(m, allPassing(t, m), testRun(t), Selection{})
+	if s.Complete || !onlyPending(m, s) || !strings.Contains(strings.Join(s.Problems, "\n"), "H12/A: no qualified producer of this case's proof exists yet") ||
+		s.Incomplete != 4 {
+		t.Fatalf("pending case: %+v", s)
 	}
 }
 

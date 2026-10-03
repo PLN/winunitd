@@ -24,6 +24,7 @@ const (
 	// Admitted hashes of the runtime test binary and an unrelated program.
 	testRuntimeSHA = "7e57000000000000000000000000000000000000000000000000000000000001"
 	testOtherSHA   = "0e00000000000000000000000000000000000000000000000000000000000002"
+	testJournalSHA = "7e57000000000000000000000000000000000000000000000000000000000003"
 	testShare      = `\\peer\share\nonce.txt`
 	testEFSFile    = `C:\Users\b\efs\secret.txt`
 )
@@ -34,7 +35,8 @@ var testAdmission = sync.OnceValues(func() ([]byte, error) {
 		return nil, err
 	}
 	return json.Marshal(Admission{Schema: AdmissionSchema, Source: testSource, Artifacts: []Artifact{
-		{Name: workloadImage, SHA256: exe}, {Name: "runtime.test.exe", SHA256: testRuntimeSHA}, {Name: "other.exe", SHA256: testOtherSHA}}})
+		{Name: workloadImage, SHA256: exe}, {Name: "runtime.test.exe", SHA256: testRuntimeSHA}, {Name: "journal.test.exe", SHA256: testJournalSHA},
+		{Name: "other.exe", SHA256: testOtherSHA}}})
 })
 
 func testRun(t *testing.T) AdmittedRun {
@@ -126,8 +128,13 @@ var testExecutable = sync.OnceValue(func() string {
 })
 
 func tokenFacts(account, mode string) TokenFacts {
-	if mode == ModeWTS {
-		return TokenFacts{SID: roleSID[account], Session: 2, Source: "User32", LogonType: logonInteractive, AuthPackage: "Negotiate", AuthenticationID: "00000000:00020000"}
+	switch mode {
+	case ModeWTS:
+		return TokenFacts{SID: roleSID[account], Session: 2, Source: "User32", LogonType: logonInteractive, AuthPackage: "Negotiate", AuthenticationID: "00000000:00020000",
+			ElevationType: 1}
+	case ModeFilteredAdmin:
+		return TokenFacts{SID: roleSID[account], Session: 2, Source: "User32", LogonType: logonInteractive, AuthPackage: "Negotiate", AuthenticationID: "00000000:00040000",
+			ElevationType: tokenElevationTypeLimit}
 	}
 	return TokenFacts{SID: roleSID[account], Source: productTokenSource, LogonType: logonNetwork, AuthPackage: "Kerberos", AuthenticationID: "00000000:00010000"}
 }
@@ -324,6 +331,32 @@ func observerFor(e Entry) *ObserverReport {
 		return o.ObserverReport
 	case "H03":
 		return newObserved(e.Phase, 130).ObserverReport
+	case "H06":
+		// Admission revoked at 10 s, a logon at 20 s, linger disabled at
+		// 30 s, logoff at 50 s; everything drains and stays gone.
+		o := newObserved(e.Phase, 140)
+		o.stable(peerOf(e.Account))
+		sid := roleSID[e.Account]
+		m := o.gen(RoleManager, e.Account, ModeS4U, -60, 35, 1).PID
+		o.gen(RoleWorkload, e.Account, ModeS4U, -59, 35, 1).ParentPID = m
+		o.gen(RoleManager, e.Account, ModeWTS, 20, 51, 0)
+		o.Marks = []Mark{{Name: MarkAdmissionRevoked, At: ft(10)}, {Name: MarkLingerDisabled, At: ft(30)}, {Name: MarkLogoff, At: ft(50)}}
+		o.Sessions = []SessionSample{{At: o.Started}, {At: ft(20), Users: []SessionUser{{Session: 2, SID: sid}}}, {At: ft(50.5)}}
+		o.Logons = []LogonFact{{ID: "00000000:00020000", SID: sid, Type: logonInteractive, LogonTime: ft(19)}}
+		return o.ObserverReport
+	case "H12", "G6":
+		// The manager the daemon-log proof needs started after the
+		// intervention at 10 s and still runs.
+		o := newObserved(e.Phase, 60)
+		if e.Account == AccountAdmin {
+			o.Accounts[AccountAdmin] = sidAdmin
+		}
+		mode := e.Mode
+		m := o.gen(RoleManager, e.Account, mode, 15, -1, 0).PID
+		if mode == ModeS4U {
+			o.gen(RoleWorkload, e.Account, mode, 16, -1, 0).ParentPID = m
+		}
+		return o.ObserverReport
 	case "H04":
 		// The account's WTS logon starts a session manager beside the
 		// headless one, which stays the same process.
@@ -380,10 +413,58 @@ func observerFor(e Entry) *ObserverReport {
 }
 
 // evidenceFor gives each case realistic raw evidence that meets it.
+// protectedFor is the product's protected daemon-log DACL for sid.
+func protectedFor(sid string) string {
+	if sid == SystemSID {
+		return "D:P(A;;FA;;;SY)(A;;FA;;;BA)"
+	}
+	return "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;" + sid + ")"
+}
+
+const paddedSHA = "9added0000000000000000000000000000000000000000000000000000000000"
+
+// daemonLogFor is a manager's diagnostics around the intervention at 10 s.
+func daemonLogFor(e Entry) *DaemonLogProof {
+	sid := roleSID[e.Account]
+	if e.Mode == ModeSystem {
+		sid = SystemSID
+	}
+	obj := func(size int64, sha string) *ObjectFacts {
+		return &ObjectFacts{Owner: sid, DACL: protectedFor(sid), Size: size, SHA256: sha}
+	}
+	after := DaemonLogFacts{At: ft(40), Dir: obj(0, ""), Current: obj(300, "c0"), Tail: []LogRecord{{Code: daemonOpenCode, At: ft(15.5)}}}
+	p := &DaemonLogProof{SID: sid, After: after}
+	switch e.Check {
+	case CheckRotation:
+		p.Before = &DaemonLogFacts{At: ft(10), Dir: obj(0, ""), Current: obj(RotationBytes+100, paddedSHA)}
+		p.After.Archive = obj(RotationBytes+100, paddedSHA)
+	case CheckRepair:
+		p.Before = &DaemonLogFacts{At: ft(10), Dir: &ObjectFacts{Owner: sid, DACL: "D:AI(A;OICI;FA;;;" + sid + ")(A;OICIID;FA;;;BU)"}}
+	}
+	return p
+}
+
 func evidenceFor(e Entry) Evidence {
 	var ev Evidence
 	if e.Proof == ProofObserver {
 		ev.Observer = observerFor(e)
+	}
+	if e.Proof == ProofDaemonLog {
+		ev.DaemonLog = daemonLogFor(e)
+		if e.Observe != nil {
+			ev.Observer = observerFor(e)
+		}
+	}
+	if e.Proof == ProofSessionProbe {
+		f := tokenFacts(e.Account, e.Mode)
+		ev.Token = &TokenProbe{PID: 4100, Created: ft(1), SID: f.SID, Source: f.Source, Session: f.Session, LogonType: f.LogonType, AuthPackage: f.AuthPackage,
+			AuthenticationID: f.AuthenticationID, ElevationType: f.ElevationType, Integrity: "medium"}
+		ev.Paths = []PathResult{{Probe: "own-log", OK: true}, {Probe: "peer-directory", Win32: errAccessDenied}, {Probe: "peer-log", Win32: errAccessDenied},
+			{Probe: "system-directory", Win32: errAccessDenied}, {Probe: "system-log", Win32: errAccessDenied}}
+	}
+	if e.Proof == ProofInventory {
+		service := ServiceFacts{Installed: true, StartType: 2, BinaryPath: strings.Repeat("b", 64), Recovery: "restart/60000;restart/60000;none/0;86400"}
+		ev.Inventory = &InventoryProof{Baseline: "c5-baseline", At: ft(9000), Service: service, BaselineService: service}
 	}
 	var p probed
 	if e.Proof == ProofProbe {
@@ -391,12 +472,22 @@ func evidenceFor(e Entry) Evidence {
 		ev.Observer, ev.Token = p.report, tokenProbeOf(p.probe)
 	}
 	if e.Proof == ProofNamedTest {
-		ev.TestRun = &TestRunProof{Artifact: "runtime.test.exe", SHA256: testRuntimeSHA,
-			Runner: RunnerFacts{PID: 77, Created: ft(-10), Token: TokenFacts{SID: SystemSID, AuthenticationID: "00000000:000003e7"}},
-			Events: []TestEvent{{Action: "run", Test: e.Test}, {Action: "run", Test: e.Test + "/sub"}, {Action: "pass", Test: e.Test + "/sub"}, {Action: "pass", Test: e.Test}}}
-		if e.Mode == ModeS4U {
+		ev.TestRun = &TestRunProof{Artifact: e.Package + ".test.exe", SHA256: map[string]string{"runtime": testRuntimeSHA, "journal": testJournalSHA}[e.Package],
+			Runner: RunnerFacts{PID: 77, Created: ft(-10), Token: TokenFacts{SID: SystemSID, AuthenticationID: "00000000:000003e7"}}}
+		tests := e.Tests
+		if len(tests) == 0 {
+			tests = []string{e.Test}
+		}
+		for _, name := range tests {
+			ev.TestRun.Events = append(ev.TestRun.Events, TestEvent{Action: "run", Test: name}, TestEvent{Action: "run", Test: name + "/sub"},
+				TestEvent{Action: "pass", Test: name + "/sub"}, TestEvent{Action: "pass", Test: name})
+		}
+		switch e.Mode {
+		case ModeS4U:
 			subject := tokenFacts(e.Account, ModeS4U)
 			ev.TestRun.Subject = &subject
+		case ModeWTS:
+			ev.TestRun.Runner.Token = tokenFacts(e.Account, ModeWTS)
 		}
 	}
 	switch e.Case {

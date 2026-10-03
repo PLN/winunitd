@@ -26,6 +26,12 @@ type ProbeConfig struct {
 	EFS      *EFSTarget `json:"efs,omitempty"`
 	// Pipe is the SYSTEM qualification pipe the in-unit probe connects to.
 	Pipe string `json:"pipe,omitempty"`
+	// OwnDaemon, PeerDaemon and SystemDaemon are the data roots of the
+	// account's own manager, the peer's and the system manager, for the
+	// daemon-log denial probes.
+	OwnDaemon    string `json:"ownDaemon,omitempty"`
+	PeerDaemon   string `json:"peerDaemon,omitempty"`
+	SystemDaemon string `json:"systemDaemon,omitempty"`
 }
 
 // SMBTarget is the protected share's nonce file and its server.
@@ -43,7 +49,7 @@ type EFSTarget struct {
 }
 
 func (c *ProbeConfig) validate() error {
-	for _, p := range []string{c.UnitFile, c.PeerRoot, c.Absent, c.Denied} {
+	for _, p := range []string{c.UnitFile, c.PeerRoot, c.Absent, c.Denied, c.OwnDaemon, c.PeerDaemon, c.SystemDaemon} {
 		if p != "" && (!filepath.IsAbs(p) || filepath.Clean(p) != p) {
 			return errors.New("probe paths must be clean absolute paths")
 		}

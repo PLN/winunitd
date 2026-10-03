@@ -97,10 +97,8 @@ func TestRecordAndSummarizeCommands(t *testing.T) {
 	if code, _, _ := runMain("record", "--observation", obsPath, "--results", results, "--admission", admission); code != 1 {
 		t.Fatal("a record was replaced")
 	}
-	// Cases without a qualified producer keep the whole matrix open.
 	code, out, errOut := runMain("summarize", "--results", results, "--admission", admission)
-	var sum Summary
-	if code != SummaryFailed || json.Unmarshal([]byte(out), &sum) != nil || !onlyPending(m, sum) {
+	if code != SummaryComplete {
 		t.Fatalf("summarize: %d %s %s", code, out, errOut)
 	}
 	if code, _, _ := runMain("summarize", "--results", results, "--admission", admission, "--case", "H07"); code != SummaryPartial {
@@ -129,7 +127,7 @@ func TestBuildRecord(t *testing.T) {
 	m := testMatrix(t)
 	run := testRun(t)
 	exe := run.Manifest.Artifacts[0].SHA256
-	good := Observation{Key: "H06/A", Kind: KindPrimary, Result: ResultPass, ExecutionID: "run-1", Sequence: 3, BootID: "boot-1"}
+	good := Observation{Key: "H22/all", Kind: KindPrimary, Result: ResultPass, ExecutionID: "run-1", Sequence: 3, BootID: "boot-1"}
 	r, err := BuildRecord(m, good, nil, run, exe)
 	if err != nil || r.Source != testSource || r.Admission != run.Hash || r.Matrix != MatrixHash() || r.Executable != exe {
 		t.Fatalf("record %+v %v", r, err)
@@ -178,7 +176,7 @@ func TestBuildRecord(t *testing.T) {
 		"another boot":       func(o *Observation, r *ObserverReport) { o.BootID = "boot-1" },
 		"unadmitted":         func(o *Observation, r *ObserverReport) { r.Executable = strings.Repeat("5", 64) },
 		"unfinished":         func(o *Observation, r *ObserverReport) { r.Stage = ObserverRunning },
-		"unobserved case":    func(o *Observation, r *ObserverReport) { o.Key = "H06/A" },
+		"unobserved case":    func(o *Observation, r *ObserverReport) { o.Key = "H22/all" },
 		"inline report":      func(o *Observation, r *ObserverReport) { o.Evidence.Observer = r },
 		"generation reorder": func(o *Observation, r *ObserverReport) { r.Generations[0].Seen = r.Generations[0].Created - 1 },
 	} {

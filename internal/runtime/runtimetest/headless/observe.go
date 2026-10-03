@@ -411,6 +411,12 @@ func DeriveLifecycle(r *ObserverReport, spec ObserveSpec, account, sid, mode str
 		problems = append(problems, fmt.Sprintf("%d processes of a watched image were not identified", len(r.Unidentified)))
 	}
 	want := tokenClass(mode)
+	// Where the account also has an interactive session, its session
+	// manager runs beside the headless one under a session token.
+	allowed := []string{want}
+	if spec.Session || spec.Independent {
+		allowed = append(allowed, SourceWTS)
+	}
 	of := func(role, acct string) []Generation {
 		var out []Generation
 		for _, g := range r.Generations {
@@ -424,7 +430,7 @@ func DeriveLifecycle(r *ObserverReport, spec ObserveSpec, account, sid, mode str
 	badToken := false
 	checkTokens := func(gs []Generation) {
 		for _, g := range gs {
-			if g.Role != RoleBroker && ClassifyToken(g.Token) != want {
+			if g.Role != RoleBroker && !slices.Contains(allowed, ClassifyToken(g.Token)) {
 				badToken = true
 			}
 		}
@@ -537,8 +543,18 @@ func DeriveLifecycle(r *ObserverReport, spec ObserveSpec, account, sid, mode str
 		}
 		l.Drained = &drained
 	}
+	if spec.Independent {
+		for k, v := range independent(r, account, sid) {
+			if l.Values == nil {
+				l.Values = map[string]float64{}
+			}
+			l.Values[k] = v
+		}
+	}
 	if spec.Boot != "" || spec.Session || spec.Unloaded {
-		l.Values = map[string]float64{}
+		if l.Values == nil {
+			l.Values = map[string]float64{}
+		}
 		maxUsers, accountSeen := 0, false
 		for _, sm := range r.Sessions {
 			maxUsers = max(maxUsers, len(sm.Users))
@@ -573,6 +589,51 @@ func DeriveLifecycle(r *ObserverReport, spec ObserveSpec, account, sid, mode str
 		problems = append(problems, "an observed generation did not run under the account's "+mode+" token")
 	}
 	return l, problems
+}
+
+// The marks H06's driver creates, in this order.
+const (
+	MarkAdmissionRevoked = "admission-revoked"
+	MarkLingerDisabled   = "linger-disabled"
+	MarkLogoff           = "logoff"
+)
+
+// independent derives H06's sequence. Linger stays effective when only
+// interactive admission is revoked: a headless S4U manager running at that
+// mark still runs at the linger mark. A session-backed manager outlives
+// disabling linger while the account's session remains: a session manager
+// running at the linger mark still runs at logoff, and the session is seen
+// between them. Final drain and the quiet window after logoff are the
+// drained and negative metrics.
+func independent(r *ObserverReport, account, sid string) map[string]float64 {
+	marks := map[string]uint64{}
+	for _, m := range r.Marks {
+		if _, dup := marks[m.Name]; !dup {
+			marks[m.Name] = m.At
+		}
+	}
+	admission, linger, logoff := marks[MarkAdmissionRevoked], marks[MarkLingerDisabled], marks[MarkLogoff]
+	if admission == 0 || linger <= admission || logoff <= linger {
+		return nil
+	}
+	aliveAcross := func(class string, from, to uint64) bool {
+		return slices.ContainsFunc(r.Generations, func(g Generation) bool {
+			return g.Role == RoleManager && g.Account == account && ClassifyToken(g.Token) == class && g.Seen <= from && (g.Exited == 0 || g.Exited >= to)
+		})
+	}
+	// Samples are recorded when the sessions change, so the last one at or
+	// before the linger mark is the state at that mark.
+	sessionSeen := false
+	for _, sm := range r.Sessions {
+		if sm.At > linger {
+			break
+		}
+		sessionSeen = slices.ContainsFunc(sm.Users, func(u SessionUser) bool { return u.SID == sid })
+	}
+	return map[string]float64{
+		"lingerKept":      boolMetric(aliveAcross(SourceS4U, admission, linger)),
+		"sessionRetained": boolMetric(aliveAcross(SourceWTS, linger, logoff) && sessionSeen),
+	}
 }
 
 // Kinds of cold-boot profile.

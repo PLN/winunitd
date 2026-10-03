@@ -30,6 +30,10 @@ func runWindowsRole(role string, args []string, stdout io.Writer) error {
 		return runProbeEndpoint(args)
 	case "test-receipt":
 		return runTestReceipt(args)
+	case "probe-daemon-log":
+		return runProbeDaemonLog(args)
+	case "inventory":
+		return runInventory(args)
 	case "probe-pipe":
 		rep, err = runProbePipe(args)
 	default:
@@ -81,8 +85,8 @@ func runProbe(role string, args []string) (any, error) {
 	switch role {
 	case "probe-token":
 	case "probe-path":
-		if *set != PathsOwnRoots && *set != PathsMissingAndDenied {
-			return nil, usage("--set must be %s or %s", PathsOwnRoots, PathsMissingAndDenied)
+		if *set != PathsOwnRoots && *set != PathsMissingAndDenied && *set != PathsDaemonDenial {
+			return nil, usage("--set must be %s, %s or %s", PathsOwnRoots, PathsMissingAndDenied, PathsDaemonDenial)
 		}
 		if *state == "" {
 			if *state, err = defaultStateRoot(); err != nil {

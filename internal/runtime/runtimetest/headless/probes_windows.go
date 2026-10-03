@@ -100,6 +100,8 @@ func ProbePaths(set string, c *ProbeConfig, stateRoot, nonce string) []PathResul
 	case PathsMissingAndDenied:
 		out = append(out, pathResult("absent", readFileOp("read", c.Absent)))
 		out = append(out, pathResult("denied", readFileOp("read", c.Denied)))
+	case PathsDaemonDenial:
+		out = daemonDenial(c)
 	}
 	return out
 }

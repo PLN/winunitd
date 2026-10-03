@@ -136,9 +136,25 @@ func TestDecodeMatrixRejectsInvalidTables(t *testing.T) {
 		"control with another kind of proof": func(m map[string]any) {
 			cases(m)["H17"].(map[string]any)["controls"].([]any)[0].(map[string]any)["proof"] = ProofPassword
 		},
-		"boot kind":            func(m map[string]any) { cases(m)["H01"].(map[string]any)["observe"].(map[string]any)["boot"] = "warm" },
-		"reference with proof": func(m map[string]any) { variant(m, "H10", 0)["proof"] = ProofPending },
-		"unknown reference":    func(m map[string]any) { variant(m, "B01", 0)["refs"] = []any{"G2/C"} },
+		"boot kind":                 func(m map[string]any) { cases(m)["H01"].(map[string]any)["observe"].(map[string]any)["boot"] = "warm" },
+		"reference with proof":      func(m map[string]any) { variant(m, "H10", 0)["proof"] = ProofPending },
+		"rotation without observer": func(m map[string]any) { delete(cases(m)["H12"].(map[string]any), "observe") },
+		"protection of a user":      func(m map[string]any) { cases(m)["H12"].(map[string]any)["check"] = CheckProtection },
+		"daemon-log without check":  func(m map[string]any) { delete(cases(m)["H12"].(map[string]any), "check") },
+		"check on another proof":    func(m map[string]any) { cases(m)["H13"].(map[string]any)["check"] = CheckRotation },
+		"session probe as S4U": func(m map[string]any) {
+			variant(m, "G6", 4)["mode"] = ModeS4U
+			variant(m, "G6", 4)["account"] = AccountA
+		},
+		"session probe without set": func(m map[string]any) { delete(variant(m, "G6", 4), "paths") },
+		"inventory of an account": func(m map[string]any) {
+			variant(m, "H22", 0)["account"] = AccountA
+			variant(m, "H22", 0)["mode"] = ModeS4U
+		},
+		"test and test list": func(m map[string]any) { variant(m, "G6", 0)["test"] = "TestDaemonPathSDDL" },
+		"bad test in a list": func(m map[string]any) { variant(m, "G6", 0)["tests"] = []any{"daemonPathSDDL"} },
+		"unknown path set":   func(m map[string]any) { variant(m, "G6", 4)["paths"] = "everything" },
+		"unknown reference":  func(m map[string]any) { variant(m, "B01", 0)["refs"] = []any{"G2/C"} },
 		"executed B record": func(m map[string]any) {
 			cases(m)["B01"].(map[string]any)["variants"] = []any{map[string]any{"id": "A", "account": "A", "mode": "s4u"}}
 		},

@@ -414,7 +414,10 @@ func (ev *evaluation) evaluate(e Entry) (status, bool, string) {
 	if err := headerMatches(r.Token, r.Evidence.Token); err != nil {
 		open("%v", err)
 	}
-	if e.Mode == ModeFilteredAdmin && !FilteredAdministrator(r.Evidence.Token) {
+	// A filtered administrator's token probe, when the proof rests on one,
+	// must be one; a daemon-log proof checks the class of the observer's
+	// held manager instead.
+	if e.Mode == ModeFilteredAdmin && e.Proof != ProofDaemonLog && !FilteredAdministrator(r.Evidence.Token) {
 		open("the token probe is not an administrator's filtered token")
 	}
 	sid, peer := ev.roles[e.Account], ev.peerOf(e.Account)
@@ -431,6 +434,27 @@ func (ev *evaluation) evaluate(e Entry) (status, bool, string) {
 		}
 	case ProofNamedTest:
 		for _, p := range CheckTestRun(r.Evidence.TestRun, e, r.RunnerID, sid, ev.run) {
+			open("%s", p)
+		}
+	case ProofDaemonLog:
+		var rep *ObserverReport
+		if e.Observe != nil {
+			life = ev.lifecycle(e.Observe, e.Account, e.Mode, r, open)
+			rep = r.Evidence.Observer
+		}
+		logSID := sid
+		if e.Mode == ModeSystem {
+			logSID = SystemSID
+		}
+		for _, p := range CheckDaemonLog(r.Evidence.DaemonLog, e.Check, logSID, e.Account, e.Mode, rep) {
+			open("%s", p)
+		}
+	case ProofSessionProbe:
+		if !SessionToken(r.Evidence.Token, sid, e.Mode) {
+			open("the probe did not run under the account's own %s token", e.Mode)
+		}
+	case ProofInventory:
+		for _, p := range CheckInventory(r.Evidence.Inventory) {
 			open("%s", p)
 		}
 	default:

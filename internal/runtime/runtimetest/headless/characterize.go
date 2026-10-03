@@ -219,7 +219,7 @@ func CheckPaths(set string, results []PathResult) []string {
 	for _, r := range results {
 		got[r.Probe] = r
 	}
-	want := map[string]func(PathResult) bool{}
+	var want map[string]func(PathResult) bool
 	ok := func(r PathResult) bool { return r.OK }
 	switch set {
 	case PathsOwnRoots:
@@ -232,6 +232,13 @@ func CheckPaths(set string, results []PathResult) []string {
 			"absent": func(r PathResult) bool { return !r.OK && (r.Win32 == errFileNotFound || r.Win32 == errPathNotFound) },
 			"denied": func(r PathResult) bool { return !r.OK && r.Win32 == errAccessDenied },
 		}
+	case PathsDaemonDenial:
+		denied := func(r PathResult) bool { return !r.OK && r.Win32 == errAccessDenied }
+		want = map[string]func(PathResult) bool{
+			"own-log": ok, "peer-directory": denied, "peer-log": denied, "system-directory": denied, "system-log": denied,
+		}
+	default:
+		return []string{"unknown path set " + set}
 	}
 	var problems []string
 	for name, check := range want {

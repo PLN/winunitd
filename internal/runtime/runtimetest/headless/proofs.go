@@ -37,6 +37,14 @@ const (
 	ProofPassword = "password"
 	// ProofEndpoint: SYSTEM's identification of the live pipe servers.
 	ProofEndpoint = "endpoint"
+	// ProofDaemonLog: a manager's diagnostics before and after a declared
+	// intervention, or the system manager's protected diagnostics.
+	ProofDaemonLog = "daemon-log"
+	// ProofSessionProbe: probe results from the account's own interactive
+	// session token, outside any unit.
+	ProofSessionProbe = "session-probe"
+	// ProofInventory: SYSTEM's final inventory against the baseline's.
+	ProofInventory = "inventory"
 	// ProofPending: no producer or validator exists yet; never accepted.
 	ProofPending = "pending"
 )
@@ -133,31 +141,48 @@ func CheckTestRun(p *TestRunProof, e Entry, runnerID, sid string, run AdmittedRu
 	if p.Runner.ID != runnerID || p.Runner.PID == 0 || p.Runner.Created == 0 {
 		problems = append(problems, "the receipt names another runner")
 	}
-	if p.Runner.Token.SID != SystemSID || p.Runner.Token.Session != 0 {
-		problems = append(problems, "the runner is not SYSTEM in session zero")
+	// S4U and SYSTEM tests run in a SYSTEM runner; a session lane runs in
+	// the account's own interactive token, so a test that needs a
+	// non-SYSTEM identity cannot pass by skipping.
+	switch e.Mode {
+	case ModeWTS, ModeFilteredAdmin:
+		if p.Runner.Token.SID != sid || ClassifyToken(p.Runner.Token) != tokenClass(e.Mode) {
+			problems = append(problems, "the runner is not the account's own "+e.Mode+" token")
+		}
+	default:
+		if p.Runner.Token.SID != SystemSID || p.Runner.Token.Session != 0 {
+			problems = append(problems, "the runner is not SYSTEM in session zero")
+		}
 	}
-	runs, passed := 0, false
+	tests := e.Tests
+	if len(tests) == 0 {
+		tests = []string{e.Test}
+	}
+	runs, passed := map[string]int{}, map[string]bool{}
 	for _, ev := range p.Events {
 		top, _, _ := strings.Cut(ev.Test, "/")
-		if top != e.Test {
+		if !slices.Contains(tests, top) {
 			problems = append(problems, "the receipt covers another test")
 			break
 		}
 		switch ev.Action {
 		case "run":
-			if ev.Test == e.Test {
-				runs++
+			if ev.Test == top {
+				runs[top]++
 			}
 		case "pass":
-			if ev.Test == e.Test {
-				passed = true
+			if ev.Test == top {
+				passed[top] = true
 			}
 		case "skip", "fail":
 			problems = append(problems, "the test or a subtest was "+map[string]string{"skip": "skipped", "fail": "failed"}[ev.Action])
 		}
 	}
-	if runs != 1 || !passed {
-		problems = append(problems, "the named test did not run once and pass")
+	for _, name := range tests {
+		if runs[name] != 1 || !passed[name] {
+			problems = append(problems, "the named test did not run once and pass")
+			break
+		}
 	}
 	if e.Mode == ModeS4U {
 		switch {

@@ -17,6 +17,8 @@ type Evidence struct {
 	FirstUse    *FirstUseProof   `json:"firstUse,omitempty"`
 	TestRun     *TestRunProof    `json:"testRun,omitempty"`
 	Endpoints   []EndpointHealth `json:"endpoints,omitempty"`
+	DaemonLog   *DaemonLogProof  `json:"daemonLog,omitempty"`
+	Inventory   *InventoryProof  `json:"inventory,omitempty"`
 	PipeServers []ServerReport   `json:"pipeServers,omitempty"`
 	TCP         []TCPResult      `json:"tcp,omitempty"`
 	SMB         *SMBResult       `json:"smb,omitempty"`
