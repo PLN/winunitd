@@ -349,11 +349,16 @@ SYSTEM subtest run by another account is a regression run, not SYSTEM
 evidence. Headless subtests skip unless a SYSTEM runner in session zero sets
 `WINUNITD_NATIVE_NESTED_HEADLESS_SID` to a dedicated, logged-off local standard
 account and `WINUNITD_NATIVE_NESTED_FIXTURE=disposable`; the test binary must
-be readable by that account. The runtime tests then launch an owner agent in a
+be readable by that account. A headless runner joins a broker job for the
+rest of its life, so run headless selectors in their own test process. The
+runtime tests then launch an owner agent in a
 genuine S4U process through the production headless path; it owns the unit
 job and answers membership queries, while the SYSTEM test observes. The
-headless manager cases (N03 to N05, N08 to N10) are not implemented yet and
-skip with that reason. The CPU quota cases check native settings by default;
+manager tests do the same with an isolated Manager: the agent follows the
+user-manager entry pattern (its own daemon job, user scope, an isolated base
+directory), serves no control endpoint, and answers start, stop, inspect,
+membership and replacement-launch questions about its one nested unit.
+The CPU quota cases check native settings by default;
 `WINUNITD_NATIVE_NESTED_METER=1` adds a 30-second measurement and a
 separately recorded uncapped control.
 
@@ -366,6 +371,17 @@ confirmed. `tools/lab/assets/nested-job-checks.ps1` runs one installed-daemon
 execution of N06 or N07: it renders an enabled unit, lets the fixture's
 observer crash the exact user manager or broker, checks the recovered daemon
 and records the result. Its account, directories and paths are parameters.
+
+For headless installed-daemon cases an administrator cannot reach the
+account's manager pipe, so the driver installs the unit itself. It writes
+the unit file and the enable link (`enabled\default.target\<unit>`, the
+file `winctl enable` writes) into the account's manager directory, then runs
+`winctl disable-linger` and `winctl enable-linger` for the account so the
+broker starts a fresh S4U manager that boots the enabled unit. Teardown
+removes both files and repeats the pair, leaving linger enabled. Every unit of
+that account restarts twice per execution, so the account must be dedicated
+to these cases and must already linger. The lab owner decides whether this
+fits its account conventions.
 
 `nested-job-fixture summarize --results DIR --source COMMIT` exits 0 only when
 every required execution passed with matching source, matrix, token context,

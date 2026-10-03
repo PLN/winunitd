@@ -15,6 +15,22 @@ Preconditions owned by the caller: the account for headless cases is a
 dedicated, local standard account with linger enabled and no interactive
 logon; the fixture is readable and executable by that account; the case
 root is fresh. The script leaves linger enabled for that account.
+
+How a headless unit is installed (for review with the lab's account
+conventions): an administrator cannot reach another account's manager
+pipe, so the script places the unit itself and restarts that manager.
+  1. It writes the unit file to <HeadlessBase>\units and the enable link
+     <HeadlessBase>\enabled\default.target\<unit> (content: the unit name),
+     the same files winctl enable writes. Both inherit the ACL of the
+     account's manager directory; their owner is the SYSTEM caller.
+  2. It runs winctl disable-linger <account>, which stops the account's
+     manager and its units, waits until no manager process for the SID
+     remains, then runs winctl enable-linger <account>. The broker starts a
+     new S4U manager, which boots enabled units, including this one.
+  3. Teardown removes both files, repeats disable-linger and enable-linger,
+     and so leaves linger enabled with the unit gone.
+Side effects: every unit of that account restarts twice per execution, and
+the linger record is rewritten. Use an account that hosts nothing else.
 #>
 [CmdletBinding()]
 param(
