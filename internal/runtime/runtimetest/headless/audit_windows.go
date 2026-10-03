@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -259,14 +260,28 @@ func (e *auditEvent) at() (uint64, error) {
 // evtEach runs fn on each event a Security log query returns, rendered as
 // XML, oldest first, until fn returns false.
 func evtEach(query string, fn func(*auditEvent) (bool, error)) error {
-	channel, _ := windows.UTF16PtrFromString("Security")
+	return channelEach("Security", query, fn)
+}
+
+// channelEach runs fn on each event a query of an event log channel
+// returns. A query handle must be used on the thread that created it, so
+// the whole lifetime, from the query through every read, render and
+// callback to the last close, runs with the goroutine locked to one OS
+// thread; the lock is released only after every handle is closed.
+func channelEach(name, query string, fn func(*auditEvent) (bool, error)) error {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	channel, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return err
+	}
 	q, err := windows.UTF16PtrFromString(query)
 	if err != nil {
 		return err
 	}
 	h, _, callErr := procEvtQuery.Call(0, uintptr(unsafe.Pointer(channel)), uintptr(unsafe.Pointer(q)), evtQueryChannelPath|evtQueryForwardDirection)
 	if h == 0 {
-		return fmt.Errorf("query the Security log: %w", callErr)
+		return fmt.Errorf("query the %s log: %w", name, callErr)
 	}
 	defer procEvtClose.Call(h)
 	events := make([]windows.Handle, evtBatch)
@@ -278,7 +293,7 @@ func evtEach(query string, fn func(*auditEvent) (bool, error)) error {
 			if errors.Is(callErr, windows.ERROR_NO_MORE_ITEMS) {
 				return nil
 			}
-			return fmt.Errorf("read the Security log: %w", callErr)
+			return fmt.Errorf("read the %s log: %w", name, callErr)
 		}
 		stop := false
 		var ferr error
@@ -297,7 +312,7 @@ func evtEach(query string, fn func(*auditEvent) (bool, error)) error {
 			return ferr
 		}
 		if seen += int(n); seen > maxAuditEvents {
-			return errors.New("too many Security log events")
+			return fmt.Errorf("too many %s log events", name)
 		}
 	}
 }
