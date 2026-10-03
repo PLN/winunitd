@@ -2,6 +2,7 @@ package headless
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -152,12 +153,16 @@ type observed struct {
 func newObserved(phase int, end float64) *observed {
 	boot := testBoot(phase)
 	return &observed{ObserverReport: &ObserverReport{Schema: ObserverSchema, Executable: testExecutable(), Boot: boot,
-		Accounts: map[string]string{AccountA: sidA, AccountB: sidB}, Started: ft(-5), Ended: ft(end), Scans: 1000, MaxGap: 500000,
+		Accounts: map[string]string{AccountA: sidA, AccountB: sidB}, Started: ft(-5), Ended: ft(end), FinalScan: ft(end), Scans: 1000, MaxGap: 500000,
 		Observer: ObserverIdentity{PID: 500, Created: ft(-3000), SID: SystemSID},
 		Images:   ObservedImages{Daemon: testDaemonSHA, Workload: testExecutable()},
-		Sampling: &SamplingFacts{Samples: 100, First: ft(-5), Last: ft(-4), MaxInterval: 1e7},
-		Audit:    &AuditFacts{Read: true, Oldest: boot.Time - 1e7},
-		Stage:    ObserverFinished}, pid: 1000}
+		// One sample a second from the first scan to the final one, the
+		// first with the initial session state.
+		Sampling: &SamplingFacts{Samples: int(math.Ceil(end+5)) + 1, First: ft(-5), Last: ft(end), MaxInterval: 1e7},
+		Sessions: []SessionSample{{At: ft(-5)}},
+		Audit: &AuditFacts{Read: true, Oldest: boot.Time - 1e7, PolicyStart: &AuditPolicy{LogonSuccess: true, PolicyChangeSuccess: true},
+			PolicyEnd: &AuditPolicy{LogonSuccess: true, PolicyChangeSuccess: true}, To: ft(end + 3)},
+		Stage: ObserverFinished}, pid: 1000}
 }
 
 // gen adds a generation created at sec; it is seen at the first scan or
@@ -209,7 +214,17 @@ func (o *observed) loop(account, mode string, att []Attempt) {
 		crash(o.gen(RoleManager, account, mode, a.Launched.Sub(t0).Seconds(), a.Exited.Sub(t0).Seconds(), 0))
 	}
 	o.gen(RoleManager, account, mode, lastLaunch(att)+60, -1, 0)
-	o.Ended = max(o.Ended, ft(lastLaunch(att)+70))
+	if end := lastLaunch(att) + 70; ft(end) > o.Ended {
+		o.endAt(end)
+	}
+}
+
+// endAt moves the final scan to sec, with sampling and the audit read
+// keeping up with it.
+func (o *observed) endAt(sec float64) {
+	o.Ended, o.FinalScan = ft(sec), ft(sec)
+	o.Sampling.Samples, o.Sampling.Last = int(math.Ceil(sec+5))+1, ft(sec)
+	o.Audit.To = ft(sec + 3)
 }
 
 func lastLaunch(att []Attempt) float64 { return att[len(att)-1].Launched.Sub(t0).Seconds() }

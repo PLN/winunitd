@@ -73,9 +73,13 @@ type ObserverReport struct {
 	Accounts map[string]string `json:"accounts"`
 	Plan     ObserverPlan      `json:"plan"`
 	// Started and Ended are the first and last scans, as FILETIMEs.
-	Started uint64 `json:"started"`
-	Ended   uint64 `json:"ended"`
-	Scans   int    `json:"scans"`
+	// FinalScan is the final scan's boundary, which Ended must equal:
+	// whatever the observer reads after it, such as the audit history,
+	// carries its own time.
+	Started   uint64 `json:"started"`
+	Ended     uint64 `json:"ended"`
+	FinalScan uint64 `json:"finalScan"`
+	Scans     int    `json:"scans"`
 	// MaxGap is the longest interval between two scans, in 100 ns units.
 	MaxGap       uint64         `json:"maxGap"`
 	Generations  []Generation   `json:"generations"`
@@ -160,31 +164,66 @@ type SamplingFacts struct {
 }
 
 // AuditFacts is the Security log's logon history since the boot: whether
-// it was read, the oldest event it still holds and whether it was cleared
-// since the boot. Only a log that reaches back past the boot, uncleared,
-// lists every logon since then.
+// it was read, the oldest event it still holds, whether it was cleared
+// since the boot, the audit policy when the observer started and after its
+// final scan, how many changes to that policy were logged since the boot,
+// and the time up to which the read covers the log. Only a log that
+// reaches back past the boot, uncleared, under a policy that audited
+// successful logons and policy changes throughout, lists every logon since
+// then.
 type AuditFacts struct {
-	Read             bool          `json:"read"`
-	Oldest           uint64        `json:"oldest,omitempty"`
-	ClearedSinceBoot bool          `json:"clearedSinceBoot"`
-	Errors           []NativeError `json:"errors,omitempty"`
+	Read             bool         `json:"read"`
+	Oldest           uint64       `json:"oldest,omitempty"`
+	ClearedSinceBoot bool         `json:"clearedSinceBoot"`
+	PolicyStart      *AuditPolicy `json:"policyStart,omitempty"`
+	PolicyEnd        *AuditPolicy `json:"policyEnd,omitempty"`
+	// PolicyChanges counts logged changes to the logon or audit-policy
+	// change subcategories since the boot.
+	PolicyChanges int           `json:"policyChanges"`
+	To            uint64        `json:"to,omitempty"`
+	Errors        []NativeError `json:"errors,omitempty"`
 }
+
+// AuditPolicy is the system audit policy the logon history depends on:
+// success auditing of logons, and of audit-policy changes, so that a
+// change to the former is itself logged.
+type AuditPolicy struct {
+	LogonSuccess        bool `json:"logonSuccess"`
+	PolicyChangeSuccess bool `json:"policyChangeSuccess"`
+}
+
+func (p *AuditPolicy) audits() bool { return p != nil && p.LogonSuccess && p.PolicyChangeSuccess }
 
 // MaxSampleInterval bounds the time between two samples.
 const MaxSampleInterval = 5 * time.Second
 
 // LogonHistoryKnown reports whether the report lists every password-bearing
-// logon of the watched accounts since its boot: sampling ran without error
-// and the audited history reaches back past the boot, uncleared.
+// logon of the watched accounts since its boot: sampling covered the
+// observation, and the audited history reaches back past the boot,
+// uncleared, under an unchanged policy auditing successful logons, and
+// covers the log until after the observation ended.
 func (r *ObserverReport) LogonHistoryKnown() bool {
 	a := r.Audit
-	return r.samplingComplete() && a != nil && a.Read && len(a.Errors) == 0 && !a.ClearedSinceBoot && a.Oldest != 0 && a.Oldest <= r.Boot.Time
+	if !r.samplingComplete() || a == nil || !a.Read || len(a.Errors) > 0 || a.ClearedSinceBoot || a.Oldest == 0 || a.Oldest > r.Boot.Time ||
+		!a.PolicyStart.audits() || !a.PolicyEnd.audits() || a.PolicyChanges != 0 || a.To < r.Ended {
+		return false
+	}
+	return !slices.ContainsFunc(r.Logons, func(l LogonFact) bool { return l.Source == "audit" && l.LogonTime > a.To })
 }
 
+// samplingComplete reports whether session and logon sampling covered the
+// observation: no failed query, the first sample with the initial session
+// state within one interval of the first scan, the last within one
+// interval of the final scan, and no interval between them too long.
 func (r *ObserverReport) samplingComplete() bool {
 	sm := r.Sampling
-	return sm != nil && sm.Samples >= 2 && len(sm.Errors) == 0 && sm.First >= r.Started && sm.Last <= r.Ended &&
-		time.Duration(sm.MaxInterval)*100 <= MaxSampleInterval
+	iv := uint64(MaxSampleInterval / 100)
+	if sm == nil || sm.Samples < 2 || len(sm.Errors) > 0 || sm.First < r.Started || sm.First > sm.Last || sm.Last > r.Ended ||
+		sm.First-r.Started > iv || r.Ended-sm.Last > iv || sm.MaxInterval > iv || uint64(sm.Samples-1)*sm.MaxInterval < sm.Last-sm.First {
+		return false
+	}
+	n := len(r.Sessions)
+	return n > 0 && r.Sessions[0].At == sm.First && r.Sessions[n-1].At <= sm.Last
 }
 
 // ProfileFacts is an account's profile: registered in ProfileList, the
@@ -337,6 +376,11 @@ func (r *ObserverReport) Validate() error {
 	}
 	if !r.samplingComplete() {
 		return errors.New("the observer's session and logon sampling is incomplete")
+	}
+	// The observation ends at the final scan, the last instant the process
+	// table and held exits were observed.
+	if r.FinalScan == 0 || r.Ended != r.FinalScan {
+		return errors.New("the observation does not end at its final scan")
 	}
 	return nil
 }

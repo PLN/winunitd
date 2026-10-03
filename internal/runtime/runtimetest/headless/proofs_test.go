@@ -658,6 +658,54 @@ func TestSummarizeRequiresCompleteObservation(t *testing.T) {
 		{"one sample", "H14/B: observer: the observer's session and logon sampling is incomplete", func(rs []Record) {
 			ev(t, rs, "H14/B").Observer.Sampling.Samples = 1
 		}},
+		{"sampling with no last sample", "H13/A: observer: the observer's session and logon sampling is incomplete", func(rs []Record) {
+			ev(t, rs, "H13/A").Observer.Sampling.Last = 0
+		}},
+		{"no initial session state", "H13/B: observer: the observer's session and logon sampling is incomplete", func(rs []Record) {
+			ev(t, rs, "H13/B").Observer.Sessions = nil
+		}},
+		{"sampling stopped after the first scan", "H13/A: observer: the observer's session and logon sampling is incomplete", func(rs []Record) {
+			r := ev(t, rs, "H13/A").Observer
+			r.Sampling.Last = r.Started + 1e7
+		}},
+		{"sampling started late", "H14/A: observer: the observer's session and logon sampling is incomplete", func(rs []Record) {
+			r := ev(t, rs, "H14/A").Observer
+			r.Sampling.First += 30e7
+			r.Sessions[0].At = r.Sampling.First
+		}},
+		{"too few samples for the claimed interval", "H14/B: observer: the observer's session and logon sampling is incomplete", func(rs []Record) {
+			ev(t, rs, "H14/B").Observer.Sampling.Samples = 3
+		}},
+		{"collection after the final scan counted as observation", "H07/A: observer: the observation does not end at its final scan", func(rs []Record) {
+			r := ev(t, rs, "H07/A").Observer
+			r.Ended += 30e7
+			r.Sampling.Samples += 30
+			r.Sampling.Last, r.Audit.To = r.Ended, r.Ended+1
+		}},
+		{"held exit after the final scan", "H08/B: observer: generation", func(rs []Record) {
+			r := ev(t, rs, "H08/B").Observer
+			r.Generations[len(r.Generations)-1].Exited = r.Ended + 1e7
+		}},
+		{"logon auditing off at the start", "H13/A: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+			ev(t, rs, "H13/A").Observer.Audit.PolicyStart.LogonSuccess = false
+		}},
+		{"policy-change auditing off at the end", "H07/B: phase lifecycle has no complete observed logon history since its boot", func(rs []Record) {
+			ev(t, rs, "H07/B").Observer.Audit.PolicyEnd.PolicyChangeSuccess = false
+		}},
+		{"no policy read at the end", "H17/B: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+			ev(t, rs, "H17/B").Observer.Audit.PolicyEnd = nil
+		}},
+		{"audit policy changed since the boot", "H08/A: phase lifecycle has no complete observed logon history since its boot", func(rs []Record) {
+			ev(t, rs, "H08/A").Observer.Audit.PolicyChanges = 1
+		}},
+		{"history read before the observation ended", "H15/A: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+			r := ev(t, rs, "H15/A").Observer
+			r.Audit.To = r.Ended - 1
+		}},
+		{"audited logon beyond the read", "H16/B: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+			r := ev(t, rs, "H16/B").Observer
+			r.Logons = []LogonFact{{ID: "2", SID: sidB, Type: logonNetwork, LogonTime: r.Audit.To + 1, Source: "audit", Process: productTokenSource}}
+		}},
 		{"no audited history", "H17/A: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
 			ev(t, rs, "H17/A").Observer.Audit = nil
 		}},

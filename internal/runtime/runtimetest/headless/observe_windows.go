@@ -51,6 +51,8 @@ type observer struct {
 	nextOut    time.Time
 	nextSample time.Time
 	logons     map[string]bool
+	// final marks the last scan.
+	final bool
 }
 
 // runObserve is the SYSTEM observer. It launches nothing: it holds every
@@ -90,23 +92,39 @@ func observeWith(args []string, qualification bool) error {
 		}
 		time.Sleep(cfg.Scan)
 	}
-	if err := o.scan(); err != nil {
-		return o.fail(err)
-	}
+	// The last session sample and the account facts, then the final scan,
+	// whose boundary ends the observation: nothing read after it extends
+	// liveness or absence. The audit history read afterwards records how
+	// far it covers the log.
 	o.sample(true)
 	o.accountFacts()
+	if err := o.finalScan(); err != nil {
+		return o.fail(err)
+	}
 	sids := map[string]bool{}
 	for _, sid := range cfg.Accounts {
 		sids[sid] = true
 	}
-	audit, logons := auditedLogons(o.rep.Boot.Time, sids)
-	o.rep.Audit = &audit
-	o.rep.Logons = append(o.rep.Logons, logons...)
-	// After the last scan's exit checks, so every recorded exit is inside
-	// the observation.
-	o.rep.Ended = filetimeNow()
+	o.rep.Logons = append(o.rep.Logons, auditedLogons(o.rep.Audit, o.rep.Boot.Time, sids)...)
 	o.rep.Stage = ObserverFinished
 	return writeJSONFile(o.cfg.Report, o.rep)
+}
+
+// finalScan is the last scan. It terminates and releases nothing and takes
+// no sample; its boundary is the observation's end. A held process whose
+// kernel exit time follows the boundary was running at it.
+func (o *observer) finalScan() error {
+	o.final = true
+	if err := o.scan(); err != nil {
+		return err
+	}
+	o.rep.FinalScan, o.rep.Ended = o.last, o.last
+	for i := range o.rep.Generations {
+		if g := &o.rep.Generations[i]; g.Exited > o.rep.Ended && g.Crashed == 0 {
+			g.Exited, g.ExitCode = 0, 0
+		}
+	}
+	return nil
 }
 
 func (o *observer) start(qualification bool) error {
@@ -148,6 +166,12 @@ func (o *observer) start(qualification bool) error {
 		*img.into = sum
 	}
 	o.rep.Sampling = &SamplingFacts{}
+	// The audit policy the logon history depends on, as the observation
+	// begins; a failed read leaves the history unknown.
+	o.rep.Audit = &AuditFacts{}
+	if o.rep.Audit.PolicyStart, err = auditPolicy(); err != nil {
+		o.rep.Audit.Errors = append(o.rep.Audit.Errors, NativeError{Op: "audit-policy-start", Win32: win32Code(err)})
+	}
 	o.rep.Boot, err = bootIdentity()
 	return err
 }
@@ -238,6 +262,9 @@ func (o *observer) scan() error {
 	}
 	if err := o.exits(); err != nil {
 		return err
+	}
+	if o.final {
+		return o.marks()
 	}
 	if err := o.crashDue(); err != nil {
 		return err

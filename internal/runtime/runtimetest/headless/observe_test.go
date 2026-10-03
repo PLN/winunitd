@@ -107,18 +107,28 @@ func TestObserverReportValidate(t *testing.T) {
 		"seen after the scans":  func(r *ObserverReport) { r.Generations[4].Seen = r.Ended + 1 },
 		"exit before creation":  func(r *ObserverReport) { r.Generations[3].Exited = r.Generations[3].Created - 1 },
 		"exit after the scans":  func(r *ObserverReport) { r.Generations[3].Exited = r.Ended + 1 },
-		"crash without exit":    func(r *ObserverReport) { r.Generations[3].Exited = 0 },
-		"crash after exit":      func(r *ObserverReport) { r.Generations[3].Crashed = r.Generations[3].Exited + 1 },
-		"crash before seen":     func(r *ObserverReport) { r.Generations[3].Crashed = r.Generations[3].Seen - 1 },
-		"role":                  func(r *ObserverReport) { r.Generations[0].Role = "service" },
-		"account SID mismatch":  func(r *ObserverReport) { r.Generations[2].Token.SID = sidB },
-		"unwatched account":     func(r *ObserverReport) { r.Generations[2].Account = "C" },
-		"broker with account":   func(r *ObserverReport) { r.Generations[5].Account = AccountA },
-		"broker not SYSTEM":     func(r *ObserverReport) { r.Generations[5].Token.SID = sidA },
-		"mark name":             func(r *ObserverReport) { r.Marks[0].Name = "Quiet!" },
-		"start mark":            func(r *ObserverReport) { r.Marks[0].Name = MarkStart },
-		"mark outside":          func(r *ObserverReport) { r.Marks[0].At = r.Ended + 1 },
-		"release outside":       func(r *ObserverReport) { r.Releases = []Mark{{Name: "release", At: r.Started - 1}} },
+		"no final scan":         func(r *ObserverReport) { r.FinalScan = 0 },
+		"ended after the final scan": func(r *ObserverReport) {
+			r.Ended += 1e7
+			r.Sampling.Last = r.Ended
+		},
+		"no initial session sample": func(r *ObserverReport) { r.Sessions = nil },
+		"sampling ended early":      func(r *ObserverReport) { r.Sampling.Last = r.Sampling.First + 1e7 },
+		"session after the last sample": func(r *ObserverReport) {
+			r.Sessions = append(r.Sessions, SessionSample{At: r.Sampling.Last + 1})
+		},
+		"crash without exit":   func(r *ObserverReport) { r.Generations[3].Exited = 0 },
+		"crash after exit":     func(r *ObserverReport) { r.Generations[3].Crashed = r.Generations[3].Exited + 1 },
+		"crash before seen":    func(r *ObserverReport) { r.Generations[3].Crashed = r.Generations[3].Seen - 1 },
+		"role":                 func(r *ObserverReport) { r.Generations[0].Role = "service" },
+		"account SID mismatch": func(r *ObserverReport) { r.Generations[2].Token.SID = sidB },
+		"unwatched account":    func(r *ObserverReport) { r.Generations[2].Account = "C" },
+		"broker with account":  func(r *ObserverReport) { r.Generations[5].Account = AccountA },
+		"broker not SYSTEM":    func(r *ObserverReport) { r.Generations[5].Token.SID = sidA },
+		"mark name":            func(r *ObserverReport) { r.Marks[0].Name = "Quiet!" },
+		"start mark":           func(r *ObserverReport) { r.Marks[0].Name = MarkStart },
+		"mark outside":         func(r *ObserverReport) { r.Marks[0].At = r.Ended + 1 },
+		"release outside":      func(r *ObserverReport) { r.Releases = []Mark{{Name: "release", At: r.Started - 1}} },
 		"too many generations": func(r *ObserverReport) {
 			for i := range MaxGenerations {
 				r.Generations = append(r.Generations, Generation{Role: RoleChild, Account: AccountA, PID: uint32(50000 + i), Created: r.Started,
