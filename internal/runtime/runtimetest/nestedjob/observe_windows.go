@@ -38,6 +38,13 @@ func runObserve(c ObserveConfig) error {
 	if err != nil {
 		return fail(fmt.Errorf("generation %d: %w", c.Generation, err))
 	}
+	// The unit must actually run the bound launch mode before anything is
+	// crashed.
+	if r, err := obs.Report(c.Generation); err != nil {
+		return fail(err)
+	} else if err := CheckTree(r, c.Binding.Mode); err != nil {
+		return fail(fmt.Errorf("generation %d: %w", c.Generation, err))
+	}
 	for _, h := range old {
 		rep.OldTree = append(rep.OldTree, h.ID)
 	}
@@ -84,6 +91,9 @@ func runObserve(c ObserveConfig) error {
 	if start := r.Find(EventStart); start == nil || len(rep.NewTree) == 0 || !start.Identity.Same(rep.NewTree[0]) {
 		return fail(errors.New("replacement report does not start with its tree's MAIN"))
 	}
+	if err := CheckTree(r, c.Binding.Mode); err != nil {
+		return fail(fmt.Errorf("replacement generation %d: %w", c.Replacement, err))
+	}
 	rep.ReplacementCreated = rep.NewTree[0].Created
 	rep.Old = heldExits(all)
 	ex := heldExits([]*Held{crash})[0]
@@ -91,9 +101,6 @@ func runObserve(c ObserveConfig) error {
 	rep.Managers = heldExits(managers)
 	ordering := ClassifyOrdering(rep.Old, rep.ReplacementCreated)
 	rep.Ordering = &ordering
-	if prev := r.Find(EventPrevious); prev != nil {
-		rep.EntryObservation = prev.Previous
-	}
 	rep.Stage = StageReplaced
 	if err := write(); err != nil {
 		return err
@@ -111,6 +118,17 @@ func runObserve(c ObserveConfig) error {
 	}
 	if err := WaitSignaled(append(append([]*Held(nil), all...), replacement...), 15*time.Second); err != nil {
 		return fail(fmt.Errorf("cleanup: %w", err))
+	}
+	// Both MAINs have exited: their reports are final and must be complete.
+	for _, g := range []struct {
+		gen    int
+		events *[]Event
+	}{{c.Generation, &rep.OldEvents}, {c.Replacement, &rep.NewEvents}} {
+		final, err := ReadFinalReport(c.CaseDir, g.gen)
+		if err != nil {
+			return fail(fmt.Errorf("final report of generation %d: %w", g.gen, err))
+		}
+		*g.events = final.Events
 	}
 	rep.CleanupConfirmed = true
 	rep.Stage = StageFinished

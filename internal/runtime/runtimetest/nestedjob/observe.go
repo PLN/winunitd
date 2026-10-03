@@ -1,6 +1,8 @@
 package nestedjob
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -21,7 +23,11 @@ import (
 // report concludes: it recomputes every check from the raw identities.
 
 // ObserverReportSchema is the observer report schema.
-const ObserverReportSchema = 2
+const ObserverReportSchema = 3
+
+// FixtureArtifact is the admitted standalone fixture: the only image the
+// installed lane's workload may run and the only recorder of its results.
+const FixtureArtifact = "nested-job.exe"
 
 // Observer report stages.
 const (
@@ -110,22 +116,26 @@ type DaemonBinding struct {
 
 // ObserverReport is the observer's evidence file, rewritten at each stage.
 type ObserverReport struct {
-	Schema             int             `json:"schema"`
-	Stage              string          `json:"stage"`
-	Binding            DaemonBinding   `json:"binding"`
-	Generation         int             `json:"generation"`
-	Replacement        int             `json:"replacement"`
-	OldTree            []Identity      `json:"oldTree,omitempty"`
-	NewTree            []Identity      `json:"newTree,omitempty"`
-	Crash              *HeldExit       `json:"crash,omitempty"`
-	Managers           []HeldExit      `json:"managers,omitempty"`
-	Old                []HeldExit      `json:"old,omitempty"`
-	CrashAt            uint64          `json:"crashAt,omitempty"`
-	ReplacementCreated uint64          `json:"replacementCreated,omitempty"`
-	Ordering           *Ordering       `json:"ordering,omitempty"`
-	EntryObservation   []PreviousCheck `json:"entryObservation,omitempty"`
-	CleanupConfirmed   bool            `json:"cleanupConfirmed"`
-	Failure            string          `json:"failure,omitempty"`
+	Schema             int           `json:"schema"`
+	Stage              string        `json:"stage"`
+	Binding            DaemonBinding `json:"binding"`
+	Generation         int           `json:"generation"`
+	Replacement        int           `json:"replacement"`
+	OldTree            []Identity    `json:"oldTree,omitempty"`
+	NewTree            []Identity    `json:"newTree,omitempty"`
+	Crash              *HeldExit     `json:"crash,omitempty"`
+	Managers           []HeldExit    `json:"managers,omitempty"`
+	Old                []HeldExit    `json:"old,omitempty"`
+	CrashAt            uint64        `json:"crashAt,omitempty"`
+	ReplacementCreated uint64        `json:"replacementCreated,omitempty"`
+	Ordering           *Ordering     `json:"ordering,omitempty"`
+	// OldEvents and NewEvents are both generations' complete MAIN reports,
+	// read after their writers exited: the fixture's own record of its
+	// launch mode, inner job, launch sequence, tree and entry observation.
+	OldEvents        []Event `json:"oldEvents,omitempty"`
+	NewEvents        []Event `json:"newEvents,omitempty"`
+	CleanupConfirmed bool    `json:"cleanupConfirmed"`
+	Failure          string  `json:"failure,omitempty"`
 }
 
 // ExpectedCrashRole is the crash target of a daemon case.
@@ -171,8 +181,8 @@ func (b DaemonBinding) heldManagers() int {
 }
 
 // checkDaemonTree validates one generation's MAIN, ENGINE, G1 and G2 and
-// that every one of them ran an admitted fixture image.
-func checkDaemonTree(ids []Identity, gen int, b DaemonBinding, run *Admission) error {
+// that every one of them ran the admitted fixture image.
+func checkDaemonTree(ids []Identity, gen int, b DaemonBinding, fixture string) error {
 	roles := []string{RoleMain, RoleEngine, RoleG1, RoleG2}
 	if len(ids) != len(roles) {
 		return fmt.Errorf("generation %d has %d processes", gen, len(ids))
@@ -196,8 +206,8 @@ func checkDaemonTree(ids []Identity, gen int, b DaemonBinding, run *Admission) e
 		if id.SID != b.ExpectSID || id.Session != 0 || (b.Identity == IdentityHeadless && id.Elevated) {
 			return fmt.Errorf("generation %d %s does not run as the expected account in session zero", gen, id.Role)
 		}
-		if !run.Admits(id.ImageSHA256) {
-			return fmt.Errorf("generation %d %s image is not admitted", gen, id.Role)
+		if id.ImageSHA256 != fixture {
+			return fmt.Errorf("generation %d %s image is not the admitted fixture", gen, id.Role)
 		}
 	}
 	main, engine := ids[0], ids[1]
@@ -212,10 +222,94 @@ func checkDaemonTree(ids []Identity, gen int, b DaemonBinding, run *Admission) e
 	return nil
 }
 
+// finalReport rebuilds a generation's report from its recorded events with
+// the same strict validation as the report file and requires it complete.
+func finalReport(events []Event, gen int) (*Report, error) {
+	var buf bytes.Buffer
+	for _, e := range events {
+		line, err := json.Marshal(e)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(append(line, '\n'))
+	}
+	r, err := DecodeReport(&buf, gen)
+	switch {
+	case err != nil:
+		return nil, err
+	case r.Truncated || r.Partial:
+		return nil, errors.New("report is incomplete")
+	}
+	return r, nil
+}
+
+// sameTree requires a report's tree to be exactly the held tree.
+func sameTree(r *Report, held []Identity) bool {
+	tree := r.Find(EventTree)
+	if tree == nil || len(tree.Tree) != len(held) {
+		return false
+	}
+	for i, m := range tree.Tree {
+		if m.Identity != held[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// generationProof checks one generation's own report: complete, READY in
+// the bound launch mode with its launch sequence and inner job, and its
+// tree the one the observer held.
+func generationProof(events []Event, gen int, mode string, held []Identity) (*Report, error) {
+	r, err := finalReport(events, gen)
+	if err != nil {
+		return nil, err
+	}
+	if err := CheckTree(r, mode); err != nil {
+		return nil, err
+	}
+	if !sameTree(r, held) {
+		return nil, errors.New("its tree is not the tree the observer held")
+	}
+	return r, nil
+}
+
+// matchEntries requires the replacement MAIN's entry check to cover every
+// old process exactly once, each proven absent without an error.
+func matchEntries(checks []PreviousCheck, old []Identity) error {
+	if len(checks) != len(old) {
+		return fmt.Errorf("%d entry checks for %d old processes", len(checks), len(old))
+	}
+	used := make([]bool, len(old))
+	for _, c := range checks {
+		if c.Error != "" {
+			return fmt.Errorf("entry check of %s failed", c.Role)
+		}
+		if c.State != PreviousExited && c.State != PreviousGone && c.State != PreviousReused {
+			return fmt.Errorf("entry check of %s is %s", c.Role, c.State)
+		}
+		match := -1
+		for i, o := range old {
+			if o.Role == c.Role && o.PID == c.PID && o.Created == c.Created {
+				match = i
+			}
+		}
+		switch {
+		case match < 0:
+			return fmt.Errorf("entry check of %s names no old process", c.Role)
+		case used[match]:
+			return fmt.Errorf("entry check of %s is repeated", c.Role)
+		}
+		used[match] = true
+	}
+	return nil
+}
+
 // ValidateDaemonReport recomputes an installed-daemon execution's proof. It
 // returns nil only for a finished report bound to want whose old and new
-// trees, crash target, managers, timestamps and cleanup all check out, with
-// fixture images from the admitted run.
+// trees, both generations' own reports in the bound mode, the entry check,
+// crash target, managers, timestamps and cleanup all check out, with the
+// admitted fixture as the workload image.
 func ValidateDaemonReport(rep ObserverReport, want DaemonBinding, run *Admission) error {
 	if rep.Schema != ObserverReportSchema {
 		return fmt.Errorf("observer report schema %d", rep.Schema)
@@ -226,6 +320,10 @@ func ValidateDaemonReport(rep ObserverReport, want DaemonBinding, run *Admission
 	if run == nil || run.Source != want.Source {
 		return errors.New("no admitted run for this binding")
 	}
+	fixture, ok := run.Lookup(FixtureArtifact)
+	if !ok {
+		return errors.New("the admitted run names no fixture artifact")
+	}
 	if rep.Binding != want {
 		return errors.New("report is bound to another case, account or admitted run")
 	}
@@ -235,11 +333,18 @@ func ValidateDaemonReport(rep ObserverReport, want DaemonBinding, run *Admission
 	if rep.Generation < 1 || rep.Replacement != rep.Generation+1 {
 		return fmt.Errorf("generations %d and %d are not consecutive", rep.Generation, rep.Replacement)
 	}
-	if err := checkDaemonTree(rep.OldTree, rep.Generation, want, run); err != nil {
+	if err := checkDaemonTree(rep.OldTree, rep.Generation, want, fixture.SHA256); err != nil {
 		return fmt.Errorf("old tree: %w", err)
 	}
-	if err := checkDaemonTree(rep.NewTree, rep.Replacement, want, run); err != nil {
+	if err := checkDaemonTree(rep.NewTree, rep.Replacement, want, fixture.SHA256); err != nil {
 		return fmt.Errorf("new tree: %w", err)
+	}
+	if _, err := generationProof(rep.OldEvents, rep.Generation, want.Mode, rep.OldTree); err != nil {
+		return fmt.Errorf("old generation report: %w", err)
+	}
+	newReport, err := generationProof(rep.NewEvents, rep.Replacement, want.Mode, rep.NewTree)
+	if err != nil {
+		return fmt.Errorf("replacement report: %w", err)
 	}
 	for _, n := range rep.NewTree {
 		for _, o := range rep.OldTree {
@@ -310,13 +415,12 @@ func ValidateDaemonReport(rep ObserverReport, want DaemonBinding, run *Admission
 	if o := ClassifyOrdering(rep.Old, created); o.Verdict != OrderingOrdered {
 		return fmt.Errorf("ordering %s: %s", o.Verdict, strings.Join(o.NotBefore, ", "))
 	}
-	if len(rep.EntryObservation) != len(rep.OldTree) {
-		return errors.New("the replacement MAIN's entry observation is missing")
+	prev := newReport.Find(EventPrevious)
+	if prev == nil {
+		return errors.New("the replacement MAIN recorded no entry check")
 	}
-	for _, p := range rep.EntryObservation {
-		if p.State != PreviousExited && p.State != PreviousGone && p.State != PreviousReused {
-			return fmt.Errorf("entry observation saw %s %s", p.Role, p.State)
-		}
+	if err := matchEntries(prev.Previous, rep.OldTree); err != nil {
+		return fmt.Errorf("entry observation: %w", err)
 	}
 	return nil
 }
@@ -449,8 +553,8 @@ func DaemonResult(m *Matrix, c RecordConfig, rep ObserverReport, run AdmittedRun
 		notes = append(notes, "not a required execution")
 	case err != nil:
 		notes = append(notes, "invalid proof: "+err.Error())
-	case !run.Manifest.Admits(executable):
-		notes = append(notes, "recorded by an executable outside the admitted run")
+	case !recordedByFixture(run, executable):
+		notes = append(notes, "recorded by an executable other than the admitted fixture")
 	case c.DriverResult != ResultPass:
 		notes = append(notes, "driver checks failed")
 	default:
@@ -462,6 +566,11 @@ func DaemonResult(m *Matrix, c RecordConfig, rep ObserverReport, run AdmittedRun
 	}
 	r.Detail = strings.Join(notes, "; ")
 	return r
+}
+
+func recordedByFixture(run AdmittedRun, executable string) bool {
+	fixture, ok := run.Manifest.Lookup(FixtureArtifact)
+	return ok && executable == fixture.SHA256
 }
 
 func runRecord(c RecordConfig) error {

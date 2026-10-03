@@ -2,6 +2,8 @@ package nestedjob
 
 import (
 	"bytes"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,13 +44,13 @@ func testBinding(caseID, mode, identity, repetition string) DaemonBinding {
 }
 
 // daemonTree is one generation's realistic tree: distinct processes,
-// parent links, the binding's account and the admitted fixture image.
-func daemonTree(b DaemonBinding, gen int, pid uint32, created uint64) []Identity {
+// parent links, the binding's account and the fixture image.
+func daemonTree(b DaemonBinding, gen int, pid uint32, created uint64, image string) []Identity {
 	var ids []Identity
 	for i, role := range []string{RoleMain, RoleEngine, RoleG1, RoleG2} {
 		ids = append(ids, Identity{Role: role, PID: pid + uint32(4*i), Created: created + uint64(10*i),
-			Image: `C:\fixture\nested-job.exe`, ImageSHA256: testFixtureHash, SID: b.ExpectSID,
-			Elevated: b.Identity == IdentitySystem, Invocation: "inv", Generation: gen})
+			Image: `C:\fixture\nested-job.exe`, ImageSHA256: image, SID: b.ExpectSID,
+			Elevated: b.Identity == IdentitySystem, Invocation: fmt.Sprintf("inv-%d", gen), Generation: gen})
 	}
 	ids[1].ParentPID, ids[1].ParentCreated = ids[0].PID, ids[0].Created
 	for i := 2; i < 4; i++ {
@@ -57,23 +59,60 @@ func daemonTree(b DaemonBinding, gen int, pid uint32, created uint64) []Identity
 	return ids
 }
 
+// generationEvents is a generation's complete MAIN report in mode: start,
+// entry check, inner job, the mode's launch sequence, tree and READY.
+func generationEvents(mode string, ids []Identity, gen int, previous []PreviousCheck) []Event {
+	main := ids[0]
+	created := Identity{Role: RoleEngine, PID: ids[1].PID, Created: ids[1].Created, ParentPID: main.PID, ParentCreated: main.Created, Generation: gen}
+	inner := &InnerJob{Handle: 0x1a4, LimitFlags: jobLimitKillOnJobClose}
+	members := []Member{{Identity: ids[0]}}
+	for _, id := range ids[1:] {
+		members = append(members, Member{Identity: id, InInner: true})
+	}
+	prev := Event{Kind: EventPrevious, Previous: previous}
+	if previous == nil {
+		prev.Note = "none"
+	}
+	events := []Event{{Kind: EventStart, Mode: mode, OS: "10.0.20348", Identity: &main}, prev,
+		{Kind: EventInnerJob, Inner: inner}, {Kind: EventCreated, Identity: &created}}
+	if mode == ModeAssign {
+		events = append(events, Event{Kind: EventAssigned, Identity: &created})
+	}
+	events = append(events, Event{Kind: EventResumed, Identity: &created}, Event{Kind: EventTree, Tree: members, Inner: inner},
+		Event{Kind: EventCommand, Note: "observed 1"}, Event{Kind: EventReady})
+	return sequenced(events, gen)
+}
+
+// sequenced numbers events as MAIN's report writer does.
+func sequenced(events []Event, gen int) []Event {
+	for i := range events {
+		events[i].Seq, events[i].Generation, events[i].Time = i+1, gen, "2026-10-03T00:00:00Z"
+	}
+	return events
+}
+
 // daemonReport is a finished, valid observer report for a bound binding:
 // the crash at 3000, old exits from 3010, the replacement MAIN at 5000.
-func daemonReport(b DaemonBinding) ObserverReport {
+func daemonReport(b DaemonBinding) ObserverReport { return daemonReportImage(b, testFixtureHash) }
+
+func daemonReportImage(b DaemonBinding, image string) ObserverReport {
 	crashSID := b.ExpectSID
 	if b.CrashRole == CrashBroker {
 		crashSID = SystemSID
 	}
 	rep := ObserverReport{
 		Schema: ObserverReportSchema, Stage: StageFinished, Binding: b, Generation: 1, Replacement: 2,
-		OldTree: daemonTree(b, 1, 1000, 1000), NewTree: daemonTree(b, 2, 2000, 5000),
+		OldTree: daemonTree(b, 1, 1000, 1000, image), NewTree: daemonTree(b, 2, 2000, 5000, image),
 		Crash:   &HeldExit{Role: b.CrashRole, PID: 500, Created: 500, Image: DaemonImage, SID: crashSID, Exited: true, ExitTime: 3010},
 		CrashAt: 3000, ReplacementCreated: 5000, CleanupConfirmed: true,
 	}
+	var entry []PreviousCheck
 	for i, id := range rep.OldTree {
 		rep.Old = append(rep.Old, HeldExit{Role: id.Role, PID: id.PID, Created: id.Created, SID: id.SID, Exited: true, ExitTime: 3100 + uint64(i)})
-		rep.EntryObservation = append(rep.EntryObservation, PreviousCheck{Role: id.Role, PID: id.PID, Created: id.Created, State: PreviousExited})
+		entry = append(entry, PreviousCheck{Role: id.Role, PID: id.PID, Created: id.Created, State: PreviousExited})
 	}
+	rep.OldEvents = generationEvents(b.Mode, rep.OldTree, 1, nil)
+	rep.NewEvents = generationEvents(b.Mode, rep.NewTree, 2, entry)
 	if b.heldManagers() == 1 {
 		m := HeldExit{Role: CrashUserManager, PID: 600, Created: 600, Image: DaemonImage, SID: b.ExpectSID, Exited: true, ExitTime: 3050}
 		rep.Managers = []HeldExit{m}
@@ -183,16 +222,63 @@ func TestValidateDaemonReport(t *testing.T) {
 			r.Managers[0].SID = SystemSID
 		},
 		"manager record":     func(r *ObserverReport, _ *DaemonBinding) { r.Managers[0].ExitTime = 3051 },
-		"no entry check":     func(r *ObserverReport, _ *DaemonBinding) { r.EntryObservation = nil },
-		"entry saw survivor": func(r *ObserverReport, _ *DaemonBinding) { r.EntryObservation[1].State = PreviousRunning },
+		"no entry check":     func(r *ObserverReport, _ *DaemonBinding) { entryChecks(r).Previous = nil },
+		"entry saw survivor": func(r *ObserverReport, _ *DaemonBinding) { entryChecks(r).Previous[1].State = PreviousRunning },
+		"entry check failed": func(r *ObserverReport, _ *DaemonBinding) {
+			entryChecks(r).Previous[1].Error = "access denied"
+		},
+		"entry checks repeated": func(r *ObserverReport, _ *DaemonBinding) {
+			p := entryChecks(r).Previous
+			p[3] = p[2]
+		},
+		"entry check of an unrelated process": func(r *ObserverReport, _ *DaemonBinding) {
+			entryChecks(r).Previous[2].PID = 9999
+		},
+		"entry check of a reused creation time": func(r *ObserverReport, _ *DaemonBinding) {
+			entryChecks(r).Previous[0].Created++
+		},
+		"entry checks of the new tree": func(r *ObserverReport, _ *DaemonBinding) {
+			p := entryChecks(r).Previous
+			for i, id := range r.NewTree {
+				p[i] = PreviousCheck{Role: id.Role, PID: id.PID, Created: id.Created, State: PreviousExited}
+			}
+		},
+		// The raw proof of one mode relabeled as the other, both labels changed.
+		"raw proof relabeled to the other mode": func(r *ObserverReport, b *DaemonBinding) { r.Binding.Mode, b.Mode = ModeAssign, ModeAssign },
+		"assignment in the job-list sequence": func(r *ObserverReport, _ *DaemonBinding) {
+			created := *r.NewEvents[3].Identity
+			events := append(append([]Event(nil), r.NewEvents[:4]...), Event{Kind: EventAssigned, Identity: &created})
+			r.NewEvents = sequenced(append(events, r.NewEvents[4:]...), 2)
+		},
+		"inner job with breakaway": func(r *ObserverReport, _ *DaemonBinding) {
+			inner := *r.OldEvents[2].Inner
+			inner.LimitFlags |= jobLimitBreakawayOK
+			r.OldEvents[2].Inner, r.OldEvents[eventIndex(r.OldEvents, EventTree)].Inner = &inner, &inner
+		},
+		"no old report":         func(r *ObserverReport, _ *DaemonBinding) { r.OldEvents = nil },
+		"no replacement report": func(r *ObserverReport, _ *DaemonBinding) { r.NewEvents = nil },
+		"truncated old report": func(r *ObserverReport, _ *DaemonBinding) {
+			r.OldEvents = sequenced(append(r.OldEvents, Event{Kind: EventTruncated}), 1)
+		},
+		"report of another generation": func(r *ObserverReport, _ *DaemonBinding) { r.NewEvents = sequenced(r.NewEvents, 3) },
+		"report sequence gap":          func(r *ObserverReport, _ *DaemonBinding) { r.OldEvents[4].Seq = 9 },
+		"fatal replacement report": func(r *ObserverReport, _ *DaemonBinding) {
+			r.NewEvents = sequenced(append(r.NewEvents, Event{Kind: EventFatal, Failure: &Failure{Op: "x", Message: "y"}}), 2)
+		},
+		"report tree is not the held tree": func(r *ObserverReport, _ *DaemonBinding) {
+			r.OldEvents[eventIndex(r.OldEvents, EventTree)].Tree[2].PID = 7777
+		},
+		"daemon image as workload": func(r *ObserverReport, _ *DaemonBinding) {
+			*r = daemonReportImage(r.Binding, testExecutableHash(t))
+		},
 		"relabeled case": func(_ *ObserverReport, b *DaemonBinding) {
 			b.Case, b.CrashRole = "N06", CrashUserManager
 		},
-		"relabeled mode":       func(_ *ObserverReport, b *DaemonBinding) { b.Mode = ModeAssign },
-		"relabeled repetition": func(_ *ObserverReport, b *DaemonBinding) { b.Repetition = "r3" },
-		"other account":        func(_ *ObserverReport, b *DaemonBinding) { b.ExpectSID = "S-1-5-21-1-2-3-1002" },
-		"other admission":      func(_ *ObserverReport, b *DaemonBinding) { b.Admission = strings.Repeat("1", 64) },
-		"other source":         func(_ *ObserverReport, b *DaemonBinding) { b.Source = strings.Repeat("f", 40) },
+		"recorder relabels mode": func(_ *ObserverReport, b *DaemonBinding) { b.Mode = ModeAssign },
+		"relabeled repetition":   func(_ *ObserverReport, b *DaemonBinding) { b.Repetition = "r3" },
+		"other account":          func(_ *ObserverReport, b *DaemonBinding) { b.ExpectSID = "S-1-5-21-1-2-3-1002" },
+		"other admission":        func(_ *ObserverReport, b *DaemonBinding) { b.Admission = strings.Repeat("1", 64) },
+		"other source":           func(_ *ObserverReport, b *DaemonBinding) { b.Source = strings.Repeat("f", 40) },
 	}
 	for name, mutate := range mutations {
 		rep, b := daemonReport(want), want
@@ -227,6 +313,34 @@ func TestValidateDaemonReport(t *testing.T) {
 	}
 }
 
+func eventIndex(events []Event, kind string) int {
+	for i, e := range events {
+		if e.Kind == kind {
+			return i
+		}
+	}
+	return -1
+}
+
+// entryChecks is the replacement report's entry check event.
+func entryChecks(r *ObserverReport) *Event {
+	for i := range r.NewEvents {
+		if r.NewEvents[i].Kind == EventPrevious {
+			return &r.NewEvents[i]
+		}
+	}
+	return nil
+}
+
+func testExecutableHash(t *testing.T) string {
+	t.Helper()
+	sum, err := ExecutableSHA256()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sum
+}
+
 func TestDaemonResult(t *testing.T) {
 	m, err := CaseMatrix()
 	if err != nil {
@@ -242,6 +356,10 @@ func TestDaemonResult(t *testing.T) {
 	}
 	if r := DaemonResult(m, cfg, rep, run, strings.Repeat("cd", 32)); r.Result == ResultPass {
 		t.Errorf("an unadmitted recorder passed: %+v", r)
+	}
+	// Admitted, but not the fixture: another role's executable.
+	if r := DaemonResult(m, cfg, rep, run, testExecutableHash(t)); r.Result == ResultPass || !strings.Contains(r.Detail, "other than the admitted fixture") {
+		t.Errorf("a recorder other than the fixture passed: %+v", r)
 	}
 	failed := cfg
 	failed.DriverResult = ResultFail
@@ -265,9 +383,26 @@ func TestDaemonResult(t *testing.T) {
 	}
 }
 
+// writeFixtureAdmission admits this test binary as the fixture, so the
+// record command running in it is the admitted recorder.
+func writeFixtureAdmission(t *testing.T) (string, AdmittedRun) {
+	t.Helper()
+	data := []byte(fmt.Sprintf(`{"schema":1,"source":%q,"dirty":false,"artifacts":[{"name":%q,"sha256":%q}]}`,
+		testSource, FixtureArtifact, testExecutableHash(t)))
+	path := filepath.Join(absDir(t), "fixture-admission.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run, err := DecodeAdmission(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path, run
+}
+
 func TestObserveAndRecordCommandLines(t *testing.T) {
 	dir := absDir(t)
-	admission := writeTestAdmission(t)
+	admission, fixtureRun := writeFixtureAdmission(t)
 	report := filepath.Join(dir, "observer.json")
 	good := []string{"observe", "--case-dir", dir, "--generation", "1", "--crash-pid", "4242", "--hold-pid", "77",
 		"--report", report, "--finish-file", filepath.Join(dir, "finish"), "--admission", admission,
@@ -330,8 +465,8 @@ func TestObserveAndRecordCommandLines(t *testing.T) {
 	}
 
 	results := absDir(t)
-	run := testRun(t)
-	if err := WriteJSON(report, daemonReport(testBinding("N07", ModeJobList, IdentityHeadless, "r2").bind(run))); err != nil {
+	run := fixtureRun
+	if err := WriteJSON(report, daemonReportImage(testBinding("N07", ModeJobList, IdentityHeadless, "r2").bind(run), testExecutableHash(t))); err != nil {
 		t.Fatal(err)
 	}
 	record := []string{"record", "--report", report, "--results", results, "--admission", admission, "--case", "N07",
@@ -354,6 +489,7 @@ func TestObserveAndRecordCommandLines(t *testing.T) {
 		t.Fatalf("daemon record without owner proof: %+v", s)
 	}
 	proof := passing(t, m.Select(Selection{Cases: []string{"N01"}, Identities: []string{IdentityHeadless}})[1])
+	proof.Admission, proof.Executable = run.Hash, testExecutableHash(t)
 	if proof.Key != "N01/job-list/headless/r1/native-owner" {
 		t.Fatalf("proof key %s", proof.Key)
 	}
