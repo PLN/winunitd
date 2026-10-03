@@ -260,9 +260,10 @@ native handle type. Record those checks separately. Guest drivers own account,
 logon, payload ACL and restoration evidence; test output omits fixture SIDs.
 
 Non-file handle classes have their own tests, so a native run of them does not
-repeat the file, environment, stdio and pipe-denial cases above. Each event and
-section sentinel is a named object whose name carries a fresh nonce; a section
-also holds a second nonce in its contents. The child first duplicates the
+repeat the file, environment, stdio and pipe-denial cases above. The classes
+are events, sections, mutexes, semaphores and jobs. Each sentinel is a named
+object whose name carries a fresh nonce; a section also holds a second nonce
+in its contents. The child first duplicates the
 handle at each number into one it holds, so every query concerns one object,
 and reports a number that names no handle as absent. It reads the object type
 first and the name, and for a section the contents through a read-only view,
@@ -274,16 +275,16 @@ fails the test rather than counting as absence. With
 `WINUNITD_QUAL_SUBJECT_OUT` set, the isolation tests check the child's own
 token (the product's S4U logon in session zero, or an interactive logon in
 the selected session) and write it, with the SYSTEM test process as its
-owner, in the qualification receipt's subject format. `TestNativeObjectProbeDetectsSelectiveInheritance` is the positive
-control: two inheritable sentinels of each kind, only the first of each in the
-explicit inherit list, so the child must find exactly those two. It runs under
-any token. `TestNativeInteractiveUserManagerObjectIsolation` and
+owner, in the qualification receipt's subject format.
+`TestNativeObjectProbeDetectsSelectiveInheritance` is the positive control:
+two inheritable sentinels of each kind, only the first of each in the
+explicit inherit list, so the child must find exactly the first of every
+kind. It runs under any token. `TestNativeInteractiveUserManagerObjectIsolation` and
 `TestNativeHeadlessUserManagerObjectIsolation` use the same WTS, filtered WTS
 and S4U fixtures and gating as the security cases above. The production launch
 must expose no sentinel, and the child must report the expected identity,
-session and non-elevation. Mutexes, semaphores, jobs, processes, threads,
-tokens, pipes, sockets and registry keys remain separate classes and are not
-inferred from these.
+session and non-elevation. Processes, threads, tokens, pipes, sockets and
+registry keys remain separate classes and are not inferred from these.
 
 `tests/security/pathcases` holds the case ledger for nested-descendant and
 ancestor-path cases that remain open in R4. It excludes the shapes already

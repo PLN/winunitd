@@ -19,30 +19,42 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// firstOfEachKind is the explicit inherit list of the positive control:
+// the first of the two sentinels of every kind.
+func firstOfEachKind(handles []windows.Handle) []syscall.Handle {
+	var out []syscall.Handle
+	for i := 0; i < len(handles); i += 2 {
+		out = append(out, syscall.Handle(handles[i]))
+	}
+	return out
+}
+
 // objectSentinels creates two inheritable sentinels of each non-file kind,
-// held and closed by this test, and returns their handles, identities and
-// the child argument naming them.
+// the two of a kind next to each other, held and closed by this test, and
+// returns their handles, identities and the child argument naming them.
 func objectSentinels(t *testing.T) ([]windows.Handle, []runtime.ObjectIdentity, string) {
 	t.Helper()
 	var handles []windows.Handle
 	var ids []runtime.ObjectIdentity
 	var refs []runtime.ObjectSentinelRef
-	for _, kind := range []string{runtime.SentinelEvent, runtime.SentinelEvent, runtime.SentinelSection, runtime.SentinelSection} {
-		h, id, err := runtime.NewObjectSentinel(kind)
-		if err != nil {
-			t.Fatal(err)
+	for _, kind := range runtime.SentinelKinds {
+		for range 2 {
+			h, id, err := runtime.NewObjectSentinel(kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = windows.CloseHandle(h) })
+			handles, ids = append(handles, h), append(ids, id)
+			refs = append(refs, runtime.ObjectSentinelRef{Kind: kind, Handle: uint64(h)})
 		}
-		t.Cleanup(func() { _ = windows.CloseHandle(h) })
-		handles, ids = append(handles, h), append(ids, id)
-		refs = append(refs, runtime.ObjectSentinelRef{Kind: kind, Handle: uint64(h)})
 	}
 	return handles, ids, "--object-sentinels=" + runtime.FormatObjectSentinels(refs)
 }
 
 // This positive control explicitly inherits only the first sentinel of each
-// kind. It proves the child detects an inherited event and section by
-// object identity and tells them from an inheritable sibling it did not
-// receive.
+// kind. It proves the child detects an inherited event, section, mutex,
+// semaphore and job by object identity and tells each from an inheritable
+// sibling it did not receive.
 func TestNativeObjectProbeDetectsSelectiveInheritance(t *testing.T) {
 	handles, ids, objectArg := objectSentinels(t)
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
@@ -60,7 +72,7 @@ func TestNativeObjectProbeDetectsSelectiveInheritance(t *testing.T) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, os.Args[0], "-winunitd-helper=security-report", objectArg, "--security-report-pipe="+name)
 	cmd.SysProcAttr = &windows.SysProcAttr{HideWindow: true,
-		AdditionalInheritedHandles: []syscall.Handle{syscall.Handle(handles[0]), syscall.Handle(handles[2])}}
+		AdditionalInheritedHandles: firstOfEachKind(handles)}
 	if err := cmd.Start(); err != nil {
 		t.Fatal("start the security helper:", launchFailure(err))
 	}
@@ -78,8 +90,13 @@ func TestNativeObjectProbeDetectsSelectiveInheritance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.SID != sid || !inherited[0] || inherited[1] || !inherited[2] || inherited[3] {
-		t.Fatalf("positive control: inherited event/event/section/section = %v", inherited)
+	if r.SID != sid {
+		t.Fatal("the helper reported another account")
+	}
+	for i, got := range inherited {
+		if got != (i%2 == 0) {
+			t.Fatalf("positive control: %s sentinel %d inherited=%t", ids[i].Kind, i, got)
+		}
 	}
 }
 
@@ -104,8 +121,8 @@ func TestNativeHeadlessUserManagerObjectIsolation(t *testing.T) {
 }
 
 // testNativeUserManagerObjectIsolation launches the production user manager
-// with the security helper and inheritable event and section sentinels in
-// the broker. The child must hold none of them. Its token identity is
+// with the security helper and inheritable sentinels of every kind in the
+// broker. The child must hold none of them. Its token identity is
 // checked; the file, environment, stdio and pipe-denial cases are the
 // separately qualified security test's and do not run here. The child's
 // own token, read from its process, must be the genuine one of its mode:
@@ -175,7 +192,7 @@ func testNativeUserManagerObjectIsolation(t *testing.T, tok *runtime.UserToken, 
 	if err := proc.Kill(); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("native child object isolation passed: session=%d elevation-type=%d event-sentinels=2 section-sentinels=2", r.Session, r.ElevationType)
+	t.Logf("native child object isolation passed: session=%d elevation-type=%d kinds=%d sentinels=%d", r.Session, r.ElevationType, len(runtime.SentinelKinds), len(ids))
 }
 
 // objectSubjectEnv names the file a qualification runner asks for: the

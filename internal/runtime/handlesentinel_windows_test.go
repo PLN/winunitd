@@ -12,7 +12,27 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var procNtQueryObject = windows.NewLazySystemDLL("ntdll.dll").NewProc("NtQueryObject")
+var (
+	procNtQueryObject    = windows.NewLazySystemDLL("ntdll.dll").NewProc("NtQueryObject")
+	sentinelKernel32     = windows.NewLazySystemDLL("kernel32.dll")
+	procCreateSemaphoreW = sentinelKernel32.NewProc("CreateSemaphoreW")
+	procCreateJobObjectW = sentinelKernel32.NewProc("CreateJobObjectW")
+)
+
+// createNamed calls a kernel object constructor that returns a handle and
+// reports an existing object of the same name through ERROR_ALREADY_EXISTS,
+// which x/sys does not surface for these two.
+func createNamed(proc *windows.LazyProc, args ...uintptr) (windows.Handle, error) {
+	r, _, err := proc.Call(args...)
+	h := windows.Handle(r)
+	switch {
+	case h == 0:
+		return 0, err
+	case errors.Is(err, windows.ERROR_ALREADY_EXISTS):
+		return h, err
+	}
+	return h, nil
+}
 
 // OBJECT_INFORMATION_CLASS values.
 const (
@@ -140,6 +160,12 @@ func NewObjectSentinel(kind string) (windows.Handle, ObjectIdentity, error) {
 		h, err = windows.CreateEvent(sa, 1, 0, name)
 	case SentinelSection:
 		h, err = windows.CreateFileMapping(windows.InvalidHandle, sa, windows.PAGE_READWRITE, 0, sectionNonceBytes, name)
+	case SentinelMutex:
+		h, err = windows.CreateMutex(sa, false, name)
+	case SentinelSemaphore:
+		h, err = createNamed(procCreateSemaphoreW, uintptr(unsafe.Pointer(sa)), 0, 1, uintptr(unsafe.Pointer(name)))
+	case SentinelJob:
+		h, err = createNamed(procCreateJobObjectW, uintptr(unsafe.Pointer(sa)), uintptr(unsafe.Pointer(name)))
 	default:
 		return 0, ObjectIdentity{}, fmt.Errorf("sentinel kind %q", kind)
 	}

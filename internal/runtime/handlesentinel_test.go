@@ -13,12 +13,21 @@ import (
 // the identity of whatever object each number refers to in its own handle
 // table, and the parent decides which sentinels it really inherited.
 const (
-	SentinelEvent   = "event"
-	SentinelSection = "section"
+	SentinelEvent     = "event"
+	SentinelSection   = "section"
+	SentinelMutex     = "mutex"
+	SentinelSemaphore = "semaphore"
+	SentinelJob       = "job"
 )
 
+// SentinelKinds is every kind a test creates sentinels of. Each is an
+// explicit class; none stands in for another or for pipes, sockets,
+// registry keys, processes, threads or tokens.
+var SentinelKinds = []string{SentinelEvent, SentinelSection, SentinelMutex, SentinelSemaphore, SentinelJob}
+
 // sentinelTypes is the NT object type each sentinel kind must have.
-var sentinelTypes = map[string]string{SentinelEvent: "Event", SentinelSection: "Section"}
+var sentinelTypes = map[string]string{SentinelEvent: "Event", SentinelSection: "Section", SentinelMutex: "Mutant", SentinelSemaphore: "Semaphore",
+	SentinelJob: "Job"}
 
 // SentinelName is the object name of a sentinel of a kind with a nonce.
 func SentinelName(kind, nonce string) string { return "winunitd-r4-" + kind + "-" + nonce }
@@ -130,7 +139,7 @@ func TestParseObjectSentinels(t *testing.T) {
 	if err != nil || len(got) != 2 || got[0] != refs[0] || got[1] != refs[1] {
 		t.Fatalf("round trip %v %v", got, err)
 	}
-	for _, bad := range []string{"", "event", "event:", "event:0", "event:-4", "mutex:12", "event:12,", "file:12", "event:0x10"} {
+	for _, bad := range []string{"", "event", "event:", "event:0", "event:-4", "token:12", "event:12,", "file:12", "event:0x10"} {
 		if _, err := ParseObjectSentinels(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
@@ -204,11 +213,38 @@ func TestInheritedSentinels(t *testing.T) {
 			[]ObjectIdentity{{Kind: SentinelEvent, Status: id, Type: "Mutant", Name: "e"}}},
 		"sentinel not identified": {[]ObjectIdentity{{Kind: SentinelEvent, Status: ObjectUnknown, Type: "Event", Name: "e"}},
 			[]ObjectIdentity{{Kind: SentinelEvent, Status: ObjectAbsent}}},
-		"unknown kind":     {[]ObjectIdentity{{Kind: "mutex", Status: id, Type: "Mutant", Name: "m"}}, []ObjectIdentity{{Kind: "mutex", Status: id, Type: "Mutant", Name: "m"}}},
+		"unknown kind":     {[]ObjectIdentity{{Kind: "token", Status: id, Type: "Token", Name: "t"}}, []ObjectIdentity{{Kind: "token", Status: id, Type: "Token", Name: "t"}}},
 		"empty identities": {[]ObjectIdentity{{}}, []ObjectIdentity{{}}},
 	} {
 		if _, err := InheritedSentinels(c.sent, c.observed); err == nil {
 			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+// The mutex, semaphore and job classes are told apart by type and name
+// like events: another kind of object at a number, or one of the right
+// kind with another name, is not the sentinel.
+func TestInheritedSentinelClasses(t *testing.T) {
+	const id = ObjectIdentified
+	sentinel := func(kind string) ObjectIdentity {
+		return ObjectIdentity{Kind: kind, Status: id, Type: sentinelTypes[kind], Name: `\BaseNamedObjects\` + SentinelName(kind, "n-"+kind)}
+	}
+	mutex, semaphore, job := sentinel(SentinelMutex), sentinel(SentinelSemaphore), sentinel(SentinelJob)
+	got, err := InheritedSentinels([]ObjectIdentity{mutex, semaphore, job}, []ObjectIdentity{
+		{Kind: SentinelMutex, Status: ObjectOtherType, Type: "Event"},
+		semaphore,
+		{Kind: SentinelJob, Status: id, Type: "Job", Name: `\BaseNamedObjects\another-job`},
+	})
+	if err != nil || got[0] || !got[1] || got[2] {
+		t.Fatalf("decisions %v %v", got, err)
+	}
+	if _, err := InheritedSentinels([]ObjectIdentity{job}, []ObjectIdentity{{Kind: SentinelJob, Status: ObjectUnknown, Type: "Job", Error: "name 0xc0000022"}}); err == nil {
+		t.Fatal("an unknown job identity accepted")
+	}
+	for _, kind := range SentinelKinds {
+		if sentinelTypes[kind] == "" {
+			t.Errorf("kind %s has no object type", kind)
 		}
 	}
 }
