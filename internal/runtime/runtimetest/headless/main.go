@@ -23,7 +23,7 @@ const (
 )
 
 // Roles that run only on Windows, with the workload's token or SYSTEM's.
-var windowsRoles = []string{"serve", "fail", "probe-token", "probe-path", "probe-tcp", "probe-smb", "probe-efs", "pipe-serve", "probe-pipe", "observe"}
+var windowsRoles = []string{"serve", "fail", "probe-token", "probe-path", "probe-tcp", "probe-smb", "probe-efs", "pipe-serve", "probe-pipe", "observe", "probe-first-use", "probe-endpoint", "test-receipt"}
 
 // Main runs one fixture role and returns its exit code.
 func Main(args []string, stdout, stderr io.Writer) int {
@@ -295,8 +295,8 @@ func BuildRecord(m *Matrix, o Observation, report *ObserverReport, run AdmittedR
 		if err := report.Validate(); err != nil {
 			return Record{}, fmt.Errorf("observer report: %w", err)
 		}
-		if !run.Manifest.Admits(report.Executable) {
-			return Record{}, errors.New("the observer is not in the admitted run manifest")
+		if report.Executable != run.Manifest.Lookup(workloadImage) {
+			return Record{}, errors.New("the observer is not the admitted " + workloadImage)
 		}
 		if report.Boot.String() != o.BootID {
 			return Record{}, errors.New("the observer report is from another boot")
@@ -349,8 +349,8 @@ func runRecord(args []string) error {
 	if err != nil {
 		return err
 	}
-	if !run.Manifest.Admits(exe) {
-		return errors.New("this executable is not in the admitted run manifest")
+	if want := run.Manifest.Lookup(workloadImage); want == "" || exe != want {
+		return errors.New("this executable is not the admitted " + workloadImage)
 	}
 	data, err := readBounded(*observation)
 	if err != nil {

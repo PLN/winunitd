@@ -163,7 +163,7 @@ func TestObserverCrashesThePlannedGeneration(t *testing.T) {
 	}
 	spec := ObserveSpec{Crash: RoleWorkload, Old: []string{RoleWorkload, RoleChild}, New: RoleWorkload}
 	l, _ := DeriveLifecycle(rep, spec, AccountA, r.sid, ModeS4U)
-	if metrics(l, "", 0)["orderedReplacement"] != 1 {
+	if metrics(l, nil, 0)["orderedReplacement"] != 1 {
 		t.Fatalf("replacement %+v", l.Replacement)
 	}
 	if len(rep.Marks) != 1 || rep.Marks[0].Name != "quiet" || rep.Marks[0].At < rep.Started+3e7 {

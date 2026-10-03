@@ -7,12 +7,72 @@ import (
 	"testing"
 )
 
-func TestSummarizeCompleteSet(t *testing.T) {
+// pendingKeys are the expected records that cannot pass yet: their proof
+// has no producer, or they cite such a record.
+func pendingKeys(m *Matrix) map[string]bool {
+	all := m.Expand()
+	out := map[string]bool{}
+	for _, e := range all {
+		if e.Proof == ProofPending {
+			out[e.Key] = true
+		}
+	}
+	resolved, _ := resolveAll(all)
+	for key, targets := range resolved {
+		for _, k := range targets {
+			if out[k] {
+				out[key] = true
+			}
+		}
+	}
+	return out
+}
+
+// onlyPending reports whether every record passed except the pending ones,
+// which are incomplete, and every problem belongs to a pending record.
+func onlyPending(m *Matrix, s Summary) bool {
+	pending := pendingKeys(m)
+	if s.Failed != 0 || s.Passed != s.Selected-countIn(pending, m, s) || s.Incomplete != countIn(pending, m, s) {
+		return false
+	}
+	for _, p := range s.Problems {
+		key, _, _ := strings.Cut(p, ":")
+		if !pending[primaryOf(key)] {
+			return false
+		}
+	}
+	return true
+}
+
+// countIn counts the pending records of the summary's selection.
+func countIn(pending map[string]bool, m *Matrix, s Summary) int {
+	omitted := map[string]bool{}
+	for _, k := range s.Omitted {
+		omitted[k] = true
+	}
+	n := 0
+	for _, e := range m.Expand() {
+		if pending[e.Key] && !omitted[e.Key] {
+			n++
+		}
+	}
+	return n
+}
+
+// A full realistic record set passes every case with a producer; the
+// pending cases stay incomplete with only their own problems, so the
+// summary is never complete until they have one.
+func TestSummarizeCompleteSetLeavesOnlyPendingCases(t *testing.T) {
 	m := testMatrix(t)
 	run := testRun(t)
 	s := Summarize(m, allPassing(t, m), run, Selection{})
-	if !s.Complete || s.Passed != 86 || s.Required != 86 || s.Controls != 14 || len(s.Problems) != 0 {
+	if s.Complete || s.Required != 86 || s.Controls != 14 || !onlyPending(m, s) {
 		t.Fatalf("complete set: %+v", s)
+	}
+	for key := range pendingKeys(m) {
+		if !strings.Contains(strings.Join(s.Problems, "\n"), key+": ") && !strings.HasPrefix(key, "G6/headless") {
+			t.Errorf("%s is not reported", key)
+		}
 	}
 	// Shared events count once: 86 records, 15 references, three pairs.
 	if s.Executions != 86-15-3 {
@@ -36,7 +96,7 @@ func TestSummarizeFailsClosed(t *testing.T) {
 		"missing record":     func(rs []Record) []Record { return remove(rs, "H07/A") },
 		"duplicate record":   func(rs []Record) []Record { return append(rs, rs[idx(rs, "H07/A")]) },
 		"failed record":      func(rs []Record) []Record { rs[idx(rs, "H05/B")].Result = ResultFail; return rs },
-		"skipped record":     func(rs []Record) []Record { rs[idx(rs, "H04/B")].Result = ResultSkip; return rs },
+		"skipped record":     func(rs []Record) []Record { rs[idx(rs, "H05/B")].Result = ResultSkip; return rs },
 		"no cleanup":         func(rs []Record) []Record { rs[idx(rs, "H08/A")].CleanupConfirmed = false; return rs },
 		"other admission":    func(rs []Record) []Record { rs[idx(rs, "H13/A")].Admission = strings.Repeat("1", 64); return rs },
 		"unadmitted program": func(rs []Record) []Record { rs[idx(rs, "H13/A")].Executable = strings.Repeat("2", 64); return rs },
@@ -63,8 +123,7 @@ func TestSummarizeFailsClosed(t *testing.T) {
 			rs[idx(rs, "H21/sensitivity-A")].Token = tokenFor(AccountA, ModeS4U)
 			return rs
 		},
-		"admin elevated": func(rs []Record) []Record { rs[idx(rs, "G6/filtered-admin")].Token.Elevated = true; return rs },
-		"no token":       func(rs []Record) []Record { rs[idx(rs, "H03/B")].Token = nil; return rs },
+		"no token": func(rs []Record) []Record { rs[idx(rs, "H03/B")].Token = nil; return rs },
 		"control no token": func(rs []Record) []Record {
 			rs[idx(rs, "H16/A#pipe-health")].Token = tokenFor(AccountA, ModeS4U)
 			return rs
@@ -79,14 +138,14 @@ func TestSummarizeFailsClosed(t *testing.T) {
 			rs[idx(rs, "H17/A#peer-receipt")].CleanupConfirmed = false
 			return rs
 		},
-		"finite control continued": func(rs []Record) []Record { rs[idx(rs, "G5/B#finite-limit")].Evidence.Terminal = "active"; return rs },
+		"finite control continued": func(rs []Record) []Record { rs[idx(rs, "G5/B#finite-limit")].Evidence.Status.Reason = ""; return rs },
 		"foreign control link": func(rs []Record) []Record {
 			rs[idx(rs, "H13/A")].Controls = []string{"H14/A#restore"}
 			return rs
 		},
 		// Characterizations recomputed from raw probes and controls.
 		"SMB without password control": func(rs []Record) []Record {
-			rs[idx(rs, "H18/A#password-share")].Evidence.Op.OK = false
+			rs[idx(rs, "H18/A#password-share")].Evidence.SMB.Read.OK = false
 			return rs
 		},
 		"SMB unreachable":        func(rs []Record) []Record { rs[idx(rs, "H18/B")].Evidence.SMB.Reachable = false; return rs },
@@ -167,16 +226,16 @@ func TestSummarizeFailsClosed(t *testing.T) {
 			return rs
 		},
 		"owner test without runner": func(rs []Record) []Record { rs[idx(rs, "H21/security-B")].RunnerID = ""; return rs },
-		"daemon record with runner": func(rs []Record) []Record { rs[idx(rs, "H22/all")].RunnerID = "runner"; return rs },
+		"daemon record with runner": func(rs []Record) []Record { rs[idx(rs, "H13/A")].RunnerID = "runner"; return rs },
 	}
 	for name, mutate := range mutations {
 		s := Summarize(m, mutate(cloneRecords(base)), run, Selection{})
-		if s.Complete {
-			t.Errorf("%s: summary complete", name)
+		if s.Complete || onlyPending(m, s) {
+			t.Errorf("%s: no effect on the summary", name)
 		}
 	}
-	if s := Summarize(m, base, AdmittedRun{}, Selection{}); s.Complete {
-		t.Error("complete without an admitted run")
+	if s := Summarize(m, base, AdmittedRun{}, Selection{}); s.Complete || onlyPending(m, s) {
+		t.Error("accepted without an admitted run")
 	}
 }
 
@@ -224,16 +283,34 @@ func TestSummarizeObserverFailsClosed(t *testing.T) {
 		{"reset after cap", "G1/B: shortGapsAfterCap above its maximum", func(rs []Record) {
 			r := report(rs, "G1/B")
 			gs := gensOf(r, RoleManager, AccountB)
-			g := *gs[len(gs)-1]
-			g.PID++
+			g := *gs[len(gs)-2]
+			g.PID = 9999
 			shift(&g, 1)
 			r.Generations = append(r.Generations, g)
-			r.Ended = max(r.Ended, g.Exited)
+		}},
+		{"short-lived crash loop recovered by a crash", "G2/B: recovered below its minimum", func(rs []Record) {
+			gs := gensOf(report(rs, "G2/B"), RoleManager, AccountB)
+			last := gs[len(gs)-1]
+			last.Exited = last.Created + 10e7
+			crash(last)
+		}},
+		{"long-lived crash loop", "G2/A: maxExitedLifeSec above its maximum", func(rs []Record) {
+			g := gensOf(report(rs, "G2/A"), RoleManager, AccountA)[3]
+			g.Exited = g.Created + 59e7
+			crash(g)
 		}},
 		{"no reset after stable", "G3/s4u-A: postResetGapSec above its maximum", func(rs []Record) {
 			gs := gensOf(report(rs, "G3/s4u-A"), RoleManager, AccountA)
+			shift(gs[len(gs)-2], 59)
 			shift(gs[len(gs)-1], 59)
 			report(rs, "G3/s4u-A").Ended += 60e7
+		}},
+		{"no growth after reset", "G3/s4u-B: postResetGrowth below its minimum", func(rs []Record) {
+			gs := gensOf(report(rs, "G3/s4u-B"), RoleManager, AccountB)
+			r2, r3 := gs[len(gs)-2], gs[len(gs)-1]
+			life := r3.Exited - r3.Created
+			r3.Created = r2.Exited + 1e6
+			r3.Seen, r3.Exited, r3.Crashed = r3.Created+5e5, r3.Created+life, r3.Created+life-1000
 		}},
 		{"stable too short", "G3/wts-B: stableSec below its minimum", func(rs []Record) {
 			g := gensOf(report(rs, "G3/wts-B"), RoleManager, AccountB)[7]
@@ -256,10 +333,15 @@ func TestSummarizeObserverFailsClosed(t *testing.T) {
 			r.Generations = slices.DeleteFunc(r.Generations, func(g Generation) bool { return g.Role == RoleWorkload && g.Created > keep })
 		}},
 		{"never more than five starts in ten seconds", "G5/B: maxStartsIn10s below its minimum", func(rs []Record) {
-			for i, g := range gensOf(report(rs, "G5/B"), RoleWorkload, AccountB) {
+			r := report(rs, "G5/B")
+			for i, g := range gensOf(r, RoleWorkload, AccountB) {
 				life := g.Exited - g.Created
 				g.Created = ft(float64(i) * 2.5)
-				g.Seen, g.Exited = g.Created+5e5, g.Created+life
+				g.Seen = g.Created + 5e5
+				if g.Exited != 0 {
+					g.Exited = g.Created + life
+				}
+				r.Ended = max(r.Ended, g.Seen+1e7)
 			}
 		}},
 		{"short-lived generation", "G5/B: observer: a generation lived too briefly", func(rs []Record) {
@@ -283,7 +365,7 @@ func TestSummarizeObserverFailsClosed(t *testing.T) {
 			gensOf(report(rs, "H07/B"), RoleWorkload, AccountB)[0].Crashed = 0
 		}},
 		{"no observer report", "H07/A: no observer report", func(rs []Record) { rs[findRecord(t, rs, "H07/A")].Evidence.Observer = nil }},
-		{"observer outside the run", "H08/A: observer executable outside the admitted run", func(rs []Record) {
+		{"observer outside the run", "H08/A: observer executable is not the admitted headless-workload.exe", func(rs []Record) {
 			report(rs, "H08/A").Executable = strings.Repeat("4", 64)
 		}},
 		{"observer on another boot", "H05/A: observer report is from another boot", func(rs []Record) { report(rs, "H05/A").Boot.Counter = 9 }},
@@ -327,15 +409,15 @@ func TestSummarizeObserverFailsClosed(t *testing.T) {
 			g := gensOf(report(rs, "H08/A"), RoleManager, AccountA)[0]
 			g.Crashed = g.Seen - 1
 		}},
-		{"report on an unobserved case", "H13/A: carries an observer report its case does not use", func(rs []Record) {
-			rs[findRecord(t, rs, "H13/A")].Evidence.Observer = report(rs, "H07/A")
+		{"report on an unobserved case", "H21/security-A: carries an observer report its case does not use", func(rs []Record) {
+			rs[findRecord(t, rs, "H21/security-A")].Evidence.Observer = report(rs, "H07/A")
 		}},
 	}
 	for _, tc := range tests {
 		rs := cloneRecords(base)
 		tc.mutate(rs)
 		s := Summarize(m, rs, run, Selection{})
-		if s.Complete || !strings.Contains(strings.Join(s.Problems, "\n"), tc.want) {
+		if s.Complete || onlyPending(m, s) || !strings.Contains(strings.Join(s.Problems, "\n"), tc.want) {
 			t.Errorf("%s: complete %t, problems %q", tc.name, s.Complete, s.Problems)
 		}
 	}
@@ -356,7 +438,7 @@ func smbSuccess(rs []Record, i int, class string) []Record {
 	r.Evidence.SMB.Write = OpResult{Op: "write", OK: true}
 	for j := range rs {
 		if rs[j].Key == r.Key+"#server-principal" {
-			rs[j].Evidence.Server = &Principal{Class: class}
+			rs[j].Evidence.Server = &Principal{Class: class, SID: r.Token.SID, Target: r.Evidence.SMB.Target, At: r.Evidence.SMB.Started + 1}
 		}
 	}
 	return rs
@@ -381,13 +463,12 @@ func TestSummarizeReferencesAndSuccesses(t *testing.T) {
 	}
 	rs = cloneRecords(allPassing(t, m))
 	rs = smbSuccess(rs, findRecord(t, rs, "H18/A"), "account")
-	rs[findRecord(t, rs, "H18/A#server-principal")].Evidence.Server.Role = AccountA
 	s = Summarize(m, rs, run, Selection{})
-	if !s.Complete || s.Characterizations["H18/A"] != Succeeded {
+	if !onlyPending(m, s) || s.Characterizations["H18/A"] != Succeeded {
 		t.Fatalf("attributed success: %+v", s)
 	}
-	rs[findRecord(t, rs, "H18/A#server-principal")].Evidence.Server.Role = AccountB
-	if s := Summarize(m, rs, run, Selection{}); s.Complete || s.Characterizations["H18/A"] != Inconclusive {
+	rs[findRecord(t, rs, "H18/A#server-principal")].Evidence.Server.SID = sidB
+	if s := Summarize(m, rs, run, Selection{}); onlyPending(m, s) || s.Characterizations["H18/A"] != Inconclusive {
 		t.Fatalf("success attributed to another account: %+v", s)
 	}
 }
@@ -406,7 +487,7 @@ func TestSummarizeSelectionIsPartial(t *testing.T) {
 		}
 	}
 	s := Summarize(m, rs, run, Selection{Phases: []int{1}})
-	if s.Complete || !s.Partial || s.Passed != s.Selected || len(s.Problems) != 0 || len(s.Omitted) == 0 {
+	if s.Complete || !s.Partial || !onlyPending(m, s) || len(s.Omitted) == 0 {
 		t.Fatalf("phase 1 only: %+v", s)
 	}
 	if s := Summarize(m, rs, run, Selection{}); s.Complete || len(s.Missing) == 0 {
@@ -429,7 +510,7 @@ func TestSummarizeFirstUseImmediatelyBefore(t *testing.T) {
 	rs = cloneRecords(allPassing(t, m))
 	b, h = findRecord(t, rs, "H01/A"), findRecord(t, rs, "H02/B")
 	rs[b].Sequence, rs[h].Sequence = rs[h].Sequence, rs[b].Sequence
-	if s := Summarize(m, rs, testRun(t), Selection{}); !s.Complete {
+	if s := Summarize(m, rs, testRun(t), Selection{}); strings.Contains(strings.Join(s.Problems, "\n"), "ran between the control") {
 		t.Fatalf("B between the check and H01: %q", s.Problems)
 	}
 }

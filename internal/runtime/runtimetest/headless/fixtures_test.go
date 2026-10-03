@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/PLN/winunitd/internal/protocol"
 )
 
 const (
@@ -19,6 +21,11 @@ const (
 	sidControl  = "S-1-5-21-9-9-9-1101"
 	testNonce   = "00112233445566778899aabbccddeeff"
 	testContent = "c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00"
+	// Admitted hashes of the runtime test binary and an unrelated program.
+	testRuntimeSHA = "7e57000000000000000000000000000000000000000000000000000000000001"
+	testOtherSHA   = "0e00000000000000000000000000000000000000000000000000000000000002"
+	testShare      = `\\peer\share\nonce.txt`
+	testEFSFile    = `C:\Users\b\efs\secret.txt`
 )
 
 var testAdmission = sync.OnceValues(func() ([]byte, error) {
@@ -26,7 +33,8 @@ var testAdmission = sync.OnceValues(func() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(Admission{Schema: AdmissionSchema, Source: testSource, Artifacts: []Artifact{{Name: "headless.test", SHA256: exe}}})
+	return json.Marshal(Admission{Schema: AdmissionSchema, Source: testSource, Artifacts: []Artifact{
+		{Name: workloadImage, SHA256: exe}, {Name: "runtime.test.exe", SHA256: testRuntimeSHA}, {Name: "other.exe", SHA256: testOtherSHA}}})
 })
 
 func testRun(t *testing.T) AdmittedRun {
@@ -109,6 +117,9 @@ func ft(sec float64) uint64 { return uint64(int64(ft0) + int64(sec*1e7)) }
 // testBoot is the boot of a phase; phase 1 is one fresh boot.
 func testBoot(phase int) Boot { return Boot{Time: ft(-3600), Counter: uint32(phase)} }
 
+// firstUseBoot is the boot the first-use check runs on, before phase 1's.
+var firstUseBoot = Boot{Time: ft(-7200), Counter: 0}
+
 var testExecutable = sync.OnceValue(func() string {
 	exe, _ := ExecutableSHA256()
 	return exe
@@ -135,7 +146,8 @@ func newObserved(phase int, end float64) *observed {
 }
 
 // gen adds a generation created at sec; it is seen at the first scan or
-// 50 ms after its creation, and exits at exit unless that is negative.
+// 50 ms after its creation, and exits at exit unless that is negative. The
+// pointer is valid until the next gen.
 func (o *observed) gen(role, account, mode string, created, exit float64, code uint32) *Generation {
 	o.pid++
 	g := Generation{Role: role, Account: account, PID: o.pid, Created: ft(created), Seen: max(ft(created+0.05), o.Started), Token: tokenFacts(account, mode)}
@@ -152,10 +164,20 @@ func (o *observed) gen(role, account, mode string, created, exit float64, code u
 // crash marks a generation as terminated by the observer just before its exit.
 func crash(g *Generation) { g.Crashed, g.ExitCode = g.Exited-1000, 0xdead }
 
-// stable adds the account's manager and workload running throughout.
-func (o *observed) stable(account string) {
-	o.gen(RoleManager, account, ModeS4U, -60, -1, 0)
-	o.gen(RoleWorkload, account, ModeS4U, -59, -1, 0)
+// stable adds the account's manager and workload running throughout and
+// returns the workload's PID.
+func (o *observed) stable(account string) uint32 {
+	m := o.gen(RoleManager, account, ModeS4U, -60, -1, 0).PID
+	w := o.gen(RoleWorkload, account, ModeS4U, -59, -1, 0)
+	w.ParentPID = m
+	return w.PID
+}
+
+// child adds a short-lived process started by parent, such as a probe.
+func (o *observed) child(account string, parent uint32, created float64) Generation {
+	g := o.gen(RoleChild, account, ModeS4U, created, created+1, 0)
+	g.ParentPID = parent
+	return *g
 }
 
 func peerOf(account string) string {
@@ -165,15 +187,77 @@ func peerOf(account string) string {
 	return AccountA
 }
 
-// loop adds crashed manager generations at the attempts' times.
+// loop adds crashed manager generations at the attempts' times, then the
+// recovered manager that keeps running.
 func (o *observed) loop(account, mode string, att []Attempt) {
 	for _, a := range att {
-		g := o.gen(RoleManager, account, mode, a.Launched.Sub(t0).Seconds(), a.Exited.Sub(t0).Seconds(), 0)
-		crash(g)
+		crash(o.gen(RoleManager, account, mode, a.Launched.Sub(t0).Seconds(), a.Exited.Sub(t0).Seconds(), 0))
 	}
+	o.gen(RoleManager, account, mode, lastLaunch(att)+60, -1, 0)
+	o.Ended = max(o.Ended, ft(lastLaunch(att)+70))
 }
 
 func lastLaunch(att []Attempt) float64 { return att[len(att)-1].Launched.Sub(t0).Seconds() }
+
+// tokenProbeOf is the token a held process reports about itself.
+func tokenProbeOf(g Generation) *TokenProbe {
+	return &TokenProbe{PID: g.PID, Created: g.Created, SID: g.Token.SID, Source: g.Token.Source, Session: g.Token.Session, Elevated: g.Token.Elevated,
+		AuthenticationID: g.Token.AuthenticationID, LogonType: g.Token.LogonType, AuthPackage: g.Token.AuthPackage, Integrity: "medium", ElevationType: 1}
+}
+
+// passwordProbe is a same-account password-bearing logon's token.
+func passwordProbe(account string) *TokenProbe {
+	return &TokenProbe{PID: 4000, Created: ft(-1), SID: roleSID[account], Source: "User32", Session: 3, LogonType: logonInteractive,
+		AuthPackage: "Negotiate", AuthenticationID: "00000000:00030000", Integrity: "medium", ElevationType: 1}
+}
+
+// probed is an observer report holding the account's unit, with the probe
+// process and any further in-unit processes, and an outside process.
+type probed struct {
+	report        *ObserverReport
+	probe, inUnit Generation
+	outside       Generation
+}
+
+func probeReport(e Entry) probed {
+	o := newObserved(e.Phase, 30)
+	w := o.stable(e.Account)
+	var p probed
+	p.probe = o.child(e.Account, w, 1)
+	p.inUnit = o.child(e.Account, w, 2)
+	p.outside = o.child(e.Account, 0, 3)
+	p.report = o.ObserverReport
+	return p
+}
+
+func pipeServers(e Entry, p probed) []ServerReport {
+	sid, peer := roleSID[e.Account], roleSID[peerOf(e.Account)]
+	server := ServerIdentity{PID: 600, Created: ft(-30), SID: SystemSID}
+	entry := func(pid uint32, created uint64, processSID string, claim *Claim, exited bool) ServerEntry {
+		o := CallerObservation{PID: pid, Created: created, ProcessSID: processSID, ImpersonationSID: processSID, Claim: claim, Exited: exited}
+		ok, reason := Decide(sid, o)
+		v := Verdict{Accepted: ok, Reason: reason, Held: true}
+		if ok {
+			v.PID, v.Created = pid, created
+		}
+		return ServerEntry{Observation: o, Verdict: v}
+	}
+	own := ServerReport{Name: QualificationPipePrefix + "h15", Allowed: sid, ACL: []string{sid}, Server: server, Entries: []ServerEntry{
+		entry(p.inUnit.PID, p.inUnit.Created, sid, &Claim{PID: p.inUnit.PID, Created: p.inUnit.Created, SID: sid}, false),
+		entry(p.outside.PID, p.outside.Created, sid, nil, false),
+		entry(p.inUnit.PID, p.inUnit.Created, sid, &Claim{PID: p.inUnit.PID, Created: p.inUnit.Created + 1}, false),
+		entry(5000, ft(4), sid, &Claim{PID: 5000, Created: ft(4)}, true),
+	}}
+	// The stale claim comes from another connection of the same in-unit
+	// process; give it its own incarnation so each client has one entry.
+	own.Entries[2].Observation.PID, own.Entries[2].Observation.Created = 5001, ft(5)
+	own.Entries[2].Observation.Claim = &Claim{PID: 5001, Created: ft(5) + 1}
+	own.Entries[2].Verdict = Verdict{Reason: ReasonClaim, Held: true}
+	wide := ServerReport{Name: QualificationPipePrefix + "h15-wide", Allowed: sid, ACL: []string{sid, peer}, Server: server, Entries: []ServerEntry{
+		entry(5002, ft(6), peer, nil, false),
+	}}
+	return []ServerReport{own, wide}
+}
 
 // observerFor builds the report an observed case's records carry. Shared
 // executions get the same report for every account.
@@ -191,68 +275,104 @@ func observerFor(e Entry) *ObserverReport {
 		stable := Attempt{Launched: last.Add(32 * time.Second), Exited: last.Add(162 * time.Second)}
 		r1 := Attempt{Launched: stable.Exited.Add(5 * time.Second), Exited: stable.Exited.Add(5500 * time.Millisecond)}
 		r2 := Attempt{Launched: r1.Launched.Add(time.Second), Exited: r1.Launched.Add(1500 * time.Millisecond)}
-		att = append(att, stable, r1, r2)
+		r3 := Attempt{Launched: r2.Launched.Add(2 * time.Second), Exited: r2.Launched.Add(2500 * time.Millisecond)}
+		att = append(att, stable, r1, r2, r3)
 		o := newObserved(e.Phase, lastLaunch(att)+5)
-		o.loop(e.Account, e.Mode, att)
+		for _, a := range att {
+			crash(o.gen(RoleManager, e.Account, e.Mode, a.Launched.Sub(t0).Seconds(), a.Exited.Sub(t0).Seconds(), 0))
+		}
 		return o.ObserverReport
 	case "G4":
 		att := launches(1, 2, 4, 8, 16, 32, 60)
 		end := lastLaunch(att)
 		o := newObserved(e.Phase, end+140)
-		o.loop(e.Account, e.Mode, att)
+		for _, a := range att {
+			crash(o.gen(RoleManager, e.Account, e.Mode, a.Launched.Sub(t0).Seconds(), a.Exited.Sub(t0).Seconds(), 0))
+		}
 		o.Marks = []Mark{{Name: "quiet", At: ft(end + 10)}}
 		return o.ObserverReport
 	case "G5":
-		var gaps []float64
-		for range 9 {
-			gaps = append(gaps, 0.6)
-		}
-		for range 20 {
-			gaps = append(gaps, 30)
+		gaps := []float64{0.6, 0.7, 0.9, 1.3}
+		for range 400 {
+			gaps = append(gaps, 1.5)
 		}
 		att := launches(gaps...)
 		o := newObserved(e.Phase, lastLaunch(att)+5)
-		o.gen(RoleManager, e.Account, e.Mode, -60, -1, 0)
+		m := o.gen(RoleManager, e.Account, e.Mode, -60, -1, 0).PID
 		for _, a := range att {
-			o.gen(RoleWorkload, e.Account, e.Mode, a.Launched.Sub(t0).Seconds(), a.Exited.Sub(t0).Seconds(), 7)
+			o.gen(RoleWorkload, e.Account, e.Mode, a.Launched.Sub(t0).Seconds(), a.Exited.Sub(t0).Seconds(), 7).ParentPID = m
 		}
+		o.gen(RoleWorkload, e.Account, e.Mode, lastLaunch(att)+1.5, -1, 0).ParentPID = m
 		o.Releases = []Mark{{Name: "release", At: ft(lastLaunch(att) + 1)}}
+		return o.ObserverReport
+	case "H01", "H02":
+		// One cold boot for both accounts: A's profile is created on this
+		// boot, B's existed before it.
+		o := newObserved(e.Phase, 60)
+		o.Sessions = []SessionSample{{At: o.Started}}
+		o.Profiles = map[string]ProfileFacts{
+			AccountA: {Registered: true, DirectoryCreated: ft(-50), HiveLoaded: true},
+			AccountB: {Registered: true, DirectoryCreated: ft(-90000), HiveLoaded: true},
+		}
+		o.Progress = map[string]Progress{}
+		for _, acct := range []string{AccountA, AccountB} {
+			m := o.gen(RoleManager, acct, ModeS4U, -40, -1, 0).PID
+			w := o.gen(RoleWorkload, acct, ModeS4U, -39, -1, 0)
+			w.ParentPID = m
+			o.Progress[acct] = Progress{Sequence: 9, PID: w.PID, Created: w.Created, SID: roleSID[acct], AuthenticationID: w.Token.AuthenticationID}
+		}
 		return o.ObserverReport
 	case "H03":
 		return newObserved(e.Phase, 130).ObserverReport
+	case "H04":
+		// The account's WTS logon starts a session manager beside the
+		// headless one, which stays the same process.
+		o := newObserved(e.Phase, 60)
+		o.stable(peerOf(e.Account))
+		o.stable(e.Account)
+		sid := roleSID[e.Account]
+		o.gen(RoleManager, e.Account, ModeWTS, 10, 40, 0)
+		o.Sessions = []SessionSample{{At: o.Started}, {At: ft(10), Users: []SessionUser{{Session: 2, SID: sid, State: 0}}}, {At: ft(41)}}
+		o.Logons = []LogonFact{{ID: "00000000:00020000", SID: sid, Type: logonInteractive, LogonTime: ft(9)}}
+		return o.ObserverReport
 	case "H05":
 		o := newObserved(e.Phase, 90)
 		o.stable(peerOf(e.Account))
-		o.gen(RoleManager, e.Account, e.Mode, -60, 10.5, 0)
-		o.gen(RoleWorkload, e.Account, e.Mode, -59, 10.2, 1)
+		m := o.gen(RoleManager, e.Account, e.Mode, -60, 10.5, 0).PID
+		o.gen(RoleWorkload, e.Account, e.Mode, -59, 10.2, 1).ParentPID = m
 		o.Marks = []Mark{{Name: "quiet", At: ft(10)}}
+		o.Profiles = map[string]ProfileFacts{e.Account: {Registered: true, DirectoryCreated: ft(-90000)}}
 		return o.ObserverReport
 	case "H07":
 		o := newObserved(e.Phase, 30)
 		o.stable(peerOf(e.Account))
-		o.gen(RoleManager, e.Account, e.Mode, -60, -1, 0)
-		crash(o.gen(RoleWorkload, e.Account, e.Mode, -59, 5.2, 0))
-		o.gen(RoleWorkload, e.Account, e.Mode, 7, -1, 0)
+		m := o.gen(RoleManager, e.Account, e.Mode, -60, -1, 0).PID
+		w := o.gen(RoleWorkload, e.Account, e.Mode, -59, 5.2, 0)
+		w.ParentPID = m
+		crash(w)
+		o.gen(RoleWorkload, e.Account, e.Mode, 7, -1, 0).ParentPID = m
 		return o.ObserverReport
 	case "H08":
 		o := newObserved(e.Phase, 30)
 		o.stable(peerOf(e.Account))
-		crash(o.gen(RoleManager, e.Account, e.Mode, -60, 5.1, 0))
-		o.gen(RoleWorkload, e.Account, e.Mode, -59, 5.3, 1)
-		o.gen(RoleManager, e.Account, e.Mode, 6.5, -1, 0)
-		o.gen(RoleWorkload, e.Account, e.Mode, 7, -1, 0)
+		m := o.gen(RoleManager, e.Account, e.Mode, -60, 5.1, 0)
+		crash(m)
+		mpid := m.PID
+		o.gen(RoleWorkload, e.Account, e.Mode, -59, 5.3, 1).ParentPID = mpid
+		m2 := o.gen(RoleManager, e.Account, e.Mode, 6.5, -1, 0).PID
+		o.gen(RoleWorkload, e.Account, e.Mode, 7, -1, 0).ParentPID = m2
 		return o.ObserverReport
 	case "H09":
 		o := newObserved(e.Phase, 60)
 		crash(o.gen(RoleBroker, "", ModeSystem, -120, 5.1, 0))
 		for _, acct := range []string{AccountA, AccountB} {
-			o.gen(RoleManager, acct, ModeS4U, -60, 5.2, 1)
-			o.gen(RoleWorkload, acct, ModeS4U, -59, 5.3, 1)
+			m := o.gen(RoleManager, acct, ModeS4U, -60, 5.2, 1).PID
+			o.gen(RoleWorkload, acct, ModeS4U, -59, 5.3, 1).ParentPID = m
 		}
 		o.gen(RoleBroker, "", ModeSystem, 20, -1, 0)
 		for _, acct := range []string{AccountA, AccountB} {
-			o.gen(RoleManager, acct, ModeS4U, 21, -1, 0)
-			o.gen(RoleWorkload, acct, ModeS4U, 22, -1, 0)
+			m := o.gen(RoleManager, acct, ModeS4U, 21, -1, 0).PID
+			o.gen(RoleWorkload, acct, ModeS4U, 22, -1, 0).ParentPID = m
 		}
 		return o.ObserverReport
 	}
@@ -262,49 +382,105 @@ func observerFor(e Entry) *ObserverReport {
 // evidenceFor gives each case realistic raw evidence that meets it.
 func evidenceFor(e Entry) Evidence {
 	var ev Evidence
-	if e.Observe != nil {
+	if e.Proof == ProofObserver {
 		ev.Observer = observerFor(e)
 	}
+	var p probed
+	if e.Proof == ProofProbe {
+		p = probeReport(e)
+		ev.Observer, ev.Token = p.report, tokenProbeOf(p.probe)
+	}
+	if e.Proof == ProofNamedTest {
+		ev.TestRun = &TestRunProof{Artifact: "runtime.test.exe", SHA256: testRuntimeSHA,
+			Runner: RunnerFacts{PID: 77, Created: ft(-10), Token: TokenFacts{SID: SystemSID, AuthenticationID: "00000000:000003e7"}},
+			Events: []TestEvent{{Action: "run", Test: e.Test}, {Action: "run", Test: e.Test + "/sub"}, {Action: "pass", Test: e.Test + "/sub"}, {Action: "pass", Test: e.Test}}}
+		if e.Mode == ModeS4U {
+			subject := tokenFacts(e.Account, ModeS4U)
+			ev.TestRun.Subject = &subject
+		}
+	}
 	switch e.Case {
+	case "G5":
+		ev.Status = &UnitStatusProof{Unit: "failing.service", ActiveState: "active", RestartAttempt: 404, Budget: &StatusBudget{Policy: "always", IntervalSec: 10}, At: ft(700)}
 	case "H13":
 		ev.Paths = []PathResult{{Probe: "unit-fixture", OK: true}, {Probe: "state-write", OK: true}, {Probe: "state-read", OK: true},
 			{Probe: "hkcu", OK: true}, {Probe: "known-folders", OK: true}, {Probe: "peer-root", Win32: errAccessDenied}}
 	case "H14":
 		ev.Paths = []PathResult{{Probe: "absent", Win32: errPathNotFound}, {Probe: "denied", Win32: errAccessDenied}}
 	case "H15":
-		ok := func(c string) PipeResult {
-			return PipeResult{Client: c, Connected: true, Accepted: true, Reason: ReasonAccepted, Held: true}
+		ok := func(c string, g Generation) PipeResult {
+			return PipeResult{Client: c, Connected: true, PID: g.PID, Created: g.Created, Accepted: true, Reason: ReasonAccepted, Held: true}
 		}
-		no := func(c, reason string) PipeResult {
-			return PipeResult{Client: c, Connected: true, Reason: reason, Held: true}
+		no := func(c string, pid uint32, created uint64, reason string) PipeResult {
+			return PipeResult{Client: c, Connected: true, PID: pid, Created: created, Reason: reason, Held: true}
 		}
-		ev.Pipe = []PipeResult{ok(ClientInUnit), ok(ClientOutsideUnit), no(ClientWrongDecision, ReasonAccount),
-			{Client: ClientWrongACL, OpenError: errAccessDenied}, no(ClientExited, ReasonExited), no(ClientStaleClaim, ReasonClaim)}
+		ev.Pipe = []PipeResult{ok(ClientInUnit, p.inUnit), ok(ClientOutsideUnit, p.outside), no(ClientWrongDecision, 5002, ft(6), ReasonAccount),
+			{Client: ClientWrongACL, OpenError: errAccessDenied}, no(ClientStaleClaim, 5001, ft(5), ReasonClaim)}
+		ev.PipeServers = pipeServers(e, p)
 	case "H16":
 		for _, c := range []string{ClientSystemOnly, ClientPeerUserPipe, ClientControlPipe, ClientMaintenancePipe} {
-			ev.Pipe = append(ev.Pipe, PipeResult{Client: c, OpenError: errAccessDenied})
+			ev.Pipe = append(ev.Pipe, PipeResult{Client: c, OpenError: errAccessDenied, PID: p.inUnit.PID, Created: p.inUnit.Created})
 		}
 	case "H17":
 		ev.TCP = []TCPResult{{Target: "loopback", Connected: true, Sent: 33, Received: 33, Nonce: testNonce, Echoed: true},
 			{Target: "peer", Connected: true, Sent: 33, Received: 33, Nonce: testNonce, Echoed: true}}
 	case "H18":
-		ev.SMB = &SMBResult{Reachable: true, Read: OpResult{Op: "read", Win32: errLogonFailure}, Write: OpResult{Op: "write", Win32: errLogonFailure}, ExpectSHA256: testContent}
+		ev.SMB = &SMBResult{Target: testShare, Started: ft(1), Ended: ft(2), Reachable: true, Read: OpResult{Op: "read", Win32: errLogonFailure},
+			Write: OpResult{Op: "write", Win32: errLogonFailure}, ExpectSHA256: testContent}
 	case "H19":
-		ev.EFS = &EFSResult{VolumeEncryption: true, Encrypted: true, Read: OpResult{Op: "read", Win32: errAccessDenied},
+		ev.EFS = &EFSResult{Target: testEFSFile, VolumeEncryption: true, Encrypted: true, Read: OpResult{Op: "read", Win32: errAccessDenied},
 			Plain: OpResult{Op: "read", OK: true, SHA256: testContent}, ExpectSHA256: testContent}
 	}
 	return ev
 }
 
-func controlEvidence(c ControlEntry) Evidence {
+func endpointHealth(account string) []EndpointHealth {
+	server := func(pid uint32, sid, image string) EndpointServer {
+		return EndpointServer{PID: pid, Created: ft(-100), SID: sid, Image: image}
+	}
+	h := func(client, pipe string, s EndpointServer) EndpointHealth {
+		return EndpointHealth{Client: client, Pipe: pipe, Before: s, After: s}
+	}
+	return []EndpointHealth{
+		h(ClientSystemOnly, QualificationPipePrefix+"system-only", server(601, SystemSID, workloadImage)),
+		h(ClientPeerUserPipe, WorkloadPipe(roleSID[peerOf(account)]), server(602, roleSID[peerOf(account)], workloadImage)),
+		h(ClientControlPipe, protocol.DefaultPipeName, server(603, SystemSID, daemonImage)),
+		h(ClientMaintenancePipe, protocol.MaintenancePipeName, server(603, SystemSID, daemonImage)),
+	}
+}
+
+func controlEvidence(e Entry, c ControlEntry) Evidence {
 	var ev Evidence
 	switch c.Name {
+	case "first-use":
+		ev.FirstUse = &FirstUseProof{SID: roleSID[e.Account], Baseline: "c5-baseline", Boot: firstUseBoot, At: ft(-3700)}
 	case "finite-limit":
-		ev.Terminal = "start-limit"
+		o := newObserved(e.Phase, 30)
+		m := o.gen(RoleManager, e.Account, e.Mode, -60, -1, 0).PID
+		for i := range 5 {
+			o.gen(RoleWorkload, e.Account, e.Mode, float64(i)*1.5, float64(i)*1.5+0.5, 7).ParentPID = m
+		}
+		ev.Observer = o.ObserverReport
+		remaining := 0
+		ev.Status = &UnitStatusProof{Unit: "finite.service", ActiveState: "failed", Reason: "start-limit", RestartAttempt: 4,
+			Budget: &StatusBudget{Policy: "always", IntervalSec: 10, Burst: 5, Remaining: &remaining}, At: ft(25)}
+	case "restore":
+		p := probeReport(e)
+		ev.Observer, ev.Token = p.report, tokenProbeOf(p.probe)
+		ev.Paths = []PathResult{{Probe: "unit-fixture", OK: true}, {Probe: "state-write", OK: true}, {Probe: "state-read", OK: true},
+			{Probe: "hkcu", OK: true}, {Probe: "known-folders", OK: true}, {Probe: "peer-root", Win32: errAccessDenied}}
 	case "peer-receipt":
 		ev.Receipt = &EchoReceipt{Nonce: testNonce, Received: true}
-	case "password-share", "password-decrypt", "restore":
-		ev.Op = &OpResult{Op: "read", OK: true, SHA256: testContent}
+	case "pipe-health":
+		ev.Endpoints = endpointHealth(e.Account)
+	case "password-share":
+		ev.Token = passwordProbe(e.Account)
+		ev.SMB = &SMBResult{Target: testShare, Started: ft(1000), Ended: ft(1001), Reachable: true, Read: OpResult{Op: "read", OK: true, SHA256: testContent},
+			Write: OpResult{Op: "write", OK: true}, ExpectSHA256: testContent}
+	case "password-decrypt":
+		ev.Token = passwordProbe(e.Account)
+		ev.EFS = &EFSResult{Target: testEFSFile, VolumeEncryption: true, Encrypted: true, Read: OpResult{Op: "read", OK: true, SHA256: testContent},
+			Plain: OpResult{Op: "read", OK: true, SHA256: testContent}, ExpectSHA256: testContent}
 	case "server-principal":
 		ev.Server = &Principal{Class: "none"}
 	}
@@ -337,6 +513,9 @@ func allPassing(t *testing.T, m *Matrix) []Record {
 			if e.Repetition != "" {
 				r.RunnerID = "runner-" + e.Repetition
 			}
+			if r.Evidence.TestRun != nil {
+				r.Evidence.TestRun.Runner.ID = r.RunnerID
+			}
 		}
 		order := 1
 		if e.Case == "H01" {
@@ -346,7 +525,13 @@ func allPassing(t *testing.T, m *Matrix) []Record {
 			r.Controls = append(r.Controls, c.Key)
 			cr := Record{Schema: RecordSchema, Key: c.Key, Kind: KindControl, Result: ResultPass, Source: run.Manifest.Source,
 				Admission: run.Hash, Executable: r.Executable, Matrix: MatrixHash(), Token: tokenFor(c.Account, c.Mode),
-				ExecutionID: "c-" + strings.NewReplacer("/", "-", "#", "-").Replace(c.Key), CleanupConfirmed: true, Evidence: controlEvidence(c)}
+				ExecutionID: "c-" + strings.NewReplacer("/", "-", "#", "-").Replace(c.Key), CleanupConfirmed: true, Evidence: controlEvidence(e, c)}
+			if c.Mode == ModePassword {
+				cr.Token = &Token{SID: roleSID[e.Account], Session: 3, Source: SourcePassword}
+			}
+			if c.Proof == ProofObserver || c.Proof == ProofProbe {
+				cr.Token = tokenFor(e.Account, e.Mode)
+			}
 			corder := 2
 			if c.ImmediatelyBefore {
 				corder = -1
@@ -369,7 +554,10 @@ func allPassing(t *testing.T, m *Matrix) []Record {
 		r := it.rec
 		r.Sequence = i + 1
 		r.BootID = testBoot(it.phase).String()
-		if it.phase > 1 {
+		if strings.HasSuffix(r.Key, "#first-use") {
+			r.BootID = firstUseBoot.String()
+		}
+		if it.phase > 2 {
 			r.PasswordLogons = 1
 		}
 		out = append(out, r)

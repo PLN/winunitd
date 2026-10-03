@@ -24,6 +24,12 @@ func runWindowsRole(role string, args []string, stdout io.Writer) error {
 		return runPipeServe(args)
 	case "observe":
 		return runObserve(args)
+	case "probe-first-use":
+		return runProbeFirstUse(args)
+	case "probe-endpoint":
+		return runProbeEndpoint(args)
+	case "test-receipt":
+		return runTestReceipt(args)
 	case "probe-pipe":
 		rep, err = runProbePipe(args)
 	default:

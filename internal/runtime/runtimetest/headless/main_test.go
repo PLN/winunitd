@@ -97,8 +97,10 @@ func TestRecordAndSummarizeCommands(t *testing.T) {
 	if code, _, _ := runMain("record", "--observation", obsPath, "--results", results, "--admission", admission); code != 1 {
 		t.Fatal("a record was replaced")
 	}
+	// Cases without a qualified producer keep the whole matrix open.
 	code, out, errOut := runMain("summarize", "--results", results, "--admission", admission)
-	if code != SummaryComplete {
+	var sum Summary
+	if code != SummaryFailed || json.Unmarshal([]byte(out), &sum) != nil || !onlyPending(m, sum) {
 		t.Fatalf("summarize: %d %s %s", code, out, errOut)
 	}
 	if code, _, _ := runMain("summarize", "--results", results, "--admission", admission, "--case", "H07"); code != SummaryPartial {
@@ -127,7 +129,7 @@ func TestBuildRecord(t *testing.T) {
 	m := testMatrix(t)
 	run := testRun(t)
 	exe := run.Manifest.Artifacts[0].SHA256
-	good := Observation{Key: "H13/A", Kind: KindPrimary, Result: ResultPass, ExecutionID: "run-1", Sequence: 3, BootID: "boot-1"}
+	good := Observation{Key: "H06/A", Kind: KindPrimary, Result: ResultPass, ExecutionID: "run-1", Sequence: 3, BootID: "boot-1"}
 	r, err := BuildRecord(m, good, nil, run, exe)
 	if err != nil || r.Source != testSource || r.Admission != run.Hash || r.Matrix != MatrixHash() || r.Executable != exe {
 		t.Fatalf("record %+v %v", r, err)
@@ -176,7 +178,7 @@ func TestBuildRecord(t *testing.T) {
 		"another boot":       func(o *Observation, r *ObserverReport) { o.BootID = "boot-1" },
 		"unadmitted":         func(o *Observation, r *ObserverReport) { r.Executable = strings.Repeat("5", 64) },
 		"unfinished":         func(o *Observation, r *ObserverReport) { r.Stage = ObserverRunning },
-		"unobserved case":    func(o *Observation, r *ObserverReport) { o.Key = "H13/A" },
+		"unobserved case":    func(o *Observation, r *ObserverReport) { o.Key = "H06/A" },
 		"inline report":      func(o *Observation, r *ObserverReport) { o.Evidence.Observer = r },
 		"generation reorder": func(o *Observation, r *ObserverReport) { r.Generations[0].Seen = r.Generations[0].Created - 1 },
 	} {
@@ -312,5 +314,29 @@ func TestDecodeAdmission(t *testing.T) {
 		if _, err := DecodeAdmission([]byte(data)); err == nil {
 			t.Errorf("%s accepted", name)
 		}
+	}
+}
+
+// File errors in command and test output name files, never the directories
+// that can hold an account's profile or a private share.
+func TestFileErrorsDoNotNameDirectories(t *testing.T) {
+	private := filepath.Join(t.TempDir(), "S-1-5-21-7-7-7-1001", "profile")
+	errs := map[string]error{
+		"write record": WriteRecord(private, Record{Key: "H13/A"}),
+		"write report": writeJSONFile(filepath.Join(private, "report.json"), 1),
+	}
+	_, errs["admission"] = LoadAdmission(filepath.Join(private, "admission.json"))
+	_, errs["records"] = ReadRecords(private)
+	_, errs["hash"] = FileSHA256(filepath.Join(private, "binary.exe"))
+	_, errs["config"] = LoadProbeConfig(filepath.Join(private, "config.json"))
+	for name, err := range errs {
+		if err == nil || strings.Contains(err.Error(), "S-1-5-21-7-7-7-1001") {
+			t.Errorf("%s: %v", name, err != nil)
+		}
+	}
+	code, _, errOut := runMain("record", "--observation", filepath.Join(private, "observation.json"), "--results", private,
+		"--admission", filepath.Join(private, "admission.json"))
+	if code != 1 || strings.Contains(errOut, "S-1-5-21-7-7-7-1001") || !strings.Contains(errOut, "admission.json") {
+		t.Fatalf("record diagnostic: %d, names the directory %t", code, strings.Contains(errOut, "S-1-5-21-7-7-7-1001"))
 	}
 }

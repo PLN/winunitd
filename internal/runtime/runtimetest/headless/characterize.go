@@ -56,8 +56,13 @@ type EchoReceipt struct {
 }
 
 // SMBResult is the bare S4U UNC probe: TCP 445 reachability, then a read of
-// the expected nonce file and a write, with no supplied credentials.
+// the expected nonce file and a write, with no supplied credentials. Target
+// is the nonce file's UNC path; Started and Ended bound the file calls, as
+// FILETIMEs.
 type SMBResult struct {
+	Target       string   `json:"target"`
+	Started      uint64   `json:"started"`
+	Ended        uint64   `json:"ended"`
 	Reachable    bool     `json:"reachable"`
 	ReachError   uint32   `json:"reachError,omitempty"`
 	Read         OpResult `json:"read"`
@@ -65,15 +70,19 @@ type SMBResult struct {
 	ExpectSHA256 string   `json:"expectSha256"`
 }
 
-// Principal is the server's record of who authenticated: an account role
-// (A, B, control) or guest, anonymous or machine access.
+// Principal is the server's record of an access to Target at At (a
+// FILETIME): an account, by SID, or guest, anonymous or machine access.
 type Principal struct {
-	Class string `json:"class"` // account, guest, anonymous, machine, none
-	Role  string `json:"role,omitempty"`
+	Class  string `json:"class"` // account, guest, anonymous, machine, none
+	SID    string `json:"sid,omitempty"`
+	Target string `json:"target,omitempty"`
+	At     uint64 `json:"at,omitempty"`
 }
 
-// EFSResult is the bare S4U plaintext read of an encrypted fixture.
+// EFSResult is the bare S4U plaintext read of the encrypted fixture at
+// Target.
 type EFSResult struct {
+	Target           string   `json:"target"`
 	VolumeEncryption bool     `json:"volumeEncryption"`
 	VolumeError      uint32   `json:"volumeError,omitempty"`
 	Encrypted        bool     `json:"encrypted"`
@@ -117,10 +126,16 @@ func authError(code uint32) bool {
 	return false
 }
 
-// CharacterizeSMB judges H18. An authentication error counts as a refusal
-// only when the share is reachable and a password-bearing control reached
-// it; a success counts only when the server names the account itself.
-func CharacterizeSMB(r *SMBResult, passwordControl bool, server *Principal, account string) (string, string) {
+// attributionSlack is how far a server's attribution may lie outside the
+// probe's own interval, in 100 ns units.
+const attributionSlack = 5 * 1e7
+
+// CharacterizeSMB judges H18 for the account sid. An authentication error
+// counts as a refusal only when the share is reachable and the same
+// account's password-bearing logon read the same nonce file; a success
+// counts only when the server attributes that access, on that file and at
+// that time, to the account itself.
+func CharacterizeSMB(r *SMBResult, password *SMBResult, server *Principal, sid string) (string, string) {
 	switch {
 	case r == nil:
 		return Failed, "no SMB probe"
@@ -130,8 +145,13 @@ func CharacterizeSMB(r *SMBResult, passwordControl bool, server *Principal, acco
 		if r.Read.SHA256 != r.ExpectSHA256 {
 			return Failed, "read a different nonce"
 		}
-		if server == nil || server.Class != "account" || server.Role != account {
-			return Inconclusive, "access succeeded but the server did not attribute it to the account"
+		switch {
+		case server == nil || server.Class != "account":
+			return Inconclusive, "access succeeded but the server did not attribute it to an account"
+		case server.SID != sid:
+			return Inconclusive, "access succeeded but the server attributed it to another account"
+		case server.Target != r.Target || server.At+attributionSlack < r.Started || server.At > r.Ended+attributionSlack:
+			return Inconclusive, "the server's attribution is not for this access"
 		}
 		return Succeeded, "bare S4U access authenticated as the account"
 	}
@@ -142,10 +162,12 @@ func CharacterizeSMB(r *SMBResult, passwordControl bool, server *Principal, acco
 	switch {
 	case !authError(code):
 		return Inconclusive, fmt.Sprintf("network or share error %d", code)
-	case !passwordControl:
-		return Inconclusive, "no passing password-bearing control on the same share"
+	case password == nil || !password.Reachable || !password.Read.OK:
+		return Inconclusive, "no passing same-account password-bearing control"
+	case password.Target != r.Target || password.Read.SHA256 != r.ExpectSHA256:
+		return Inconclusive, "the password-bearing control read another file"
 	}
-	return Refused, fmt.Sprintf("bare S4U refused with %d while the share works with a password logon", code)
+	return Refused, fmt.Sprintf("bare S4U refused with %d while the same account's password logon reads the file", code)
 }
 
 func efsError(code uint32) bool {
@@ -158,8 +180,9 @@ func efsError(code uint32) bool {
 
 // CharacterizeEFS judges H19. A failure counts as a refusal only when the
 // volume supports encryption, the fixture is encrypted, an unencrypted
-// sibling with the same ACL is readable and a password logon decrypts it.
-func CharacterizeEFS(r *EFSResult, passwordControl bool) (string, string) {
+// sibling with the same ACL is readable and the same account's password
+// logon decrypts the same file to the expected plaintext.
+func CharacterizeEFS(r *EFSResult, password *EFSResult) (string, string) {
 	switch {
 	case r == nil:
 		return Failed, "no EFS probe"
@@ -175,10 +198,12 @@ func CharacterizeEFS(r *EFSResult, passwordControl bool) (string, string) {
 		return Succeeded, "plaintext read under bare S4U for this profile and key state"
 	case !efsError(r.Read.Win32):
 		return Inconclusive, fmt.Sprintf("unexpected read error %d", r.Read.Win32)
-	case !passwordControl:
+	case password == nil || !password.Read.OK:
 		return Inconclusive, "no passing password-logon decryption control"
+	case password.Target != r.Target || password.Read.SHA256 != r.ExpectSHA256:
+		return Inconclusive, "the password logon decrypted another file"
 	}
-	return Refused, fmt.Sprintf("bare S4U read refused with %d while a password logon decrypts", r.Read.Win32)
+	return Refused, fmt.Sprintf("bare S4U read refused with %d while the same account's password logon decrypts it", r.Read.Win32)
 }
 
 // PathResult is one path sub-probe of H13 or H14.

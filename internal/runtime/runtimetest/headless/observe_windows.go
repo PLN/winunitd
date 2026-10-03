@@ -22,6 +22,7 @@ const (
 	systemTimeOfDayInformation = 3
 	tokenSourceClass           = 7
 	reportInterval             = 2 * time.Second
+	sampleInterval             = time.Second
 	// maxIgnored bounds the processes of a watched image that are not
 	// generations, held only so their PIDs cannot be reused.
 	maxIgnored = 256
@@ -39,15 +40,17 @@ type heldProcess struct {
 }
 
 type observer struct {
-	cfg     ObserveConfig
-	rep     ObserverReport
-	held    map[uint32]*heldProcess
-	byGen   map[int]*heldProcess
-	self    uint32
-	last    uint64
-	daemon  string
-	work    string
-	nextOut time.Time
+	cfg        ObserveConfig
+	rep        ObserverReport
+	held       map[uint32]*heldProcess
+	byGen      map[int]*heldProcess
+	self       uint32
+	last       uint64
+	daemon     string
+	work       string
+	nextOut    time.Time
+	nextSample time.Time
+	logons     map[string]bool
 }
 
 // runObserve is the SYSTEM observer. It launches nothing: it holds every
@@ -59,7 +62,7 @@ func runObserve(args []string) error {
 	if err != nil {
 		return err
 	}
-	o := &observer{cfg: cfg, held: map[uint32]*heldProcess{}, byGen: map[int]*heldProcess{}, self: windows.GetCurrentProcessId(),
+	o := &observer{cfg: cfg, held: map[uint32]*heldProcess{}, byGen: map[int]*heldProcess{}, logons: map[string]bool{}, self: windows.GetCurrentProcessId(),
 		daemon: filepath.Base(cfg.DaemonImage), work: filepath.Base(cfg.WorkloadImage)}
 	o.rep = ObserverReport{Schema: ObserverSchema, Accounts: cfg.Accounts, Plan: cfg.Plan(), Stage: ObserverRunning}
 	defer o.close()
@@ -85,6 +88,10 @@ func runObserve(args []string) error {
 	if err := o.scan(); err != nil {
 		return o.fail(err)
 	}
+	if err := o.sample(true); err != nil {
+		return o.fail(err)
+	}
+	o.accountFacts()
 	// After the last scan's exit checks, so every recorded exit is inside
 	// the observation.
 	o.rep.Ended = filetimeNow()
@@ -101,8 +108,8 @@ func (o *observer) start() error {
 	if err != nil {
 		return err
 	}
-	if !run.Manifest.Admits(exe) {
-		return errors.New("the observer is not in the admitted run manifest")
+	if want := run.Manifest.Lookup(workloadImage); want == "" || exe != want {
+		return errors.New("the observer is not the admitted " + workloadImage)
 	}
 	o.rep.Executable = exe
 	o.rep.Boot, err = bootIdentity()
@@ -197,7 +204,62 @@ func (o *observer) scan() error {
 	if err := o.release(); err != nil {
 		return err
 	}
-	return o.marks()
+	if err := o.marks(); err != nil {
+		return err
+	}
+	return o.sample(false)
+}
+
+// sample records the interactive sessions with a user when they change and
+// the watched accounts' password-bearing logon sessions, about once a
+// second and at the end.
+func (o *observer) sample(final bool) error {
+	if !final && time.Now().Before(o.nextSample) {
+		return nil
+	}
+	o.nextSample = time.Now().Add(sampleInterval)
+	users, err := interactiveUsers()
+	if err != nil {
+		return err
+	}
+	at := filetimeNow()
+	if n := len(o.rep.Sessions); n == 0 || !slices.Equal(o.rep.Sessions[n-1].Users, users) {
+		if n >= MaxGenerations {
+			return errors.New("too many session changes")
+		}
+		o.rep.Sessions = append(o.rep.Sessions, SessionSample{At: at, Users: users})
+	}
+	sessions, err := logonSessions()
+	if err != nil {
+		return err
+	}
+	watched := map[string]bool{}
+	for _, sid := range o.cfg.Accounts {
+		watched[sid] = true
+	}
+	for _, l := range sessions {
+		if watched[l.SID] && passwordLogon(l.Type) && !o.logons[l.ID] && len(o.rep.Logons) < maxIgnored {
+			o.logons[l.ID] = true
+			o.rep.Logons = append(o.rep.Logons, l)
+		}
+	}
+	return nil
+}
+
+// accountFacts reads each watched account's profile and workload progress
+// at the end of the observation.
+func (o *observer) accountFacts() {
+	o.rep.Profiles, o.rep.Progress = map[string]ProfileFacts{}, map[string]Progress{}
+	for account, sid := range o.cfg.Accounts {
+		facts, dir := profileFacts(sid)
+		o.rep.Profiles[account] = facts
+		if dir == "" {
+			continue
+		}
+		if p, ok := workloadProgress(dir); ok && p.SID == sid {
+			o.rep.Progress[account] = p
+		}
+	}
 }
 
 // snapshot opens every new process of a watched image. One that cannot be

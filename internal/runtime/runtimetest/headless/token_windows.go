@@ -5,6 +5,7 @@ package headless
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -47,7 +48,7 @@ type tokenStatistics struct {
 // folders it resolves from that token.
 func ProbeOwnToken() (TokenProbe, error) {
 	var tok windows.Token
-	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY|windows.TOKEN_IMPERSONATE|windows.TOKEN_DUPLICATE, &tok); err != nil {
+	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY|windows.TOKEN_QUERY_SOURCE|windows.TOKEN_IMPERSONATE|windows.TOKEN_DUPLICATE, &tok); err != nil {
 		return TokenProbe{}, fmt.Errorf("open own token: %w", err)
 	}
 	defer tok.Close()
@@ -57,6 +58,19 @@ func ProbeOwnToken() (TokenProbe, error) {
 		return p, err
 	}
 	p.SID = user.User.Sid.String()
+	p.PID = windows.GetCurrentProcessId()
+	if p.Created, err = creationTime(windows.CurrentProcess()); err != nil {
+		return p, err
+	}
+	var source struct {
+		Name [8]byte
+		ID   windows.LUID
+	}
+	var sn uint32
+	if err := windows.GetTokenInformation(tok, tokenSourceClass, (*byte)(unsafe.Pointer(&source)), uint32(unsafe.Sizeof(source)), &sn); err != nil {
+		return p, fmt.Errorf("token source: %w", err)
+	}
+	p.Source = strings.TrimRight(string(source.Name[:]), "\x00 ")
 	var stats tokenStatistics
 	var n uint32
 	if err := windows.GetTokenInformation(tok, windows.TokenStatistics, (*byte)(unsafe.Pointer(&stats)), uint32(unsafe.Sizeof(stats)), &n); err != nil {

@@ -12,20 +12,23 @@ import (
 // windows, replacements) come only from the observer's report.
 type Evidence struct {
 	Observer *ObserverReport `json:"observer,omitempty"`
-	// Terminal is the final unit state a status snapshot reported, such as
-	// "start-limit".
-	Terminal string        `json:"terminal,omitempty"`
-	TCP      []TCPResult   `json:"tcp,omitempty"`
-	SMB      *SMBResult    `json:"smb,omitempty"`
-	EFS      *EFSResult    `json:"efs,omitempty"`
-	Paths    []PathResult  `json:"paths,omitempty"`
-	Pipe     []PipeResult  `json:"pipe,omitempty"`
-	Op       *OpResult     `json:"op,omitempty"`
-	Server   *Principal    `json:"server,omitempty"`
-	Receipt  *EchoReceipt  `json:"receipt,omitempty"`
-	Token    *TokenProbe   `json:"tokenProbe,omitempty"`
-	Notes    []string      `json:"notes,omitempty"`
-	Native   []NativeError `json:"native,omitempty"`
+	// Status is a unit status snapshot from winctl.
+	Status      *UnitStatusProof `json:"status,omitempty"`
+	FirstUse    *FirstUseProof   `json:"firstUse,omitempty"`
+	TestRun     *TestRunProof    `json:"testRun,omitempty"`
+	Endpoints   []EndpointHealth `json:"endpoints,omitempty"`
+	PipeServers []ServerReport   `json:"pipeServers,omitempty"`
+	TCP         []TCPResult      `json:"tcp,omitempty"`
+	SMB         *SMBResult       `json:"smb,omitempty"`
+	EFS         *EFSResult       `json:"efs,omitempty"`
+	Paths       []PathResult     `json:"paths,omitempty"`
+	Pipe        []PipeResult     `json:"pipe,omitempty"`
+	Op          *OpResult        `json:"op,omitempty"`
+	Server      *Principal       `json:"server,omitempty"`
+	Receipt     *EchoReceipt     `json:"receipt,omitempty"`
+	Token       *TokenProbe      `json:"tokenProbe,omitempty"`
+	Notes       []string         `json:"notes,omitempty"`
+	Native      []NativeError    `json:"native,omitempty"`
 }
 
 // NativeError is an operation's exact native result.
@@ -34,10 +37,10 @@ type NativeError struct {
 	Win32 uint32 `json:"win32"`
 }
 
-// metrics computes every metric the derived lifecycle and the terminal state
-// support. A metric that they cannot support is absent, which fails any
-// requirement on it.
-func metrics(ev Lifecycle, terminal string, capSec float64) map[string]float64 {
+// metrics computes every metric the derived lifecycle and the status
+// snapshot support. A metric that they cannot support is absent, which fails
+// any requirement on it.
+func metrics(ev Lifecycle, status *UnitStatusProof, capSec float64) map[string]float64 {
 	out := map[string]float64{}
 	att := append([]Attempt(nil), ev.Attempts...)
 	sort.SliceStable(att, func(i, j int) bool { return att[i].Launched.Before(att[j].Launched) })
@@ -51,6 +54,17 @@ func metrics(ev Lifecycle, terminal string, capSec float64) map[string]float64 {
 		}
 		out["failures"] = float64(failures)
 		out["maxStartsIn10s"] = float64(maxInWindow(att, 10*time.Second))
+		longest := 0.0
+		for _, a := range att {
+			if !a.Exited.IsZero() {
+				longest = math.Max(longest, a.Exited.Sub(a.Launched).Seconds())
+			}
+		}
+		out["maxExitedLifeSec"] = longest
+		// Recovered: the last launch still runs at the end of the
+		// observation and was not terminated by the observer.
+		last := att[len(att)-1]
+		out["recovered"] = boolMetric(last.Exited.IsZero() && !last.Crashed)
 	}
 	gaps := make([]float64, 0, len(att))
 	for i := 1; i < len(att); i++ {
@@ -89,15 +103,20 @@ func metrics(ev Lifecycle, terminal string, capSec float64) map[string]float64 {
 			out["grownGapSec"] = grown
 		}
 		// The first replacement follows detection; the gap after it shows
-		// whether the delay restarted from the beginning.
+		// whether the delay restarted from the beginning, and the next one
+		// that it grows again from there.
 		if stable+2 < len(att) {
 			out["postResetGapSec"] = gaps[stable+1]
+		}
+		if stable+3 < len(att) {
+			out["postResetGrowth"] = boolMetric(gaps[stable+2] > gaps[stable+1])
 		}
 	}
 	if w := ev.Negative; w != nil && w.Until.After(w.Since) {
 		out["negativeSec"] = w.Until.Sub(w.Since).Seconds()
+		// The window is closed: a launch at either end counts.
 		for _, a := range att {
-			if a.Launched.After(w.Since) && !a.Launched.After(w.Until) {
+			if !a.Launched.Before(w.Since) && !a.Launched.After(w.Until) {
 				out["negativeSec"] = 0
 			}
 		}
@@ -114,14 +133,24 @@ func metrics(ev Lifecycle, terminal string, capSec float64) map[string]float64 {
 	if ev.Kept != nil {
 		out["kept"] = boolMetric(*ev.Kept)
 	}
+	for k, v := range ev.Values {
+		out[k] = v
+	}
 	if ev.Peer != nil {
 		out["peerUnchanged"] = boolMetric(*ev.Peer)
 	}
 	if ev.Drained != nil {
 		out["drained"] = boolMetric(*ev.Drained)
 	}
-	if terminal != "" {
-		out["startLimited"] = boolMetric(terminal == "start-limit")
+	if status != nil {
+		out["startLimited"] = boolMetric(status.Reason == "start-limit" && status.ActiveState == "failed")
+		out["restartAttempts"] = float64(status.RestartAttempt)
+		if b := status.Budget; b != nil {
+			out["unlimited"] = boolMetric(b.Burst == 0 && b.Remaining == nil)
+			if b.Burst > 0 && len(att) > 0 {
+				out["withinBurst"] = boolMetric(len(att) <= b.Burst)
+			}
+		}
 	}
 	return out
 }

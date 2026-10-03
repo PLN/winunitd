@@ -108,7 +108,7 @@ func ProbePaths(set string, c *ProbeConfig, stateRoot, nonce string) []PathResul
 // and writes a new one beside it with ordinary file calls: no user name,
 // password, credential URI, impersonation or credential-store entry.
 func ProbeSMB(t *SMBTarget, nonce string) SMBResult {
-	r := SMBResult{ExpectSHA256: t.ExpectSHA256}
+	r := SMBResult{Target: t.Path, ExpectSHA256: t.ExpectSHA256}
 	c, err := net.DialTimeout("tcp", net.JoinHostPort(t.Server, "445"), probeTimeout)
 	if err != nil {
 		r.ReachError = socketError(err)
@@ -116,19 +116,22 @@ func ProbeSMB(t *SMBTarget, nonce string) SMBResult {
 	}
 	_ = c.Close()
 	r.Reachable = true
+	r.Started = filetimeNow()
 	done := make(chan struct{})
+	var read, write OpResult
 	go func() {
 		defer close(done)
-		r.Read = readFileOp("read", t.Path)
-		r.Write = writeFileOp("write", filepath.Join(filepath.Dir(t.Path), "s4u-"+nonce+".txt"), []byte(nonce+"\n"))
+		read = readFileOp("read", t.Path)
+		write = writeFileOp("write", filepath.Join(filepath.Dir(t.Path), "s4u-"+nonce+".txt"), []byte(nonce+"\n"))
 	}()
 	select {
 	case <-done:
+		r.Read, r.Write = read, write
 	case <-time.After(2 * probeTimeout):
 		// The file calls cannot be cancelled; the workload's job bounds them.
-		return SMBResult{Reachable: true, ExpectSHA256: t.ExpectSHA256,
-			Read: OpResult{Op: "read", Win32: uint32(windows.WAIT_TIMEOUT)}, Write: OpResult{Op: "write", Win32: uint32(windows.WAIT_TIMEOUT)}}
+		r.Read, r.Write = OpResult{Op: "read", Win32: uint32(windows.WAIT_TIMEOUT)}, OpResult{Op: "write", Win32: uint32(windows.WAIT_TIMEOUT)}
 	}
+	r.Ended = filetimeNow()
 	return r
 }
 
@@ -136,7 +139,7 @@ func ProbeSMB(t *SMBTarget, nonce string) SMBResult {
 // encrypted attribute, then reads the fixture and its plain sibling with
 // ordinary reads.
 func ProbeEFS(t *EFSTarget) EFSResult {
-	r := EFSResult{ExpectSHA256: t.ExpectSHA256}
+	r := EFSResult{Target: t.Path, ExpectSHA256: t.ExpectSHA256}
 	volume := make([]uint16, windows.MAX_PATH+1)
 	p, err := windows.UTF16PtrFromString(t.Path)
 	if err == nil {

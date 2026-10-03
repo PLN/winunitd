@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -121,7 +122,23 @@ func TestDecodeMatrixRejectsInvalidTables(t *testing.T) {
 		},
 		"observed owner test": func(m map[string]any) { variant(m, "G5", 0)["plane"] = PlaneOwnerTest },
 		"observed field":      func(m map[string]any) { cases(m)["G5"].(map[string]any)["observe"].(map[string]any)["extra"] = 1 },
-		"unknown reference":   func(m map[string]any) { variant(m, "B01", 0)["refs"] = []any{"G2/C"} },
+		"no proof":            func(m map[string]any) { delete(cases(m)["H13"].(map[string]any), "proof") },
+		"unknown proof":       func(m map[string]any) { cases(m)["H13"].(map[string]any)["proof"] = "claim" },
+		"probe without subject": func(m map[string]any) {
+			delete(cases(m)["H13"].(map[string]any)["observe"].(map[string]any), "subject")
+		},
+		"observer proof without observer": func(m map[string]any) { delete(cases(m)["H03"].(map[string]any), "observe") },
+		"named test without package":      func(m map[string]any) { delete(cases(m)["H21"].(map[string]any), "package") },
+		"owner test proven otherwise":     func(m map[string]any) { cases(m)["H21"].(map[string]any)["proof"] = ProofObserver },
+		"control without proof": func(m map[string]any) {
+			delete(cases(m)["H17"].(map[string]any)["controls"].([]any)[0].(map[string]any), "proof")
+		},
+		"control with another kind of proof": func(m map[string]any) {
+			cases(m)["H17"].(map[string]any)["controls"].([]any)[0].(map[string]any)["proof"] = ProofPassword
+		},
+		"boot kind":            func(m map[string]any) { cases(m)["H01"].(map[string]any)["observe"].(map[string]any)["boot"] = "warm" },
+		"reference with proof": func(m map[string]any) { variant(m, "H10", 0)["proof"] = ProofPending },
+		"unknown reference":    func(m map[string]any) { variant(m, "B01", 0)["refs"] = []any{"G2/C"} },
 		"executed B record": func(m map[string]any) {
 			cases(m)["B01"].(map[string]any)["variants"] = []any{map[string]any{"id": "A", "account": "A", "mode": "s4u"}}
 		},
@@ -154,36 +171,36 @@ func TestDecodeMatrixRejectsInvalidTables(t *testing.T) {
 
 func TestMetrics(t *testing.T) {
 	ev := Lifecycle{Attempts: launches(1, 2, 4, 8, 16, 32, 60, 60, 61)}
-	got := metrics(ev, "", 60)
+	got := metrics(ev, nil, 60)
 	if got["cappedGaps"] != 3 || got["shortGapsAfterCap"] != 0 || got["durationSec"] != 244 || got["failures"] != 10 {
 		t.Fatalf("crash loop metrics %v", got)
 	}
 	ev.Attempts = append(ev.Attempts, Attempt{Launched: ev.Attempts[9].Launched.Add(2e9)})
-	if got := metrics(ev, "", 60); got["shortGapsAfterCap"] != 1 || got["failures"] != 10 {
+	if got := metrics(ev, nil, 60); got["shortGapsAfterCap"] != 1 || got["failures"] != 10 {
 		t.Fatalf("reset after the cap %v", got)
 	}
-	if got := metrics(Lifecycle{Attempts: launches(1, 1, 1, 1, 1, 1, 1, 1, 20)}, "", 0); got["maxStartsIn10s"] != 9 {
+	if got := metrics(Lifecycle{Attempts: launches(1, 1, 1, 1, 1, 1, 1, 1, 20)}, nil, 0); got["maxStartsIn10s"] != 9 {
 		t.Fatalf("starts in ten seconds %v", got)
 	}
-	if got := metrics(Lifecycle{}, "", 60); len(got) != 0 {
+	if got := metrics(Lifecycle{}, nil, 60); len(got) != 0 {
 		t.Fatalf("metrics without evidence %v", got)
 	}
 	w := &Window{Since: at(100), Until: at(250)}
-	if got := metrics(Lifecycle{Attempts: launches(1), Negative: w}, "", 0); got["negativeSec"] != 150 {
+	if got := metrics(Lifecycle{Attempts: launches(1), Negative: w}, nil, 0); got["negativeSec"] != 150 {
 		t.Fatalf("negative window %v", got)
 	}
-	if got := metrics(Lifecycle{Attempts: []Attempt{{Launched: at(250)}}, Negative: w}, "", 0); got["negativeSec"] != 0 {
+	if got := metrics(Lifecycle{Attempts: []Attempt{{Launched: at(250)}}, Negative: w}, nil, 0); got["negativeSec"] != 0 {
 		t.Fatalf("launch at the window's end %v", got)
 	}
 	r := &Replacement{Old: []Process{{PID: 1, Created: 1, Exited: 5}}, New: Process{PID: 2, Created: 5}}
-	if got := metrics(Lifecycle{Replacement: r}, "", 0); got["orderedReplacement"] != 0 {
+	if got := metrics(Lifecycle{Replacement: r}, nil, 0); got["orderedReplacement"] != 0 {
 		t.Fatalf("equal exit and creation time counted as ordered: %v", got)
 	}
 	r.New.Created = 6
-	if got := metrics(Lifecycle{Replacement: r}, "", 0); got["orderedReplacement"] != 1 {
+	if got := metrics(Lifecycle{Replacement: r}, nil, 0); got["orderedReplacement"] != 1 {
 		t.Fatalf("ordered replacement %v", got)
 	}
-	if got := metrics(Lifecycle{Replacement: &Replacement{New: Process{PID: 2, Created: 6}}}, "", 0); got["orderedReplacement"] != 0 {
+	if got := metrics(Lifecycle{Replacement: &Replacement{New: Process{PID: 2, Created: 6}}}, nil, 0); got["orderedReplacement"] != 0 {
 		t.Fatalf("replacement without old processes %v", got)
 	}
 }
@@ -253,51 +270,71 @@ func TestCharacterize(t *testing.T) {
 			t.Errorf("tcp %s: %s (%s), want %s", c.name, got, why, c.want)
 		}
 	}
-	denied := &SMBResult{Reachable: true, Read: OpResult{Win32: errAccessDenied}, ExpectSHA256: testContent}
-	ok := &SMBResult{Reachable: true, Read: OpResult{OK: true, SHA256: testContent}, Write: OpResult{OK: true}, ExpectSHA256: testContent}
+	denied := &SMBResult{Target: testShare, Started: ft(1), Ended: ft(2), Reachable: true, Read: OpResult{Win32: errAccessDenied}, ExpectSHA256: testContent}
+	ok := &SMBResult{Target: testShare, Started: ft(1), Ended: ft(2), Reachable: true, Read: OpResult{OK: true, SHA256: testContent}, Write: OpResult{OK: true}, ExpectSHA256: testContent}
+	control := &SMBResult{Target: testShare, Reachable: true, Read: OpResult{OK: true, SHA256: testContent}, ExpectSHA256: testContent}
+	other := *control
+	other.Target = `\\peer\other\nonce.txt`
+	wrongFile := *control
+	wrongFile.Read.SHA256 = strings.Repeat("9", 64)
+	failedControl := *control
+	failedControl.Read = OpResult{Win32: errAccessDenied}
+	account := &Principal{Class: "account", SID: sidA, Target: testShare, At: ft(1.5)}
+	attributed := func(f func(*Principal)) *Principal { p := *account; f(&p); return &p }
 	smb := []struct {
 		name     string
 		r        *SMBResult
-		password bool
+		password *SMBResult
 		server   *Principal
 		want     string
 	}{
-		{"refused with control", denied, true, nil, Refused},
-		{"refused without control", denied, false, nil, Inconclusive},
-		{"logon failure", &SMBResult{Reachable: true, Read: OpResult{Win32: errLogonFailure}}, true, nil, Refused},
-		{"no logon session", &SMBResult{Reachable: true, Read: OpResult{Win32: errNoSuchLogonSession}}, true, nil, Refused},
-		{"unreachable", &SMBResult{ReachError: wsaETimedOut}, true, nil, Inconclusive},
-		{"bad path", &SMBResult{Reachable: true, Read: OpResult{Win32: errBadNetPath}}, true, nil, Inconclusive},
-		{"read works, write denied", &SMBResult{Reachable: true, Read: OpResult{OK: true}, Write: OpResult{Win32: errAccessDenied}}, true, nil, Refused},
-		{"success as the account", ok, true, &Principal{Class: "account", Role: AccountA}, Succeeded},
-		{"success as guest", ok, true, &Principal{Class: "guest"}, Inconclusive},
-		{"success unattributed", ok, true, nil, Inconclusive},
-		{"wrong content", &SMBResult{Reachable: true, Read: OpResult{OK: true, SHA256: "x"}, Write: OpResult{OK: true}, ExpectSHA256: testContent}, true, nil, Failed},
-		{"no probe", nil, true, nil, Failed},
+		{"refused with control", denied, control, nil, Refused},
+		{"refused without control", denied, nil, nil, Inconclusive},
+		{"control on another share", denied, &other, nil, Inconclusive},
+		{"control read another file", denied, &wrongFile, nil, Inconclusive},
+		{"control failed", denied, &failedControl, nil, Inconclusive},
+		{"logon failure", &SMBResult{Target: testShare, Reachable: true, Read: OpResult{Win32: errLogonFailure}, ExpectSHA256: testContent}, control, nil, Refused},
+		{"no logon session", &SMBResult{Target: testShare, Reachable: true, Read: OpResult{Win32: errNoSuchLogonSession}, ExpectSHA256: testContent}, control, nil, Refused},
+		{"unreachable", &SMBResult{ReachError: wsaETimedOut}, control, nil, Inconclusive},
+		{"bad path", &SMBResult{Target: testShare, Reachable: true, Read: OpResult{Win32: errBadNetPath}}, control, nil, Inconclusive},
+		{"read works, write denied", &SMBResult{Target: testShare, Reachable: true, Read: OpResult{OK: true}, Write: OpResult{Win32: errAccessDenied}, ExpectSHA256: testContent}, control, nil, Refused},
+		{"success as the account", ok, control, account, Succeeded},
+		{"success as another account", ok, control, attributed(func(p *Principal) { p.SID = sidB }), Inconclusive},
+		{"success on another file", ok, control, attributed(func(p *Principal) { p.Target = other.Target }), Inconclusive},
+		{"success at another time", ok, control, attributed(func(p *Principal) { p.At = ft(30) }), Inconclusive},
+		{"success as guest", ok, control, &Principal{Class: "guest"}, Inconclusive},
+		{"success as machine", ok, control, &Principal{Class: "machine", SID: sidA, Target: testShare, At: ft(1.5)}, Inconclusive},
+		{"success unattributed", ok, control, nil, Inconclusive},
+		{"wrong content", &SMBResult{Reachable: true, Read: OpResult{OK: true, SHA256: "x"}, Write: OpResult{OK: true}, ExpectSHA256: testContent}, control, nil, Failed},
+		{"no probe", nil, control, nil, Failed},
 	}
 	for _, c := range smb {
-		if got, why := CharacterizeSMB(c.r, c.password, c.server, AccountA); got != c.want {
+		if got, why := CharacterizeSMB(c.r, c.password, c.server, sidA); got != c.want {
 			t.Errorf("smb %s: %s (%s), want %s", c.name, got, why, c.want)
 		}
 	}
-	base := EFSResult{VolumeEncryption: true, Encrypted: true, Read: OpResult{Win32: errAccessDenied}, Plain: OpResult{OK: true}, ExpectSHA256: testContent}
+	base := EFSResult{Target: testEFSFile, VolumeEncryption: true, Encrypted: true, Read: OpResult{Win32: errAccessDenied}, Plain: OpResult{OK: true}, ExpectSHA256: testContent}
 	mod := func(f func(*EFSResult)) *EFSResult { r := base; f(&r); return &r }
+	decrypted := mod(func(r *EFSResult) { r.Read = OpResult{OK: true, SHA256: testContent} })
 	efs := []struct {
 		name     string
 		r        *EFSResult
-		password bool
+		password *EFSResult
 		want     string
 	}{
-		{"refused with control", &base, true, Refused},
-		{"decryption failed", mod(func(r *EFSResult) { r.Read.Win32 = errDecryptionFailed }), true, Refused},
-		{"no user keys", mod(func(r *EFSResult) { r.Read.Win32 = errNoUserKeys }), true, Refused},
-		{"refused without control", &base, false, Inconclusive},
-		{"volume without EFS", mod(func(r *EFSResult) { r.VolumeEncryption = false }), true, Inconclusive},
-		{"not encrypted", mod(func(r *EFSResult) { r.Encrypted = false }), true, Inconclusive},
-		{"sibling unreadable", mod(func(r *EFSResult) { r.Plain = OpResult{Win32: errAccessDenied} }), true, Inconclusive},
-		{"not found", mod(func(r *EFSResult) { r.Read.Win32 = errFileNotFound }), true, Inconclusive},
-		{"plaintext read", mod(func(r *EFSResult) { r.Read = OpResult{OK: true, SHA256: testContent} }), false, Succeeded},
-		{"wrong plaintext", mod(func(r *EFSResult) { r.Read = OpResult{OK: true, SHA256: "x"} }), true, Failed},
+		{"refused with control", &base, decrypted, Refused},
+		{"decryption failed", mod(func(r *EFSResult) { r.Read.Win32 = errDecryptionFailed }), decrypted, Refused},
+		{"no user keys", mod(func(r *EFSResult) { r.Read.Win32 = errNoUserKeys }), decrypted, Refused},
+		{"refused without control", &base, nil, Inconclusive},
+		{"control decrypted another file", &base, mod(func(r *EFSResult) { r.Target, r.Read = `C:\\other.txt`, OpResult{OK: true, SHA256: testContent} }), Inconclusive},
+		{"control read other plaintext", &base, mod(func(r *EFSResult) { r.Read = OpResult{OK: true, SHA256: "x"} }), Inconclusive},
+		{"control failed", &base, &base, Inconclusive},
+		{"volume without EFS", mod(func(r *EFSResult) { r.VolumeEncryption = false }), decrypted, Inconclusive},
+		{"not encrypted", mod(func(r *EFSResult) { r.Encrypted = false }), decrypted, Inconclusive},
+		{"sibling unreadable", mod(func(r *EFSResult) { r.Plain = OpResult{Win32: errAccessDenied} }), decrypted, Inconclusive},
+		{"not found", mod(func(r *EFSResult) { r.Read.Win32 = errFileNotFound }), decrypted, Inconclusive},
+		{"plaintext read", decrypted, nil, Succeeded},
+		{"wrong plaintext", mod(func(r *EFSResult) { r.Read = OpResult{OK: true, SHA256: "x"} }), decrypted, Failed},
 	}
 	for _, c := range efs {
 		if got, why := CharacterizeEFS(c.r, c.password); got != c.want {

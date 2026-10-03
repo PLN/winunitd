@@ -81,8 +81,73 @@ type ObserverReport struct {
 	Unidentified []Unidentified `json:"unidentified,omitempty"`
 	Marks        []Mark         `json:"marks,omitempty"`
 	Releases     []Mark         `json:"releases,omitempty"`
-	Stage        string         `json:"stage"`
-	Failure      string         `json:"failure,omitempty"`
+	// Sessions are the interactive sessions with a user, sampled about
+	// once a second and recorded when they change; the first sample is
+	// always recorded.
+	Sessions []SessionSample `json:"sessions,omitempty"`
+	// Logons are the watched accounts' password-bearing logon sessions the
+	// observer found.
+	Logons []LogonFact `json:"logons,omitempty"`
+	// Profiles and Progress are read at the last scan, per watched account.
+	Profiles map[string]ProfileFacts `json:"profiles,omitempty"`
+	Progress map[string]Progress     `json:"progress,omitempty"`
+	Stage    string                  `json:"stage"`
+	Failure  string                  `json:"failure,omitempty"`
+}
+
+// SessionSample is the set of interactive sessions with a user at At.
+type SessionSample struct {
+	At    uint64        `json:"at"`
+	Users []SessionUser `json:"users,omitempty"`
+}
+
+// SessionUser is one interactive session and its user.
+type SessionUser struct {
+	Session uint32 `json:"session"`
+	SID     string `json:"sid"`
+	State   uint32 `json:"state"`
+}
+
+// LogonFact is one password-bearing logon session of a watched account.
+type LogonFact struct {
+	ID        string `json:"id"`
+	SID       string `json:"sid"`
+	Type      uint32 `json:"type"`
+	LogonTime uint64 `json:"logonTime"`
+}
+
+// ProfileFacts is an account's profile: registered in ProfileList, the
+// creation time of its directory (zero when absent) and whether its hive is
+// loaded.
+type ProfileFacts struct {
+	Registered       bool          `json:"registered"`
+	DirectoryCreated uint64        `json:"directoryCreated,omitempty"`
+	HiveLoaded       bool          `json:"hiveLoaded"`
+	Errors           []NativeError `json:"errors,omitempty"`
+}
+
+// Progress is the workload's flushed liveness record.
+type Progress struct {
+	Sequence         uint64 `json:"sequence"`
+	Nonce            string `json:"nonce"`
+	Time             string `json:"time"`
+	PID              uint32 `json:"pid"`
+	Created          uint64 `json:"created"`
+	SID              string `json:"sid"`
+	AuthenticationID string `json:"authenticationId"`
+	Session          uint32 `json:"session"`
+}
+
+// PasswordLogonsSince counts the watched accounts' password-bearing logons
+// that began at or after the boot's time.
+func (r *ObserverReport) PasswordLogonsSince() int {
+	n := 0
+	for _, l := range r.Logons {
+		if l.LogonTime >= r.Boot.Time {
+			n++
+		}
+	}
+	return n
 }
 
 // Boot identifies one boot: the kernel boot time and the boot counter.
@@ -235,6 +300,32 @@ func (r *ObserverReport) Validate() error {
 			return fmt.Errorf("mark %q", m.Name)
 		}
 	}
+	last := uint64(0)
+	for i, sm := range r.Sessions {
+		if sm.At < r.Started || sm.At > r.Ended || sm.At < last {
+			return fmt.Errorf("session sample %d out of order", i)
+		}
+		last = sm.At
+	}
+	watched := map[string]bool{}
+	for _, sid := range r.Accounts {
+		watched[sid] = true
+	}
+	for i, l := range r.Logons {
+		if !watched[l.SID] || l.ID == "" || l.LogonTime == 0 || l.LogonTime > r.Ended {
+			return fmt.Errorf("logon %d", i)
+		}
+	}
+	for account := range r.Profiles {
+		if r.Accounts[account] == "" {
+			return fmt.Errorf("profile of unwatched account %s", account)
+		}
+	}
+	for account, p := range r.Progress {
+		if r.Accounts[account] == "" || p.SID != r.Accounts[account] {
+			return fmt.Errorf("progress of account %s", account)
+		}
+	}
 	return nil
 }
 
@@ -248,6 +339,8 @@ type Lifecycle struct {
 	Kept    *bool
 	Peer    *bool
 	Drained *bool
+	// Values are the boot, session and profile metrics the case asks for.
+	Values map[string]float64
 }
 
 // Attempt is one observed launch. Exited is zero while it still runs.
@@ -257,6 +350,8 @@ type Attempt struct {
 	ExitCode uint32
 	PID      uint32
 	Created  uint64
+	// Crashed is set when the observer terminated it.
+	Crashed bool
 }
 
 // Window is a closed observation interval.
@@ -324,7 +419,7 @@ func DeriveLifecycle(r *ObserverReport, spec ObserveSpec, account, sid, mode str
 		gens := of(spec.Role, account)
 		checkTokens(gens)
 		for _, g := range gens {
-			a := Attempt{Launched: FiletimeTime(g.Created), ExitCode: g.ExitCode, PID: g.PID, Created: g.Created}
+			a := Attempt{Launched: FiletimeTime(g.Created), ExitCode: g.ExitCode, PID: g.PID, Created: g.Created, Crashed: g.Crashed != 0}
 			if g.Exited != 0 {
 				a.Exited = FiletimeTime(g.Exited)
 				// A generation that lived no longer than two scans could
@@ -393,8 +488,13 @@ func DeriveLifecycle(r *ObserverReport, spec ObserveSpec, account, sid, mode str
 	// stable is one process of the role, held from the first scan and
 	// still running at the last, with the expected token.
 	stable := func(role, acct, source string) bool {
-		gs := of(role, acct)
-		return len(gs) == 1 && gs[0].Seen == r.Started && gs[0].Exited == 0 && ClassifyToken(gs[0].Token) == source
+		var gs []Generation
+		for _, g := range of(role, acct) {
+			if ClassifyToken(g.Token) == source {
+				gs = append(gs, g)
+			}
+		}
+		return len(gs) == 1 && gs[0].Seen == r.Started && gs[0].Exited == 0
 	}
 	if len(spec.Kept) > 0 {
 		kept := true
@@ -422,8 +522,70 @@ func DeriveLifecycle(r *ObserverReport, spec ObserveSpec, account, sid, mode str
 		}
 		l.Drained = &drained
 	}
+	if spec.Boot != "" || spec.Session || spec.Unloaded {
+		l.Values = map[string]float64{}
+		maxUsers, accountSeen := 0, false
+		for _, sm := range r.Sessions {
+			maxUsers = max(maxUsers, len(sm.Users))
+			for _, u := range sm.Users {
+				if u.SID == sid {
+					accountSeen = true
+				}
+			}
+		}
+		if len(r.Sessions) > 0 {
+			l.Values["interactiveSessions"] = float64(maxUsers)
+			last := r.Sessions[len(r.Sessions)-1]
+			l.Values["sessionCycle"] = boolMetric(accountSeen && !slices.ContainsFunc(last.Users, func(u SessionUser) bool { return u.SID == sid }))
+		}
+		prof, hasProfile := r.Profiles[account]
+		if spec.Unloaded && hasProfile && len(prof.Errors) == 0 {
+			l.Values["profileUnloaded"] = boolMetric(!prof.HiveLoaded)
+		}
+		if spec.Boot != "" {
+			started, progressing := bootStart(r, account, sid)
+			l.Values["bootStarted"] = boolMetric(started != nil)
+			l.Values["progressing"] = boolMetric(progressing)
+			if hasProfile && len(prof.Errors) == 0 {
+				created := prof.Registered && prof.HiveLoaded && prof.DirectoryCreated > r.Boot.Time
+				existing := prof.Registered && prof.HiveLoaded && prof.DirectoryCreated != 0 && prof.DirectoryCreated < r.Boot.Time
+				l.Values["profileCreated"] = boolMetric(spec.Boot == BootCreated && created)
+				l.Values["profileExisting"] = boolMetric(spec.Boot == BootExisting && existing)
+			}
+		}
+	}
 	if badToken {
 		problems = append(problems, "an observed generation did not run under the account's "+mode+" token")
 	}
 	return l, problems
+}
+
+// Kinds of cold-boot profile.
+const (
+	BootCreated  = "created"
+	BootExisting = "existing"
+)
+
+// bootStart finds the account's S4U manager and the workload it started,
+// both created on this boot and still running at the end, and whether the
+// workload's own progress record names that workload incarnation, its token
+// and more than one flush.
+func bootStart(r *ObserverReport, account, sid string) (*Generation, bool) {
+	for i, m := range r.Generations {
+		if m.Role != RoleManager || m.Account != account || m.Created <= r.Boot.Time || m.Exited != 0 || ClassifyToken(m.Token) != SourceS4U {
+			continue
+		}
+		for j, w := range r.Generations {
+			if w.Role != RoleWorkload || w.Account != account || w.ParentPID != m.PID || w.Created < m.Created || w.Exited != 0 ||
+				ClassifyToken(w.Token) != SourceS4U {
+				continue
+			}
+			_ = j
+			p, ok := r.Progress[account]
+			progressing := ok && p.PID == w.PID && p.Created == w.Created && p.SID == sid && p.AuthenticationID == w.Token.AuthenticationID &&
+				p.Session == 0 && p.Sequence >= 2
+			return &r.Generations[i], progressing
+		}
+	}
+	return nil, false
 }

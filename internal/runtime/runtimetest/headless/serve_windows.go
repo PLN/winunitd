@@ -21,22 +21,6 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// WorkloadPipe is the workload's command pipe for its account: SYSTEM and
-// the account itself may connect.
-func WorkloadPipe(sid string) string { return QualificationPipePrefix + `workload\` + sid }
-
-// Progress is the workload's flushed liveness record.
-type Progress struct {
-	Sequence         uint64 `json:"sequence"`
-	Nonce            string `json:"nonce"`
-	Time             string `json:"time"`
-	PID              uint32 `json:"pid"`
-	Created          uint64 `json:"created"`
-	SID              string `json:"sid"`
-	AuthenticationID string `json:"authenticationId"`
-	Session          uint32 `json:"session"`
-}
-
 // Command is one enumerated request on the workload pipe.
 type Command struct {
 	Verb  string `json:"verb"`            // health, probe or exit
@@ -104,9 +88,17 @@ type workload struct {
 	progress      Progress
 	probes        int
 	exit          chan uint32
+	echo          interface{ Close() error }
 }
 
+// tick flushes progress and, once a probe configuration with a loopback
+// address appears in the state root, opens the loopback echo listener: the
+// configuration can be staged after the workload started on its own, so no
+// restart is needed.
 func (w *workload) tick() error {
+	if err := w.listenLoopback(); err != nil {
+		return err
+	}
 	w.mu.Lock()
 	w.progress.Sequence++
 	w.progress.Nonce = newNonce()
@@ -140,6 +132,30 @@ func (w *workload) runProbe(name string) (json.RawMessage, error) {
 	}
 	data, err := readBounded(out)
 	return json.RawMessage(data), err
+}
+
+// listenLoopback opens the configured loopback echo listener once. A
+// configuration that does not exist yet is not an error; one that exists
+// and cannot be read or served is.
+func (w *workload) listenLoopback() error {
+	if w.echo != nil {
+		return nil
+	}
+	cfg, err := LoadProbeConfig(w.config)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	case cfg.Loopback == "":
+		return nil
+	}
+	echo, err := ListenEcho(cfg.Loopback)
+	if err != nil {
+		return fmt.Errorf("loopback echo: %w", err)
+	}
+	w.echo = echo
+	return nil
 }
 
 func (w *workload) answer(c net.Conn) {
@@ -210,16 +226,12 @@ func runServe(args []string) error {
 	}
 	w := &workload{state: *state, config: filepath.Join(*state, "config.json"), exe: exe, exit: make(chan uint32, 1),
 		progress: Progress{PID: windows.GetCurrentProcessId(), Created: created, SID: tp.SID, AuthenticationID: tp.AuthenticationID, Session: tp.Session}}
-	if err := w.tick(); err != nil {
-		return err
-	}
-	if cfg, err := LoadProbeConfig(w.config); err == nil && cfg.Loopback != "" {
-		echo, err := ListenEcho(cfg.Loopback)
-		if err != nil {
-			return fmt.Errorf("loopback echo: %w", err)
+	defer func() {
+		if w.echo != nil {
+			_ = w.echo.Close()
 		}
-		defer echo.Close()
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+	}()
+	if err := w.tick(); err != nil {
 		return err
 	}
 	ln, err := protocol.ListenPipeSDDL(WorkloadPipe(tp.SID), "D:P(A;;GA;;;SY)(A;;GA;;;"+tp.SID+")")

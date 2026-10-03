@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -181,18 +182,18 @@ func writeJSONFile(path string, v any) error {
 		return err
 	}
 	if len(data) > MaxFileBytes {
-		return fmt.Errorf("%s exceeds %d bytes", path, MaxFileBytes)
+		return fmt.Errorf("%s exceeds %d bytes", filepath.Base(path), MaxFileBytes)
 	}
 	tmp := fmt.Sprintf("%s.tmp-%d", path, os.Getpid())
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
-		return err
+		return baseOnly(err)
 	}
 	_, werr := f.Write(append(data, '\n'))
 	serr := f.Sync()
 	if err := errors.Join(werr, serr, f.Close()); err != nil {
 		_ = os.Remove(tmp)
-		return err
+		return baseOnly(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for {
@@ -202,7 +203,7 @@ func writeJSONFile(path string, v any) error {
 		}
 		if time.Now().After(deadline) {
 			_ = os.Remove(tmp)
-			return err
+			return baseOnly(err)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

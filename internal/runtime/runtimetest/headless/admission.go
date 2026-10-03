@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 )
 
@@ -60,6 +62,22 @@ func (a *Admission) Admits(sum string) bool {
 	return false
 }
 
+// Lookup returns the admitted SHA-256 of the named artifact, or "" when the
+// manifest has no such artifact. A proof that names a role, such as the
+// recorder or a test binary, must match that entry, not merely any admitted
+// executable.
+func (a *Admission) Lookup(name string) string {
+	if a == nil {
+		return ""
+	}
+	for _, art := range a.Artifacts {
+		if art.Name == name {
+			return art.SHA256
+		}
+	}
+	return ""
+}
+
 func (a *Admission) validate() error {
 	if a.Schema != AdmissionSchema {
 		return fmt.Errorf("admission schema %d", a.Schema)
@@ -106,19 +124,20 @@ func LoadAdmission(path string) (AdmittedRun, error) {
 	return DecodeAdmission(data)
 }
 
-// readBounded reads a file of at most MaxFileBytes.
+// readBounded reads a file of at most MaxFileBytes. Its errors name the
+// file, never its directory.
 func readBounded(path string) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, baseOnly(err)
 	}
 	defer f.Close()
 	data, err := io.ReadAll(io.LimitReader(f, MaxFileBytes+1))
 	if err != nil {
-		return nil, err
+		return nil, baseOnly(err)
 	}
 	if len(data) > MaxFileBytes {
-		return nil, fmt.Errorf("file exceeds %d bytes", MaxFileBytes)
+		return nil, fmt.Errorf("%s exceeds %d bytes", filepath.Base(path), MaxFileBytes)
 	}
 	return data, nil
 }
@@ -127,14 +146,29 @@ func readBounded(path string) ([]byte, error) {
 func FileSHA256(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", err
+		return "", baseOnly(err)
 	}
 	defer f.Close()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return "", err
+		return "", baseOnly(err)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// baseOnly keeps a file error's operation, file name and cause but drops
+// its directory, which can name an account's profile or a private share:
+// diagnostics in ordinary test and command output stay free of them.
+func baseOnly(err error) error {
+	var pe *fs.PathError
+	var le *os.LinkError
+	switch {
+	case errors.As(err, &pe):
+		return &fs.PathError{Op: pe.Op, Path: filepath.Base(pe.Path), Err: pe.Err}
+	case errors.As(err, &le):
+		return &os.LinkError{Op: le.Op, Old: filepath.Base(le.Old), New: filepath.Base(le.New), Err: le.Err}
+	}
+	return err
 }
 
 // ExecutableSHA256 hashes the running executable.

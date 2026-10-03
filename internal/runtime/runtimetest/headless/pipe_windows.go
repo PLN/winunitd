@@ -20,10 +20,6 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// QualificationPipePrefix is the namespace of the fixture's own pipes. It is
-// not a WinUnit endpoint.
-const QualificationPipePrefix = `\\.\pipe\winunitd-qual\`
-
 // settleWindow is how long the server watches a held caller after reading
 // its claim: a caller that exits within it is rejected as exited.
 const settleWindow = time.Second
@@ -228,7 +224,7 @@ func runPipeServe(args []string) error {
 	}
 	for _, sid := range append([]string{*allow}, acl...) {
 		if !protocol.ValidSID(sid) {
-			return usage("invalid SID %q", sid)
+			return usage("--allow and --acl need valid SIDs")
 		}
 	}
 	if err := errors.Join(absPath("report", *report), durationIn("duration", *duration, time.Second, time.Hour)); err != nil {

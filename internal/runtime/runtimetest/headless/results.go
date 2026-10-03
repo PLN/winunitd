@@ -221,6 +221,19 @@ func Summarize(m *Matrix, records []Record, run AdmittedRun, sel Selection) Summ
 	}
 	sort.Strings(ev.problems)
 	s.Problems = ev.problems
+	if s.Partial {
+		// A development selection reports the problems of what it selected
+		// and those that belong to no record.
+		in := map[string]bool{}
+		for _, e := range selected {
+			in[e.Key] = true
+		}
+		s.Problems = slices.DeleteFunc(s.Problems, func(p string) bool {
+			key, _, _ := strings.Cut(p, ":")
+			_, isEntry := ev.entries[primaryOf(key)]
+			return isEntry && !in[primaryOf(key)]
+		})
+	}
 	s.Complete = !s.Partial && s.Passed == s.Required && len(s.Problems) == 0
 	return s
 }
@@ -238,8 +251,8 @@ func (ev *evaluation) check(r Record) error {
 	if ev.run.Manifest == nil || r.Source != ev.run.Manifest.Source || r.Admission != ev.run.Hash {
 		return errors.New("not recorded for the admitted run")
 	}
-	if !ev.run.Manifest.Admits(r.Executable) {
-		return errors.New("made by an executable outside the admitted run")
+	if r.Executable == "" || r.Executable != ev.run.Manifest.Lookup(workloadImage) {
+		return errors.New("not made by the admitted " + workloadImage)
 	}
 	if r.Matrix != MatrixHash() {
 		return errors.New("recorded against another matrix")
@@ -277,7 +290,8 @@ func (ev *evaluation) check(r Record) error {
 	if r.Token != nil && r.Token.Source != SourcePeer && !sidPattern.MatchString(r.Token.SID) {
 		return errors.New("token without an account SID")
 	}
-	if r.Evidence.Observer != nil && (r.Kind != KindPrimary || ev.entries[r.Key].Observe == nil) {
+	observed := r.Kind == KindPrimary && ev.entries[r.Key].Observe != nil || r.Kind == KindControl && ev.controls[r.Key].Observe != nil
+	if r.Evidence.Observer != nil && !observed {
 		return errors.New("carries an observer report its case does not use")
 	}
 	return nil
@@ -397,11 +411,32 @@ func (ev *evaluation) evaluate(e Entry) (status, bool, string) {
 	if err := ev.tokenFits(r.Token, e.Account, e.Mode); err != nil {
 		open("token: %v", err)
 	}
-	var life Lifecycle
-	if e.Observe != nil {
-		life = ev.lifecycle(e, r, open)
+	if err := headerMatches(r.Token, r.Evidence.Token); err != nil {
+		open("%v", err)
 	}
-	for _, f := range meets(e.Requires, metrics(life, r.Evidence.Terminal, e.CapSec)) {
+	if e.Mode == ModeFilteredAdmin && !FilteredAdministrator(r.Evidence.Token) {
+		open("the token probe is not an administrator's filtered token")
+	}
+	sid, peer := ev.roles[e.Account], ev.peerOf(e.Account)
+	var life Lifecycle
+	switch e.Proof {
+	case ProofPending:
+		open("no qualified producer of this case's proof exists yet")
+	case ProofObserver:
+		life = ev.lifecycle(e.Observe, e.Account, e.Mode, r, open)
+	case ProofProbe:
+		life = ev.lifecycle(e.Observe, e.Account, e.Mode, r, open)
+		for _, p := range CheckSubject(r.Evidence.Observer, r.Evidence.Token, e.Account, e.Mode) {
+			open("%s", p)
+		}
+	case ProofNamedTest:
+		for _, p := range CheckTestRun(r.Evidence.TestRun, e, r.RunnerID, sid, ev.run) {
+			open("%s", p)
+		}
+	default:
+		open("proof %q", e.Proof)
+	}
+	for _, f := range meets(e.Requires, metrics(life, r.Evidence.Status, e.CapSec)) {
 		open("%s", f)
 	}
 	if e.Paths != "" {
@@ -411,6 +446,9 @@ func (ev *evaluation) evaluate(e Entry) (status, bool, string) {
 	}
 	if e.Pipe != "" {
 		for _, p := range CheckPipe(e.Pipe, r.Evidence.Pipe) {
+			open("pipe %s", p)
+		}
+		for _, p := range CheckPipeClients(e.Pipe, r.Evidence.Pipe, r.Evidence.PipeServers, sid, peer, e.Account, r.Evidence.Observer) {
 			open("pipe %s", p)
 		}
 	}
@@ -429,13 +467,10 @@ func (ev *evaluation) evaluate(e Entry) (status, bool, string) {
 		case !cr.CleanupConfirmed:
 			open("control %s passed without confirmed cleanup", c.Name)
 		default:
-			if err := ev.tokenFits(cr.Token, c.Account, c.Mode); err != nil {
-				open("control %s token: %v", c.Name, err)
+			copen := func(format string, args ...any) { open("control "+c.Name+" "+format, args...) }
+			if ev.control(e, r, c, cr, copen) {
+				controls[c.Name] = cr
 			}
-			for _, f := range meets(c.Requires, metrics(Lifecycle{}, cr.Evidence.Terminal, 0)) {
-				open("control %s %s", c.Name, f)
-			}
-			controls[c.Name] = cr
 		}
 	}
 	char := ""
@@ -449,18 +484,20 @@ func (ev *evaluation) evaluate(e Entry) (status, bool, string) {
 			}
 			char, why = CharacterizeTCP(r.Evidence.TCP, receipt)
 		case CharSMB:
-			_, password := controls["password-share"]
-			if c, ok := controls["password-share"]; ok && (c.Evidence.Op == nil || !c.Evidence.Op.OK) {
-				password = false
+			var password *SMBResult
+			if c, ok := controls["password-share"]; ok {
+				password = c.Evidence.SMB
 			}
 			var server *Principal
 			if c, ok := controls["server-principal"]; ok {
 				server = c.Evidence.Server
 			}
-			char, why = CharacterizeSMB(r.Evidence.SMB, password, server, e.Account)
+			char, why = CharacterizeSMB(r.Evidence.SMB, password, server, sid)
 		case CharEFS:
-			c, password := controls["password-decrypt"]
-			password = password && c.Evidence.Op != nil && c.Evidence.Op.OK
+			var password *EFSResult
+			if c, ok := controls["password-decrypt"]; ok {
+				password = c.Evidence.EFS
+			}
 			char, why = CharacterizeEFS(r.Evidence.EFS, password)
 		}
 		switch char {
@@ -475,17 +512,94 @@ func (ev *evaluation) evaluate(e Entry) (status, bool, string) {
 	return st, false, char
 }
 
-// lifecycle derives an observed case's lifecycle from the observer report
-// the record carries: made by an admitted observer on the record's boot,
-// watching the record's account under its SID and mode.
-func (ev *evaluation) lifecycle(e Entry, r Record, open func(string, ...any)) Lifecycle {
+// control judges one control record of entry e by its declared proof and
+// reports whether it holds.
+func (ev *evaluation) control(e Entry, r Record, c ControlEntry, cr Record, open func(string, ...any)) bool {
+	bad := false
+	fail := func(format string, args ...any) {
+		open(format, args...)
+		bad = true
+	}
+	if err := ev.tokenFits(cr.Token, c.Account, c.Mode); err != nil {
+		fail("token: %v", err)
+	}
+	if err := headerMatches(cr.Token, cr.Evidence.Token); err != nil {
+		fail("%v", err)
+	}
+	sid := ev.roles[e.Account]
+	var life Lifecycle
+	switch c.Proof {
+	case ProofPending:
+		fail("has no qualified producer yet")
+	case ProofFirstUse:
+		for _, p := range CheckFirstUse(cr.Evidence.FirstUse, sid, r.Evidence.Observer) {
+			fail("%s", p)
+		}
+		// The check is recorded on the boot it ran on, never relabelled
+		// with the cold boot that follows it.
+		if f := cr.Evidence.FirstUse; f != nil && cr.BootID != f.Boot.String() {
+			fail("is recorded on another boot than it ran on")
+		}
+	case ProofReceipt:
+		if cr.Evidence.Receipt == nil {
+			fail("has no receipt")
+		}
+	case ProofPrincipal:
+		if cr.Evidence.Server == nil {
+			fail("has no server attribution")
+		}
+	case ProofPassword:
+		if cr.Evidence.SMB == nil && cr.Evidence.EFS == nil || !PasswordToken(cr.Evidence.Token, sid) {
+			fail("is not the account's password-bearing probe")
+		}
+	case ProofEndpoint:
+		for _, p := range CheckEndpoints(cr.Evidence.Endpoints, ev.peerOf(e.Account)) {
+			fail("%s", p)
+		}
+	case ProofObserver:
+		life = ev.lifecycle(c.Observe, e.Account, e.Mode, cr, fail)
+	case ProofProbe:
+		life = ev.lifecycle(c.Observe, e.Account, e.Mode, cr, fail)
+		for _, p := range CheckSubject(cr.Evidence.Observer, cr.Evidence.Token, e.Account, e.Mode) {
+			fail("%s", p)
+		}
+		if c.Paths == "" {
+			fail("names no path set")
+		}
+		for _, p := range CheckPaths(c.Paths, cr.Evidence.Paths) {
+			fail("path %s", p)
+		}
+	default:
+		fail("proof %q", c.Proof)
+	}
+	for _, f := range meets(c.Requires, metrics(life, cr.Evidence.Status, 0)) {
+		fail("%s", f)
+	}
+	return !bad
+}
+
+// peerOf is the other account's SID, if its records named one.
+func (ev *evaluation) peerOf(account string) string {
+	switch account {
+	case AccountA:
+		return ev.roles[AccountB]
+	case AccountB:
+		return ev.roles[AccountA]
+	}
+	return ""
+}
+
+// lifecycle derives an observed record's lifecycle from the observer report
+// it carries: made by an admitted observer on the record's boot, watching
+// the record's account under its SID and mode.
+func (ev *evaluation) lifecycle(spec *ObserveSpec, account, mode string, r Record, open func(string, ...any)) Lifecycle {
 	rep := r.Evidence.Observer
-	if rep == nil {
+	if spec == nil || rep == nil {
 		open("no observer report")
 		return Lifecycle{}
 	}
-	if !ev.run.Manifest.Admits(rep.Executable) {
-		open("observer executable outside the admitted run")
+	if ev.run.Manifest.Lookup(workloadImage) == "" || rep.Executable != ev.run.Manifest.Lookup(workloadImage) {
+		open("observer executable is not the admitted %s", workloadImage)
 	}
 	if rep.Boot.String() != r.BootID {
 		open("observer report is from another boot")
@@ -494,7 +608,7 @@ func (ev *evaluation) lifecycle(e Entry, r Record, open func(string, ...any)) Li
 	if r.Token != nil {
 		sid = r.Token.SID
 	}
-	life, problems := DeriveLifecycle(rep, *e.Observe, e.Account, sid, e.Mode)
+	life, problems := DeriveLifecycle(rep, *spec, account, sid, mode)
 	for _, p := range problems {
 		open("observer: %s", p)
 	}
@@ -509,16 +623,27 @@ func (ev *evaluation) checkOrder() {
 		phase, seq   int
 		boot         string
 		passwords    int
+		// preboot marks a check that runs before its record's boot, such
+		// as the first-use check; its own proof binds it to that boot.
+		preboot bool
+		// observed records carry an observer report, whose logon sessions
+		// count password-bearing logons since the boot.
+		observed bool
+		primary  bool
 	}
 	var all []placed
 	for k, r := range ev.records {
 		if ev.bad[primaryOf(k)] {
 			continue
 		}
-		p := placed{key: k, seq: r.Sequence, boot: r.BootID, passwords: r.PasswordLogons}
+		p := placed{key: k, seq: r.Sequence, boot: r.BootID, passwords: r.PasswordLogons, observed: r.Evidence.Observer != nil}
+		if rep := r.Evidence.Observer; rep != nil {
+			p.passwords = max(p.passwords, rep.PasswordLogonsSince())
+		}
 		if c, ok := ev.controls[k]; ok {
-			p.phase, p.account = c.Phase, c.Account
+			p.phase, p.account, p.preboot = c.Phase, c.Account, c.ImmediatelyBefore
 		} else {
+			p.primary = true
 			e := ev.entries[k]
 			p.phase, p.account = e.Phase, e.Account
 		}
@@ -538,7 +663,7 @@ func (ev *evaluation) checkOrder() {
 	for _, ph := range ev.m.Phases {
 		boot := ""
 		for _, p := range all {
-			if p.phase != ph.ID {
+			if p.phase != ph.ID || p.preboot {
 				continue
 			}
 			if ph.OneBoot && boot != "" && p.boot != boot {
@@ -547,6 +672,9 @@ func (ev *evaluation) checkOrder() {
 			boot = p.boot
 			if ph.NoPassword && p.passwords != 0 {
 				ev.problem("%s: phase %s ran after a password-bearing logon", p.key, ph.Name)
+			}
+			if ph.NoPassword && p.primary && !p.observed && ev.entries[p.key].Proof != ProofPending {
+				ev.problem("%s: phase %s has no observed logon sessions", p.key, ph.Name)
 			}
 		}
 	}
@@ -670,7 +798,7 @@ func WriteRecord(dir string, r Record) error {
 	}
 	f, err := os.OpenFile(filepath.Join(dir, ResultFileName(r.Key)), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
-		return err
+		return baseOnly(err)
 	}
 	_, werr := f.Write(append(data, '\n'))
 	return errors.Join(werr, f.Close())
@@ -680,7 +808,7 @@ func WriteRecord(dir string, r Record) error {
 func ReadRecords(dir string) ([]Record, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, err
+		return nil, baseOnly(err)
 	}
 	var names []string
 	for _, e := range entries {

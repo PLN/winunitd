@@ -3,7 +3,13 @@ package headless
 // TokenProbe is a workload's native view of its own token and the profile
 // paths it resolves from that token. Paths and SIDs are private evidence.
 type TokenProbe struct {
-	SID              string           `json:"sid"`
+	// PID and Created identify the probing process, so its token can be
+	// matched with the process the observer held.
+	PID     uint32 `json:"pid"`
+	Created uint64 `json:"created"`
+	SID     string `json:"sid"`
+	// Source is the token source name, such as the product's S4U source.
+	Source           string           `json:"source"`
 	AuthenticationID string           `json:"authenticationId"`
 	Session          uint32           `json:"session"`
 	Integrity        string           `json:"integrity"`

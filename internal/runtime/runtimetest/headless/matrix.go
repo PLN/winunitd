@@ -69,6 +69,8 @@ const (
 var knownMetrics = []string{
 	"durationSec", "cappedGaps", "shortGapsAfterCap", "grownGapSec", "stableSec", "postResetGapSec",
 	"negativeSec", "failures", "maxStartsIn10s", "orderedReplacement", "startLimited", "peerUnchanged", "drained", "kept",
+	"maxExitedLifeSec", "recovered", "postResetGrowth", "unlimited", "restartAttempts", "withinBurst",
+	"bootStarted", "progressing", "profileCreated", "profileExisting", "interactiveSessions", "sessionCycle", "profileUnloaded",
 }
 
 // The observer report derivation each lifecycle metric needs: launches of
@@ -78,6 +80,9 @@ var metricNeeds = map[string]string{
 	"durationSec": "role", "cappedGaps": "role", "shortGapsAfterCap": "role", "grownGapSec": "role", "stableSec": "role",
 	"postResetGapSec": "role", "failures": "role", "maxStartsIn10s": "role", "negativeSec": "negative",
 	"orderedReplacement": "crash", "peerUnchanged": "peer", "drained": "drained", "kept": "kept",
+	"maxExitedLifeSec": "role", "recovered": "role", "postResetGrowth": "role", "withinBurst": "role",
+	"bootStarted": "boot", "progressing": "boot", "profileCreated": "boot", "profileExisting": "boot", "interactiveSessions": "sessions",
+	"sessionCycle": "session", "profileUnloaded": "unloaded",
 }
 
 //go:embed matrix.json
@@ -122,6 +127,10 @@ type Case struct {
 	// Observe is what the summary derives from the SYSTEM observer's
 	// report; a case with lifecycle requirements needs it.
 	Observe *ObserveSpec `json:"observe,omitempty"`
+	// Proof is what each record must carry before it is accepted.
+	Proof string `json:"proof,omitempty"`
+	// Package is the product package whose test binary runs a named test.
+	Package string `json:"package,omitempty"`
 }
 
 // ObserveSpec names the lifecycle values derived from an observer report.
@@ -144,6 +153,15 @@ type ObserveSpec struct {
 	Peer bool `json:"peer,omitempty"`
 	// Drained requires every process of the account to have exited.
 	Drained bool `json:"drained,omitempty"`
+	// Subject binds the record's probes to a process the observer held as
+	// the account's workload or one of its children.
+	Subject bool `json:"subject,omitempty"`
+	// Boot derives the cold-boot start, progress and profile ("created" or
+	// "existing"); Session the account's interactive session coming and
+	// going; Unloaded its profile hive unloaded at the end.
+	Boot     string `json:"boot,omitempty"`
+	Session  bool   `json:"session,omitempty"`
+	Unloaded bool   `json:"unloaded,omitempty"`
 }
 
 // Variant is one account, mode or subcase of a case.
@@ -157,6 +175,7 @@ type Variant struct {
 	Refs        []string `json:"refs,omitempty"`
 	Repetitions int      `json:"repetitions,omitempty"`
 	Test        string   `json:"test,omitempty"`
+	Proof       string   `json:"proof,omitempty"`
 }
 
 // ControlDef is a separately keyed control a case's records require.
@@ -169,6 +188,9 @@ type ControlDef struct {
 	// with no other record of that account between them.
 	ImmediatelyBefore bool          `json:"immediatelyBefore,omitempty"`
 	Requires          []Requirement `json:"requires,omitempty"`
+	Proof             string        `json:"proof"`
+	Observe           *ObserveSpec  `json:"observe,omitempty"`
+	Paths             string        `json:"paths,omitempty"`
 }
 
 // Requirement bounds one metric computed from a record's raw evidence.
@@ -199,6 +221,8 @@ type Entry struct {
 	Pipe         string         `json:"pipe,omitempty"`
 	Controls     []ControlEntry `json:"controls,omitempty"`
 	Observe      *ObserveSpec   `json:"observe,omitempty"`
+	Proof        string         `json:"proof,omitempty"`
+	Package      string         `json:"package,omitempty"`
 }
 
 // ControlEntry is one expected control record.
@@ -210,6 +234,9 @@ type ControlEntry struct {
 	Phase             int           `json:"phase"`
 	ImmediatelyBefore bool          `json:"immediatelyBefore,omitempty"`
 	Requires          []Requirement `json:"requires,omitempty"`
+	Proof             string        `json:"proof"`
+	Observe           *ObserveSpec  `json:"observe,omitempty"`
+	Paths             string        `json:"paths,omitempty"`
 }
 
 var (
@@ -217,6 +244,7 @@ var (
 	nameIDPattern  = regexp.MustCompile(`^[a-z0-9A-Z][a-zA-Z0-9-]{0,31}$`)
 	controlPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 	testPattern    = regexp.MustCompile(`^Test[A-Za-z0-9]+$`)
+	packagePattern = regexp.MustCompile(`^[a-z][a-z0-9]{0,31}$`)
 )
 
 // CaseMatrix decodes and validates the embedded matrix.
@@ -307,17 +335,18 @@ func validRole(role string, broker bool) bool {
 
 // validObserve requires an observer derivation for every lifecycle
 // requirement, and only for daemon-plane cases.
-func validObserve(c Case) error {
-	o := c.Observe
+func validObserve(c Case) error { return validObserveSpec(c.Observe, c.Requires, c.Plane) }
+
+func validObserveSpec(o *ObserveSpec, requires []Requirement, plane string) error {
 	if o == nil {
-		for _, r := range c.Requires {
+		for _, r := range requires {
 			if metricNeeds[r.Metric] != "" {
 				return fmt.Errorf("requirement %s needs an observer derivation", r.Metric)
 			}
 		}
 		return nil
 	}
-	if c.Plane != PlaneDaemon {
+	if plane != PlaneDaemon {
 		return errors.New("only daemon cases are observed")
 	}
 	if o.Role != "" && !validRole(o.Role, false) {
@@ -341,9 +370,12 @@ func validObserve(c Case) error {
 			return fmt.Errorf("kept role %q", r)
 		}
 	}
+	if o.Boot != "" && o.Boot != BootCreated && o.Boot != BootExisting {
+		return fmt.Errorf("boot %q", o.Boot)
+	}
 	has := map[string]bool{"role": o.Role != "", "negative": o.Negative != "", "crash": o.Crash != "", "peer": o.Peer, "drained": o.Drained,
-		"kept": len(o.Kept) > 0}
-	for _, r := range c.Requires {
+		"kept": len(o.Kept) > 0, "boot": o.Boot != "", "session": o.Session, "unloaded": o.Unloaded, "sessions": o.Boot != "" || o.Session}
+	for _, r := range requires {
 		if need := metricNeeds[r.Metric]; need != "" && !has[need] {
 			return fmt.Errorf("requirement %s needs the observer's %s", r.Metric, need)
 		}
@@ -400,6 +432,9 @@ func (m *Matrix) validateCase(id string, c Case) error {
 		if err := validRequirements(ctl.Requires); err != nil {
 			return err
 		}
+		if err := validControlProof(ctl, c.Plane); err != nil {
+			return fmt.Errorf("control %s: %w", ctl.Name, err)
+		}
 	}
 	seen := map[string]bool{}
 	for _, v := range c.Variants {
@@ -408,7 +443,7 @@ func (m *Matrix) validateCase(id string, c Case) error {
 		}
 		seen[v.ID] = true
 		if len(v.Refs) > 0 {
-			if v.Account != "" || v.Mode != "" || v.Execution != "" || v.Repetitions != 0 || v.Phase != 0 || v.Test != "" {
+			if v.Account != "" || v.Mode != "" || v.Execution != "" || v.Repetitions != 0 || v.Phase != 0 || v.Test != "" || v.Proof != "" {
 				return fmt.Errorf("reference variant %s has execution fields", v.ID)
 			}
 			continue
@@ -445,6 +480,68 @@ func (m *Matrix) validateCase(id string, c Case) error {
 		if v.Execution != "" && !controlPattern.MatchString(v.Execution) {
 			return fmt.Errorf("variant %s execution %q", v.ID, v.Execution)
 		}
+		proof := c.Proof
+		if v.Proof != "" {
+			proof = v.Proof
+		}
+		if err := validProof(proof, plane, c, v); err != nil {
+			return fmt.Errorf("variant %s: %w", v.ID, err)
+		}
+	}
+	return nil
+}
+
+// validProof requires each executed variant to declare the proof its
+// records carry, and the case to define what that proof needs.
+func validProof(proof, plane string, c Case, v Variant) error {
+	switch proof {
+	case ProofPending:
+		return nil
+	case ProofObserver:
+		if c.Observe == nil {
+			return errors.New("an observer proof needs an observer derivation")
+		}
+	case ProofProbe:
+		if c.Observe == nil || !c.Observe.Subject {
+			return errors.New("a probe proof needs the observer to hold its subject")
+		}
+	case ProofNamedTest:
+		if plane != PlaneOwnerTest || v.Test == "" || !packagePattern.MatchString(c.Package) {
+			return errors.New("a named-test proof needs an owner test, its name and its package")
+		}
+	default:
+		return fmt.Errorf("proof %q", proof)
+	}
+	if plane == PlaneOwnerTest && proof != ProofNamedTest {
+		return errors.New("an owner test needs a named-test proof")
+	}
+	return nil
+}
+
+// validControlProof requires each control's proof to fit its mode.
+func validControlProof(ctl ControlDef, plane string) error {
+	if err := validObserveSpec(ctl.Observe, ctl.Requires, plane); err != nil {
+		return err
+	}
+	ok := false
+	switch ctl.Proof {
+	case ProofPending:
+		ok = true
+	case ProofFirstUse:
+		ok = ctl.Mode == ModeSystem && ctl.ImmediatelyBefore
+	case ProofReceipt, ProofPrincipal:
+		ok = ctl.Mode == ModePeer
+	case ProofPassword:
+		ok = ctl.Mode == ModePassword
+	case ProofEndpoint:
+		ok = ctl.Mode == ModeSystem
+	case ProofObserver:
+		ok = ctl.Mode == "" && ctl.Observe != nil
+	case ProofProbe:
+		ok = ctl.Mode == "" && ctl.Observe != nil && ctl.Observe.Subject && (ctl.Paths == PathsOwnRoots || ctl.Paths == PathsMissingAndDenied)
+	}
+	if !ok {
+		return fmt.Errorf("proof %q does not fit the control", ctl.Proof)
 	}
 	return nil
 }
@@ -473,11 +570,14 @@ func (m *Matrix) expand() ([]Entry, error) {
 		for _, v := range c.Variants {
 			e := Entry{Case: id, Variant: v.ID, Ledger: c.Ledger, Account: v.Account, Mode: v.Mode, Execution: v.Execution,
 				Refs: slices.Clone(v.Refs), Test: v.Test, CapSec: c.CapSec, Requires: c.Requires,
-				Characterize: c.Characterize, Paths: c.Paths, Pipe: c.Pipe, Observe: c.Observe}
+				Characterize: c.Characterize, Paths: c.Paths, Pipe: c.Pipe, Observe: c.Observe, Proof: c.Proof, Package: c.Package}
+			if v.Proof != "" {
+				e.Proof = v.Proof
+			}
 			if len(v.Refs) > 0 {
 				e.Plane = PlaneReference
 				e.Key = id + "/" + v.ID
-				e.Requires, e.Characterize, e.Paths, e.Pipe, e.CapSec, e.Observe = nil, "", "", "", 0, nil
+				e.Requires, e.Characterize, e.Paths, e.Pipe, e.CapSec, e.Observe, e.Proof, e.Package = nil, "", "", "", 0, nil, "", ""
 				out = append(out, e)
 				continue
 			}
@@ -504,7 +604,7 @@ func (m *Matrix) expand() ([]Entry, error) {
 				}
 				for _, ctl := range c.Controls {
 					ce := ControlEntry{Key: x.Key + "#" + ctl.Name, Name: ctl.Name, Account: x.Account, Mode: x.Mode, Phase: x.Phase,
-						ImmediatelyBefore: ctl.ImmediatelyBefore, Requires: ctl.Requires}
+						ImmediatelyBefore: ctl.ImmediatelyBefore, Requires: ctl.Requires, Proof: ctl.Proof, Observe: ctl.Observe, Paths: ctl.Paths}
 					if ctl.Mode != "" {
 						ce.Mode = ctl.Mode
 					}
