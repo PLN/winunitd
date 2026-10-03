@@ -15,11 +15,14 @@ try {
 	# The helper evaluates the compatibility floor with its own identity on
 	# the payload's behalf, so it is built like the payload and the produced
 	# binaries must agree before the package is built.
+	$priorCgo = $env:CGO_ENABLED
 	$env:CGO_ENABLED = '0'
 	try {
 		go build -trimpath -buildvcs=true -ldflags "-X github.com/PLN/winunitd/internal/version.Version=$release" -o dist/wix/payload/msi-check.exe ./tools/msi-check
 		if ($LASTEXITCODE) { throw 'Service helper build failed' }
-	} finally { Remove-Item Env:CGO_ENABLED }
+	} finally {
+		if ($null -eq $priorCgo) { Remove-Item Env:CGO_ENABLED } else { $env:CGO_ENABLED = $priorCgo }
+	}
 	$identityArgs = @('-manifest', 'dist/wix/payload/build-manifest.json', '-release', $release, '-helper', 'dist/wix/payload/msi-check.exe')
 	if ($AllowDirty) { $identityArgs += '-development' }
 	$identity = go run ./tools/package-identity @identityArgs

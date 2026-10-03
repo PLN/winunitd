@@ -341,9 +341,10 @@ controller is not involved.
 Every published package has its own higher three-field installer version,
 so Windows Installer orders published releases. Two builds that share an
 installer version cannot be ordered by it: the default reinstall mode can
-keep files of the same version, so only `REINSTALLMODE=vamus` replaces them,
-and only a check of the installed hashes and the running daemon's revision
-afterward shows that it did. Packages built from a modified tree are marked
+keep files of the same version. Use `REINSTALLMODE=vamus` to recache the
+package and force the replacement (its `a` rewrites every file regardless of
+version), and only a check of the installed hashes and the running daemon's
+revision afterward shows that it did. Packages built from a modified tree are marked
 `admissible: false` in their package manifest and are for development only.
 
 Global maintenance stops all system and user work and closes admission until

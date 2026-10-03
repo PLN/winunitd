@@ -11,11 +11,14 @@ try {
 	go run ./tools/build -out dist/beta/payload -version $release
 	if ($LASTEXITCODE) { throw 'Payload build failed' }
 	# Built like the payload; the produced binaries must agree (see packaging/wix/build.ps1).
+	$priorCgo = $env:CGO_ENABLED
 	$env:CGO_ENABLED = '0'
 	try {
 		go build -trimpath -buildvcs=true -ldflags "-X github.com/PLN/winunitd/internal/version.Version=$release" -o dist/beta/payload/msi-check.exe ./tools/msi-check
 		if ($LASTEXITCODE) { throw 'Preflight build failed' }
-	} finally { Remove-Item Env:CGO_ENABLED }
+	} finally {
+		if ($null -eq $priorCgo) { Remove-Item Env:CGO_ENABLED } else { $env:CGO_ENABLED = $priorCgo }
+	}
 	$identityArgs = @('-manifest', 'dist/beta/payload/build-manifest.json', '-release', $release, '-helper', 'dist/beta/payload/msi-check.exe')
 	if ($AllowDirty) { $identityArgs += '-development' }
 	$identity = go run ./tools/package-identity @identityArgs
