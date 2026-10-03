@@ -41,7 +41,8 @@ func FloorPath(baseDir string) string {
 
 // ReadFloor reads and validates the floor record at path. It returns nil and
 // no error when the record is absent from a trusted chain. The record must be
-// a regular file that only trusted principals can change.
+// a regular file that only trusted principals can change. Readers take no
+// lock: a record is replaced atomically, so a reader sees one whole record.
 func ReadFloor(path string) (*Floor, error) {
 	dirs, present, err := openFloorDirs(path)
 	if err != nil {
@@ -51,6 +52,10 @@ func ReadFloor(path string) (*Floor, error) {
 	if !present {
 		return nil, nil
 	}
+	return readHeld(path)
+}
+
+func readHeld(path string) (*Floor, error) {
 	f, err := openProtected(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -66,22 +71,64 @@ func ReadFloor(path string) (*Floor, error) {
 	return DecodeFloor(data)
 }
 
-// WriteFloor atomically replaces the floor record at path with a protected
-// file. The data root and daemon directory must already exist.
-func WriteFloor(path string, f *Floor) error {
+// LockFileName is the floor's cross-process mutation lock, beside the
+// record in the daemon directory. It is never removed: removing a lock file
+// that others may have opened would let two changes hold it.
+const LockFileName = "compat-floor.lock"
+
+// DefaultLockWait bounds how long a floor change waits for another one.
+const DefaultLockWait = 30 * time.Second
+
+const lockPoll = 20 * time.Millisecond
+
+// ErrNoDataDirectory reports that the data root or daemon directory does not
+// exist yet: there is no floor, and none can be written.
+var ErrNoDataDirectory = errors.New("the daemon data directory does not exist; install the product first")
+
+// ErrFloorBusy reports that another floor change held the lock for longer
+// than the wait.
+var ErrFloorBusy = errors.New("another compatibility floor change is in progress")
+
+// FloorChange is one floor mutation in progress. It holds the checked
+// directory chain and the floor's exclusive cross-process lock from before
+// it reads the current record until it has written or removed it, so no
+// other change can read, classify or replace the record in between.
+type FloorChange struct {
+	path string
+	dirs io.Closer
+	lock io.Closer
+}
+
+// BeginFloorChange takes the floor's lock for path, waiting at most wait,
+// and fails closed: an unsafe chain, a missing daemon directory
+// (ErrNoDataDirectory) or a lock held too long (ErrFloorBusy) is an error.
+func BeginFloorChange(path string, wait time.Duration) (*FloorChange, error) {
+	dirs, present, err := openFloorDirs(path)
+	if err != nil {
+		return nil, err
+	}
+	if !present {
+		_ = dirs.Close()
+		return nil, ErrNoDataDirectory
+	}
+	lock, err := lockFloor(filepath.Join(filepath.Dir(path), LockFileName), wait)
+	if err != nil {
+		_ = dirs.Close()
+		return nil, err
+	}
+	return &FloorChange{path: path, dirs: dirs, lock: lock}, nil
+}
+
+// Current reads the record under the lock.
+func (c *FloorChange) Current() (*Floor, error) { return readHeld(c.path) }
+
+// Write atomically replaces the record with a protected file.
+func (c *FloorChange) Write(f *Floor) error {
 	data, err := EncodeFloor(f)
 	if err != nil {
 		return err
 	}
-	dirs, present, err := openFloorDirs(path)
-	if err != nil {
-		return err
-	}
-	defer dirs.Close()
-	if !present {
-		return errors.New("the daemon data directory does not exist; install the product first")
-	}
-	tmp := path + ".tmp-" + strconv.Itoa(os.Getpid())
+	tmp := c.path + ".tmp-" + strconv.Itoa(os.Getpid())
 	out, err := createProtected(tmp)
 	if err != nil {
 		return err
@@ -96,7 +143,7 @@ func WriteFloor(path string, f *Floor) error {
 	// A reader without delete sharing can briefly refuse the replacement.
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		err := os.Rename(tmp, path)
+		err := os.Rename(tmp, c.path)
 		if err == nil {
 			return nil
 		}
@@ -108,21 +155,49 @@ func WriteFloor(path string, f *Floor) error {
 	}
 }
 
-// RemoveFloor deletes the floor record. An absent record is not an error.
-func RemoveFloor(path string) error {
-	dirs, present, err := openFloorDirs(path)
-	if err != nil {
-		return err
-	}
-	defer dirs.Close()
-	if !present {
-		return nil
-	}
-	err = os.Remove(path)
+// Remove deletes the record. An absent record is not an error.
+func (c *FloorChange) Remove() error {
+	err := os.Remove(c.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	return err
+}
+
+// Close releases the lock and the directory chain. Later calls do nothing.
+func (c *FloorChange) Close() error {
+	if c.lock == nil {
+		return nil
+	}
+	err := errors.Join(c.lock.Close(), c.dirs.Close())
+	c.lock, c.dirs = nil, nil
+	return err
+}
+
+// WriteFloor replaces the floor record at path under the floor's lock. The
+// data root and daemon directory must already exist.
+func WriteFloor(path string, f *Floor) error {
+	if _, err := EncodeFloor(f); err != nil {
+		return err
+	}
+	c, err := BeginFloorChange(path, DefaultLockWait)
+	if err != nil {
+		return err
+	}
+	return errors.Join(c.Write(f), c.Close())
+}
+
+// RemoveFloor deletes the floor record under the floor's lock. An absent
+// record or data directory is not an error.
+func RemoveFloor(path string) error {
+	c, err := BeginFloorChange(path, DefaultLockWait)
+	if errors.Is(err, ErrNoDataDirectory) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return errors.Join(c.Remove(), c.Close())
 }
 
 // floorChain names the levels openFloorDirs checks for the record at path.

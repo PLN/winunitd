@@ -229,6 +229,7 @@ path on its open handle and keeps them open for the operation:
 | `%ProgramData%` | Not a reparse point; owned by SYSTEM, Administrators, or TrustedInstaller; no other principal may delete, rename, or re-permission its entries. Creating new entries, which ProgramData allows its users, is accepted |
 | `%ProgramData%\winunitd` and `daemon` | When present: not reparse points; owned by SYSTEM, Administrators, or TrustedInstaller; no other principal may write, delete, or re-permission them or anything in them, including through inherit-only grants |
 | `compat-floor.json` | A regular file, not a reparse point, with the same owner and write rule |
+| `compat-floor.lock` | The lock that serializes floor changes, with the same rules as the record. It is created with the first change and never removed |
 
 A missing `winunitd` or `daemon` directory under a safe `%ProgramData%` is a
 first install: there is no floor, and `floor set` refuses until the product
@@ -281,6 +282,14 @@ manager stopped. To raise it before admitting a workload that depends on it:
 Lowering the floor (a floor that requires nothing the current one did not)
 and `clear` do not need the manager stopped. They apply at the next manager
 start; a held manager stays held until it restarts.
+
+`set` and `clear` are serialized across processes. Each holds the floor's
+lock from reading the current record, through deciding whether the new floor
+raises it and the stop checks of a raise, until it has written or removed the
+record. Another `set` or `clear` waits up to 30 seconds and then exits 1
+without changing anything. `show`, `check`, the package helper and a starting
+manager read the record without waiting; it is replaced in one step, so they
+see either the old or the new record.
 
 Builds do not report capability features yet. Until they do, a floor that
 requires a feature holds every build and refuses every package, and

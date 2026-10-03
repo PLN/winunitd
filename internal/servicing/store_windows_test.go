@@ -56,21 +56,32 @@ func TestWindowsFloorRecordIsWrittenProtected(t *testing.T) {
 	if err := WriteFloor(path, &Floor{Schema: 1, MinVersion: "0.1.0"}); err != nil {
 		t.Fatal(err)
 	}
+	// The lock the write created beside the record has the same protection.
+	for _, file := range []string{path, filepath.Join(filepath.Dir(path), LockFileName)} {
+		requireMachineProtection(t, file)
+	}
+	if f, err := ReadFloor(path); err != nil || f.MinVersion != "0.1.0" {
+		t.Fatalf("read back %+v %v", f, err)
+	}
+}
+
+func requireMachineProtection(t *testing.T, path string) {
+	t.Helper()
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		t.Fatal(err)
 	}
 	owner, _, err := sd.Owner()
 	if err != nil || !owner.IsWellKnown(windows.WinBuiltinAdministratorsSid) && !owner.IsWellKnown(windows.WinLocalSystemSid) {
-		t.Fatalf("record owner %v: %v", owner, err)
+		t.Fatalf("%s owner %v: %v", path, owner, err)
 	}
 	control, _, err := sd.Control()
 	if err != nil || control&windows.SE_DACL_PROTECTED == 0 {
-		t.Fatalf("record DACL is not protected: %#x %v", control, err)
+		t.Fatalf("%s DACL is not protected: %#x %v", path, control, err)
 	}
 	acl, _, err := sd.DACL()
 	if err != nil || acl == nil {
-		t.Fatal("record has no DACL")
+		t.Fatalf("%s has no DACL", path)
 	}
 	for i := uint32(0); i < uint32(acl.AceCount); i++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
@@ -79,11 +90,28 @@ func TestWindowsFloorRecordIsWrittenProtected(t *testing.T) {
 		}
 		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
 		if !sid.IsWellKnown(windows.WinLocalSystemSid) && !sid.IsWellKnown(windows.WinBuiltinAdministratorsSid) {
-			t.Fatalf("record grants %s", sid)
+			t.Fatalf("%s grants %s", path, sid)
 		}
 	}
+}
+
+// A lock file that others may write fails every change closed; readers
+// do not take the lock.
+func TestWindowsFloorRejectsWritableLock(t *testing.T) {
+	requireElevated(t)
+	path := nativeFloorPath(t)
+	if err := WriteFloor(path, &Floor{Schema: 1, MinVersion: "0.1.0"}); err != nil {
+		t.Fatal(err)
+	}
+	setSecurity(t, filepath.Join(filepath.Dir(path), LockFileName), "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FW;;;BU)", windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION)
+	if err := WriteFloor(path, &Floor{Schema: 1, MinVersion: "0.2.0"}); err == nil || !strings.Contains(err.Error(), "floor lock permits non-administrator writes") {
+		t.Fatalf("write under a writable lock: %v", err)
+	}
+	if err := RemoveFloor(path); err == nil {
+		t.Fatal("removed under a writable lock")
+	}
 	if f, err := ReadFloor(path); err != nil || f.MinVersion != "0.1.0" {
-		t.Fatalf("read back %+v %v", f, err)
+		t.Fatalf("read %+v %v", f, err)
 	}
 }
 

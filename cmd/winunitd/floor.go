@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/PLN/winunitd/internal/manager"
 	"github.com/PLN/winunitd/internal/servicing"
@@ -31,6 +32,10 @@ binary, the build the manager runs.
          system manager is stopped: the winunitd service stopped with no
          process, its endpoints unserved and no other winunitd.exe running.
   clear  Remove the floor. Lowering or clearing applies at the next start.
+
+set and clear hold the floor's lock while they read, classify and replace
+the record; another set or clear waits up to 30 seconds for them and then
+exits 1. show and check do not wait.
 
 To raise the floor before admitting a workload that needs it:
   1. winctl maintenance          quiesce system and user work
@@ -60,9 +65,14 @@ func (f *featureList) Set(v string) error {
 
 // floorEnv is what the floor verbs evaluate: this binary's identity and the
 // check that the system manager and the managers it brokers are stopped.
+// lockWait bounds the wait for another floor change (zero is the default);
+// afterRead, when set, runs between reading and classifying the current
+// floor, so tests can schedule other writers there.
 type floorEnv struct {
-	build   servicing.Build
-	stopped func() error
+	build     servicing.Build
+	stopped   func() error
+	lockWait  time.Duration
+	afterRead func()
 }
 
 func runFloor(args []string, stdout, stderr io.Writer, env floorEnv) int {
@@ -142,39 +152,77 @@ func runFloor(args []string, stdout, stderr io.Writer, env floorEnv) int {
 			fmt.Fprintf(stderr, "winunitd floor: refused: %s does not satisfy it: %s\n", describeBuild(build), strings.Join(v.Reasons, "; "))
 			return 1
 		}
-		// A running manager sampled the floor when it started and keeps
-		// admitting work under it, so a raise needs that manager stopped.
-		// An unusable current record counts as no floor: replacing it raises.
-		prev, _ := servicing.ReadFloor(path)
-		raise := !f.Within(prev)
-		if raise {
-			if err := env.stopped(); err != nil {
-				fmt.Fprintf(stderr, "winunitd floor: refused: raising the floor needs the system manager stopped: %v; run winctl maintenance, stop the winunitd service and every winunitd process, then retry\n", err)
-				return 1
-			}
+		code, msg := setFloor(path, f, env)
+		if code != 0 {
+			fmt.Fprintf(stderr, "winunitd floor: %s\n", msg)
+		} else {
+			fmt.Fprintln(stdout, msg)
 		}
-		if err := servicing.WriteFloor(path, f); err != nil {
-			fmt.Fprintf(stderr, "winunitd floor: %v\n", err)
-			return 1
-		}
-		if raise {
-			if err := env.stopped(); err != nil {
-				fmt.Fprintf(stderr, "winunitd floor: the floor was raised, but a manager started during the change (%v) and may admit work under the previous floor; restart it before admitting work that needs this floor\n", err)
-				return 1
-			}
-			fmt.Fprintln(stdout, "compatibility floor raised; start the service and confirm that winunitd floor check and winctl status show no admission hold before admitting work that needs it")
+		return code
+	default: // clear
+		c, err := servicing.BeginFloorChange(path, env.wait())
+		if errors.Is(err, servicing.ErrNoDataDirectory) {
+			fmt.Fprintln(stdout, "no compatibility floor is set")
 			return 0
 		}
-		fmt.Fprintln(stdout, "compatibility floor written without raising it; it applies at the next manager start")
-		return 0
-	default: // clear
-		if err := servicing.RemoveFloor(path); err != nil {
+		if err == nil {
+			err = errors.Join(c.Remove(), c.Close())
+		}
+		if err != nil {
 			fmt.Fprintf(stderr, "winunitd floor: %v\n", err)
 			return 1
 		}
 		fmt.Fprintln(stdout, "compatibility floor removed; restart the manager to reopen held admission")
 		return 0
 	}
+}
+
+func (env floorEnv) wait() time.Duration {
+	if env.lockWait > 0 {
+		return env.lockWait
+	}
+	return servicing.DefaultLockWait
+}
+
+// setFloor writes f in one floor change: under the floor's cross-process
+// lock it reads the current record, classifies f against it, and for a
+// raise checks the stop before and after writing. No other floor change can
+// replace or remove the record in between, so the classification holds for
+// the record it replaces.
+func setFloor(path string, f *servicing.Floor, env floorEnv) (int, string) {
+	c, err := servicing.BeginFloorChange(path, env.wait())
+	if err != nil {
+		return 1, err.Error()
+	}
+	defer c.Close()
+	// A running manager sampled the floor when it started and keeps
+	// admitting work under it, so a raise needs that manager stopped.
+	// An unusable current record counts as no floor: replacing it raises.
+	prev, _ := c.Current()
+	if env.afterRead != nil {
+		env.afterRead()
+	}
+	raise := !f.Within(prev)
+	if raise {
+		if err := env.stopped(); err != nil {
+			return 1, fmt.Sprintf("refused: raising the floor needs the system manager stopped: %v; run winctl maintenance, stop the winunitd service and every winunitd process, then retry", err)
+		}
+	}
+	if err := c.Write(f); err != nil {
+		return 1, err.Error()
+	}
+	if raise {
+		if err := env.stopped(); err != nil {
+			return 1, fmt.Sprintf("the floor was raised, but a manager started during the change (%v) and may admit work under the previous floor; restart it before admitting work that needs this floor", err)
+		}
+	}
+	if err := c.Close(); err != nil {
+		return 1, fmt.Sprintf("the floor was written, but releasing its lock failed: %v", err)
+	}
+	if raise {
+		return 0, "compatibility floor raised; start the service and confirm that winunitd floor check and winctl status show no admission hold before admitting work that needs it"
+	}
+	return 0, "compatibility floor written without raising it; it applies at the next manager start"
 }
 
 func describeBuild(b servicing.Build) string {

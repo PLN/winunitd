@@ -211,8 +211,9 @@ func TestFloorStore(t *testing.T) {
 	if err := WriteFloor(path, &Floor{Schema: 1}); err == nil {
 		t.Fatal("empty floor written")
 	}
+	// The record and the floor's lock, which is never removed.
 	entries, err := os.ReadDir(filepath.Dir(path))
-	if err != nil || len(entries) != 1 {
+	if err != nil || len(entries) != 2 || entries[0].Name() != FloorFileName || entries[1].Name() != LockFileName {
 		t.Fatalf("temporary files left: %v %v", entries, err)
 	}
 	if err := RemoveFloor(path); err != nil {

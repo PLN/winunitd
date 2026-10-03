@@ -187,25 +187,25 @@ func openProtected(path string) (*os.File, error) {
 	if err != nil {
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}
-	if err := protectedHandle(h, self); err != nil {
+	if err := protectedHandle(h, "floor record", self); err != nil {
 		_ = windows.CloseHandle(h)
 		return nil, err
 	}
 	return os.NewFile(uintptr(h), path), nil
 }
 
-func protectedHandle(h windows.Handle, self *windows.SID) error {
+func protectedHandle(h windows.Handle, name string, self *windows.SID) error {
 	var info windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
 		return err
 	}
 	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-		return fmt.Errorf("floor record is a reparse point")
+		return fmt.Errorf("%s is a reparse point", name)
 	}
 	if info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
-		return fmt.Errorf("floor record is not a regular file")
+		return fmt.Errorf("%s is not a regular file", name)
 	}
-	return checkSecurity(h, "floor record", writeRights, true, self)
+	return checkSecurity(h, name, writeRights, true, self)
 }
 
 // floorSDDL grants full control to SYSTEM and Administrators only, without
@@ -224,7 +224,7 @@ func floorSDDL() (string, error) {
 	return machine + "(A;;FA;;;" + self.String() + ")", nil
 }
 
-func createProtected(path string) (*os.File, error) {
+func protectedAttributes() (*windows.SecurityAttributes, error) {
 	sddl, err := floorSDDL()
 	if err != nil {
 		return nil, err
@@ -233,15 +233,85 @@ func createProtected(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	sa := windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
+	return &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}, nil
+}
+
+func createProtected(path string) (*os.File, error) {
+	sa, err := protectedAttributes()
+	if err != nil {
+		return nil, err
+	}
 	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return nil, err
 	}
-	h, err := windows.CreateFile(p, windows.GENERIC_WRITE, 0, &sa, windows.CREATE_NEW,
+	h, err := windows.CreateFile(p, windows.GENERIC_WRITE, 0, sa, windows.CREATE_NEW,
 		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	if err != nil {
 		return nil, &os.PathError{Op: "create", Path: path, Err: err}
 	}
 	return os.NewFile(uintptr(h), path), nil
+}
+
+// fileLock is an exclusive byte-range lock on the open lock file. The handle
+// shares no delete, so the file cannot be removed or renamed while held.
+type fileLock windows.Handle
+
+func (l fileLock) Close() error {
+	h := windows.Handle(l)
+	return errors.Join(windows.UnlockFileEx(h, 0, 1, 0, &windows.Overlapped{}), windows.CloseHandle(h))
+}
+
+// lockFloor opens or creates the lock file itself, never a reparse target,
+// with the record's protection, checks its owner and DACL on the handle and
+// takes an exclusive lock on its first byte. A process that exits releases
+// its lock.
+func lockFloor(path string, wait time.Duration) (io.Closer, error) {
+	self, _, err := principals()
+	if err != nil {
+		return nil, err
+	}
+	sa, err := protectedAttributes()
+	if err != nil {
+		return nil, err
+	}
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(wait)
+	var h windows.Handle
+	for {
+		h, err = windows.CreateFile(p, windows.GENERIC_READ|windows.GENERIC_WRITE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, sa,
+			windows.OPEN_ALWAYS, windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
+			return nil, fmt.Errorf("floor lock: %w", err)
+		}
+		if !time.Now().Before(deadline) {
+			return nil, ErrFloorBusy
+		}
+		time.Sleep(lockPoll)
+	}
+	if err := protectedHandle(h, "floor lock", self); err != nil {
+		_ = windows.CloseHandle(h)
+		return nil, err
+	}
+	for {
+		err := windows.LockFileEx(h, windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &windows.Overlapped{})
+		if err == nil {
+			return fileLock(h), nil
+		}
+		if !errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
+			_ = windows.CloseHandle(h)
+			return nil, fmt.Errorf("floor lock: %w", err)
+		}
+		if !time.Now().Before(deadline) {
+			_ = windows.CloseHandle(h)
+			return nil, ErrFloorBusy
+		}
+		time.Sleep(lockPoll)
+	}
 }

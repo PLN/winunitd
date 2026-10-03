@@ -143,3 +143,54 @@ func TestFloorChainRejectsUnsafeLevels(t *testing.T) {
 	}
 	check("linked container", FloorPath(filepath.Join(linkedContainer, filepath.Base(elsewhere))), "containing directory is a symbolic link")
 }
+
+// The lock file is checked like the record: a link, a lock others may write
+// or a directory fails every change closed. Readers do not take the lock.
+func TestFloorLockRejectsUntrustedFiles(t *testing.T) {
+	for name, prepare := range map[string]func(t *testing.T, lock string){
+		"symbolic link": func(t *testing.T, lock string) {
+			target := filepath.Join(t.TempDir(), "lock")
+			if err := os.WriteFile(target, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, lock); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"writable by others": func(t *testing.T, lock string) {
+			if err := os.WriteFile(lock, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(lock, 0o666); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"directory": func(t *testing.T, lock string) {
+			if err := os.Mkdir(lock, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		_, path := floorDir(t)
+		if err := WriteFloor(path, &Floor{Schema: 1, MinVersion: "0.1.0"}); err != nil {
+			t.Fatal(err)
+		}
+		lock := filepath.Join(filepath.Dir(path), LockFileName)
+		if err := os.Remove(lock); err != nil {
+			t.Fatal(err)
+		}
+		prepare(t, lock)
+		if _, err := BeginFloorChange(path, 0); err == nil || !strings.Contains(err.Error(), "floor lock") {
+			t.Errorf("%s: change began: %v", name, err)
+		}
+		if err := WriteFloor(path, &Floor{Schema: 1, MinVersion: "0.2.0"}); err == nil {
+			t.Errorf("%s: wrote a record", name)
+		}
+		if err := RemoveFloor(path); err == nil {
+			t.Errorf("%s: removed a record", name)
+		}
+		if f, err := ReadFloor(path); err != nil || f.MinVersion != "0.1.0" {
+			t.Errorf("%s: read %+v %v", name, f, err)
+		}
+	}
+}

@@ -9,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/PLN/winunitd/internal/manager"
 	"github.com/PLN/winunitd/internal/runtime/runtimetest"
@@ -369,4 +371,238 @@ func TestFloorRaiseOrderWithAnActiveManager(t *testing.T) {
 		t.Fatalf("on-disk build did not admit as enabled: reconciliations %d", sessions.Load())
 	}
 	stop(fresh, freshHost)
+}
+
+// managerGuard stands for the system manager's stop check: it fails while a
+// test's manager runs.
+type managerGuard struct {
+	mu   sync.Mutex
+	live *manager.Manager
+}
+
+func (g *managerGuard) stopped() error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.live != nil {
+		return errors.New("the winunitd service is not stopped")
+	}
+	return nil
+}
+
+// startOld starts a manager of build 0.1.0 under the floor on disk.
+func (g *managerGuard) startOld(base string) (string, error) {
+	hold := startupHold(base, servicing.Build{Version: "0.1.0"})
+	m, err := manager.New(manager.Config{BaseDir: base, Launch: runtimetest.Launcher(), AdmissionHold: hold})
+	if err != nil {
+		return hold, err
+	}
+	g.mu.Lock()
+	g.live = m
+	g.mu.Unlock()
+	_, err = m.Reload()
+	return hold, err
+}
+
+func (g *managerGuard) stop(t *testing.T) {
+	t.Helper()
+	g.mu.Lock()
+	m := g.live
+	g.live = nil
+	g.mu.Unlock()
+	if m != nil {
+		if err := finishContext(context.Background(), m, nil, nil, io.Discard); err != nil {
+			t.Error(err)
+		}
+	}
+}
+
+func floorUnits(t *testing.T, base string) {
+	t.Helper()
+	units := filepath.Join(base, "units")
+	if err := os.MkdirAll(units, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(units, "work.service"), []byte("[Service]\nExecStart=C:\\Tools\\work.exe\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A clear and an older manager's start scheduled between a writer's read and
+// its classification wait for that writer: the writer's lowering from the
+// floor it read stands, the clear then removes it, and the older manager
+// starts under no floor. The writer can no longer replace a cleared floor
+// it classified as a lowering, leaving a below-floor manager admitting work.
+func TestFloorChangeSerializesConcurrentClearAndStart(t *testing.T) {
+	base := floorBase(t)
+	path := servicing.FloorPath(base)
+	floorUnits(t, base)
+	if err := servicing.WriteFloor(path, &servicing.Floor{Schema: 1, MinVersion: "9.0.0"}); err != nil {
+		t.Fatal(err)
+	}
+	var guard managerGuard
+	defer guard.stop(t)
+	done := make(chan struct{})
+	var otherErr error
+	var otherHold string
+	reads := 0
+	env := floorEnv{build: servicing.Build{Version: "0.2.0"}, stopped: guard.stopped}
+	env.afterRead = func() {
+		reads++
+		// Another administrator clears the floor and starts the older
+		// build, given every chance to overtake this writer.
+		go func() {
+			defer close(done)
+			code, _, errOut := runFloorEnv(floorEnv{build: servicing.Build{Version: "0.1.0"}, stopped: stoppedManager}, "clear", "--base-dir", base)
+			if code != 0 {
+				otherErr = fmt.Errorf("clear: %d %q", code, errOut)
+				return
+			}
+			otherHold, otherErr = guard.startOld(base)
+		}()
+		select {
+		case <-done:
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+	code, out, errOut := runFloorEnv(env, "set", "--base-dir", base, "--min-version", "0.2.0")
+	<-done
+	if otherErr != nil {
+		t.Fatal(otherErr)
+	}
+	if code != 0 || reads != 1 || !strings.Contains(out, "without raising") {
+		t.Fatalf("writer: %d reads %d %q %q", code, reads, out, errOut)
+	}
+	// The clear ran after the write, so no floor holds the running build.
+	if f, err := servicing.ReadFloor(path); err != nil || f != nil {
+		t.Fatalf("floor after the clear: %+v %v", f, err)
+	}
+	if hold := startupHold(base, servicing.Build{Version: "0.1.0"}); hold != "" || otherHold != "" {
+		t.Fatalf("a manager admits below the floor: started under %q, now %q", otherHold, hold)
+	}
+}
+
+// The other order: a clear and an older manager's start complete first, so
+// the writer reads no floor, classifies its floor as a raise and is refused
+// while that manager runs. The floor stays absent until the manager stops.
+func TestFloorRaiseAfterClearAndStartIsRefused(t *testing.T) {
+	base := floorBase(t)
+	path := servicing.FloorPath(base)
+	floorUnits(t, base)
+	if err := servicing.WriteFloor(path, &servicing.Floor{Schema: 1, MinVersion: "9.0.0"}); err != nil {
+		t.Fatal(err)
+	}
+	var guard managerGuard
+	defer guard.stop(t)
+	if code, _, errOut := runFloorEnv(floorEnv{build: servicing.Build{Version: "0.1.0"}, stopped: guard.stopped}, "clear", "--base-dir", base); code != 0 {
+		t.Fatalf("clear: %d %q", code, errOut)
+	}
+	if hold, err := guard.startOld(base); err != nil || hold != "" {
+		t.Fatalf("older start after the clear: %q %v", hold, err)
+	}
+	env := floorEnv{build: servicing.Build{Version: "0.2.0"}, stopped: guard.stopped}
+	if code, _, errOut := runFloorEnv(env, "set", "--base-dir", base, "--min-version", "0.2.0"); code != 1 || !strings.Contains(errOut, "needs the system manager stopped") {
+		t.Fatalf("raise over a running older manager: %d %q", code, errOut)
+	}
+	if f, err := servicing.ReadFloor(path); err != nil || f != nil {
+		t.Fatalf("refused raise wrote %+v %v", f, err)
+	}
+	guard.stop(t)
+	if code, out, errOut := runFloorEnv(env, "set", "--base-dir", base, "--min-version", "0.2.0"); code != 0 || !strings.Contains(out, "floor raised") {
+		t.Fatalf("raise after the stop: %d %q %q", code, out, errOut)
+	}
+	if hold := startupHold(base, servicing.Build{Version: "0.1.0"}); hold == "" {
+		t.Fatal("the raised floor does not hold the older build")
+	}
+}
+
+// Two writers: while one floor change is in progress another set or clear
+// waits for it, and fails closed when the wait ends first. Readers do not
+// wait. A waiting writer classifies its floor against what the first one
+// wrote.
+func TestFloorWritersSerialize(t *testing.T) {
+	base := floorBase(t)
+	path := servicing.FloorPath(base)
+	build := servicing.Build{Version: "0.5.0"}
+	if err := servicing.WriteFloor(path, &servicing.Floor{Schema: 1, MinVersion: "0.5.0"}); err != nil {
+		t.Fatal(err)
+	}
+	held, err := servicing.BeginFloorChange(path, servicing.DefaultLockWait)
+	if err != nil {
+		t.Fatal(err)
+	}
+	impatient := floorEnv{build: build, stopped: stoppedManager, lockWait: 50 * time.Millisecond}
+	for _, args := range [][]string{{"set", "--min-version", "0.1.0"}, {"clear"}} {
+		code, _, errOut := runFloorEnv(impatient, append(args, "--base-dir", base)...)
+		if code != 1 || !strings.Contains(errOut, "another compatibility floor change is in progress") {
+			t.Fatalf("%s during another change: %d %q", args[0], code, errOut)
+		}
+	}
+	if code, out, _ := runFloorArgs(build, "show", "--base-dir", base); code != 0 || !strings.Contains(out, `"minVersion": "0.5.0"`) {
+		t.Fatalf("show during a change: %d %q", code, out)
+	}
+	if code, _, _ := runFloorArgs(build, "check", "--base-dir", base); code != 0 {
+		t.Fatal("check during a change failed")
+	}
+
+	// 0.3.0 lowers the floor on disk now, but raises the one the first
+	// writer leaves; the waiting writer must treat it as a raise.
+	var checks atomic.Int32
+	waiting := floorEnv{build: build, stopped: func() error { checks.Add(1); return nil }}
+	result := make(chan string, 1)
+	go func() {
+		code, out, errOut := runFloorEnv(waiting, "set", "--base-dir", base, "--min-version", "0.3.0")
+		result <- fmt.Sprintf("%d %s%s", code, out, errOut)
+	}()
+	time.Sleep(100 * time.Millisecond)
+	if err := held.Write(&servicing.Floor{Schema: 1, MinVersion: "0.1.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := held.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-result; !strings.HasPrefix(got, "0 compatibility floor raised") || checks.Load() != 2 {
+		t.Fatalf("waiting writer: %q, stop checks %d", got, checks.Load())
+	}
+	if f, err := servicing.ReadFloor(path); err != nil || f.MinVersion != "0.3.0" {
+		t.Fatalf("final floor %+v %v", f, err)
+	}
+}
+
+// Concurrent sets and clears through the verbs never overlap inside a
+// change.
+func TestFloorVerbsNeverOverlap(t *testing.T) {
+	base := floorBase(t)
+	var inside, overlaps atomic.Int32
+	env := floorEnv{build: servicing.Build{Version: "0.9.0"}, stopped: stoppedManager, afterRead: func() {
+		if inside.Add(1) != 1 {
+			overlaps.Add(1)
+		}
+		time.Sleep(time.Millisecond)
+		inside.Add(-1)
+	}}
+	var wg sync.WaitGroup
+	failures := make(chan string, 64)
+	for w := range 6 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range 8 {
+				args := []string{"set", "--base-dir", base, "--min-version", fmt.Sprintf("0.%d.%d", w, i)}
+				if (w+i)%4 == 0 {
+					args = []string{"clear", "--base-dir", base}
+				}
+				if code, _, errOut := runFloorEnv(env, args...); code != 0 {
+					failures <- fmt.Sprintf("%v: %d %q", args, code, errOut)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(failures)
+	for f := range failures {
+		t.Error(f)
+	}
+	if overlaps.Load() != 0 {
+		t.Fatalf("%d changes overlapped", overlaps.Load())
+	}
 }
