@@ -326,23 +326,50 @@ exports. `--launch-mode assign` assigns a suspended ENGINE before resuming it;
 There is no fallback between them. The runtime and manager test binaries run it
 through `-winunitd-helper=nested-job`; `tests/native/nested-job` builds the same
 code as a standalone executable for installed-daemon cases. Neither is a
-release payload.
+release payload, and neither depends on other qualification helpers.
 
 Each execution uses a fresh case directory. MAIN writes a bounded, sequenced
 report and a generation manifest of process identities (PID plus creation
 time). Observers hold process handles, never job handles, and treat only a
 signaled held handle as exit. Commands are a closed set of verbs in atomic
-files. The case matrix (`nestedjob/matrix.json`) lists each case, its modes,
-identities, repetitions and lanes; `nested-job-fixture matrix --lane owner
---identity system` prints the expanded executions with their `-test.run`
-selectors. A summary passes only when every required lane of every execution
-passed; skipped, inconclusive and missing lanes are not passes.
+files.
 
-Owner-lane tests run in the ordinary Windows test lane:
+The case matrix (`nestedjob/matrix.json`) is the only source of the required
+set: 68 primary executions, 58 in the native-owner lane and 10 in the
+installed-daemon lane, each with one key such as
+`N14/assign/headless/pre-assign/r1/native-owner`. The first increment (N01,
+N02, N11, N14, N15) is 20 of them: 11 SYSTEM and 9 headless. `nested-job-fixture
+matrix [--first-increment] [--lane L] [--identity I] [--case N]` prints
+executions with their `-test.run` selectors; `--hash` prints the matrix hash.
+
+Native-owner tests run in the ordinary Windows test lane:
 `TestNativeNestedJob*` in `internal/runtime` and `TestWindowsNestedJob*` in
-`internal/manager`. The CPU quota cases check native settings by default. Set
-`WINUNITD_NATIVE_NESTED_METER=1` to add a 30-second measurement against an
-uncapped control; a control below 60% of all processors makes the case
-inconclusive (skipped). Genuine headless-user, user-manager crash and broker
-recovery cases need the installed daemon and a guest driver, which are not yet
-part of this fixture. No native result is recorded here until those runs pass.
+`internal/manager`, with subtests for mode, identity and launch phase. A
+SYSTEM subtest run by another account is a regression run, not SYSTEM
+evidence. Headless subtests skip unless a SYSTEM runner in session zero sets
+`WINUNITD_NATIVE_NESTED_HEADLESS_SID` to a dedicated, logged-off local standard
+account and `WINUNITD_NATIVE_NESTED_FIXTURE=disposable`; the test binary must
+be readable by that account. The runtime tests then launch an owner agent in a
+genuine S4U process through the production headless path; it owns the unit
+job and answers membership queries, while the SYSTEM test observes. The
+headless manager cases (N03 to N05, N08 to N10) are not implemented yet and
+skip with that reason. The CPU quota cases check native settings by default;
+`WINUNITD_NATIVE_NESTED_METER=1` adds a 30-second measurement and a
+separately recorded uncapped control.
+
+For qualification, set `WINUNITD_NATIVE_NESTED_RESULTS` (a directory),
+`WINUNITD_NATIVE_NESTED_SOURCE` (the admitted commit),
+`WINUNITD_NATIVE_NESTED_REPETITION` (r1 to r3) and optionally
+`WINUNITD_NATIVE_NESTED_CASE_ROOT` to keep case directories. Each scenario
+writes one result record with its token context and whether its cleanup was
+confirmed. `tools/lab/assets/nested-job-checks.ps1` runs one installed-daemon
+execution of N06 or N07: it renders an enabled unit, lets the fixture's
+observer crash the exact user manager or broker, checks the recovered daemon
+and records the result. Its account, directories and paths are parameters.
+
+`nested-job-fixture summarize --results DIR --source COMMIT` exits 0 only when
+every required execution passed with matching source, matrix, token context,
+owner proof and confirmed cleanup. A selection (`--first-increment`,
+`--identity`, `--lane`, `--case`) is partial: it lists the omitted keys and
+exits 3 even when everything selected passed. No native result is recorded
+here until those runs pass.
