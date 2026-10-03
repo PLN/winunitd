@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -135,5 +136,31 @@ func TestAdmissionHoldStopsUserManagerLaunches(t *testing.T) {
 	open.Logon(1)
 	if openStarts.Load() != 1 {
 		t.Fatalf("unheld host launched %d user managers", openStarts.Load())
+	}
+}
+
+func TestAdmissionHoldRefusesEnableLingerButAllowsDisable(t *testing.T) {
+	h, store := testLingerHost(t)
+	if err := store.Put(runtime.LingerRecord{SID: testSIDB, Name: "bob"}); err != nil {
+		t.Fatal(err)
+	}
+	h.cfg.AdmissionHold = testHold
+	var launches int
+	h.cfg.Start = func(runtime.UserManagerSpec) (runtime.UserManagerProc, error) {
+		launches++
+		return nil, errors.New("launched under a hold")
+	}
+	if res, err := h.EnableLinger("alice"); err == nil || !strings.Contains(err.Error(), "admission is held") {
+		t.Fatalf("enable-linger under hold: %+v %v", res, err)
+	}
+	if _, err := store.Get(testSIDA); err == nil {
+		t.Fatal("refused enable-linger still wrote a record")
+	}
+	// Revoking existing work stays available while admission is held.
+	if res, err := h.DisableLinger(testSIDB); err != nil || res.Lingering {
+		t.Fatalf("disable-linger under hold: %+v %v", res, err)
+	}
+	if launches != 0 || h.ManagerCount() != 0 {
+		t.Fatalf("held host launched %d managers", launches)
 	}
 }

@@ -2,11 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/PLN/winunitd/internal/manager"
+	"github.com/PLN/winunitd/internal/runtime/runtimetest"
 	"github.com/PLN/winunitd/internal/servicing"
 )
 
@@ -111,5 +117,51 @@ func TestStartupHoldFollowsTheFloor(t *testing.T) {
 	}
 	if hold := startupHold(base, build); !strings.HasPrefix(hold, "below compatibility floor: ") {
 		t.Fatalf("hold = %q", hold)
+	}
+}
+
+func TestStartAdmittedWorkRespectsTheHold(t *testing.T) {
+	for _, hold := range []string{"", "below compatibility floor: version 0.1.0-alpha is below 0.2.0"} {
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, "units"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "units", "work.service"), []byte("[Service]\nExecStart=C:\\Tools\\work.exe\n[Install]\nWantedBy=default.target\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		m, err := manager.New(manager.Config{BaseDir: dir, Launch: runtimetest.Launcher(), AdmissionHold: hold})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.Reload(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.Enable("work.service"); err != nil {
+			t.Fatal(err)
+		}
+		var sessions atomic.Int32
+		host := manager.NewUserHost(manager.UserHostConfig{
+			AdmissionHold: hold,
+			Sessions:      func() ([]uint32, error) { sessions.Add(1); return nil, nil },
+		})
+		var logged []string
+		done := startAdmittedWork(context.Background(), m, host, hold, nil, func(f string, a ...any) { logged = append(logged, fmt.Sprintf(f, a...)) })
+		if done != nil {
+			<-done
+		}
+		st, err := m.Status("work.service")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hold == "" {
+			if st.Unit.ActiveState != "active" || sessions.Load() != 1 {
+				t.Fatalf("unheld start: state %s, reconciliations %d", st.Unit.ActiveState, sessions.Load())
+			}
+		} else if done != nil || st.Unit.ActiveState == "active" || sessions.Load() != 0 || len(logged) != 1 {
+			t.Fatalf("held start: state %s, reconciliations %d, log %q", st.Unit.ActiveState, sessions.Load(), logged)
+		}
+		if err := finishContext(context.Background(), m, nil, host, io.Discard); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

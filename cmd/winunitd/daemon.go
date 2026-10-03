@@ -144,14 +144,7 @@ func serveReady(ctx context.Context, baseDir string, stderr io.Writer, sessions 
 	}()
 	// Control and SCM readiness precede workload activation. A waiting notify
 	// unit must not hide status/stop, and invalid configuration remains repairable.
-	if loadErr == nil && hold == "" {
-		if _, err := m.Boot(ctx); err != nil {
-			logf("start %s: %v", manager.DefaultTarget, err)
-		}
-	}
-	if hold == "" {
-		startUserReconciliation(ctx, host)
-	}
+	startAdmittedWork(ctx, m, host, hold, loadErr, logf)
 	return <-serverErr
 }
 
@@ -174,6 +167,23 @@ func serveControlEndpoints(ctx context.Context, control, maintenance net.Listene
 // features holds admission until the build can name them.
 func runningBuild() servicing.Build {
 	return servicing.CurrentBuild(version.Version, nil)
+}
+
+// startAdmittedWork boots enabled units and starts user-manager
+// reconciliation and lingering. A held manager starts neither; it keeps its
+// endpoints until a restart. It returns the reconciliation worker's
+// completion, or nil when nothing was started.
+func startAdmittedWork(ctx context.Context, m *manager.Manager, host *manager.UserHost, hold string, loadErr error, logf func(string, ...any)) <-chan struct{} {
+	if hold != "" {
+		logf("no units or user managers start while admission is held")
+		return nil
+	}
+	if loadErr == nil {
+		if _, err := m.Boot(ctx); err != nil {
+			logf("start %s: %v", manager.DefaultTarget, err)
+		}
+	}
+	return startUserReconciliation(ctx, host)
 }
 
 // startupHold is why a system manager starting from baseDir must hold
