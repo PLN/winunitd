@@ -104,7 +104,7 @@ Set-StrictMode -Version Latest
 # matrix; here are what the driver needs to run each and how it observes.
 function Get-HeadlessCase([string]$Case, [string]$Variant, [string]$Control = '') {
 	$account = switch -Regex ($Variant) {
-		'^(A|s4u-A|linger-A|stop-A|revocation|shutdown|deadline|security-A|legacy-repair)$' { 'A'; break }
+		'^(A|s4u-A|linger-A|stop-A|revocation|shutdown|deadline|group|security-A|legacy-repair)$' { 'A'; break }
 		'^(B|s4u-B|wts-B|linger-B|stop-B|logoff-B|admission-B|security-B|go-tests|standard-wts|peer-denial)$' { 'B'; break }
 		'^filtered-admin$' { 'admin'; break }
 		default { 'system' }
@@ -218,6 +218,67 @@ function Get-HeadlessToken([string]$Mode, [string]$Sid, [int]$Session) {
 	throw "Unknown mode $Mode"
 }
 
+# The account's one interactive session among an observer report's
+# session samples. None, or more than one, is an error: an interactive
+# record never claims session zero.
+function Get-ObservedSession($Report, [string]$Sid) {
+	$users = @()
+	if ($null -ne $Report -and $Report.PSObject.Properties['sessions']) {
+		foreach ($sample in @($Report.sessions)) { if ($sample.PSObject.Properties['users']) { $users += @($sample.users) } }
+	}
+	$ids = @($users | Where-Object { $_.sid -eq $Sid -and [int]$_.session -gt 0 } | ForEach-Object { [int]$_.session } | Sort-Object -Unique)
+	if ($ids.Count -ne 1) { throw "The observer saw $($ids.Count) interactive sessions of the account" }
+	return $ids[0]
+}
+
+# The session a native test receipt ran in: the recorder's and the test
+# process's own token, the account's, in one positive session.
+function Get-ReceiptSession($Receipt, [string]$Sid) {
+	$o, $r = $Receipt.owner.token, $Receipt.runner.token
+	if ($o.sid -ne $Sid -or $r.sid -ne $Sid -or [int]$o.session -le 0 -or [int]$o.session -ne [int]$r.session) {
+		throw 'The test receipt names no interactive session of the account'
+	}
+	return [int]$o.session
+}
+
+# The token header a record claims: session zero for S4U and SYSTEM rows,
+# and for interactive rows the account's own session as the observer
+# report or the test receipt recorded it.
+function Get-RecordToken([string]$Mode, [string]$Sid, $Report = $null, $Receipt = $null) {
+	if ($Mode -notin @('wts', 'filtered-admin')) { return Get-HeadlessToken $Mode $Sid 0 }
+	$observed = if ($null -ne $Receipt) { Get-ReceiptSession $Receipt $Sid } elseif ($null -ne $Report) { Get-ObservedSession $Report $Sid } else {
+		throw 'An interactive record needs the session it ran in'
+	}
+	return Get-HeadlessToken $Mode $Sid $observed
+}
+
+# The named native tests of a variant.
+function Get-NativeTests([string]$Variant) {
+	$tests = @{ revocation = 'TestLingerRevocationOverlapsNativeHeadlessManagerCreation'; shutdown = 'TestShutdownOverlapsNativeHeadlessManagerCreation'
+		deadline = 'TestShutdownDeadlineOverlapsNativeHeadlessManagerCreation'; 'security-A' = 'TestNativeHeadlessUserManagerSecurity'
+		'security-B' = 'TestNativeHeadlessUserManagerSecurity'; 'sensitivity-A' = 'TestNativeSecurityProbeDetectsSelectiveInheritance'
+		'sensitivity-B' = 'TestNativeSecurityProbeDetectsSelectiveInheritance'
+		'go-tests' = @('TestDaemonPathSDDL', 'TestDaemonPathOwnerAllowed', 'TestDaemonLogNonAdminIdentity') }
+	if (!$tests.ContainsKey($Variant)) { throw "No native tests for $Variant" }
+	return @($tests[$Variant])
+}
+
+# One H20 repetition: the three held-launch tests, a record each, run by
+# one recorder, so the repetition's runner is one real process.
+function Get-NativeTestGroup([string]$Repetition) {
+	if ($Repetition -notmatch '^r[1-5]$') { throw 'H20 runs as one repetition, r1 to r5' }
+	$variants = @('revocation', 'shutdown', 'deadline')
+	return [pscustomobject]@{
+		Runner   = "runner-$Repetition"
+		Variants = $variants
+		Tests    = @($variants | ForEach-Object { Get-NativeTests $_ })
+		Keys     = @($variants | ForEach-Object { Get-HeadlessKey 'H20' $_ $Repetition '' })
+	}
+}
+
+# The file `headless-workload record` writes for a key.
+function Get-ResultFileName([string]$Key) { return $Key.Replace('/', '_').Replace('#', '+') + '.json' }
+
 # Windows command-line quoting for one argument (CommandLineToArgvW rules).
 function ConvertTo-NativeArgument([string]$Value) {
 	if ($Value -and $Value -notmatch '[\s"]') { return $Value }
@@ -229,6 +290,102 @@ function ConvertTo-NativeArgument([string]$Value) {
 function Protect-Detail([string]$Text, [object[]]$Pairs) {
 	foreach ($pair in ($Pairs | Where-Object { $_[0] } | Sort-Object { $_[0].Length } -Descending)) { $Text = $Text.Replace($pair[0], $pair[1]) }
 	return $Text -replace '[\r\n]+', ' '
+}
+
+# A whole Windows command line, each argument quoted on its own, so a path
+# with spaces stays one argument.
+function Format-NativeCommandLine([string[]]$Arguments) { return (@($Arguments) | ForEach-Object { ConvertTo-NativeArgument $_ }) -join ' ' }
+#endregion
+
+#region tested helpers: files, children, replies and recording
+# JSON that native code reads, as UTF-8 without a byte-order mark: the
+# fixture's strict decoder refuses one, and Windows PowerShell 5.1 writes it
+# for -Encoding UTF8.
+function Write-JsonFile([string]$Path, $Value, [int]$Depth = 32) {
+	[IO.File]::WriteAllText($Path, (ConvertTo-Json -InputObject $Value -Depth $Depth), (New-Object Text.UTF8Encoding $false))
+}
+
+# One line from a reader within a deadline: a reply that does not arrive
+# is an error, never a hang that keeps the finally block from running.
+function Read-LineWithin([IO.TextReader]$Reader, [int]$Milliseconds) {
+	$task = $Reader.ReadLineAsync()
+	if (!$task.Wait($Milliseconds)) { throw "No reply within $Milliseconds ms" }
+	return $task.Result
+}
+
+function Stop-ExactProcess([Diagnostics.Process]$Process, [string]$What) {
+	try { if (!$Process.HasExited) { $Process.Kill() } } catch { }
+	if ($Process.WaitForExit(30000)) { return "$What was killed after its deadline" }
+	return "$What did not exit after kill: cleanup unconfirmed, case evidence kept"
+}
+
+# Children this execution starts besides the observer, such as pipe
+# servers: registered as they start, so the finally block stops and reaps
+# each one however the execution ended.
+$script:children = New-Object Collections.Generic.List[Diagnostics.Process]
+function Start-Child([string]$File, [string[]]$Arguments) {
+	$start = New-Object Diagnostics.ProcessStartInfo
+	$start.FileName = $File
+	$start.Arguments = Format-NativeCommandLine $Arguments
+	$start.UseShellExecute = $false
+	$start.CreateNoWindow = $true
+	$child = [Diagnostics.Process]::Start($start)
+	$script:children.Add($child)
+	return $child
+}
+
+# Wait for a registered child to finish on its own within a deadline.
+# Returns '' when it did; otherwise kills it and returns the failure, which
+# is a cleanup failure when the child did not exit even after the kill.
+function Wait-Child([Diagnostics.Process]$Child, [int]$Milliseconds, [string]$What) {
+	if ($Child.WaitForExit($Milliseconds)) { return '' }
+	return Stop-ExactProcess $Child $What
+}
+
+# Stops every registered child still running; returns the failures.
+function Stop-Children([int]$GraceMs = 5000) {
+	$problems = @()
+	foreach ($child in $script:children) {
+		if ($child.HasExited) { continue }
+		$state = Wait-Child $child $GraceMs 'a child process'
+		if ($state) { $problems += $state }
+	}
+	return , @($problems)
+}
+
+# Records: one observation per record, written as JSON native code reads,
+# recorded by Record, confirmed by the new record file the recorder
+# writes. Returns the next run-wide sequence and every record failure; a
+# record that is not admitted fails the execution.
+function Complete-HeadlessRun {
+	param($Records, [string]$Case, [int]$Sequence, [string]$ExecutionId, [string]$BootId, [bool]$Passed, [bool]$Cleanup, [string]$Detail,
+		[string]$CaseRoot, [string]$Results, [scriptblock]$Record, [scriptblock]$ObserverBoot)
+	$next = $Sequence
+	$failed = @()
+	$shared = $Case -in @('H01', 'H02', 'H03', 'H09')
+	foreach ($r in $Records) {
+		$seq = $next
+		if (!$shared -or $r.Kind -eq 'control') { $next++ }
+		try {
+			$recordBoot = if ($r.Observer) { & $ObserverBoot $r.Observer } else { $BootId }
+			$executionId = if ($r.Kind -eq 'control') { "$ExecutionId-$(($r.Key -split '#')[1])" } elseif ($r['ExecutionId']) { $r['ExecutionId'] } else { $ExecutionId }
+			$result = if ($Passed) { 'pass' } else { 'fail' }
+			$observation = New-HeadlessObservation -Key $r.Key -Kind $r.Kind -Result $result -Token $r.Token -ExecutionId $executionId -Sequence $seq -BootId $recordBoot `
+				-PasswordLogons 0 -RunnerId $r.Runner -Cleanup $Cleanup -Controls $r.Controls -Evidence $r.Evidence -Detail $Detail
+			$path = Join-Path $CaseRoot ("observation-" + ($r.Key -replace '[/#]', '-') + '.json')
+			$written = Join-Path $Results (Get-ResultFileName $r.Key)
+			if (Test-Path -LiteralPath $written) { throw 'a record for this key already exists' }
+			Write-JsonFile $path $observation
+			$recordArgs = @('record', '--observation', $path, '--results', $Results)
+			if ($r.Observer) { $recordArgs += @('--observer', $r.Observer) }
+			& $Record $recordArgs
+			if (!(Test-Path -LiteralPath $written)) { throw 'the recorder wrote no record' }
+		} catch {
+			$failed += "record $($r.Key): $($_.Exception.Message)"
+		}
+	}
+	if ($shared -and @($Records).Count -gt 0) { $next++ }
+	return [pscustomobject]@{ Next = $next; Failures = @($failed) }
 }
 #endregion
 
@@ -283,10 +440,22 @@ $pairs = @(@($caseDir, '<case>'), @($CaseRoot, '<case-root>'), @($Results, '<res
 	@($SidA, '<sid-a>'), @($SidB, '<sid-b>'), @($AdminSid, '<sid-admin>'), @($AccountA, '<account-a>'), @($AccountB, '<account-b>'),
 	@($AdminAccount, '<account-admin>'), @($SmbServer, '<smb-server>'), @($SmbPath, '<smb-path>'), @($PeerEcho, '<peer>'), @($EfsPath, '<efs>'))
 
-function Stop-ExactProcess([Diagnostics.Process]$Process, [string]$What) {
-	try { if (!$Process.HasExited) { $Process.Kill() } } catch { }
-	if ($Process.WaitForExit(30000)) { return "$What was killed after its deadline" }
-	return "$What did not exit after kill: cleanup unconfirmed, case evidence kept"
+# icacls with its result checked at once; its output names paths, so it
+# stays out of the error.
+function Invoke-Icacls([string[]]$Arguments) {
+	& icacls.exe @Arguments 2>&1 | Out-Null
+	if ($LASTEXITCODE -ne 0) { throw "icacls failed ($LASTEXITCODE)" }
+}
+
+# Wait until a pipe server's pipe exists, listing pipes rather than
+# connecting, so no instance is used up; a server that exits first fails.
+function Wait-PipeReady([string]$Pipe, [Diagnostics.Process]$Server, [int]$Seconds = 30) {
+	$deadline = (Get-Date).AddSeconds($Seconds)
+	while (@([IO.Directory]::GetFiles('\\.\pipe\')) -notcontains $Pipe) {
+		if ($Server.HasExited) { throw "The pipe server exited before serving ($($Server.ExitCode))" }
+		if ((Get-Date) -ge $deadline) { throw 'Timed out waiting for the pipe server' }
+		Start-Sleep -Milliseconds 100
+	}
 }
 
 function Invoke-Native {
@@ -383,8 +552,8 @@ function Set-InteractiveAdmission([string]$Sid, [string]$State) {
 	foreach ($p in $policy.users.PSObject.Properties) { $users[$p.Name] = $p.Value }
 	$users[$Sid] = $State
 	$tmp = "$path.tmp"
-	[ordered]@{ mode = $policy.mode; users = $users } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $tmp -Encoding UTF8
-	& icacls.exe $tmp /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' '*S-1-5-32-545:R' | Out-Null
+	Write-JsonFile $tmp ([ordered]@{ mode = $policy.mode; users = $users }) 4
+	Invoke-Icacls @($tmp, '/inheritance:r', '/grant:r', '*S-1-5-18:F', '*S-1-5-32-544:F', '*S-1-5-32-545:R')
 	Move-Item -LiteralPath $tmp -Destination $path -Force
 	Invoke-Native -File $winctl -Arguments @('daemon-reload') | Out-Null
 }
@@ -427,6 +596,21 @@ function Invoke-InSession([string]$Role, [string]$Exe, [string[]]$Arguments) {
 	Invoke-Native -File $SessionRunner -Arguments (@($accountOf[$Role], $Exe) + $Arguments) | Out-Null
 }
 
+# test-receipt as SYSTEM with the native test fixture's environment; it
+# hands the test its subject report path itself.
+function Invoke-NativeTestRecorder([string[]]$Arguments, [int]$TimeoutMs) {
+	$env:WINUNITD_NATIVE_OVERLAP_HEADLESS_SID = $sid
+	$env:WINUNITD_NATIVE_OVERLAP_FIXTURE = 'disposable'
+	$env:WINUNITD_NATIVE_SECURITY_OTHER_SID = $sidOf[$peerRole]
+	try {
+		Invoke-Native -File $Fixture -Arguments $Arguments -TimeoutMs $TimeoutMs | Out-Null
+	} finally {
+		foreach ($name in @('WINUNITD_NATIVE_OVERLAP_HEADLESS_SID', 'WINUNITD_NATIVE_OVERLAP_FIXTURE', 'WINUNITD_NATIVE_SECURITY_OTHER_SID')) {
+			Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+		}
+	}
+}
+
 # A command on the workload's pipe, as SYSTEM: health, or a named probe the
 # workload runs inside its unit. Returns the reply.
 function Invoke-Workload([string]$WorkloadSid, [hashtable]$Command) {
@@ -437,7 +621,7 @@ function Invoke-Workload([string]$WorkloadSid, [hashtable]$Command) {
 		$writer.AutoFlush = $true
 		$writer.WriteLine(($Command | ConvertTo-Json -Compress))
 		$reader = New-Object IO.StreamReader($pipe)
-		$line = $reader.ReadLine()
+		$line = Read-LineWithin $reader 180000
 		$reply = $line | ConvertFrom-Json
 		if (!$reply.ok) { throw "workload command $($Command.verb) failed" }
 		return $reply
@@ -450,7 +634,7 @@ function Set-ProbeConfig([string]$Role, [hashtable]$Config) {
 	$state = Join-Path $baseOf[$Role] '..\winunitd-qual\headless-workload'
 	$state = [IO.Path]::GetFullPath($state)
 	New-Item -ItemType Directory -Path $state -Force | Out-Null
-	$Config | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $state 'config.json') -Encoding UTF8
+	Write-JsonFile (Join-Path $state 'config.json') $Config 4
 }
 
 $records = New-Object Collections.Generic.List[object]
@@ -467,8 +651,20 @@ $marks = Join-Path $caseDir 'marks'
 $stop = Join-Path $caseDir 'observer-stop'
 $observerReport = $null
 
-function Add-Record([string]$RecordKey, [string]$Kind, $Token, $Evidence, [string[]]$Controls = @(), [string]$Observer = '', [string]$Runner = '') {
-	$records.Add([ordered]@{ Key = $RecordKey; Kind = $Kind; Token = $Token; Evidence = $Evidence; Controls = $Controls; Observer = $Observer; Runner = $Runner })
+function Add-Record([string]$RecordKey, [string]$Kind, $Token, $Evidence, [string[]]$Controls = @(), [string]$Observer = '', [string]$Runner = '',
+	[string]$Execution = '') {
+	$records.Add([ordered]@{ Key = $RecordKey; Kind = $Kind; Token = $Token; Evidence = $Evidence; Controls = $Controls; Observer = $Observer; Runner = $Runner
+			ExecutionId = $Execution })
+}
+
+# A child that must finish on its own: one that outlives its deadline fails
+# the execution, and one that survives the kill leaves cleanup unconfirmed.
+function Confirm-Child([Diagnostics.Process]$Child, [int]$Milliseconds, [string]$What) {
+	$state = Wait-Child $Child $Milliseconds $What
+	if ($state) {
+		$failures.Add($state)
+		if ($state -match 'cleanup unconfirmed') { $script:cleanup = $false }
+	}
 }
 
 try {
@@ -479,11 +675,10 @@ try {
 	# probe outputs here through the lab commands.
 	$grants = @('*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F')
 	foreach ($s in @($SidA, $SidB, $AdminSid)) { if ($s) { $grants += "*${s}:(OI)(CI)M" } }
-	& icacls.exe $caseDir /inheritance:r /grant:r @grants | Out-Null
+	Invoke-Icacls (@($caseDir, '/inheritance:r', '/grant:r') + $grants)
 	New-Item -ItemType Directory -Path $marks | Out-Null
 	Start-Transcript -LiteralPath (Join-Path $caseDir 'driver.log') | Out-Null
 	$transcript = $true
-	$session = 0
 
 	switch -Regex ("$Case/$Variant/$Stage/$Control") {
 		# Cold boot: SYSTEM's first-use check and a startup observer before
@@ -509,7 +704,7 @@ try {
 		}
 		'^H0[12]/[AB]/collect/' {
 			$bootReport = Join-Path $CaseRoot 'cold-boot-observer.json'
-			Wait-Until { (Read-ObserverReport $bootReport).stage -eq 'finished' } 'the cold-boot observer' $TimeoutSeconds
+			Wait-Until { $r = Read-ObserverReport $bootReport; $null -ne $r -and $r.stage -eq 'finished' } 'the cold-boot observer' $TimeoutSeconds
 			Unregister-ScheduledTask -TaskPath '\winunitd-qual\' -TaskName 'cold-boot-observer' -Confirm:$false
 			Add-Record (Get-HeadlessKey 'H01' 'A' '' '') 'primary' (Get-HeadlessToken 's4u' $SidA 0) $null @('H01/A#first-use') $bootReport
 			Add-Record (Get-HeadlessKey 'H02' 'B' '' '') 'primary' (Get-HeadlessToken 's4u' $SidB 0) $null @() $bootReport
@@ -530,7 +725,7 @@ try {
 		}
 		'^H03/[AB]/collect/' {
 			$bootReport = Join-Path $CaseRoot 'no-grant-observer.json'
-			Wait-Until { (Read-ObserverReport $bootReport).stage -eq 'finished' } 'the no-grant observer' $TimeoutSeconds
+			Wait-Until { $r = Read-ObserverReport $bootReport; $null -ne $r -and $r.stage -eq 'finished' } 'the no-grant observer' $TimeoutSeconds
 			Unregister-ScheduledTask -TaskPath '\winunitd-qual\' -TaskName 'no-grant-observer' -Confirm:$false
 			Add-Record (Get-HeadlessKey 'H03' 'A' '' '') 'primary' (Get-HeadlessToken 's4u' $SidA 0) $null @() $bootReport
 			Add-Record (Get-HeadlessKey 'H03' 'B' '' '') 'primary' (Get-HeadlessToken 's4u' $SidB 0) $null @() $bootReport
@@ -561,10 +756,7 @@ try {
 			}
 			Start-Observer (Get-ObserverPlan $Case $Variant $role $class) $report
 			$observerReport = Wait-Observer $report 1600
-			if ($caseInfo.Mode -eq 'wts') {
-				$session = [int]@($observerReport.sessions | ForEach-Object { $_.users } | Where-Object { $_.sid -eq $sid } | Select-Object -First 1).session
-			}
-			Add-Record $key 'primary' (Get-HeadlessToken $caseInfo.Mode $sid $session) $null @() $report
+			Add-Record $key 'primary' (Get-RecordToken $caseInfo.Mode $sid $observerReport) $null @() $report
 			break
 		}
 		# Cancellation of a waiting recovery: a crash loop until the delay is
@@ -603,7 +795,9 @@ try {
 			New-Item -ItemType File -Path $stop | Out-Null
 			$observerReport = Wait-Observer $report 120
 			if ($Variant -like 'admission-*') { Set-InteractiveAdmission $sid 'enabled' }
-			Add-Record $key 'primary' (Get-HeadlessToken $caseInfo.Mode $sid $session) $null @() $report
+			# The session samples keep the account's session from before a
+			# logoff, so the header names the session the execution used.
+			Add-Record $key 'primary' (Get-RecordToken $caseInfo.Mode $sid $observerReport) $null @() $report
 			break
 		}
 		# Unlimited unit recovery: the failing unit runs from a byte-equal
@@ -695,9 +889,9 @@ try {
 				# A legacy directory: owned by the account, its access open.
 				$dir = Join-Path $root 'daemon'
 				New-Item -ItemType Directory -Path $dir -Force | Out-Null
-				& icacls.exe $dir /setowner "*$sid" | Out-Null
-				& icacls.exe $dir /reset | Out-Null
-				& icacls.exe $dir /grant "*${sid}:(OI)(CI)F" '*S-1-5-32-545:(OI)(CI)F' | Out-Null
+				Invoke-Icacls @($dir, '/setowner', "*$sid")
+				Invoke-Icacls @($dir, '/reset')
+				Invoke-Icacls @($dir, '/grant', "*${sid}:(OI)(CI)F", '*S-1-5-32-545:(OI)(CI)F')
 			} else {
 				Invoke-Native -File $Fixture -Arguments @('pad-log', '--path', (Join-Path $root 'daemon\daemon.log')) | Out-Null
 			}
@@ -706,7 +900,7 @@ try {
 			Start-Broker; $brokerStopped = $false
 			$observerReport = Wait-Observer $report 200
 			Invoke-Native -File $Fixture -Arguments @('probe-daemon-log', '--root', $root, '--sid', $sid, '--phase', 'after', '--before', $before, '--out', $after) | Out-Null
-			Add-Record $key 'primary' (Get-HeadlessToken $caseInfo.Mode $sid $session) ([ordered]@{ daemonLog = (Get-Content -LiteralPath $after -Raw | ConvertFrom-Json) }) @() $report
+			Add-Record $key 'primary' (Get-RecordToken $caseInfo.Mode $sid $observerReport) ([ordered]@{ daemonLog = (Get-Content -LiteralPath $after -Raw | ConvertFrom-Json) }) @() $report
 			break
 		}
 		'^G6/system-protection/' {
@@ -719,7 +913,7 @@ try {
 		'^G6/peer-denial/' {
 			Invoke-Wts 'logon' $role; $sessionOpen += $role
 			$config = Join-Path $caseDir 'denial-config.json'
-			@{ ownDaemon = $BaseB; peerDaemon = $BaseA; systemDaemon = $DataDir } | ConvertTo-Json | Set-Content -LiteralPath $config -Encoding UTF8
+			Write-JsonFile $config @{ ownDaemon = $BaseB; peerDaemon = $BaseA; systemDaemon = $DataDir }
 			$token = Join-Path $caseDir 'token.json'
 			$paths = Join-Path $caseDir 'paths.json'
 			Invoke-InSession $role $Fixture @('probe-token', '--out', $token)
@@ -728,45 +922,45 @@ try {
 			Add-Record $key 'primary' (Get-HeadlessToken 'wts' $sid ([int]$tp.session)) ([ordered]@{ tokenProbe = $tp; paths = (Get-Content -LiteralPath $paths -Raw | ConvertFrom-Json).paths })
 			break
 		}
-		# Named native tests: SYSTEM runners for H20/H21, B's own session for
-		# the daemon-log regressions. test-receipt runs the test binary as
-		# its child in a kill-on-close job and records both processes, the
-		# exit code and the test2json events.
-		'^(H2[01]|G6/go-tests)' {
-			$tests = if ($Variant -eq 'go-tests') { @('TestDaemonPathSDDL', 'TestDaemonPathOwnerAllowed', 'TestDaemonLogNonAdminIdentity') } else {
-				@{ revocation = 'TestLingerRevocationOverlapsNativeHeadlessManagerCreation'; shutdown = 'TestShutdownOverlapsNativeHeadlessManagerCreation'
-					deadline = 'TestShutdownDeadlineOverlapsNativeHeadlessManagerCreation'; 'security-A' = 'TestNativeHeadlessUserManagerSecurity'
-					'security-B' = 'TestNativeHeadlessUserManagerSecurity'; 'sensitivity-A' = 'TestNativeSecurityProbeDetectsSelectiveInheritance'
-					'sensitivity-B' = 'TestNativeSecurityProbeDetectsSelectiveInheritance' }[$Variant] }
-			$run = '^(' + (@($tests) -join '|') + ')$'
+		# Named native tests. test-receipt runs the test binary as its child
+		# in a kill-on-close job and records itself, the test process, the
+		# exit code and the test2json events. An H20 repetition runs its
+		# three held-launch tests under one recorder, each in its own test
+		# process with its own receipt and subject report.
+		'^H20/group/run/$' {
+			$group = Get-NativeTestGroup $Repetition
+			$dir = Join-Path $caseDir 'receipts'
+			New-Item -ItemType Directory -Path $dir | Out-Null
+			$receiptArgs = @('test-receipt', '--test2json', $Test2Json, '--artifact', (Split-Path -Leaf $TestBinary), '--binary', $TestBinary,
+				'--runner', $group.Runner, '--out-dir', $dir, '--subjects')
+			foreach ($test in $group.Tests) { $receiptArgs += @('--each', $test) }
+			Invoke-NativeTestRecorder $receiptArgs 5400000
+			for ($i = 0; $i -lt $group.Keys.Count; $i++) {
+				$receipt = Get-Content -LiteralPath (Join-Path $dir "$($group.Tests[$i]).json") -Raw | ConvertFrom-Json
+				Add-Record $group.Keys[$i] 'primary' (Get-RecordToken 's4u' $sid) ([ordered]@{ testRun = $receipt }) @() '' $group.Runner "$ExecutionId-$($group.Variants[$i])"
+			}
+			break
+		}
+		'^H20/' { throw 'H20 runs a repetition''s three tests under one recorder: use -Variant group' }
+		'^(H21|G6/go-tests)' {
+			$run = '^(' + (@(Get-NativeTests $Variant) -join '|') + ')$'
 			$events = Join-Path $caseDir 'test.json'
 			$subject = Join-Path $caseDir 'subject.json'
-			$receipt = Join-Path $caseDir 'receipt.json'
-			$runner = if ($Repetition) { "runner-$Repetition" } else { "runner-$Variant" }
+			$receiptPath = Join-Path $caseDir 'receipt.json'
+			$runner = "runner-$Variant"
 			$receiptArgs = @('test-receipt', '--run', $run, '--test2json', $Test2Json, '--events', $events, '--artifact', (Split-Path -Leaf $TestBinary),
-				'--binary', $TestBinary, '--runner', $runner, '--out', $receipt)
+				'--binary', $TestBinary, '--runner', $runner, '--out', $receiptPath)
 			if ($Variant -eq 'go-tests') {
 				# The account's own interactive token runs them, so the
 				# identity test cannot pass by skipping.
 				Invoke-Wts 'logon' $role; $sessionOpen += $role
 				Invoke-InSession $role $Fixture $receiptArgs
 			} else {
-				# test-receipt hands the test its subject report path itself.
-				$env:WINUNITD_NATIVE_OVERLAP_HEADLESS_SID = $sid
-				$env:WINUNITD_NATIVE_OVERLAP_FIXTURE = 'disposable'
-				$env:WINUNITD_NATIVE_SECURITY_OTHER_SID = $sidOf[$peerRole]
-				try {
-					if ($caseInfo.Mode -eq 's4u') { $receiptArgs += @('--subject', $subject) }
-					Invoke-Native -File $Fixture -Arguments $receiptArgs -TimeoutMs 1800000 | Out-Null
-				} finally {
-					foreach ($name in @('WINUNITD_NATIVE_OVERLAP_HEADLESS_SID', 'WINUNITD_NATIVE_OVERLAP_FIXTURE', 'WINUNITD_NATIVE_SECURITY_OTHER_SID')) {
-						Remove-Item "Env:$name" -ErrorAction SilentlyContinue
-					}
-				}
+				if ($caseInfo.Mode -eq 's4u') { $receiptArgs += @('--subject', $subject) }
+				Invoke-NativeTestRecorder $receiptArgs 1800000
 			}
-			$token = if ($caseInfo.Mode -eq 's4u') { Get-HeadlessToken 's4u' $sid 0 } else { Get-HeadlessToken $caseInfo.Mode $sid $session }
-			$records.Add([ordered]@{ Key = $key; Kind = 'primary'; Token = $token; Evidence = [ordered]@{ testRun = (Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json) }
-					Controls = @(); Observer = ''; Runner = $runner })
+			$receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
+			Add-Record $key 'primary' (Get-RecordToken $caseInfo.Mode $sid $null $receipt) ([ordered]@{ testRun = $receipt }) @() '' $runner
 			break
 		}
 		# Probes from the workload in its unit, with the observer holding it.
@@ -776,7 +970,7 @@ try {
 				# A file only SYSTEM may read, and a path that does not exist.
 				$denied = Join-Path $caseDir 'denied.txt'
 				Set-Content -LiteralPath $denied -Value 'denied' -Encoding ASCII
-				& icacls.exe $denied /inheritance:r /grant:r '*S-1-5-18:F' | Out-Null
+				Invoke-Icacls @($denied, '/inheritance:r', '/grant:r', '*S-1-5-18:F')
 				$config.absent = Join-Path $caseDir 'absent\file.txt'
 				$config.denied = $denied
 			}
@@ -806,8 +1000,8 @@ try {
 					# caller from the unit, and the peer's own workload.
 					$pipe = $config.pipe
 					$serverOwn = Join-Path $caseDir 'pipe-server.json'
-					$server = Start-Process -FilePath $Fixture -ArgumentList @('pipe-serve', '--name', $pipe, '--allow', $sid, '--report', $serverOwn, '--max', '4', '--duration', '300s') -PassThru -WindowStyle Hidden
-					Start-Sleep -Seconds 2
+					$server = Start-Child $Fixture @('pipe-serve', '--name', $pipe, '--allow', $sid, '--report', $serverOwn, '--max', '4', '--duration', '300s')
+					Wait-PipeReady $pipe $server
 					$results = @((Get-Probe $sid 'pipe').result)
 					$outside = [IO.Path]::GetFullPath((Join-Path $baseOf[$role] '..\winunitd-qual\headless-workload\probes\outside-unit.json'))
 					if (Test-Path -LiteralPath $outside) { Remove-Item -LiteralPath $outside }
@@ -818,29 +1012,29 @@ try {
 					# The exiting caller writes nothing; the server's entry is
 					# its evidence.
 					try { Invoke-Workload $sid @{ verb = 'probe'; probe = 'pipe-exited' } | Out-Null } catch { $checks.Add('the exiting caller left no client report, as expected') }
-					if (!$server.WaitForExit(300000)) { $checks.Add((Stop-ExactProcess $server 'the pipe server')) }
+					Confirm-Child $server 330000 'the pipe server' 
 					$peerSid = $sidOf[$peerRole]
 					$serverWide = Join-Path $caseDir 'pipe-server-wide.json'
-					$wide = Start-Process -FilePath $Fixture -ArgumentList @('pipe-serve', '--name', "$pipe-wide", '--allow', $sid, '--acl', $sid, '--acl', $peerSid, '--report', $serverWide, '--max', '1', '--duration', '120s') -PassThru -WindowStyle Hidden
-					Start-Sleep -Seconds 2
+					$wide = Start-Child $Fixture @('pipe-serve', '--name', "$pipe-wide", '--allow', $sid, '--acl', $sid, '--acl', $peerSid, '--report', $serverWide, '--max', '1', '--duration', '120s')
+					Wait-PipeReady "$pipe-wide" $wide
 					Set-ProbeConfig $peerRole @{ pipe = "$pipe-wide" }
 					$results += (Get-Probe $peerSid 'pipe-wrong-decision').result
-					if (!$wide.WaitForExit(120000)) { $checks.Add((Stop-ExactProcess $wide 'the wide pipe server')) }
+					Confirm-Child $wide 150000 'the wide pipe server' 
 					$serverAcl = Join-Path $caseDir 'pipe-server-acl.json'
-					$aclServer = Start-Process -FilePath $Fixture -ArgumentList @('pipe-serve', '--name', "$pipe-acl", '--allow', $sid, '--report', $serverAcl, '--max', '1', '--duration', '60s') -PassThru -WindowStyle Hidden
-					Start-Sleep -Seconds 2
+					$aclServer = Start-Child $Fixture @('pipe-serve', '--name', "$pipe-acl", '--allow', $sid, '--report', $serverAcl, '--max', '1', '--duration', '60s')
+					Wait-PipeReady "$pipe-acl" $aclServer
 					Set-ProbeConfig $peerRole @{ pipe = "$pipe-acl" }
 					$results += (Get-Probe $peerSid 'pipe-wrong-acl').result
-					if (!$aclServer.WaitForExit(90000)) { $checks.Add((Stop-ExactProcess $aclServer 'the ACL pipe server')) }
+					Confirm-Child $aclServer 90000 'the ACL pipe server' 
 					$evidence.pipe = $results
 					$evidence.pipeServers = @(foreach ($f in @($serverOwn, $serverWide, $serverAcl)) { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json })
 				}
 				'H16' {
 					# SYSTEM identifies each pipe's live server, the account is
 					# denied from its unit, SYSTEM identifies them again.
-					$systemOnly = Start-Process -FilePath $Fixture -ArgumentList @('pipe-serve', '--name', $denial['system-only'], '--allow', 'S-1-5-18', '--acl', 'S-1-5-18',
-						'--report', (Join-Path $caseDir 'pipe-server-system.json'), '--max', '8', '--duration', '300s') -PassThru -WindowStyle Hidden
-					Start-Sleep -Seconds 2
+					$systemOnly = Start-Child $Fixture @('pipe-serve', '--name', $denial['system-only'], '--allow', 'S-1-5-18', '--acl', 'S-1-5-18',
+						'--report', (Join-Path $caseDir 'pipe-server-system.json'), '--max', '8', '--duration', '300s')
+					Wait-PipeReady $denial['system-only'] $systemOnly
 					$health = @()
 					foreach ($client in $denial.Keys) {
 						$out = Join-Path $caseDir "endpoint-$client.json"
@@ -854,7 +1048,7 @@ try {
 						Invoke-Native -File $Fixture -Arguments @('probe-endpoint', '--pipe', $h.pipe, '--client', $h.client, '--out', $out) | Out-Null
 						$h.after = (Get-Content -LiteralPath $out -Raw | ConvertFrom-Json).server
 					}
-					if (!$systemOnly.WaitForExit(300000)) { $checks.Add((Stop-ExactProcess $systemOnly 'the SYSTEM-only pipe server')) }
+					Confirm-Child $systemOnly 330000 'the SYSTEM-only pipe server' 
 					Add-Record "$key#pipe-health" 'control' (Get-HeadlessToken 'system' '' 0) ([ordered]@{ endpoints = $health })
 				}
 			}
@@ -885,8 +1079,8 @@ try {
 		}
 		'^(H18/[AB]/run/password-share|H19/B/run/password-decrypt)$' {
 			$config = Join-Path $caseDir 'password-config.json'
-			if ($Case -eq 'H18') { @{ smb = @{ server = $SmbServer; path = $SmbPath; expectSha256 = $SmbSha256 } } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $config -Encoding UTF8 }
-			else { @{ efs = @{ path = $EfsPath; plain = $EfsPlain; expectSha256 = $EfsSha256 } } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $config -Encoding UTF8 }
+			if ($Case -eq 'H18') { Write-JsonFile $config @{ smb = @{ server = $SmbServer; path = $SmbPath; expectSha256 = $SmbSha256 } } 3 }
+			else { Write-JsonFile $config @{ efs = @{ path = $EfsPath; plain = $EfsPlain; expectSha256 = $EfsSha256 } } 3 }
 			$out = Join-Path $caseDir 'password-probe.json'
 			$probe = if ($Case -eq 'H18') { 'probe-smb' } else { 'probe-efs' }
 			Invoke-AsPassword $role @($probe, '--config', $config, '--out', $out)
@@ -921,7 +1115,11 @@ try {
 } catch {
 	$failures.Add($_.Exception.Message)
 } finally {
-	# Undo exactly what this execution changed.
+	# Undo exactly what this execution changed, its children first.
+	foreach ($state in (Stop-Children)) {
+		$failures.Add($state)
+		if ($state -match 'cleanup unconfirmed') { $cleanup = $false }
+	}
 	foreach ($r in @($sessionOpen)) { try { Invoke-Wts 'logoff' $r } catch { $cleanup = $false; $failures.Add("logoff: $($_.Exception.Message)") } }
 	if ($brokerStopped) { try { Start-Broker } catch { $cleanup = $false; $failures.Add("broker start: $($_.Exception.Message)") } }
 	foreach ($r in @($lingerChanged)) { try { Set-Linger $r $true } catch { $cleanup = $false; $failures.Add("linger restore: $($_.Exception.Message)") } }
@@ -932,29 +1130,19 @@ try {
 	if ($transcript) { Stop-Transcript | Out-Null }
 }
 
-# Records: one observation per record, then headless-workload record.
+# Records: one observation per record, each admitted by headless-workload
+# record. A record that is not admitted fails the execution, and the next
+# sequence is reported only when every record was admitted.
+$detail = Protect-Detail ((@($checks) + @($failures)) -join '; ') $pairs
+if ($detail.Length -gt 500) { $detail = $detail.Substring(0, 500) }
 $bootId = Get-BootId
-$next = $Sequence
-foreach ($r in $records) {
-	$result = if ($failures.Count -eq 0) { 'pass' } else { 'fail' }
-	$recordBoot = $bootId
-	if ($r.Observer) {
-		$obs = Get-Content -LiteralPath $r.Observer -Raw | ConvertFrom-Json
-		$recordBoot = "boot-$($obs.boot.counter)-$($obs.boot.time)"
-	}
-	$seq = $next
-	if ($Case -notin @('H01', 'H02', 'H03', 'H09') -or $r.Kind -eq 'control') { $next++ }
-	$detail = Protect-Detail ((@($checks) + @($failures)) -join '; ') $pairs
-	if ($detail.Length -gt 500) { $detail = $detail.Substring(0, 500) }
-	$executionId = if ($r.Kind -eq 'control') { "$ExecutionId-$(($r.Key -split '#')[1])" } else { $ExecutionId }
-	$observation = New-HeadlessObservation -Key $r.Key -Kind $r.Kind -Result $result -Token $r.Token -ExecutionId $executionId -Sequence $seq -BootId $recordBoot `
-		-PasswordLogons 0 -RunnerId $r.Runner -Cleanup $cleanup -Controls $r.Controls -Evidence $r.Evidence -Detail $detail
-	$path = Join-Path $CaseRoot ("observation-" + ($r.Key -replace '[/#]', '-') + '.json')
-	$observation | ConvertTo-Json -Depth 32 | Set-Content -LiteralPath $path -Encoding UTF8
-	$recordArgs = @('record', '--observation', $path, '--results', $Results, '--admission', $Admission)
-	if ($r.Observer) { $recordArgs += @('--observer', $r.Observer) }
-	try { Invoke-Native -File $Fixture -Arguments $recordArgs | Out-Null } catch { Write-Output "record: $(Protect-Detail $_.Exception.Message $pairs)" }
+$tail = Complete-HeadlessRun -Records $records -Case $Case -Sequence $Sequence -ExecutionId $ExecutionId -BootId $bootId -Passed ($failures.Count -eq 0) `
+	-Cleanup $cleanup -Detail $detail -CaseRoot $CaseRoot -Results $Results `
+	-Record { param([string[]]$RecordArgs) Invoke-Native -File $Fixture -Arguments ($RecordArgs + @('--admission', $Admission)) | Out-Null } `
+	-ObserverBoot { param([string]$Path) $obs = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json; "boot-$($obs.boot.counter)-$($obs.boot.time)" }
+foreach ($f in $tail.Failures) { $failures.Add((Protect-Detail $f $pairs)) }
+if ($tail.Failures.Count -eq 0) { Write-Output "next-sequence $($tail.Next)" }
+if ($failures.Count -gt 0) {
+	Write-Output "failed: $(Protect-Detail ($failures -join '; ') $pairs)"
+	exit 1
 }
-if ($Case -in @('H01', 'H02', 'H03', 'H09') -and $records.Count -gt 0) { $next++ }
-Write-Output "next-sequence $next"
-if ($failures.Count -gt 0) { exit 1 }
