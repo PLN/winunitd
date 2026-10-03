@@ -216,7 +216,7 @@ func TestMain(m *testing.M) {
 	case "nested-job":
 		args, _ := nestedjob.HelperArgs(os.Args)
 		os.Exit(nestedjob.Main([]string{nestedjob.HelperSelector}, args, os.Stdout, os.Stderr))
-	case "nested-owner":
+	case "nested-owner-crash":
 		if err := runNestedOwner(os.Args[len(os.Args)-1]); err != nil {
 			fmt.Fprintln(os.Stderr, "nested-owner:", err)
 		}

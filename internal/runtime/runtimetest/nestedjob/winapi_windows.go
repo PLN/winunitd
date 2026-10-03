@@ -147,6 +147,11 @@ func imageHash(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// SelfIdentity describes the calling process from its own token and image.
+func SelfIdentity(role string, generation int) (Identity, error) {
+	return selfIdentity(role, generation)
+}
+
 // selfIdentity describes the calling process from its own token and image.
 func selfIdentity(role string, generation int) (Identity, error) {
 	created, err := CreationTime(windows.CurrentProcess())
@@ -362,4 +367,47 @@ func signaled(h windows.Handle) (bool, error) {
 	default:
 		return false, fmt.Errorf("wait state %d", state)
 	}
+}
+
+// CurrentTokenContext describes this process's own token.
+func CurrentTokenContext() (*TokenContext, error) {
+	tok := windows.GetCurrentProcessToken()
+	user, err := tok.GetTokenUser()
+	if err != nil {
+		return nil, err
+	}
+	var session uint32
+	if err := windows.ProcessIdToSessionId(windows.GetCurrentProcessId(), &session); err != nil {
+		return nil, err
+	}
+	return &TokenContext{SID: user.User.Sid.String(), Session: session, Elevated: tok.IsElevated(), Source: TokenProcess}, nil
+}
+
+// ExitTime is a held process's exit FILETIME, or zero while it runs.
+func ExitTime(process windows.Handle) (uint64, error) {
+	done, err := signaled(process)
+	if err != nil || !done {
+		return 0, err
+	}
+	var created, exited, kernel, user windows.Filetime
+	if err := windows.GetProcessTimes(process, &created, &exited, &kernel, &user); err != nil {
+		return 0, err
+	}
+	return filetime64(exited), nil
+}
+
+func nowFiletime() uint64 {
+	var ft windows.Filetime
+	windows.GetSystemTimePreciseAsFileTime(&ft)
+	return filetime64(ft)
+}
+
+// imagePath is a process's full image path.
+func imagePath(process windows.Handle) (string, error) {
+	buf := make([]uint16, windows.MAX_LONG_PATH)
+	n := uint32(len(buf))
+	if err := windows.QueryFullProcessImageName(process, 0, &buf[0], &n); err != nil {
+		return "", err
+	}
+	return windows.UTF16ToString(buf[:n]), nil
 }

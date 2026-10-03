@@ -36,6 +36,16 @@ func Main(prefix, args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
+	if inv.Summarize != nil {
+		return summarize(*inv.Summarize, stdout, stderr)
+	}
+	if inv.Record != nil {
+		if err := runRecord(*inv.Record); err != nil {
+			fmt.Fprintln(stderr, "nested-job:", err)
+			return 1
+		}
+		return 0
+	}
 	if err := run(inv, prefix); err != nil {
 		fmt.Fprintln(stderr, "nested-job:", err)
 		return 1
@@ -43,29 +53,57 @@ func Main(prefix, args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// printMatrix writes the selected expanded executions as JSON lines.
+// printMatrix writes the selected executions as JSON lines, or the hash.
 func printMatrix(c MatrixConfig, w io.Writer) error {
 	m, err := CaseMatrix()
 	if err != nil {
 		return err
 	}
+	if c.Hash {
+		_, err := fmt.Fprintln(w, MatrixHash())
+		return err
+	}
 	enc := json.NewEncoder(w)
-	for _, e := range m.Expand() {
-		if c.Identity != "" && e.Identity != c.Identity {
-			continue
-		}
-		if c.Lane != "" {
-			found := false
-			for _, lane := range e.Lanes {
-				found = found || lane == c.Lane
-			}
-			if !found {
-				continue
-			}
-		}
+	for _, e := range m.Select(c.Select) {
 		if err := enc.Encode(e); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// Summary exit codes: complete acceptance, any failure or incompleteness,
+// and a development selection whose selected executions all passed.
+const (
+	SummaryComplete = 0
+	SummaryFailed   = 1
+	SummaryPartial  = 3
+)
+
+func summarize(c SummarizeConfig, stdout, stderr io.Writer) int {
+	m, err := CaseMatrix()
+	if err != nil {
+		fmt.Fprintln(stderr, "nested-job:", err)
+		return SummaryFailed
+	}
+	results, err := ReadResults(c.Results)
+	if err != nil {
+		fmt.Fprintln(stderr, "nested-job:", err)
+		return SummaryFailed
+	}
+	s := Summarize(m, results, c.Source, c.Select)
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(s); err != nil {
+		return SummaryFailed
+	}
+	switch {
+	case s.Complete:
+		return SummaryComplete
+	case s.Partial && s.Passed == s.Selected && len(s.Problems) == 0:
+		fmt.Fprintln(stderr, "nested-job: partial qualification; #265 acceptance stays open")
+		return SummaryPartial
+	default:
+		return SummaryFailed
+	}
 }

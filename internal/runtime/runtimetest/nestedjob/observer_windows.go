@@ -50,7 +50,11 @@ func (o *Observer) Report(gen int) (*Report, error) { return ReadReport(o.CaseDi
 // WaitReport polls gen's report until done accepts it. A fatal or
 // unqualified event ends the wait with its failure.
 func (o *Observer) WaitReport(gen int, what string, done func(*Report) bool) (*Report, error) {
-	deadline := time.Now().Add(ObserveTimeout)
+	return o.waitReport(gen, what, done, ObserveTimeout)
+}
+
+func (o *Observer) waitReport(gen int, what string, done func(*Report) bool, timeout time.Duration) (*Report, error) {
+	deadline := time.Now().Add(timeout)
 	for {
 		r, err := o.Report(gen)
 		var pathErr *fs.PathError
@@ -105,7 +109,13 @@ func (o *Observer) Hold(id Identity, access uint32) (*Held, error) {
 // Ready waits for gen's tree, holds MAIN, ENGINE, G1 and G2, acknowledges
 // the observation and waits for READY. The returned handles are in tree order.
 func (o *Observer) Ready(gen int) (*Event, []*Held, error) {
-	r, err := o.WaitReport(gen, "tree", func(r *Report) bool { return r.Find(EventTree) != nil })
+	return o.ReadyWithin(gen, ObserveTimeout)
+}
+
+// ReadyWithin is Ready with a longer wait for the tree, for recovery cases
+// where the replacement generation starts only after a manager restart.
+func (o *Observer) ReadyWithin(gen int, timeout time.Duration) (*Event, []*Held, error) {
+	r, err := o.waitReport(gen, "tree", func(r *Report) bool { return r.Find(EventTree) != nil }, timeout)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -127,26 +137,36 @@ func (o *Observer) Ready(gen int) (*Event, []*Held, error) {
 	return &tree, held, nil
 }
 
-// Send writes the next command for role without waiting for its ack.
+// Send writes the next command for role in gen without waiting for its ack.
 func (o *Observer) Send(gen int, role string, cmd Command) (int, error) {
-	key := fmt.Sprintf("%d/%s", gen, role)
+	return o.SendIn(o.genDir(gen), role, cmd)
+}
+
+// SendIn writes the next command for role in dir without waiting.
+func (o *Observer) SendIn(dir, role string, cmd Command) (int, error) {
+	key := dir + "|" + role
 	o.seq[key]++
 	cmd.Seq = o.seq[key]
 	if err := ValidateCommand(role, cmd); err != nil {
 		return cmd.Seq, err
 	}
-	return cmd.Seq, WriteJSON(filepath.Join(o.genDir(gen), CommandFile(role, cmd.Seq)), cmd)
+	return cmd.Seq, WriteJSON(filepath.Join(dir, CommandFile(role, cmd.Seq)), cmd)
 }
 
-// Command sends one command and waits for its acknowledgment. A negative
-// acknowledgment is returned with its failure as the error.
+// Command sends one command to role in gen and waits for its acknowledgment.
+// A negative acknowledgment is returned with its failure as the error.
 func (o *Observer) Command(gen int, role string, cmd Command) (Ack, error) {
-	seq, err := o.Send(gen, role, cmd)
+	return o.CommandIn(o.genDir(gen), role, cmd, ObserveTimeout)
+}
+
+// CommandIn sends one command to role in dir and waits up to timeout.
+func (o *Observer) CommandIn(dir, role string, cmd Command, timeout time.Duration) (Ack, error) {
+	seq, err := o.SendIn(dir, role, cmd)
 	if err != nil {
 		return Ack{}, err
 	}
-	path := filepath.Join(o.genDir(gen), AckFile(role, seq))
-	deadline := time.Now().Add(ObserveTimeout)
+	path := filepath.Join(dir, AckFile(role, seq))
+	deadline := time.Now().Add(timeout)
 	for {
 		var ack Ack
 		err := ReadJSON(path, &ack)

@@ -22,15 +22,21 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// Workload-created nested jobs (#265), owner lane with a real Manager and the
-// Windows launcher. Rows refer to the nestedjob case matrix.
+// Workload-created nested jobs (#265), native-owner lane with a real Manager,
+// the Windows launcher, real jobs and ExecStop. Subtests are mode then
+// identity, matching the case matrix's selectors. This test process owns
+// the SYSTEM lane. The headless lane runs the same isolated manager inside a
+// genuine S4U process; it is not part of this increment and skips.
 
 const nestedUnitName = "nested.service"
 
+const nestedHeadlessManagerPending = "headless manager owner lane is not implemented yet; the first increment covers runtime cases only"
+
 // nestedLauncher wraps the real launcher. Each workload launch records which
-// previous-generation processes were still running at that moment: the
-// replacement-acceptance boundary in this lane. The optional seam wraps the
-// workload in failedStopProcess so a test can fail its first cleanup.
+// previous-generation processes were still running at that moment, without
+// waiting or delaying the launch: the replacement-acceptance boundary in this
+// lane. With seam set, the first workload is wrapped in failedStopProcess so
+// its first cleanup fails.
 type nestedLauncher struct {
 	inner runtime.Launcher
 	seam  bool
@@ -56,14 +62,14 @@ func (l *nestedLauncher) Start(ctx context.Context, spec runtime.StartSpec) (run
 		l.mu.Unlock()
 	}
 	p, err := l.inner.Start(ctx, spec)
-	if helper || !l.seam || p == nil {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if helper || !l.seam || p == nil || l.failing != nil {
 		return p, err
 	}
 	f := &failedStopProcess{Process: p, lie: l.lie}
 	f.fail.Store(true)
-	l.mu.Lock()
 	l.failing = f
-	l.mu.Unlock()
 	return f, err
 }
 
@@ -80,10 +86,12 @@ func (l *nestedLauncher) state() (int, []string) {
 }
 
 type nestedManagerCase struct {
-	m      *Manager
-	obs    *nestedjob.Observer
-	launch *nestedLauncher
-	cfg    nestedjob.MainConfig
+	m       *Manager
+	obs     *nestedjob.Observer
+	launch  *nestedLauncher
+	cfg     nestedjob.MainConfig
+	rec     *nestedjob.Record
+	drained bool
 }
 
 func nestedArgvJSON(t *testing.T, args []string) string {
@@ -117,18 +125,81 @@ func writeNestedUnit(t *testing.T, base string, cfg nestedjob.MainConfig, unitLi
 	}
 }
 
-func nestedCaseConfig(t *testing.T, base, mode string) nestedjob.MainConfig {
+// nestedBase returns a manager base directory with a case directory inside.
+// With the evidence root configured, both are kept.
+func nestedBase(t *testing.T, mode string) (string, nestedjob.MainConfig) {
 	t.Helper()
+	base := t.TempDir()
+	if root := os.Getenv(nestedjob.EnvCaseRoot); root != "" {
+		if !filepath.IsAbs(root) {
+			t.Fatal(nestedjob.EnvCaseRoot + " must be absolute")
+		}
+		dir, err := os.MkdirTemp(root, "manager-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		base = dir
+	}
 	dir := filepath.Join(base, "case")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return nestedjob.MainConfig{LaunchMode: mode, CaseDir: dir, Generation: 1, Work: nestedjob.WorkIdle, OnStop: nestedjob.OnStopCooperative}
+	return base, nestedjob.MainConfig{LaunchMode: mode, CaseDir: dir, Generation: 1, Work: nestedjob.WorkIdle, OnStop: nestedjob.OnStopCooperative}
 }
 
+// nestedRecord writes the scenario's result record after everything else,
+// including the case's own cleanup.
+func nestedRecord(t *testing.T, caseID, mode, identity string) *nestedjob.Record {
+	t.Helper()
+	rec, err := nestedjob.NewRecord(caseID, mode, identity, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok, err := nestedjob.CurrentTokenContext(); err == nil && identity == nestedjob.IdentitySystem {
+		rec.Token = tok
+		if nestedjob.IdentityOf(tok) != identity {
+			rec.Note("owner token is not SYSTEM")
+		}
+	}
+	t.Cleanup(func() {
+		result := nestedjob.ResultPass
+		switch {
+		case t.Failed():
+			result = nestedjob.ResultFail
+		case t.Skipped():
+			result = nestedjob.ResultSkip
+		}
+		if err := rec.Finish(result); err != nil {
+			t.Errorf("result record: %v", err)
+		}
+	})
+	return rec
+}
+
+// eachManagerLane runs f per mode for the SYSTEM identity and records the
+// headless lane as skipped until its owner runner exists.
+func eachManagerLane(t *testing.T, caseID string, identities []string, f func(t *testing.T, mode string, rec *nestedjob.Record)) {
+	for _, mode := range nestedjob.LaunchModes {
+		t.Run(mode, func(t *testing.T) {
+			for _, identity := range identities {
+				t.Run(identity, func(t *testing.T) {
+					rec := nestedRecord(t, caseID, mode, identity)
+					if identity == nestedjob.IdentityHeadless {
+						t.Skip(nestedHeadlessManagerPending)
+					}
+					f(t, mode, rec)
+				})
+			}
+		})
+	}
+}
+
+var nestedManagerIdentities = []string{nestedjob.IdentitySystem, nestedjob.IdentityHeadless}
+
 // startNestedManager starts nested.service in a fresh manager. Cleanup stops
-// the unit, terminates anything that escaped and releases held handles.
-func startNestedManager(t *testing.T, launch *nestedLauncher, cfg nestedjob.MainConfig, base, unitLines, serviceLines string, stop *nestedjob.StopConfig) *nestedManagerCase {
+// the unit, terminates anything that escaped and releases held handles; it
+// confirms cleanup for the record only when nothing failed.
+func startNestedManager(t *testing.T, rec *nestedjob.Record, launch *nestedLauncher, cfg nestedjob.MainConfig, base, unitLines, serviceLines string, stop *nestedjob.StopConfig) *nestedManagerCase {
 	t.Helper()
 	writeNestedUnit(t, base, cfg, unitLines, serviceLines, stop)
 	launch.inner = runtime.DefaultLauncher()
@@ -136,21 +207,24 @@ func startNestedManager(t *testing.T, launch *nestedLauncher, cfg nestedjob.Main
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := &nestedManagerCase{m: m, obs: nestedjob.NewObserver(cfg.CaseDir), launch: launch, cfg: cfg}
+	c := &nestedManagerCase{m: m, obs: nestedjob.NewObserver(cfg.CaseDir), launch: launch, cfg: cfg, rec: rec}
 	t.Cleanup(func() {
 		launch.mu.Lock()
 		if launch.failing != nil {
 			launch.failing.fail.Store(false)
 		}
 		launch.mu.Unlock()
-		_, _ = m.Stop(nestedUnitName)
+		_, stopErr := m.Stop(nestedUnitName)
 		m.Close()
-		if err := c.obs.TerminateRunning(); err != nil {
-			t.Errorf("terminate escaped processes: %v", err)
+		escaped := c.obs.TerminateRunning()
+		closeErr := c.obs.Close()
+		if escaped != nil {
+			t.Errorf("terminate escaped processes: %v", escaped)
 		}
-		if err := c.obs.Close(); err != nil {
-			t.Errorf("release held handles: %v", err)
+		if closeErr != nil {
+			t.Errorf("release held handles: %v", closeErr)
 		}
+		rec.Cleanup(c.drained && stopErr == nil && escaped == nil && closeErr == nil)
 	})
 	if _, err := m.Reload(); err != nil {
 		t.Fatal(err)
@@ -192,6 +266,7 @@ func (c *nestedManagerCase) ready(t *testing.T, gen int) (*nestedjob.Report, []*
 	if proc.PID() != int(held[0].ID.PID) {
 		t.Fatalf("manager main pid %d, tree MAIN %d", proc.PID(), held[0].ID.PID)
 	}
+	tok := c.rec.Token
 	for _, h := range held {
 		in, err := proc.Job().Contains(int(h.ID.PID))
 		if err != nil {
@@ -199,6 +274,9 @@ func (c *nestedManagerCase) ready(t *testing.T, gen int) (*nestedjob.Report, []*
 		}
 		if done, serr := h.Signaled(); serr != nil || done || !in {
 			t.Fatalf("%s: unit job member=%t exited=%t err=%v", h.ID.Role, in, done, serr)
+		}
+		if tok != nil && (h.ID.SID != tok.SID || h.ID.Session != tok.Session) {
+			t.Fatalf("%s runs as %s/%d, not the owner's %s/%d", h.ID.Role, h.ID.SID, h.ID.Session, tok.SID, tok.Session)
 		}
 	}
 	st, err := c.m.Status(nestedUnitName)
@@ -211,7 +289,9 @@ func (c *nestedManagerCase) ready(t *testing.T, gen int) (*nestedjob.Report, []*
 	return r, held
 }
 
-func requireDrained(t *testing.T, held []*nestedjob.Held, when string) {
+// requireDrained requires every held process to be signaled now; an empty
+// job list alone is not exit evidence.
+func (c *nestedManagerCase) requireDrained(t *testing.T, held []*nestedjob.Held, when string) {
 	t.Helper()
 	running, err := nestedjob.Unsignaled(held)
 	if err != nil {
@@ -221,6 +301,7 @@ func requireDrained(t *testing.T, held []*nestedjob.Held, when string) {
 		late := nestedjob.WaitSignaled([]*nestedjob.Held{h}, 15*time.Second)
 		t.Errorf("%s pid %d still running %s (after 15s more: %v)", h.ID.Role, h.ID.PID, when, late)
 	}
+	c.drained = len(running) == 0
 }
 
 // staysDown requires that no workload is launched again within window.
@@ -236,24 +317,17 @@ func (c *nestedManagerCase) staysDown(t *testing.T, window time.Duration) {
 	}
 }
 
-func eachNestedMode(t *testing.T, f func(t *testing.T, mode string)) {
-	for _, mode := range nestedjob.LaunchModes {
-		t.Run(mode, func(t *testing.T) { f(t, mode) })
-	}
-}
-
 // N03: one cooperative ExecStop for the captured main removes both jobs.
 func TestWindowsNestedJobCooperativeStop(t *testing.T) {
-	eachNestedMode(t, func(t *testing.T, mode string) {
-		base := t.TempDir()
-		cfg := nestedCaseConfig(t, base, mode)
+	eachManagerLane(t, "N03", nestedManagerIdentities, func(t *testing.T, mode string, rec *nestedjob.Record) {
+		base, cfg := nestedBase(t, mode)
 		stop := &nestedjob.StopConfig{CaseDir: cfg.CaseDir, Behavior: nestedjob.StopCooperative}
-		c := startNestedManager(t, &nestedLauncher{}, cfg, base, "", "Restart=always\nRestartSec=1s\nTimeoutStopSec=5s\n", stop)
+		c := startNestedManager(t, rec, &nestedLauncher{}, cfg, base, "", "Restart=always\nRestartSec=1s\nTimeoutStopSec=5s\n", stop)
 		_, held := c.ready(t, 1)
 		if _, err := c.m.Stop(nestedUnitName); err != nil {
 			t.Fatal(err)
 		}
-		requireDrained(t, held, "when the cooperative stop returned")
+		c.requireDrained(t, held, "when the cooperative stop returned")
 		helpers, err := c.obs.StopHelpers(1)
 		if err != nil {
 			t.Fatal(err)
@@ -288,12 +362,11 @@ func TestWindowsNestedJobCooperativeStop(t *testing.T) {
 // N04: a hung helper and an ignored request fall back to forced cleanup of
 // both jobs within the stop budget.
 func TestWindowsNestedJobForcedStop(t *testing.T) {
-	eachNestedMode(t, func(t *testing.T, mode string) {
-		base := t.TempDir()
-		cfg := nestedCaseConfig(t, base, mode)
+	eachManagerLane(t, "N04", nestedManagerIdentities, func(t *testing.T, mode string, rec *nestedjob.Record) {
+		base, cfg := nestedBase(t, mode)
 		cfg.OnStop = nestedjob.OnStopIgnore
 		stop := &nestedjob.StopConfig{CaseDir: cfg.CaseDir, Behavior: nestedjob.StopHang}
-		c := startNestedManager(t, &nestedLauncher{}, cfg, base, "", "Restart=always\nRestartSec=1s\nTimeoutStopSec=5s\n", stop)
+		c := startNestedManager(t, rec, &nestedLauncher{}, cfg, base, "", "Restart=always\nRestartSec=1s\nTimeoutStopSec=5s\n", stop)
 		_, held := c.ready(t, 1)
 		started := time.Now()
 		stopped := make(chan error, 1)
@@ -326,7 +399,8 @@ func TestWindowsNestedJobForcedStop(t *testing.T) {
 			t.Fatalf("stop returned after %s, before the cooperative phase expired", elapsed)
 		}
 		t.Logf("forced stop after %s: %v", elapsed, err)
-		requireDrained(t, held, "when the forced stop returned")
+		rec.Note(fmt.Sprintf("forced stop after %s", elapsed.Round(time.Millisecond)))
+		c.requireDrained(t, held, "when the forced stop returned")
 		if err := nestedjob.WaitSignaled([]*nestedjob.Held{helper}, 15*time.Second); err != nil {
 			t.Fatalf("hung helper survived forced cleanup: %v", err)
 		}
@@ -343,14 +417,14 @@ func TestWindowsNestedJobForcedStop(t *testing.T) {
 }
 
 // N05: MAIN's death closes its sole inner handle; the replacement starts only
-// after every old process has exited and gets a new invocation.
+// after every old process has exited and gets a new invocation. The check at
+// the replacement launch observes and never waits or delays the launch.
 func TestWindowsNestedJobMainCrashRestart(t *testing.T) {
-	eachNestedMode(t, func(t *testing.T, mode string) {
-		base := t.TempDir()
-		cfg := nestedCaseConfig(t, base, mode)
+	eachManagerLane(t, "N05", nestedManagerIdentities, func(t *testing.T, mode string, rec *nestedjob.Record) {
+		base, cfg := nestedBase(t, mode)
 		cfg.Generation = 0
 		launch := &nestedLauncher{}
-		c := startNestedManager(t, launch, cfg, base, "", "Restart=always\nRestartSec=1s\n", nil)
+		c := startNestedManager(t, rec, launch, cfg, base, "", "Restart=always\nRestartSec=1s\n", nil)
 		_, held := c.ready(t, 1)
 		launch.expectDrained(held)
 		if err := nestedjob.Terminate(held[0]); err != nil {
@@ -382,74 +456,98 @@ func TestWindowsNestedJobMainCrashRestart(t *testing.T) {
 		if _, err := c.m.Stop(nestedUnitName); err != nil {
 			t.Fatal(err)
 		}
-		requireDrained(t, next, "when the replacement stop returned")
+		c.requireDrained(t, next, "when the replacement stop returned")
 	})
 }
 
-// N07, owner-lane part: the process owning the daemon and unit jobs dies.
-// Genuine broker/user-manager recovery belongs to the installed-daemon lane.
+// Supplementary, not a primary matrix execution: the process owning the
+// daemon and unit jobs dies. Installed-daemon recovery is N06/N07's lane.
 func TestWindowsNestedJobOwnerCrash(t *testing.T) {
-	eachNestedMode(t, func(t *testing.T, mode string) {
-		base := t.TempDir()
-		cfg := nestedCaseConfig(t, base, mode)
-		writeNestedUnit(t, base, cfg, "", "Restart=no\n", nil)
-		exe, err := filepath.Abs(os.Args[0])
-		if err != nil {
-			t.Fatal(err)
-		}
-		cmd := exec.Command(exe, winunitdHelperArgPrefix+"nested-owner", base)
-		cmd.Env = nestedHelperEnv()
-		cmd.SysProcAttr = &windows.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
-		var out strings.Builder
-		cmd.Stdout, cmd.Stderr = &out, &out
-		if err := cmd.Start(); err != nil {
-			t.Fatal(err)
-		}
-		waited := make(chan error, 1)
-		go func() { waited <- cmd.Wait() }()
-		obs := nestedjob.NewObserver(cfg.CaseDir)
-		t.Cleanup(func() {
-			_ = cmd.Process.Kill()
-			<-waited
-			if err := obs.TerminateRunning(); err != nil {
-				t.Errorf("terminate survivors: %v", err)
+	for _, mode := range nestedjob.LaunchModes {
+		t.Run(mode, func(t *testing.T) {
+			base, cfg := nestedBase(t, mode)
+			writeNestedUnit(t, base, cfg, "", "Restart=no\n", nil)
+			exe, err := filepath.Abs(os.Args[0])
+			if err != nil {
+				t.Fatal(err)
 			}
-			if err := obs.Close(); err != nil {
-				t.Error(err)
+			cmd := exec.Command(exe, winunitdHelperArgPrefix+"nested-owner-crash", base)
+			cmd.Env = nestedHelperEnv()
+			cmd.SysProcAttr = &windows.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
+			var out strings.Builder
+			cmd.Stdout, cmd.Stderr = &out, &out
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
 			}
-			if t.Failed() {
-				t.Logf("owner output:\n%s", out.String())
+			waited := make(chan error, 1)
+			go func() { waited <- cmd.Wait() }()
+			obs := nestedjob.NewObserver(cfg.CaseDir)
+			drained := false
+			t.Cleanup(func() {
+				_ = cmd.Process.Kill()
+				<-waited
+				escaped := obs.TerminateRunning()
+				if escaped != nil {
+					t.Errorf("terminate survivors: %v", escaped)
+				}
+				if err := obs.Close(); err != nil {
+					t.Error(err)
+				}
+				if t.Failed() {
+					t.Logf("owner output:\n%s", out.String())
+				}
+				writeSupplementary(t, "owner-crash/"+mode+"/system", drained && escaped == nil)
+			})
+			_, held, err := obs.Ready(1)
+			if err != nil {
+				t.Fatal(err)
 			}
+			r, err := obs.Report(1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := nestedjob.CheckTree(r, mode); err != nil {
+				t.Fatal(err)
+			}
+			created, err := nestedjob.CreationTime(processHandle(t, cmd.Process.Pid))
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner, err := obs.Hold(nestedjob.Identity{Role: nestedjob.RoleOwner, PID: uint32(cmd.Process.Pid), Created: created, Generation: 1}, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := nestedjob.Terminate(owner); err != nil {
+				t.Fatal(err)
+			}
+			if err := nestedjob.WaitSignaled([]*nestedjob.Held{owner}, 5*time.Second); err != nil {
+				t.Fatal(err)
+			}
+			if err := nestedjob.WaitSignaled(held, 10*time.Second); err != nil {
+				t.Fatalf("nested tree survived its owner: %v", err)
+			}
+			drained = true
 		})
-		_, held, err := obs.Ready(1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		r, err := obs.Report(1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := nestedjob.CheckTree(r, mode); err != nil {
-			t.Fatal(err)
-		}
-		created, err := nestedjob.CreationTime(processHandle(t, cmd.Process.Pid))
-		if err != nil {
-			t.Fatal(err)
-		}
-		owner, err := obs.Hold(nestedjob.Identity{Role: "owner", PID: uint32(cmd.Process.Pid), Created: created, Generation: 1}, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := nestedjob.Terminate(owner); err != nil {
-			t.Fatal(err)
-		}
-		if err := nestedjob.WaitSignaled([]*nestedjob.Held{owner}, 5*time.Second); err != nil {
-			t.Fatal(err)
-		}
-		if err := nestedjob.WaitSignaled(held, 10*time.Second); err != nil {
-			t.Fatalf("nested tree survived its owner: %v", err)
-		}
-	})
+	}
+}
+
+// writeSupplementary records a supplementary regression under its own key.
+func writeSupplementary(t *testing.T, key string, cleanup bool) {
+	t.Helper()
+	dir := os.Getenv(nestedjob.EnvResults)
+	if dir == "" {
+		return
+	}
+	result := nestedjob.ResultPass
+	if t.Failed() {
+		result = nestedjob.ResultFail
+	}
+	tok, _ := nestedjob.CurrentTokenContext()
+	r := nestedjob.Result{Schema: nestedjob.ResultSchema, Key: key, Kind: nestedjob.KindSupplementary, Result: result,
+		Source: os.Getenv(nestedjob.EnvSource), Matrix: nestedjob.MatrixHash(), Token: tok, CleanupConfirmed: cleanup}
+	if err := nestedjob.WriteResult(dir, r); err != nil {
+		t.Errorf("supplementary record: %v", err)
+	}
 }
 
 // processHandle opens pid for a creation-time query; the caller's exec.Cmd
@@ -502,11 +600,10 @@ func runNestedOwner(base string) error {
 
 // N08: aggregate commitments of the inner tree hit the unit job's MemoryMax.
 func TestWindowsNestedJobMemoryMax(t *testing.T) {
-	eachNestedMode(t, func(t *testing.T, mode string) {
-		base := t.TempDir()
-		cfg := nestedCaseConfig(t, base, mode)
+	eachManagerLane(t, "N08", nestedManagerIdentities, func(t *testing.T, mode string, rec *nestedjob.Record) {
+		base, cfg := nestedBase(t, mode)
 		cfg.Work = nestedjob.WorkCommit
-		c := startNestedManager(t, &nestedLauncher{}, cfg, base, "", "Restart=no\nMemoryMax=256M\n", nil)
+		c := startNestedManager(t, rec, &nestedLauncher{}, cfg, base, "", "Restart=no\nMemoryMax=256M\n", nil)
 		r, held := c.ready(t, 1)
 		var baseline uint64
 		for _, m := range r.Find(nestedjob.EventTree).Tree {
@@ -550,7 +647,7 @@ func TestWindowsNestedJobMemoryMax(t *testing.T) {
 			}
 			time.Sleep(20 * time.Millisecond)
 		}
-		requireDrained(t, held, "after the resource-limit failure")
+		c.requireDrained(t, held, "after the resource-limit failure")
 		var committed uint64
 		for _, role := range []string{nestedjob.RoleEngine, nestedjob.RoleG1, nestedjob.RoleG2} {
 			if w, err := c.obs.Work(1, role); err == nil {
@@ -559,6 +656,7 @@ func TestWindowsNestedJobMemoryMax(t *testing.T) {
 			}
 		}
 		t.Logf("peak job memory %d, recorded work commitments %d", peak, committed)
+		rec.Note(fmt.Sprintf("baseline %d peak %d committed %d", baseline, peak, committed))
 		if peak > 256<<20 || committed >= 3*nestedjob.CommitPerProcess {
 			t.Fatalf("commitments exceeded MemoryMax: peak=%d work=%d", peak, committed)
 		}
@@ -567,24 +665,24 @@ func TestWindowsNestedJobMemoryMax(t *testing.T) {
 
 // N09: format 1 CPUQuota applies to the unit job while the inner job exists.
 func TestWindowsNestedJobCPUQuota(t *testing.T) {
-	testNestedCPUQuota(t, "", "CPUQuota=25%\n", 25, 0)
+	testNestedCPUQuota(t, "N09", "", "CPUQuota=25%\n", 25, 0)
 }
 
 // N10: format 2 WindowsCPUQuota, reported under its own status name.
 func TestWindowsNestedJobWindowsCPUQuota(t *testing.T) {
-	testNestedCPUQuota(t, "FormatVersion=2\n", "WindowsCPUQuota=25%\n", 0, 25)
+	testNestedCPUQuota(t, "N10", "FormatVersion=2\n", "WindowsCPUQuota=25%\n", 0, 25)
 }
 
 // With WINUNITD_NATIVE_NESTED_METER=1 the quota is also measured against an
-// uncapped control; otherwise only the native settings are checked.
-func testNestedCPUQuota(t *testing.T, unitLines, quota string, legacy, native uint32) {
-	meter := os.Getenv("WINUNITD_NATIVE_NESTED_METER") == "1"
-	eachNestedMode(t, func(t *testing.T, mode string) {
+// uncapped control with the same mode, token and processors, recorded as a
+// separately keyed control; otherwise only the native settings are checked.
+func testNestedCPUQuota(t *testing.T, caseID, unitLines, quota string, legacy, native uint32) {
+	meter := os.Getenv(nestedjob.EnvMeter) == "1"
+	eachManagerLane(t, caseID, nestedManagerIdentities, func(t *testing.T, mode string, rec *nestedjob.Record) {
 		start := func(t *testing.T, serviceLines string) (*nestedManagerCase, []*nestedjob.Held) {
-			base := t.TempDir()
-			cfg := nestedCaseConfig(t, base, mode)
+			base, cfg := nestedBase(t, mode)
 			cfg.Work = nestedjob.WorkCPU
-			c := startNestedManager(t, &nestedLauncher{}, cfg, base, unitLines, "Restart=no\n"+serviceLines, nil)
+			c := startNestedManager(t, rec, &nestedLauncher{}, cfg, base, unitLines, "Restart=no\n"+serviceLines, nil)
 			_, held := c.ready(t, 1)
 			return c, held
 		}
@@ -596,7 +694,12 @@ func testNestedCPUQuota(t *testing.T, unitLines, quota string, legacy, native ui
 			if _, err := c.m.Stop(nestedUnitName); err != nil {
 				t.Fatal(err)
 			}
-			requireDrained(t, held, "after the control")
+			c.requireDrained(t, held, "after the control")
+			result := nestedjob.ResultPass
+			if control < 0.60 {
+				result = nestedjob.ResultInconclusive
+			}
+			rec.Control("uncapped", result, fmt.Sprintf("%.1f%% of %d processors", control*100, goruntime.NumCPU()))
 		}
 		c, held := start(t, quota)
 		got, err := c.liveProc(t).Job().QueryLimits()
@@ -617,13 +720,15 @@ func testNestedCPUQuota(t *testing.T, unitLines, quota string, legacy, native ui
 		if meter {
 			capped = nestedCPUShare(t, c, held)
 			t.Logf("capped: %.1f%% of %d processors (control %.1f%%)", capped*100, goruntime.NumCPU(), control*100)
+			rec.Note(fmt.Sprintf("capped %.1f%% control %.1f%%", capped*100, control*100))
 		} else {
 			t.Log("measurement not requested; native settings only")
+			rec.Note("native settings only; not metered")
 		}
 		if _, err := c.m.Stop(nestedUnitName); err != nil {
 			t.Fatal(err)
 		}
-		requireDrained(t, held, "after the quota case")
+		c.requireDrained(t, held, "after the quota case")
 		if !meter {
 			return
 		}
@@ -667,23 +772,29 @@ func nestedCPUShare(t *testing.T, c *nestedManagerCase, held []*nestedjob.Held) 
 	return busy.Seconds() / (wall1.Sub(wall0).Seconds() * float64(goruntime.NumCPU()))
 }
 
-// N16: a test-only seam fails the first cleanup of a real nested tree.
+// N16: a test-only seam fails the first cleanup of a real nested tree. While
+// it is held no replacement may launch or be admitted; a start that returns
+// early must be a refusal, and a pending start is allowed. After release,
+// every held process exits, cleanup is confirmed and a fresh invocation runs.
+// This exercises state handling, not a reproduced kernel failure.
 func TestWindowsNestedJobCleanupUncertainty(t *testing.T) {
-	eachNestedMode(t, func(t *testing.T, mode string) {
+	eachManagerLane(t, "N16", []string{nestedjob.IdentitySystem}, func(t *testing.T, mode string, rec *nestedjob.Record) {
 		for _, lie := range []bool{false, true} {
 			name := "failure"
 			if lie {
 				name = "success-with-live-process"
 			}
 			t.Run(name, func(t *testing.T) {
-				base := t.TempDir()
-				cfg := nestedCaseConfig(t, base, mode)
+				base, cfg := nestedBase(t, mode)
+				cfg.Generation = 0
 				launch := &nestedLauncher{seam: true, lie: lie}
-				c := startNestedManager(t, launch, cfg, base, "", "Restart=no\n", nil)
+				c := startNestedManager(t, rec, launch, cfg, base, "", "Restart=no\n", nil)
 				_, held := c.ready(t, 1)
 				launch.mu.Lock()
 				seam := launch.failing
 				launch.mu.Unlock()
+				// Release in every outcome so teardown can drain the tree.
+				t.Cleanup(func() { seam.fail.Store(false) })
 				if _, err := c.m.Stop(nestedUnitName); err == nil {
 					t.Error("unconfirmed cleanup reported success")
 				}
@@ -703,17 +814,51 @@ func TestWindowsNestedJobCleanupUncertainty(t *testing.T) {
 				if !st.Unit.TerminationUncertain {
 					t.Error("status does not report uncertain termination")
 				}
-				if _, err := c.m.Start(context.Background(), nestedUnitName); err == nil {
-					t.Error("replacement admitted while cleanup is unconfirmed")
+				launch.expectDrained(held)
+				startResult := make(chan error, 1)
+				go func() { _, err := c.m.Start(context.Background(), nestedUnitName); startResult <- err }()
+				pending := false
+				select {
+				case err := <-startResult:
+					if err == nil {
+						t.Fatal("a start returned success while cleanup was unconfirmed")
+					}
+				case <-time.After(2 * time.Second):
+					pending = true
+					rec.Note("start stayed pending while cleanup was held")
 				}
 				if mains, _ := launch.state(); mains != 1 {
-					t.Fatalf("replacement launched (%d launches)", mains)
+					t.Fatalf("replacement launched while cleanup was held (%d launches)", mains)
 				}
 				seam.fail.Store(false)
 				if _, err := c.m.Stop(nestedUnitName); err != nil {
 					t.Fatalf("cleanup retry: %v", err)
 				}
-				requireDrained(t, held, "when the cleanup retry returned")
+				c.requireDrained(t, held, "when the cleanup retry returned")
+				if pending {
+					select {
+					case <-startResult:
+					case <-time.After(30 * time.Second):
+						t.Fatal("the pending start never finished")
+					}
+				}
+				if mains, _ := launch.state(); mains == 1 {
+					if _, err := c.m.Start(context.Background(), nestedUnitName); err != nil {
+						t.Fatalf("fresh invocation after confirmed cleanup: %v", err)
+					}
+				}
+				_, next := c.ready(t, 2)
+				mains, violations := launch.state()
+				if mains != 2 || len(violations) != 0 {
+					t.Fatalf("fresh invocation launches=%d violations=%v", mains, violations)
+				}
+				if next[0].ID.Invocation == held[0].ID.Invocation {
+					t.Fatal("fresh invocation reused the old invocation ID")
+				}
+				if _, err := c.m.Stop(nestedUnitName); err != nil {
+					t.Fatal(err)
+				}
+				c.requireDrained(t, next, "when the fresh invocation stopped")
 			})
 		}
 	})

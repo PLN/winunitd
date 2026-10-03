@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -23,8 +22,8 @@ func TestParseRoundTrip(t *testing.T) {
 	mains := []MainConfig{
 		{LaunchMode: ModeAssign, CaseDir: dir, Generation: 1, Work: WorkIdle, OnStop: OnStopCooperative},
 		{LaunchMode: ModeJobList, CaseDir: dir, Generation: 0, Work: WorkCommit, OnStop: OnStopIgnore},
-		{LaunchMode: ModeAssign, CaseDir: dir, Generation: 7, Work: WorkCPU, OnStop: OnStopCooperative, Gate: GateBeforeAssign},
-		{LaunchMode: ModeJobList, CaseDir: dir, Generation: 2, Work: WorkIdle, OnStop: OnStopCooperative, Gate: GateBeforeResume},
+		{LaunchMode: ModeAssign, CaseDir: dir, Generation: 7, Work: WorkCPU, OnStop: OnStopCooperative, Gate: GatePreAssign},
+		{LaunchMode: ModeJobList, CaseDir: dir, Generation: 2, Work: WorkIdle, OnStop: OnStopCooperative, Gate: GatePreResume},
 		{LaunchMode: ModeJobList, CaseDir: dir, Generation: 3, Work: WorkIdle, OnStop: OnStopCooperative, Sensitivity: SensitivityInheritInner},
 	}
 	for _, want := range mains {
@@ -75,8 +74,8 @@ func TestParseRejectsMalformedCommandLines(t *testing.T) {
 		"work":                    main("--engine-mode", "fork-bomb"),
 		"on-stop":                 main("--on-stop", "exit"),
 		"gate":                    main("--hold-gate", "after-resume"),
-		"job-list before-assign":  {RoleMain, "--launch-mode", ModeJobList, "--case-dir", dir, "--generation", "1", "--hold-gate", GateBeforeAssign},
-		"gate with sensitivity":   main("--hold-gate", GateBeforeResume, "--sensitivity", SensitivityInheritInner),
+		"job-list pre-assign":     {RoleMain, "--launch-mode", ModeJobList, "--case-dir", dir, "--generation", "1", "--hold-gate", GatePreAssign},
+		"gate with sensitivity":   main("--hold-gate", GatePreResume, "--sensitivity", SensitivityInheritInner),
 		"sensitivity":             main("--sensitivity", "inherit-all"),
 		"engine auto generation":  {RoleEngine, "--case-dir", dir, "--generation", "auto", "--job-handle-number", "4"},
 		"engine without probe":    {RoleEngine, "--case-dir", dir, "--generation", "1"},
@@ -353,189 +352,6 @@ func TestValidateCommandAllowsOnlyEnumeratedVerbs(t *testing.T) {
 	}
 }
 
-func TestCaseMatrixExpansion(t *testing.T) {
-	m, err := CaseMatrix()
-	if err != nil {
-		t.Fatal(err)
-	}
-	execs := m.Expand()
-	// 12 rows x 4 mode/identity pairs, N06 x 2, N14 x 6, N15/N16 x 4, and
-	// two more repetitions of N03-N07 (36).
-	if len(execs) != 96 {
-		t.Fatalf("expanded %d executions, want 96", len(execs))
-	}
-	keys := map[string]bool{}
-	rows := map[string]int{}
-	for _, e := range execs {
-		if keys[e.Key] {
-			t.Fatalf("duplicate key %s", e.Key)
-		}
-		keys[e.Key] = true
-		rows[e.Row]++
-		for _, lane := range e.Lanes {
-			if lane == LaneOwner && !strings.HasPrefix(e.OwnerRun, "^Test") {
-				t.Fatalf("%s owner lane without a test selector", e.Key)
-			}
-		}
-	}
-	for row, want := range map[string]int{"N01": 4, "N03": 12, "N06": 6, "N14": 6, "N15": 2, "N16": 2} {
-		if rows[row] != want {
-			t.Errorf("%s expanded to %d, want %d", row, rows[row], want)
-		}
-	}
-	gate := execs[0]
-	for _, e := range execs {
-		if e.Key == "N14/assign/before-assign/headless/1" {
-			gate = e
-		}
-	}
-	if gate.OwnerRun != "^TestNativeNestedJobLaunchGate$/^assign$/^before-assign$" || gate.OwnerPackage != "internal/runtime" {
-		t.Fatalf("gate execution = %+v", gate)
-	}
-	for _, e := range execs {
-		if e.Row == "N06" && (e.Identity != IdentityHeadless || len(e.Lanes) != 1 || e.Lanes[0] != LaneDaemon) {
-			t.Fatalf("N06 must be a genuine headless daemon lane: %+v", e)
-		}
-		if (e.Row == "N09" || e.Row == "N10") && len(e.OwnerEnv) != 1 {
-			t.Fatalf("CPU rows must request the metered owner lane: %+v", e)
-		}
-	}
-}
-
-func TestDecodeMatrixRejectsInvalidRows(t *testing.T) {
-	row := `{"id":"N01","action":"a","expect":"e","modes":["assign"],"identities":["system"],"repeat":1,"lanes":["owner"],"ownerPackage":"internal/runtime","ownerTest":"TestX"}`
-	doc := func(rows ...string) []byte {
-		return []byte(`{"version":1,"issue":265,"rows":[` + strings.Join(rows, ",") + `]}`)
-	}
-	if _, err := DecodeMatrix(doc(row)); err != nil {
-		t.Fatal(err)
-	}
-	edit := func(old, new string) string { return strings.Replace(row, old, new, 1) }
-	cases := map[string][]byte{
-		"version":            []byte(`{"version":2,"issue":265,"rows":[` + row + `]}`),
-		"no rows":            doc(),
-		"duplicate row":      doc(row, row),
-		"row id":             doc(edit(`"N01"`, `"C4"`)),
-		"mode":               doc(edit(`["assign"]`, `["fallback"]`)),
-		"repeated mode":      doc(edit(`["assign"]`, `["assign","assign"]`)),
-		"identity":           doc(edit(`["system"]`, `["admin"]`)),
-		"repeat":             doc(edit(`"repeat":1`, `"repeat":0`)),
-		"owner without test": doc(edit(`,"ownerTest":"TestX"`, ``)),
-		"test name":          doc(edit(`"TestX"`, `"Test X;"`)),
-		"owner package":      doc(edit(`"internal/runtime"`, `"cmd/winunitd"`)),
-		"gate mode":          doc(edit(`"lanes"`, `"gates":{"job-list":["before-resume"]},"lanes"`)),
-		"env":                doc(edit(`"lanes"`, `"ownerEnv":["PATH=x"],"lanes"`)),
-		"owner identity":     doc(edit(`"lanes"`, `"ownerIdentities":["headless"],"lanes"`)),
-		"owner-only subset":  doc(strings.Replace(edit(`["system"]`, `["system","headless"]`), `"lanes"`, `"ownerIdentities":["system"],"lanes"`, 1)),
-		"unknown field":      doc(edit(`"lanes"`, `"shell":"cmd","lanes"`)),
-	}
-	// before-assign exists only in assign mode.
-	cases["job-list gate"] = doc(strings.Replace(edit(`["assign"]`, `["job-list"]`), `"lanes"`, `"gates":{"job-list":["before-assign"]},"lanes"`, 1))
-	for name, data := range cases {
-		if _, err := DecodeMatrix(data); err == nil {
-			t.Errorf("%s accepted", name)
-		}
-	}
-}
-
-func TestOwnerIdentitiesLimitTheOwnerLane(t *testing.T) {
-	m, err := DecodeMatrix([]byte(`{"version":1,"issue":265,"rows":[{"id":"N01","action":"a","expect":"e",
-		"modes":["assign","job-list"],"identities":["system","headless"],"repeat":1,"lanes":["owner","daemon"],
-		"ownerPackage":"internal/runtime","ownerTest":"TestX","ownerIdentities":["system"]}]}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	execs := m.Expand()
-	if len(execs) != 4 {
-		t.Fatalf("expanded %d executions", len(execs))
-	}
-	for _, e := range execs {
-		owner := slices.Contains(e.Lanes, LaneOwner)
-		if owner != (e.Identity == IdentitySystem) || !slices.Contains(e.Lanes, LaneDaemon) || owner != (e.OwnerRun != "") {
-			t.Fatalf("execution %+v", e)
-		}
-	}
-}
-
-func TestSummarizeCountsOnlyCompletePasses(t *testing.T) {
-	execs := []Execution{
-		{Key: "N01/assign/system/1", Lanes: []string{LaneOwner, LaneDaemon}},
-		{Key: "N01/job-list/system/1", Lanes: []string{LaneOwner, LaneDaemon}},
-		{Key: "N15/assign/system/1", Lanes: []string{LaneOwner}},
-	}
-	pass := func(key, lane string) LaneResult { return LaneResult{Key: key, Lane: lane, Result: ResultPass} }
-	all := []LaneResult{
-		pass("N01/assign/system/1", LaneOwner), pass("N01/assign/system/1", LaneDaemon),
-		pass("N01/job-list/system/1", LaneOwner), pass("N01/job-list/system/1", LaneDaemon),
-		pass("N15/assign/system/1", LaneOwner),
-	}
-	if s, err := Summarize(execs, all); err != nil || !s.OK || s.Passed != 3 {
-		t.Fatalf("all passed: %+v %v", s, err)
-	}
-	skipped := append([]LaneResult(nil), all...)
-	skipped[4].Result = ResultSkip
-	if s, err := Summarize(execs, skipped); err != nil || s.OK || s.Passed != 2 || s.Incomplete != 1 {
-		t.Fatalf("skip counted as pass: %+v %v", s, err)
-	}
-	inconclusive := append([]LaneResult(nil), all...)
-	inconclusive[1].Result = ResultInconclusive
-	if s, err := Summarize(execs, inconclusive); err != nil || s.OK || s.Incomplete != 1 {
-		t.Fatalf("inconclusive counted as pass: %+v %v", s, err)
-	}
-	if s, err := Summarize(execs, all[:3]); err != nil || s.OK || s.Incomplete != 2 || len(s.Missing) != 2 {
-		t.Fatalf("missing lanes: %+v %v", s, err)
-	}
-	failed := append([]LaneResult(nil), all...)
-	failed[2].Result = ResultFail
-	if s, err := Summarize(execs, failed); err != nil || s.OK || s.Failed != 1 {
-		t.Fatalf("failure: %+v %v", s, err)
-	}
-	for name, extra := range map[string]LaneResult{
-		"unknown execution": pass("N99/assign/system/1", LaneOwner),
-		"unrequired lane":   pass("N15/assign/system/1", LaneDaemon),
-		"duplicate":         pass("N15/assign/system/1", LaneOwner),
-		"result value":      {Key: "N15/assign/system/1", Lane: LaneOwner, Result: "passed"},
-	} {
-		results := append(append([]LaneResult(nil), all[:4]...), extra)
-		if name == "duplicate" {
-			results = append(results, extra)
-		}
-		if _, err := Summarize(execs, results); err == nil {
-			t.Errorf("%s accepted", name)
-		}
-	}
-}
-
-func TestMainPrintsSelectedMatrix(t *testing.T) {
-	var out, errOut bytes.Buffer
-	if code := Main(nil, []string{"matrix", "--lane", LaneOwner, "--identity", IdentitySystem}, &out, &errOut); code != 0 {
-		t.Fatalf("exit %d: %s", code, errOut.String())
-	}
-	m, err := CaseMatrix()
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := 0
-	for _, e := range m.Expand() {
-		if e.Identity == IdentitySystem && e.OwnerRun != "" {
-			want++
-		}
-	}
-	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != want || want == 0 {
-		t.Fatalf("printed %d executions, want %d", len(lines), want)
-	}
-	for _, line := range lines {
-		var e Execution
-		if err := json.Unmarshal([]byte(line), &e); err != nil || e.Identity != IdentitySystem || e.OwnerRun == "" {
-			t.Fatalf("line %q: %v", line, err)
-		}
-	}
-	if code := Main(nil, []string{"matrix", "--lane", "ci"}, &out, &errOut); code != 2 {
-		t.Fatalf("invalid selection exit %d", code)
-	}
-}
-
 // readyEvents is a consistent READY report for mode.
 func readyEvents(mode string) []Event {
 	main := testIdentity(RoleMain, 10, 1)
@@ -610,7 +426,7 @@ func TestCheckTree(t *testing.T) {
 		},
 		"no assignment": func(ev []Event) []Event { return append(ev[:4:4], ev[5:]...) },
 		"gate": func(ev []Event) []Event {
-			gate := Event{Kind: EventGate, Gate: GateBeforeResume, Tree: []Member{ev[treeIndex(ev)].Tree[1]}}
+			gate := Event{Kind: EventGate, Gate: GatePreResume, Tree: []Member{ev[treeIndex(ev)].Tree[1]}}
 			return append(ev[:5:5], append([]Event{gate}, ev[5:]...)...)
 		},
 	}

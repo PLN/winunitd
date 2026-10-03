@@ -76,7 +76,7 @@ func (id Identity) Same(other Identity) bool {
 
 func (id Identity) validate(self bool) error {
 	switch id.Role {
-	case RoleMain, RoleEngine, RoleG1, RoleG2, RoleProbe, RoleStop:
+	case RoleMain, RoleEngine, RoleG1, RoleG2, RoleProbe, RoleStop, RoleOwner:
 	default:
 		return fmt.Errorf("identity role %q", id.Role)
 	}
@@ -498,7 +498,16 @@ const (
 	VerbProbe             = "probe"
 	VerbStartWork         = "start-work"
 	VerbCloseInherited    = "close-inherited"
+	// Owner-agent verbs.
+	VerbLaunch    = "launch"
+	VerbInUnitJob = "in-unit-job"
+	VerbPIDs      = "pids"
+	VerbStop      = "stop"
+	VerbExit      = "exit"
 )
+
+// MaxOwnerStopMS bounds an owner agent's unit stop.
+const MaxOwnerStopMS = 60000
 
 // Inner breakaway settings for set-inner-breakaway.
 const (
@@ -508,12 +517,14 @@ const (
 
 // Command is one observer request.
 type Command struct {
-	Seq            int    `json:"seq"`
-	Verb           string `json:"verb"`
-	Breakaway      bool   `json:"breakaway,omitempty"`
-	InnerBreakaway string `json:"innerBreakaway,omitempty"`
-	PID            uint32 `json:"pid,omitempty"`
-	Created        uint64 `json:"created,omitempty"`
+	Seq            int      `json:"seq"`
+	Verb           string   `json:"verb"`
+	Breakaway      bool     `json:"breakaway,omitempty"`
+	InnerBreakaway string   `json:"innerBreakaway,omitempty"`
+	PID            uint32   `json:"pid,omitempty"`
+	Created        uint64   `json:"created,omitempty"`
+	Args           []string `json:"args,omitempty"`
+	TimeoutMS      int64    `json:"timeoutMs,omitempty"`
 }
 
 // ValidateCommand checks that role accepts cmd with well-formed arguments.
@@ -523,6 +534,7 @@ func ValidateCommand(role string, cmd Command) error {
 		RoleEngine: {VerbPing, VerbProbe, VerbStartWork, VerbCloseInherited},
 		RoleG1:     {VerbPing, VerbProbe, VerbStartWork},
 		RoleG2:     {VerbPing, VerbProbe, VerbStartWork},
+		RoleOwner:  {VerbPing, VerbLaunch, VerbInUnitJob, VerbPIDs, VerbStop, VerbExit},
 	}[role]
 	ok := false
 	for _, v := range allowed {
@@ -539,14 +551,25 @@ func ValidateCommand(role string, cmd Command) error {
 		if cmd.InnerBreakaway != InnerBreakawayExplicit && cmd.InnerBreakaway != InnerBreakawaySilent {
 			return fmt.Errorf("inner breakaway %q", cmd.InnerBreakaway)
 		}
-	case VerbCheckInner:
+	case VerbCheckInner, VerbInUnitJob:
 		if cmd.PID == 0 || cmd.Created == 0 {
-			return errors.New("check-inner needs pid and creation time")
+			return fmt.Errorf("%s needs pid and creation time", cmd.Verb)
+		}
+	case VerbLaunch:
+		// An agent launches only the fixture's main role, never other text.
+		if inv, err := Parse(cmd.Args); err != nil || inv.Main == nil {
+			return fmt.Errorf("launch needs main-role fixture arguments: %v", err)
+		}
+	case VerbStop:
+		if cmd.TimeoutMS < 1 || cmd.TimeoutMS > MaxOwnerStopMS {
+			return fmt.Errorf("stop timeout %d ms", cmd.TimeoutMS)
 		}
 	}
 	if cmd.Verb != VerbSetInnerBreakaway && cmd.InnerBreakaway != "" ||
-		cmd.Verb != VerbCheckInner && (cmd.PID != 0 || cmd.Created != 0) ||
-		cmd.Verb != VerbProbe && cmd.Breakaway {
+		cmd.Verb != VerbCheckInner && cmd.Verb != VerbInUnitJob && (cmd.PID != 0 || cmd.Created != 0) ||
+		cmd.Verb != VerbProbe && cmd.Breakaway ||
+		cmd.Verb != VerbLaunch && len(cmd.Args) > 0 ||
+		cmd.Verb != VerbStop && cmd.TimeoutMS != 0 {
 		return fmt.Errorf("%s has arguments of another verb", cmd.Verb)
 	}
 	return nil
@@ -573,6 +596,10 @@ type Ack struct {
 	InInner    *bool        `json:"inInner,omitempty"`
 	LimitFlags uint32       `json:"limitFlags,omitempty"`
 	Closed     int          `json:"closed,omitempty"`
+	// Owner-agent results.
+	Identity  *Identity `json:"identity,omitempty"`
+	InUnitJob *bool     `json:"inUnitJob,omitempty"`
+	PIDs      []int     `json:"pids,omitempty"`
 }
 
 // HandleProbe is the negative inheritance probe at a numeric handle value.

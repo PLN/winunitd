@@ -17,7 +17,11 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
+	"strings"
+	"time"
 )
 
 // Launch modes. There is no automatic fallback between them.
@@ -37,6 +41,9 @@ const (
 	RoleG2     = "g2"
 	RoleProbe  = "probe"
 	RoleStop   = "stop"
+	// RoleOwner is a native-owner agent: it owns the unit job of a scenario
+	// that runs under another identity, such as a genuine S4U process.
+	RoleOwner = "owner"
 )
 
 // Work selects what ENGINE, G1 and G2 do after the observer's start-work
@@ -61,8 +68,8 @@ const (
 
 // Launch gates hold MAIN after creating ENGINE so a test can kill it there.
 const (
-	GateBeforeAssign = "before-assign"
-	GateBeforeResume = "before-resume"
+	GatePreAssign = "pre-assign"
+	GatePreResume = "pre-resume"
 )
 
 // SensitivityInheritInner deliberately passes one inheritable duplicate of
@@ -107,20 +114,31 @@ type StopConfig struct {
 	Behavior string
 }
 
-// MatrixConfig selects expanded matrix executions to print.
+// MatrixConfig selects expanded matrix executions to print, or the matrix
+// hash.
 type MatrixConfig struct {
-	Lane     string
-	Identity string
+	Select Selection
+	Hash   bool
+}
+
+// SummarizeConfig evaluates a result directory for one admitted source.
+type SummarizeConfig struct {
+	Results string
+	Source  string
+	Select  Selection
 }
 
 // Invocation is one parsed fixture command line. Exactly one role field is set.
 type Invocation struct {
-	Role   string
-	Main   *MainConfig
-	Engine *EngineConfig
-	Leaf   *LeafConfig
-	Stop   *StopConfig
-	Matrix *MatrixConfig
+	Role      string
+	Main      *MainConfig
+	Engine    *EngineConfig
+	Leaf      *LeafConfig
+	Stop      *StopConfig
+	Matrix    *MatrixConfig
+	Summarize *SummarizeConfig
+	Observe   *ObserveConfig
+	Record    *RecordConfig
 }
 
 // Parse validates a fixture command line: the role followed by its flags.
@@ -205,26 +223,122 @@ func Parse(args []string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("invalid stop behavior %q", c.Behavior)
 		}
 		return Invocation{Role: role, Stop: c}, nil
-	case "matrix":
-		lane := fs.String("lane", "", "")
-		identity := fs.String("identity", "", "")
+	case "observe":
+		gen := fs.Int("generation", 0, "")
+		replacement := fs.Int("replacement", 0, "")
+		crashPID := fs.Uint64("crash-pid", 0, "")
+		crashImage := fs.String("crash-image", "winunitd.exe", "")
+		var holds listFlag
+		fs.Var(&holds, "hold-pid", "")
+		timeout := fs.Duration("timeout", 3*time.Minute, "")
+		report := fs.String("report", "", "")
+		finish := fs.String("finish-file", "", "")
+		if err := parseFlags(fs, rest); err != nil {
+			return Invocation{}, err
+		}
+		c := &ObserveConfig{CaseDir: *caseDir, Generation: *gen, Replacement: *replacement, CrashImage: *crashImage,
+			Timeout: *timeout, Report: *report, FinishFile: *finish}
+		if *crashPID > 0 && *crashPID <= 1<<32-1 {
+			c.CrashPID = uint32(*crashPID)
+		}
+		for _, h := range holds {
+			pid, err := strconv.ParseUint(h, 10, 32)
+			if err != nil || pid == 0 {
+				return Invocation{}, fmt.Errorf("invalid hold pid %q", h)
+			}
+			c.HoldPIDs = append(c.HoldPIDs, uint32(pid))
+		}
+		if err := c.validate(); err != nil {
+			return Invocation{}, err
+		}
+		return Invocation{Role: role, Observe: c}, nil
+	case "record":
+		c := &RecordConfig{}
+		fs.StringVar(&c.Report, "report", "", "")
+		fs.StringVar(&c.Results, "results", "", "")
+		fs.StringVar(&c.Case, "case", "", "")
+		fs.StringVar(&c.Mode, "mode", "", "")
+		fs.StringVar(&c.Identity, "identity", "", "")
+		fs.StringVar(&c.Repetition, "repetition", "", "")
+		fs.StringVar(&c.Source, "source", "", "")
+		fs.StringVar(&c.TokenSource, "token-source", "", "")
+		fs.StringVar(&c.DriverResult, "driver-result", "", "")
+		fs.StringVar(&c.Detail, "detail", "", "")
+		if err := parseFlags(fs, rest); err != nil {
+			return Invocation{}, err
+		}
+		if *caseDir != "" || !slices.Contains(LaunchModes, c.Mode) || (c.Identity != IdentitySystem && c.Identity != IdentityHeadless) {
+			return Invocation{}, errors.New("record needs --mode and --identity and no case directory")
+		}
+		if err := c.validate(); err != nil {
+			return Invocation{}, err
+		}
+		return Invocation{Role: role, Record: c}, nil
+	case "matrix", "summarize":
+		var lanes, identities, cases listFlag
+		fs.Var(&lanes, "lane", "")
+		fs.Var(&identities, "identity", "")
+		fs.Var(&cases, "case", "")
+		first := fs.Bool("first-increment", false, "")
+		hash := fs.Bool("hash", false, "")
+		results := fs.String("results", "", "")
+		source := fs.String("source", "", "")
 		if err := parseFlags(fs, rest); err != nil {
 			return Invocation{}, err
 		}
 		if *caseDir != "" {
-			return Invocation{}, errors.New("matrix takes no case directory")
+			return Invocation{}, fmt.Errorf("%s takes no case directory", role)
 		}
-		if *lane != "" && *lane != LaneOwner && *lane != LaneDaemon {
-			return Invocation{}, fmt.Errorf("invalid lane %q", *lane)
+		sel := Selection{Lanes: lanes, Identities: identities, Cases: cases, FirstIncrement: *first}
+		for _, v := range sel.Lanes {
+			if v != LaneOwner && v != LaneDaemon {
+				return Invocation{}, fmt.Errorf("invalid lane %q", v)
+			}
 		}
-		if *identity != "" && *identity != IdentitySystem && *identity != IdentityHeadless {
-			return Invocation{}, fmt.Errorf("invalid identity %q", *identity)
+		for _, v := range sel.Identities {
+			if v != IdentitySystem && v != IdentityHeadless {
+				return Invocation{}, fmt.Errorf("invalid identity %q", v)
+			}
 		}
-		return Invocation{Role: "matrix", Matrix: &MatrixConfig{Lane: *lane, Identity: *identity}}, nil
+		for _, v := range sel.Cases {
+			if !caseIDPattern.MatchString(v) {
+				return Invocation{}, fmt.Errorf("invalid case %q", v)
+			}
+		}
+		if role == "matrix" {
+			if *results != "" || *source != "" {
+				return Invocation{}, errors.New("matrix takes no results or source")
+			}
+			if *hash && !sel.Empty() {
+				return Invocation{}, errors.New("the matrix hash covers the whole matrix")
+			}
+			return Invocation{Role: role, Matrix: &MatrixConfig{Select: sel, Hash: *hash}}, nil
+		}
+		if *hash || !filepath.IsAbs(*results) || !sourceCommit.MatchString(*source) {
+			return Invocation{}, errors.New("summarize needs --results ABSOLUTE-DIR and --source COMMIT")
+		}
+		return Invocation{Role: role, Summarize: &SummarizeConfig{Results: *results, Source: *source, Select: sel}}, nil
 	default:
 		return Invocation{}, fmt.Errorf("unknown role %q", role)
 	}
 }
+
+// listFlag accepts repeated or comma-separated values.
+type listFlag []string
+
+func (l *listFlag) String() string { return strings.Join(*l, ",") }
+
+func (l *listFlag) Set(v string) error {
+	for _, item := range strings.Split(v, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			*l = append(*l, item)
+		}
+	}
+	return nil
+}
+
+// sourceCommit is a full or abbreviated hexadecimal commit.
+var sourceCommit = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 
 func parseFlags(fs *flag.FlagSet, args []string) error {
 	if err := fs.Parse(args); err != nil {
@@ -286,11 +400,11 @@ func (c *MainConfig) validate() error {
 	}
 	switch c.Gate {
 	case "":
-	case GateBeforeAssign:
+	case GatePreAssign:
 		if c.LaunchMode != ModeAssign {
-			return errors.New("before-assign gate exists only in assign mode")
+			return errors.New("pre-assign gate exists only in assign mode")
 		}
-	case GateBeforeResume:
+	case GatePreResume:
 	default:
 		return fmt.Errorf("invalid gate %q", c.Gate)
 	}

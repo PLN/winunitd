@@ -95,6 +95,8 @@ func TestMain(m *testing.M) {
 	case "nested-job":
 		args, _ := nestedjob.HelperArgs(os.Args)
 		os.Exit(nestedjob.Main([]string{nestedjob.HelperSelector}, args, os.Stdout, os.Stderr))
+	case "nested-owner":
+		os.Exit(nestedOwnerAgentMain(os.Args))
 	}
 	code := m.Run()
 	if nativeOverlapBroker.job != nil {

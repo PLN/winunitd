@@ -36,6 +36,8 @@ func run(inv Invocation, prefix []string) error {
 		return runLeaf(*inv.Leaf, prefix)
 	case inv.Stop != nil:
 		return runStop(*inv.Stop)
+	case inv.Observe != nil:
+		return runObserve(*inv.Observe)
 	}
 	return errors.New("no role selected")
 }
@@ -258,7 +260,7 @@ func (m *mainRole) launchEngine() error {
 	if err := m.emit(Event{Kind: EventCreated, Identity: &id}); err != nil {
 		return m.abandon(child, "report", err)
 	}
-	if m.cfg.Gate == GateBeforeAssign {
+	if m.cfg.Gate == GatePreAssign {
 		return m.holdGate(child)
 	}
 	if m.cfg.LaunchMode == ModeAssign {
@@ -276,7 +278,7 @@ func (m *mainRole) launchEngine() error {
 	if !in {
 		return m.abandon(child, "verify-inner", errors.New("ENGINE is not in the inner job before resume"))
 	}
-	if m.cfg.Gate == GateBeforeResume {
+	if m.cfg.Gate == GatePreResume {
 		return m.holdGate(child)
 	}
 	previous, err := windows.ResumeThread(child.thread)
@@ -409,13 +411,13 @@ func (m *mainRole) awaitStatus(role string, v *RoleStatus) error {
 // serve handles enumerated commands and the cooperative stop request.
 func (m *mainRole) serve() error {
 	deadline := time.Now().Add(observedTimeout)
-	loop := &commandLoop{dir: m.dir, role: RoleMain, handle: m.command}
+	loop := &CommandServer{Dir: m.dir, Role: RoleMain, Handle: m.command}
 	stopPath := filepath.Join(m.dir, StopRequestFile)
 	for {
 		if !m.ready && time.Now().After(deadline) {
 			return m.fatal("observer", errors.New("observer acknowledgment timed out"))
 		}
-		if err := loop.poll(); err != nil {
+		if _, err := loop.Poll(); err != nil {
 			return m.fatal("command", err)
 		}
 		var req StopRequest
@@ -588,41 +590,6 @@ func createProbe(creator Identity, prefix []string, caseDir string, breakaway bo
 	return res, held
 }
 
-// commandLoop reads cmd-<role>-NNNN.json in order and writes each ack.
-type commandLoop struct {
-	dir    string
-	role   string
-	next   int
-	handle func(Command) Ack
-}
-
-func (l *commandLoop) poll() error {
-	if l.next == 0 {
-		l.next = 1
-	}
-	var cmd Command
-	err := ReadJSON(filepath.Join(l.dir, CommandFile(l.role, l.next)), &cmd)
-	var pathErr *fs.PathError
-	if errors.As(err, &pathErr) {
-		return nil // absent or transiently unreadable: retry on the next poll
-	}
-	ack := Ack{Seq: l.next, Verb: cmd.Verb}
-	switch {
-	case err != nil:
-		ack.Failure = failure("command", err)
-	case cmd.Seq != l.next:
-		ack.Failure = failure("command", fmt.Errorf("sequence %d in file %d", cmd.Seq, l.next))
-	default:
-		if verr := ValidateCommand(l.role, cmd); verr != nil {
-			ack.Failure = failure("command", verr)
-		} else {
-			ack = l.handle(cmd)
-		}
-	}
-	l.next++
-	return WriteJSON(filepath.Join(l.dir, AckFile(l.role, ack.Seq)), ack)
-}
-
 // worker is the shared ENGINE/leaf runtime: status, commands and work.
 type worker struct {
 	dir     string
@@ -712,9 +679,9 @@ func spin() {
 }
 
 func (w *worker) serve() error {
-	loop := &commandLoop{dir: w.dir, role: w.self.Role, handle: w.command}
+	loop := &CommandServer{Dir: w.dir, Role: w.self.Role, Handle: w.command}
 	for {
-		if err := loop.poll(); err != nil {
+		if _, err := loop.Poll(); err != nil {
 			return err
 		}
 		time.Sleep(pollInterval)
