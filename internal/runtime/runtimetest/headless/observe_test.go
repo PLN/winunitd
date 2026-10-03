@@ -143,7 +143,7 @@ func TestDeriveReplacement(t *testing.T) {
 	if len(problems) != 0 || l.Replacement == nil || len(l.Replacement.Old) != 1 || l.Replacement.New.Created != ft(7) || !*l.Kept || !*l.Peer {
 		t.Fatalf("replacement %+v kept %v peer %v: %q", l.Replacement, l.Kept, l.Peer, problems)
 	}
-	if got := metrics(l, nil, 0); got["orderedReplacement"] != 1 || got["kept"] != 1 || got["peerUnchanged"] != 1 {
+	if got := metrics(l, nil, 0, 0); got["orderedReplacement"] != 1 || got["kept"] != 1 || got["peerUnchanged"] != 1 {
 		t.Fatalf("metrics %v", got)
 	}
 	// A child that exited before the crash is not an old process; one that
@@ -154,7 +154,7 @@ func TestDeriveReplacement(t *testing.T) {
 		t.Fatalf("an exited child counted as old: %+v", l.Replacement)
 	}
 	o.gen(RoleChild, AccountA, ModeS4U, 3, 8, 0)
-	if l, _ := DeriveLifecycle(r, spec, AccountA, sidA, ModeS4U); len(l.Replacement.Old) != 2 || metrics(l, nil, 0)["orderedReplacement"] != 0 {
+	if l, _ := DeriveLifecycle(r, spec, AccountA, sidA, ModeS4U); len(l.Replacement.Old) != 2 || metrics(l, nil, 0, 0)["orderedReplacement"] != 0 {
 		t.Fatalf("a surviving child not counted: %+v", l.Replacement)
 	}
 	// Another account's crash is not this account's.

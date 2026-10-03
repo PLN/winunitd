@@ -460,7 +460,7 @@ func (ev *evaluation) evaluate(e Entry) (status, bool, string) {
 	default:
 		open("proof %q", e.Proof)
 	}
-	for _, f := range meets(e.Requires, metrics(life, r.Evidence.Status, e.CapSec)) {
+	for _, f := range meets(e.Requires, metrics(life, r.Evidence.Status, e.CapSec, e.CapToleranceSec)) {
 		open("%s", f)
 	}
 	if e.Paths != "" {
@@ -596,7 +596,7 @@ func (ev *evaluation) control(e Entry, r Record, c ControlEntry, cr Record, open
 	default:
 		fail("proof %q", c.Proof)
 	}
-	for _, f := range meets(c.Requires, metrics(life, cr.Evidence.Status, 0)) {
+	for _, f := range meets(c.Requires, metrics(life, cr.Evidence.Status, 0, 0)) {
 		fail("%s", f)
 	}
 	return !bad
@@ -625,8 +625,14 @@ func (ev *evaluation) lifecycle(spec *ObserveSpec, account, mode string, r Recor
 	if ev.run.Manifest.Lookup(workloadImage) == "" || rep.Executable != ev.run.Manifest.Lookup(workloadImage) {
 		open("observer executable is not the admitted %s", workloadImage)
 	}
+	if rep.Images.Daemon != ev.run.Manifest.Lookup(daemonImage) || rep.Images.Workload != ev.run.Manifest.Lookup(workloadImage) {
+		open("the observer watched images other than the admitted %s and %s", daemonImage, workloadImage)
+	}
 	if rep.Boot.String() != r.BootID {
 		open("observer report is from another boot")
+	}
+	if err := rep.Validate(); err != nil {
+		open("observer: %v", err)
 	}
 	sid := ""
 	if r.Token != nil {
@@ -660,9 +666,10 @@ func (ev *evaluation) checkOrder() {
 		if ev.bad[primaryOf(k)] {
 			continue
 		}
-		p := placed{key: k, seq: r.Sequence, boot: r.BootID, passwords: r.PasswordLogons, observed: r.Evidence.Observer != nil}
+		p := placed{key: k, seq: r.Sequence, boot: r.BootID, passwords: r.PasswordLogons}
 		if rep := r.Evidence.Observer; rep != nil {
 			p.passwords = max(p.passwords, rep.PasswordLogonsSince())
+			p.observed = rep.LogonHistoryKnown()
 		}
 		if c, ok := ev.controls[k]; ok {
 			p.phase, p.account, p.preboot = c.Phase, c.Account, c.ImmediatelyBefore
@@ -698,7 +705,7 @@ func (ev *evaluation) checkOrder() {
 				ev.problem("%s: phase %s ran after a password-bearing logon", p.key, ph.Name)
 			}
 			if ph.NoPassword && p.primary && !p.observed && ev.entries[p.key].Proof != ProofPending {
-				ev.problem("%s: phase %s has no observed logon sessions", p.key, ph.Name)
+				ev.problem("%s: phase %s has no complete observed logon history since its boot", p.key, ph.Name)
 			}
 		}
 	}

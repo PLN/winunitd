@@ -1,6 +1,9 @@
 package headless
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Characterizations. Succeeded and refused are both qualification
 // evidence; inconclusive and failed leave the case open.
@@ -60,14 +63,16 @@ type EchoReceipt struct {
 // is the nonce file's UNC path; Started and Ended bound the file calls, as
 // FILETIMEs.
 type SMBResult struct {
-	Target       string   `json:"target"`
-	Started      uint64   `json:"started"`
-	Ended        uint64   `json:"ended"`
-	Reachable    bool     `json:"reachable"`
-	ReachError   uint32   `json:"reachError,omitempty"`
-	Read         OpResult `json:"read"`
-	Write        OpResult `json:"write"`
-	ExpectSHA256 string   `json:"expectSha256"`
+	Target     string   `json:"target"`
+	Started    uint64   `json:"started"`
+	Ended      uint64   `json:"ended"`
+	Reachable  bool     `json:"reachable"`
+	ReachError uint32   `json:"reachError,omitempty"`
+	Read       OpResult `json:"read"`
+	Write      OpResult `json:"write"`
+	// WriteTarget is the new file the probe tried to create beside Target.
+	WriteTarget  string `json:"writeTarget,omitempty"`
+	ExpectSHA256 string `json:"expectSha256"`
 }
 
 // Principal is the server's record of an access to Target at At (a
@@ -155,19 +160,35 @@ func CharacterizeSMB(r *SMBResult, password *SMBResult, server *Principal, sid s
 		}
 		return Succeeded, "bare S4U access authenticated as the account"
 	}
-	code := r.Read.Win32
+	// The operation that failed is the discriminator: the same account's
+	// password-bearing logon must succeed on that operation, at that place.
+	// A write both contexts are denied is a share permission, not a
+	// credential refusal.
+	code, op := r.Read.Win32, "read"
 	if r.Read.OK {
-		code = r.Write.Win32
+		code, op = r.Write.Win32, "write"
 	}
 	switch {
 	case !authError(code):
 		return Inconclusive, fmt.Sprintf("network or share error %d", code)
-	case password == nil || !password.Reachable || !password.Read.OK:
+	case password == nil || !password.Reachable:
 		return Inconclusive, "no passing same-account password-bearing control"
-	case password.Target != r.Target || password.Read.SHA256 != r.ExpectSHA256:
-		return Inconclusive, "the password-bearing control read another file"
+	case password.Target != r.Target:
+		return Inconclusive, "the password-bearing control used another file"
+	case op == "read" && (!password.Read.OK || password.Read.SHA256 != r.ExpectSHA256):
+		return Inconclusive, "the same account's password logon did not read the file either"
+	case op == "write" && (!password.Write.OK || r.WriteTarget == "" || uncDir(password.WriteTarget) != uncDir(r.WriteTarget)):
+		return Inconclusive, "the same account's password logon did not write beside the file either: a share permission, not a credential refusal"
 	}
-	return Refused, fmt.Sprintf("bare S4U refused with %d while the same account's password logon reads the file", code)
+	return Refused, fmt.Sprintf("bare S4U %s refused with %d where the same account's password logon succeeds", op, code)
+}
+
+// uncDir is the directory of a Windows path, on any system.
+func uncDir(p string) string {
+	if i := strings.LastIndexAny(p, `\/`); i >= 0 {
+		return strings.ToLower(p[:i])
+	}
+	return ""
 }
 
 func efsError(code uint32) bool {

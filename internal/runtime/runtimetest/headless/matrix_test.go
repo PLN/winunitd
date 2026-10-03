@@ -187,36 +187,36 @@ func TestDecodeMatrixRejectsInvalidTables(t *testing.T) {
 
 func TestMetrics(t *testing.T) {
 	ev := Lifecycle{Attempts: launches(1, 2, 4, 8, 16, 32, 60, 60, 61)}
-	got := metrics(ev, nil, 60)
+	got := metrics(ev, nil, 60, 0)
 	if got["cappedGaps"] != 3 || got["shortGapsAfterCap"] != 0 || got["durationSec"] != 244 || got["failures"] != 10 {
 		t.Fatalf("crash loop metrics %v", got)
 	}
 	ev.Attempts = append(ev.Attempts, Attempt{Launched: ev.Attempts[9].Launched.Add(2e9)})
-	if got := metrics(ev, nil, 60); got["shortGapsAfterCap"] != 1 || got["failures"] != 10 {
+	if got := metrics(ev, nil, 60, 0); got["shortGapsAfterCap"] != 1 || got["failures"] != 10 {
 		t.Fatalf("reset after the cap %v", got)
 	}
-	if got := metrics(Lifecycle{Attempts: launches(1, 1, 1, 1, 1, 1, 1, 1, 20)}, nil, 0); got["maxStartsIn10s"] != 9 {
+	if got := metrics(Lifecycle{Attempts: launches(1, 1, 1, 1, 1, 1, 1, 1, 20)}, nil, 0, 0); got["maxStartsIn10s"] != 9 {
 		t.Fatalf("starts in ten seconds %v", got)
 	}
-	if got := metrics(Lifecycle{}, nil, 60); len(got) != 0 {
+	if got := metrics(Lifecycle{}, nil, 60, 0); len(got) != 0 {
 		t.Fatalf("metrics without evidence %v", got)
 	}
 	w := &Window{Since: at(100), Until: at(250)}
-	if got := metrics(Lifecycle{Attempts: launches(1), Negative: w}, nil, 0); got["negativeSec"] != 150 {
+	if got := metrics(Lifecycle{Attempts: launches(1), Negative: w}, nil, 0, 0); got["negativeSec"] != 150 {
 		t.Fatalf("negative window %v", got)
 	}
-	if got := metrics(Lifecycle{Attempts: []Attempt{{Launched: at(250)}}, Negative: w}, nil, 0); got["negativeSec"] != 0 {
+	if got := metrics(Lifecycle{Attempts: []Attempt{{Launched: at(250)}}, Negative: w}, nil, 0, 0); got["negativeSec"] != 0 {
 		t.Fatalf("launch at the window's end %v", got)
 	}
 	r := &Replacement{Old: []Process{{PID: 1, Created: 1, Exited: 5}}, New: Process{PID: 2, Created: 5}}
-	if got := metrics(Lifecycle{Replacement: r}, nil, 0); got["orderedReplacement"] != 0 {
+	if got := metrics(Lifecycle{Replacement: r}, nil, 0, 0); got["orderedReplacement"] != 0 {
 		t.Fatalf("equal exit and creation time counted as ordered: %v", got)
 	}
 	r.New.Created = 6
-	if got := metrics(Lifecycle{Replacement: r}, nil, 0); got["orderedReplacement"] != 1 {
+	if got := metrics(Lifecycle{Replacement: r}, nil, 0, 0); got["orderedReplacement"] != 1 {
 		t.Fatalf("ordered replacement %v", got)
 	}
-	if got := metrics(Lifecycle{Replacement: &Replacement{New: Process{PID: 2, Created: 6}}}, nil, 0); got["orderedReplacement"] != 0 {
+	if got := metrics(Lifecycle{Replacement: &Replacement{New: Process{PID: 2, Created: 6}}}, nil, 0, 0); got["orderedReplacement"] != 0 {
 		t.Fatalf("replacement without old processes %v", got)
 	}
 }
@@ -288,7 +288,14 @@ func TestCharacterize(t *testing.T) {
 	}
 	denied := &SMBResult{Target: testShare, Started: ft(1), Ended: ft(2), Reachable: true, Read: OpResult{Win32: errAccessDenied}, ExpectSHA256: testContent}
 	ok := &SMBResult{Target: testShare, Started: ft(1), Ended: ft(2), Reachable: true, Read: OpResult{OK: true, SHA256: testContent}, Write: OpResult{OK: true}, ExpectSHA256: testContent}
-	control := &SMBResult{Target: testShare, Reachable: true, Read: OpResult{OK: true, SHA256: testContent}, ExpectSHA256: testContent}
+	control := &SMBResult{Target: testShare, Reachable: true, Read: OpResult{OK: true, SHA256: testContent}, Write: OpResult{OK: true},
+		WriteTarget: `\\peer\share\s4u-control.txt`, ExpectSHA256: testContent}
+	readOnly := *control
+	readOnly.Write = OpResult{Win32: errAccessDenied}
+	elsewhere := *control
+	elsewhere.WriteTarget = `\\peer\share\sub\s4u-control.txt`
+	writeDenied := &SMBResult{Target: testShare, Reachable: true, Read: OpResult{OK: true, SHA256: testContent}, Write: OpResult{Win32: errAccessDenied},
+		WriteTarget: `\\peer\share\s4u-bare.txt`, ExpectSHA256: testContent}
 	other := *control
 	other.Target = `\\peer\other\nonce.txt`
 	wrongFile := *control
@@ -313,7 +320,9 @@ func TestCharacterize(t *testing.T) {
 		{"no logon session", &SMBResult{Target: testShare, Reachable: true, Read: OpResult{Win32: errNoSuchLogonSession}, ExpectSHA256: testContent}, control, nil, Refused},
 		{"unreachable", &SMBResult{ReachError: wsaETimedOut}, control, nil, Inconclusive},
 		{"bad path", &SMBResult{Target: testShare, Reachable: true, Read: OpResult{Win32: errBadNetPath}}, control, nil, Inconclusive},
-		{"read works, write denied", &SMBResult{Target: testShare, Reachable: true, Read: OpResult{OK: true}, Write: OpResult{Win32: errAccessDenied}, ExpectSHA256: testContent}, control, nil, Refused},
+		{"read works, write denied", writeDenied, control, nil, Refused},
+		{"read-only share for both", writeDenied, &readOnly, nil, Inconclusive},
+		{"control wrote elsewhere", writeDenied, &elsewhere, nil, Inconclusive},
 		{"success as the account", ok, control, account, Succeeded},
 		{"success as another account", ok, control, attributed(func(p *Principal) { p.SID = sidB }), Inconclusive},
 		{"success on another file", ok, control, attributed(func(p *Principal) { p.Target = other.Target }), Inconclusive},

@@ -57,7 +57,12 @@ type observer struct {
 // process of the watched images, terminates exactly the generations its
 // plan names, timestamps marks and creates the declared release file. It
 // writes a running report as it goes and a finished one at the end.
-func runObserve(args []string) error {
+func runObserve(args []string) error { return observeWith(args, true) }
+
+// observeWith runs the observer. Qualification evidence requires SYSTEM in
+// session zero; ordinary-account helper tests use qualification false, and
+// their reports do not pass Validate.
+func observeWith(args []string, qualification bool) error {
 	cfg, err := parseObserve(args)
 	if err != nil {
 		return err
@@ -66,7 +71,7 @@ func runObserve(args []string) error {
 		daemon: filepath.Base(cfg.DaemonImage), work: filepath.Base(cfg.WorkloadImage)}
 	o.rep = ObserverReport{Schema: ObserverSchema, Accounts: cfg.Accounts, Plan: cfg.Plan(), Stage: ObserverRunning}
 	defer o.close()
-	if err := o.start(); err != nil {
+	if err := o.start(qualification); err != nil {
 		return o.fail(err)
 	}
 	deadline := time.Now().Add(cfg.Duration)
@@ -88,10 +93,15 @@ func runObserve(args []string) error {
 	if err := o.scan(); err != nil {
 		return o.fail(err)
 	}
-	if err := o.sample(true); err != nil {
-		return o.fail(err)
-	}
+	o.sample(true)
 	o.accountFacts()
+	sids := map[string]bool{}
+	for _, sid := range cfg.Accounts {
+		sids[sid] = true
+	}
+	audit, logons := auditedLogons(o.rep.Boot.Time, sids)
+	o.rep.Audit = &audit
+	o.rep.Logons = append(o.rep.Logons, logons...)
 	// After the last scan's exit checks, so every recorded exit is inside
 	// the observation.
 	o.rep.Ended = filetimeNow()
@@ -99,7 +109,18 @@ func runObserve(args []string) error {
 	return writeJSONFile(o.cfg.Report, o.rep)
 }
 
-func (o *observer) start() error {
+func (o *observer) start(qualification bool) error {
+	self, err := selfClaim()
+	if err != nil {
+		return err
+	}
+	o.rep.Observer = ObserverIdentity{PID: self.PID, Created: self.Created, SID: self.SID}
+	if err := windows.ProcessIdToSessionId(self.PID, &o.rep.Observer.Session); err != nil {
+		return err
+	}
+	if qualification && (self.SID != SystemSID || o.rep.Observer.Session != 0) {
+		return errors.New("the observer must run as SYSTEM in session zero")
+	}
 	run, err := LoadAdmission(o.cfg.Admission)
 	if err != nil {
 		return err
@@ -112,6 +133,21 @@ func (o *observer) start() error {
 		return errors.New("the observer is not the admitted " + workloadImage)
 	}
 	o.rep.Executable = exe
+	// The images it watches must be the admitted ones, by name.
+	for _, img := range []struct {
+		path, name string
+		into       *string
+	}{{o.cfg.DaemonImage, daemonImage, &o.rep.Images.Daemon}, {o.cfg.WorkloadImage, workloadImage, &o.rep.Images.Workload}} {
+		sum, err := FileSHA256(img.path)
+		if err != nil {
+			return err
+		}
+		if want := run.Manifest.Lookup(img.name); want == "" || sum != want {
+			return errors.New("the watched " + img.name + " is not the admitted one")
+		}
+		*img.into = sum
+	}
+	o.rep.Sampling = &SamplingFacts{}
 	o.rep.Boot, err = bootIdentity()
 	return err
 }
@@ -158,13 +194,18 @@ func bootIdentity() (Boot, error) {
 		return Boot{}, fmt.Errorf("boot time: %w", err)
 	}
 	b := Boot{Time: uint64(tod.BootTime)}
+	// The boot counter is a fixture identifier on the selected OS; a boot
+	// that cannot be told from another is not a boot identity.
 	k, err := registry.OpenKey(registry.LOCAL_MACHINE, `SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters`, registry.QUERY_VALUE)
-	if err == nil {
-		if v, _, err := k.GetIntegerValue("BootId"); err == nil {
-			b.Counter = uint32(v)
-		}
-		_ = k.Close()
+	if err != nil {
+		return Boot{}, fmt.Errorf("boot counter: %w", err)
 	}
+	defer k.Close()
+	v, _, err := k.GetIntegerValue("BootId")
+	if err != nil {
+		return Boot{}, fmt.Errorf("boot counter: %w", err)
+	}
+	b.Counter = uint32(v)
 	return b, nil
 }
 
@@ -207,43 +248,61 @@ func (o *observer) scan() error {
 	if err := o.marks(); err != nil {
 		return err
 	}
-	return o.sample(false)
+	o.sample(false)
+	return nil
 }
 
 // sample records the interactive sessions with a user when they change and
 // the watched accounts' password-bearing logon sessions, about once a
 // second and at the end.
-func (o *observer) sample(final bool) error {
+// A failed query is recorded in the sampling facts, which then no longer
+// support any absence; the observation itself goes on.
+func (o *observer) sample(final bool) {
 	if !final && time.Now().Before(o.nextSample) {
-		return nil
+		return
 	}
 	o.nextSample = time.Now().Add(sampleInterval)
+	sm := o.rep.Sampling
+	fail := func(op string, err error) { sm.Errors = append(sm.Errors, NativeError{Op: op, Win32: win32Code(err)}) }
+	at := filetimeNow()
+	if sm.Samples > 0 && at-sm.Last > sm.MaxInterval {
+		sm.MaxInterval = at - sm.Last
+	}
+	if sm.Samples == 0 {
+		sm.First = at
+	}
+	sm.Samples++
+	sm.Last = at
 	users, err := interactiveUsers()
 	if err != nil {
-		return err
-	}
-	at := filetimeNow()
-	if n := len(o.rep.Sessions); n == 0 || !slices.Equal(o.rep.Sessions[n-1].Users, users) {
+		fail("sessions", err)
+	} else if n := len(o.rep.Sessions); n == 0 || !slices.Equal(o.rep.Sessions[n-1].Users, users) {
 		if n >= MaxGenerations {
-			return errors.New("too many session changes")
+			fail("sessions", errors.New("too many session changes"))
+		} else {
+			o.rep.Sessions = append(o.rep.Sessions, SessionSample{At: at, Users: users})
 		}
-		o.rep.Sessions = append(o.rep.Sessions, SessionSample{At: at, Users: users})
 	}
 	sessions, err := logonSessions()
 	if err != nil {
-		return err
+		fail("logons", err)
+		return
 	}
 	watched := map[string]bool{}
 	for _, sid := range o.cfg.Accounts {
 		watched[sid] = true
 	}
 	for _, l := range sessions {
-		if watched[l.SID] && passwordLogon(l.Type) && !o.logons[l.ID] && len(o.rep.Logons) < maxIgnored {
-			o.logons[l.ID] = true
-			o.rep.Logons = append(o.rep.Logons, l)
+		if !watched[l.SID] || !sampledPasswordLogon(l.Type) || o.logons[l.ID] {
+			continue
 		}
+		if len(o.rep.Logons) >= maxIgnored {
+			fail("logons", errors.New("too many password-bearing logons"))
+			return
+		}
+		o.logons[l.ID] = true
+		o.rep.Logons = append(o.rep.Logons, l)
 	}
-	return nil
 }
 
 // accountFacts reads each watched account's profile and workload progress

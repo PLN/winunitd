@@ -121,10 +121,11 @@ func ProbeSMB(t *SMBTarget, nonce string) SMBResult {
 	r.Started = filetimeNow()
 	done := make(chan struct{})
 	var read, write OpResult
+	r.WriteTarget = filepath.Join(filepath.Dir(t.Path), "s4u-"+nonce+".txt")
 	go func() {
 		defer close(done)
 		read = readFileOp("read", t.Path)
-		write = writeFileOp("write", filepath.Join(filepath.Dir(t.Path), "s4u-"+nonce+".txt"), []byte(nonce+"\n"))
+		write = writeFileOp("write", r.WriteTarget, []byte(nonce+"\n"))
 	}()
 	select {
 	case <-done:

@@ -76,3 +76,14 @@ func TestParseObserve(t *testing.T) {
 		t.Errorf("two accounts with one SID: %v", err)
 	}
 }
+
+// Usage errors name the flag, never the identities passed to it.
+func TestObserveDiagnosticsOmitIdentities(t *testing.T) {
+	const secret = "S-1-5-21-424242-1-2-1001"
+	for _, extra := range [][]string{{"--account", "A=" + secret}, {"--account", "C=" + secret}, {"--account", "A=" + SystemSID}} {
+		_, err := parseObserve(append(observeArgs(t), extra...))
+		if err == nil || strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), sidA) || strings.Contains(err.Error(), sidB) {
+			t.Errorf("%v: diagnostic names an identity: %t", extra[1][:2], err != nil)
+		}
+	}
+}

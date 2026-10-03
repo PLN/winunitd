@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -81,13 +82,25 @@ type ObserverReport struct {
 	Unidentified []Unidentified `json:"unidentified,omitempty"`
 	Marks        []Mark         `json:"marks,omitempty"`
 	Releases     []Mark         `json:"releases,omitempty"`
+	// Observer is the observer's own process and token: SYSTEM in session
+	// zero for qualification evidence.
+	Observer ObserverIdentity `json:"observer"`
+	// Images are the SHA-256 of the daemon and workload images it watched,
+	// admitted against their named manifest entries before it started.
+	Images ObservedImages `json:"images"`
+	// Sampling records that session and logon sampling ran and succeeded;
+	// without it, an empty list is unknown, not zero.
+	Sampling *SamplingFacts `json:"sampling,omitempty"`
 	// Sessions are the interactive sessions with a user, sampled about
 	// once a second and recorded when they change; the first sample is
 	// always recorded.
 	Sessions []SessionSample `json:"sessions,omitempty"`
 	// Logons are the watched accounts' password-bearing logon sessions the
-	// observer found.
+	// observer sampled and those the Security log audited since the boot.
 	Logons []LogonFact `json:"logons,omitempty"`
+	// Audit records whether the audited logon history since the boot is
+	// complete.
+	Audit *AuditFacts `json:"audit,omitempty"`
 	// Profiles and Progress are read at the last scan, per watched account.
 	Profiles map[string]ProfileFacts `json:"profiles,omitempty"`
 	Progress map[string]Progress     `json:"progress,omitempty"`
@@ -108,12 +121,70 @@ type SessionUser struct {
 	State   uint32 `json:"state"`
 }
 
-// LogonFact is one password-bearing logon session of a watched account.
+// LogonFact is one password-bearing logon of a watched account, sampled
+// from LSA or read from the Security log's logon audit.
 type LogonFact struct {
 	ID        string `json:"id"`
 	SID       string `json:"sid"`
 	Type      uint32 `json:"type"`
 	LogonTime uint64 `json:"logonTime"`
+	// Source is "sample" or "audit"; Process is the audited logon process,
+	// which separates the product's own S4U logons from password logons.
+	Source  string `json:"source"`
+	Process string `json:"process,omitempty"`
+}
+
+// ObserverIdentity is the observer's own process and token.
+type ObserverIdentity struct {
+	PID     uint32 `json:"pid"`
+	Created uint64 `json:"created"`
+	SID     string `json:"sid"`
+	Session uint32 `json:"session"`
+}
+
+// ObservedImages are the hashes of the images the observer watched.
+type ObservedImages struct {
+	Daemon   string `json:"daemon"`
+	Workload string `json:"workload"`
+}
+
+// SamplingFacts is how session and logon sampling went: the samples taken,
+// the first and last, the longest interval between two, and every query
+// that failed. A failed query leaves what it would have seen unknown.
+type SamplingFacts struct {
+	Samples     int           `json:"samples"`
+	First       uint64        `json:"first"`
+	Last        uint64        `json:"last"`
+	MaxInterval uint64        `json:"maxInterval"`
+	Errors      []NativeError `json:"errors,omitempty"`
+}
+
+// AuditFacts is the Security log's logon history since the boot: whether
+// it was read, the oldest event it still holds and whether it was cleared
+// since the boot. Only a log that reaches back past the boot, uncleared,
+// lists every logon since then.
+type AuditFacts struct {
+	Read             bool          `json:"read"`
+	Oldest           uint64        `json:"oldest,omitempty"`
+	ClearedSinceBoot bool          `json:"clearedSinceBoot"`
+	Errors           []NativeError `json:"errors,omitempty"`
+}
+
+// MaxSampleInterval bounds the time between two samples.
+const MaxSampleInterval = 5 * time.Second
+
+// LogonHistoryKnown reports whether the report lists every password-bearing
+// logon of the watched accounts since its boot: sampling ran without error
+// and the audited history reaches back past the boot, uncleared.
+func (r *ObserverReport) LogonHistoryKnown() bool {
+	a := r.Audit
+	return r.samplingComplete() && a != nil && a.Read && len(a.Errors) == 0 && !a.ClearedSinceBoot && a.Oldest != 0 && a.Oldest <= r.Boot.Time
+}
+
+func (r *ObserverReport) samplingComplete() bool {
+	sm := r.Sampling
+	return sm != nil && sm.Samples >= 2 && len(sm.Errors) == 0 && sm.First >= r.Started && sm.Last <= r.Ended &&
+		time.Duration(sm.MaxInterval)*100 <= MaxSampleInterval
 }
 
 // ProfileFacts is an account's profile: registered in ProfileList, the
@@ -141,13 +212,13 @@ type Progress struct {
 // PasswordLogonsSince counts the watched accounts' password-bearing logons
 // that began at or after the boot's time.
 func (r *ObserverReport) PasswordLogonsSince() int {
-	n := 0
+	seen := map[string]bool{}
 	for _, l := range r.Logons {
-		if l.LogonTime >= r.Boot.Time {
-			n++
+		if l.LogonTime >= r.Boot.Time && !strings.EqualFold(l.Process, productTokenSource) {
+			seen[l.ID] = true
 		}
 	}
-	return n
+	return len(seen)
 }
 
 // Boot identifies one boot: the kernel boot time and the boot counter.
@@ -248,7 +319,29 @@ func tokenClass(mode string) string {
 }
 
 // Validate checks a report's shape and internal consistency.
+// Validate checks a report as qualification evidence: its shape and
+// consistency, an observer that ran as SYSTEM in session zero, the admitted
+// images it watched and complete sampling.
 func (r *ObserverReport) Validate() error {
+	if err := r.validateStructure(); err != nil {
+		return err
+	}
+	o := r.Observer
+	if o.SID != SystemSID || o.Session != 0 || o.PID == 0 || o.Created == 0 {
+		return errors.New("the observer did not run as SYSTEM in session zero")
+	}
+	if !hexSHA256.MatchString(r.Images.Daemon) || !hexSHA256.MatchString(r.Images.Workload) {
+		return errors.New("the observer recorded no admitted images")
+	}
+	if !r.samplingComplete() {
+		return errors.New("the observer's session and logon sampling is incomplete")
+	}
+	return nil
+}
+
+// validateStructure checks a report's shape and internal consistency,
+// whatever account the observer ran as.
+func (r *ObserverReport) validateStructure() error {
 	if r.Schema != ObserverSchema {
 		return fmt.Errorf("observer schema %d", r.Schema)
 	}
@@ -327,7 +420,7 @@ func (r *ObserverReport) Validate() error {
 		watched[sid] = true
 	}
 	for i, l := range r.Logons {
-		if !watched[l.SID] || l.ID == "" || l.LogonTime == 0 || l.LogonTime > r.Ended {
+		if !watched[l.SID] || l.ID == "" || l.LogonTime == 0 || l.LogonTime > r.Ended || l.Source != "sample" && l.Source != "audit" {
 			return fmt.Errorf("logon %d", i)
 		}
 	}
@@ -398,7 +491,7 @@ type Replacement struct {
 func DeriveLifecycle(r *ObserverReport, spec ObserveSpec, account, sid, mode string) (Lifecycle, []string) {
 	var l Lifecycle
 	var problems []string
-	if err := r.Validate(); err != nil {
+	if err := r.validateStructure(); err != nil {
 		return l, []string{err.Error()}
 	}
 	if r.Accounts[account] != sid {

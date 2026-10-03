@@ -10,20 +10,20 @@
   "cases": {
     "G1": {
       "proof": "observer",
-      "ledger": "C3", "plane": "daemon", "phase": 3, "capSec": 60,
+      "ledger": "C3", "plane": "daemon", "phase": 3, "capSec": 60, "capToleranceSec": 20,
       "title": "Interactive WTS user-manager crash loop",
       "expect": "Each attempt is a successful native creation followed by a short-lived exit; the delay grows 1/2/4/8/16/32/60 and stays capped for at least five retries over ten minutes, with no renewed short delays; the peer stays healthy.",
       "variants": [{"id": "B", "account": "B", "mode": "wts"}],
-      "requires": [{"metric": "durationSec", "min": 600}, {"metric": "cappedGaps", "min": 5}, {"metric": "shortGapsAfterCap", "max": 0}, {"metric": "peerUnchanged", "min": 1}, {"metric": "maxExitedLifeSec", "max": 55}, {"metric": "recovered", "min": 1}],
+      "requires": [{"metric": "durationSec", "min": 600}, {"metric": "cappedGaps", "min": 5}, {"metric": "shortGapsAfterCap", "max": 0}, {"metric": "peerUnchanged", "min": 1}, {"metric": "maxExitedLifeSec", "max": 55}, {"metric": "recovered", "min": 1}, {"metric": "failures", "min": 12}, {"metric": "overlongGaps", "max": 0}],
       "observe": {"role": "manager", "peer": true}
     },
     "G2": {
       "proof": "observer",
-      "ledger": "C3", "plane": "daemon", "phase": 2, "capSec": 60,
+      "ledger": "C3", "plane": "daemon", "phase": 2, "capSec": 60, "capToleranceSec": 20,
       "title": "Headless S4U user-manager crash loop",
       "expect": "As G1 through the linger path with no logon; the reversible failure is then repaired and the manager recovers on its own.",
       "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}],
-      "requires": [{"metric": "durationSec", "min": 600}, {"metric": "cappedGaps", "min": 5}, {"metric": "shortGapsAfterCap", "max": 0}, {"metric": "peerUnchanged", "min": 1}, {"metric": "maxExitedLifeSec", "max": 55}, {"metric": "recovered", "min": 1}],
+      "requires": [{"metric": "durationSec", "min": 600}, {"metric": "cappedGaps", "min": 5}, {"metric": "shortGapsAfterCap", "max": 0}, {"metric": "peerUnchanged", "min": 1}, {"metric": "maxExitedLifeSec", "max": 55}, {"metric": "recovered", "min": 1}, {"metric": "failures", "min": 12}, {"metric": "overlongGaps", "max": 0}],
       "observe": {"role": "manager", "peer": true}
     },
     "G3": {
@@ -41,7 +41,7 @@
     },
     "G4": {
       "proof": "observer",
-      "ledger": "C3", "plane": "daemon", "phase": 2, "capSec": 60,
+      "ledger": "C3", "plane": "daemon", "phase": 2, "capSec": 60, "capToleranceSec": 20,
       "title": "Waiting recovery cancellation and broker crash recovery",
       "expect": "A waiting capped recovery is cancelled by the applied policy or stop, every owned process and profile drains, and nothing is relaunched for at least two capped periods; the orderly broker stop is followed by a restart with the grant revoked, which restores nothing. The broker crash is H09's event.",
       "variants": [
@@ -53,16 +53,16 @@
         {"id": "stop-B", "account": "B", "mode": "s4u"},
         {"id": "crash", "refs": ["H09/A", "H09/B"]}
       ],
-      "requires": [{"metric": "negativeSec", "min": 120}, {"metric": "drained", "min": 1}],
+      "requires": [{"metric": "negativeSec", "min": 120}, {"metric": "drained", "min": 1}, {"metric": "failedBeforeQuiet", "min": 7}, {"metric": "cappedBeforeQuiet", "min": 1}, {"metric": "waitingAtQuiet", "min": 1}],
       "observe": {"role": "manager", "negative": "quiet", "drained": true}
     },
     "G5": {
       "proof": "observer",
-      "ledger": "C3", "plane": "daemon", "phase": 2, "capSec": 1,
+      "ledger": "C3", "plane": "daemon", "phase": 2, "capSec": 1, "capToleranceSec": 2,
       "title": "Unlimited unit recovery under a healthy headless manager",
       "expect": "A short-lived nonzero-exit unit with StartLimitBurst=0 and a short capped exponential delay keeps retrying for ten minutes and more than twenty failures, more than five accepted starts in one real ten-second window, unlimited status and a confirmed stop. The finite control stops at its start limit.",
       "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}],
-      "requires": [{"metric": "durationSec", "min": 600}, {"metric": "failures", "min": 21}, {"metric": "maxStartsIn10s", "min": 6}, {"metric": "cappedGaps", "min": 10}, {"metric": "shortGapsAfterCap", "max": 0}, {"metric": "unlimited", "min": 1}, {"metric": "restartAttempts", "min": 21}, {"metric": "recovered", "min": 1}],
+      "requires": [{"metric": "durationSec", "min": 600}, {"metric": "failures", "min": 21}, {"metric": "maxStartsIn10s", "min": 6}, {"metric": "cappedGaps", "min": 10}, {"metric": "shortGapsAfterCap", "max": 0}, {"metric": "overlongGaps", "max": 0}, {"metric": "unlimited", "min": 1}, {"metric": "restartAttempts", "min": 21}, {"metric": "recovered", "min": 1}],
       "observe": {"role": "workload"},
       "controls": [{"name": "finite-limit", "proof": "observer", "observe": {"role": "workload"}, "requires": [{"metric": "startLimited", "min": 1}, {"metric": "withinBurst", "min": 1}]}]
     },

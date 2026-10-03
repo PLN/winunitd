@@ -74,7 +74,7 @@ var knownMetrics = []string{
 	"negativeSec", "failures", "maxStartsIn10s", "orderedReplacement", "startLimited", "peerUnchanged", "drained", "kept",
 	"maxExitedLifeSec", "recovered", "postResetGrowth", "unlimited", "restartAttempts", "withinBurst",
 	"bootStarted", "progressing", "profileCreated", "profileExisting", "interactiveSessions", "sessionCycle", "profileUnloaded",
-	"lingerKept", "sessionRetained",
+	"lingerKept", "sessionRetained", "overlongGaps", "failedBeforeQuiet", "cappedBeforeQuiet", "waitingAtQuiet",
 }
 
 // The observer report derivation each lifecycle metric needs: launches of
@@ -87,6 +87,7 @@ var metricNeeds = map[string]string{
 	"maxExitedLifeSec": "role", "recovered": "role", "postResetGrowth": "role", "withinBurst": "role",
 	"bootStarted": "boot", "progressing": "boot", "profileCreated": "boot", "profileExisting": "boot", "interactiveSessions": "sessions",
 	"sessionCycle": "session", "profileUnloaded": "unloaded", "lingerKept": "independent", "sessionRetained": "independent",
+	"overlongGaps": "role", "failedBeforeQuiet": "negative", "cappedBeforeQuiet": "negative", "waitingAtQuiet": "negative",
 }
 
 //go:embed matrix.json
@@ -113,18 +114,21 @@ type Phase struct {
 
 // Case is one case and its variants.
 type Case struct {
-	Ledger       string        `json:"ledger"`
-	Plane        string        `json:"plane,omitempty"`
-	Phase        int           `json:"phase,omitempty"`
-	CapSec       float64       `json:"capSec,omitempty"`
-	Title        string        `json:"title"`
-	Expect       string        `json:"expect"`
-	Variants     []Variant     `json:"variants"`
-	Requires     []Requirement `json:"requires,omitempty"`
-	Controls     []ControlDef  `json:"controls,omitempty"`
-	Characterize string        `json:"characterize,omitempty"`
-	Paths        string        `json:"paths,omitempty"`
-	Pipe         string        `json:"pipe,omitempty"`
+	Ledger string  `json:"ledger"`
+	Plane  string  `json:"plane,omitempty"`
+	Phase  int     `json:"phase,omitempty"`
+	CapSec float64 `json:"capSec,omitempty"`
+	// CapToleranceSec bounds how far past the cap a capped gap may be:
+	// the failing process's own life, reconciliation and scheduler slack.
+	CapToleranceSec float64       `json:"capToleranceSec,omitempty"`
+	Title           string        `json:"title"`
+	Expect          string        `json:"expect"`
+	Variants        []Variant     `json:"variants"`
+	Requires        []Requirement `json:"requires,omitempty"`
+	Controls        []ControlDef  `json:"controls,omitempty"`
+	Characterize    string        `json:"characterize,omitempty"`
+	Paths           string        `json:"paths,omitempty"`
+	Pipe            string        `json:"pipe,omitempty"`
 	// Runners is the number of fresh test runners whose repetitions each
 	// run every variant once.
 	Runners int `json:"runners,omitempty"`
@@ -218,29 +222,30 @@ type Requirement struct {
 
 // Entry is one expected record.
 type Entry struct {
-	Key          string         `json:"key"`
-	Case         string         `json:"case"`
-	Variant      string         `json:"variant"`
-	Repetition   string         `json:"repetition,omitempty"`
-	Ledger       string         `json:"ledger"`
-	Plane        string         `json:"plane"`
-	Account      string         `json:"account,omitempty"`
-	Mode         string         `json:"mode,omitempty"`
-	Phase        int            `json:"phase,omitempty"`
-	Execution    string         `json:"execution,omitempty"`
-	Refs         []string       `json:"refs,omitempty"`
-	Test         string         `json:"test,omitempty"`
-	CapSec       float64        `json:"capSec,omitempty"`
-	Requires     []Requirement  `json:"requires,omitempty"`
-	Characterize string         `json:"characterize,omitempty"`
-	Paths        string         `json:"paths,omitempty"`
-	Pipe         string         `json:"pipe,omitempty"`
-	Controls     []ControlEntry `json:"controls,omitempty"`
-	Observe      *ObserveSpec   `json:"observe,omitempty"`
-	Proof        string         `json:"proof,omitempty"`
-	Package      string         `json:"package,omitempty"`
-	Tests        []string       `json:"tests,omitempty"`
-	Check        string         `json:"check,omitempty"`
+	Key             string         `json:"key"`
+	Case            string         `json:"case"`
+	Variant         string         `json:"variant"`
+	Repetition      string         `json:"repetition,omitempty"`
+	Ledger          string         `json:"ledger"`
+	Plane           string         `json:"plane"`
+	Account         string         `json:"account,omitempty"`
+	Mode            string         `json:"mode,omitempty"`
+	Phase           int            `json:"phase,omitempty"`
+	Execution       string         `json:"execution,omitempty"`
+	Refs            []string       `json:"refs,omitempty"`
+	Test            string         `json:"test,omitempty"`
+	CapSec          float64        `json:"capSec,omitempty"`
+	CapToleranceSec float64        `json:"capToleranceSec,omitempty"`
+	Requires        []Requirement  `json:"requires,omitempty"`
+	Characterize    string         `json:"characterize,omitempty"`
+	Paths           string         `json:"paths,omitempty"`
+	Pipe            string         `json:"pipe,omitempty"`
+	Controls        []ControlEntry `json:"controls,omitempty"`
+	Observe         *ObserveSpec   `json:"observe,omitempty"`
+	Proof           string         `json:"proof,omitempty"`
+	Package         string         `json:"package,omitempty"`
+	Tests           []string       `json:"tests,omitempty"`
+	Check           string         `json:"check,omitempty"`
 }
 
 // ControlEntry is one expected control record.
@@ -647,14 +652,14 @@ func (m *Matrix) expand() ([]Entry, error) {
 		c := m.Cases[id]
 		for _, v := range c.Variants {
 			e := Entry{Case: id, Variant: v.ID, Ledger: c.Ledger, Account: v.Account, Mode: v.Mode, Execution: v.Execution,
-				Refs: slices.Clone(v.Refs), Test: v.Test, CapSec: c.CapSec, Requires: c.Requires,
+				Refs: slices.Clone(v.Refs), Test: v.Test, CapSec: c.CapSec, CapToleranceSec: c.CapToleranceSec, Requires: c.Requires,
 				Characterize: c.Characterize, Paths: c.Paths, Pipe: c.Pipe, Observe: c.Observe, Proof: c.Proof, Package: c.Package}
 			eff := effective(c, v)
 			e.Proof, e.Package, e.Check, e.Paths, e.Observe, e.Tests = eff.Proof, eff.Package, eff.Check, eff.Paths, eff.Observe, slices.Clone(v.Tests)
 			if len(v.Refs) > 0 {
 				e.Plane = PlaneReference
 				e.Key = id + "/" + v.ID
-				e.Requires, e.Characterize, e.Paths, e.Pipe, e.CapSec, e.Observe, e.Proof, e.Package, e.Check, e.Tests = nil, "", "", "", 0, nil, "", "", "", nil
+				e.Requires, e.Characterize, e.Paths, e.Pipe, e.CapSec, e.CapToleranceSec, e.Observe, e.Proof, e.Package, e.Check, e.Tests = nil, "", "", "", 0, 0, nil, "", "", "", nil
 				out = append(out, e)
 				continue
 			}

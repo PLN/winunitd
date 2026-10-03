@@ -48,17 +48,25 @@ func logonSessions() ([]LogonFact, error) {
 	var out []LogonFact
 	for _, id := range unsafe.Slice(list, count) {
 		var data *logonSessionFull
-		if r, _, _ := procLsaGetLogonSessionData.Call(uintptr(unsafe.Pointer(&id)), uintptr(unsafe.Pointer(&data))); r != 0 || data == nil {
+		r, _, _ := procLsaGetLogonSessionData.Call(uintptr(unsafe.Pointer(&id)), uintptr(unsafe.Pointer(&data)))
+		switch {
+		case r == statusNoSuchLogonSession:
+			// It ended between the enumeration and the query.
 			continue
+		case r != 0 || data == nil:
+			return nil, fmt.Errorf("describe a logon session: %w", windows.NTStatus(r).Errno())
 		}
 		if data.Sid != nil {
 			out = append(out, LogonFact{ID: fmt.Sprintf("%08x:%08x", id.HighPart, id.LowPart), SID: data.Sid.String(), Type: data.LogonType,
-				LogonTime: uint64(data.LogonTime)})
+				LogonTime: uint64(data.LogonTime), Source: "sample"})
 		}
 		procLsaFreeReturnBuffer.Call(uintptr(unsafe.Pointer(data)))
 	}
 	return out, nil
 }
+
+// statusNoSuchLogonSession is STATUS_NO_SUCH_LOGON_SESSION.
+const statusNoSuchLogonSession = 0xC000005F
 
 // interactiveUsers lists the sessions other than zero that have a user,
 // with that user's SID.
@@ -75,8 +83,10 @@ func interactiveUsers() ([]SessionUser, error) {
 			continue
 		}
 		var tok windows.Token
-		if err := windows.WTSQueryUserToken(s.SessionID, &tok); err != nil {
-			continue // no user in this session
+		if err := windows.WTSQueryUserToken(s.SessionID, &tok); errors.Is(err, windows.ERROR_NO_TOKEN) {
+			continue // positively no user in this session
+		} else if err != nil {
+			return nil, fmt.Errorf("session user: %w", err)
 		}
 		user, err := tok.GetTokenUser()
 		_ = tok.Close()
@@ -234,8 +244,12 @@ func unregisteredProfileDir(sid string) (string, error) {
 	return filepath.Join(root, name), nil
 }
 
-// passwordLogon reports a password-bearing logon type.
-func passwordLogon(t uint32) bool { return slices.Contains(passwordLogonTypes, t) }
+// sampledPasswordLogon reports a logon type that is password-bearing in an
+// LSA sample. A batch logon is left to the audited history, which names the
+// logon process and so separates the product's S4U batch logons.
+func sampledPasswordLogon(t uint32) bool {
+	return t != logonBatch && slices.Contains(passwordLogonTypes, t)
+}
 
 // EndpointReport is SYSTEM's view of one pipe's live server.
 type EndpointReport struct {

@@ -176,6 +176,12 @@ func TestSummarizeRequiresCaseProofs(t *testing.T) {
 			ev(t, rs, "H19/B#password-decrypt").Token.SID = sidA
 			rs[findRecord(t, rs, "H19/B#password-decrypt")].Token.SID = sidA
 		}},
+		{"read-only share", "H18/A: characterization inconclusive: the same account's password logon did not write beside the file either", func(rs []Record) {
+			smb := ev(t, rs, "H18/A").SMB
+			smb.Read = OpResult{Op: "read", OK: true, SHA256: testContent}
+			smb.Write = OpResult{Op: "write", Win32: errAccessDenied}
+			ev(t, rs, "H18/A#password-share").SMB.Write = OpResult{Op: "write", Win32: errAccessDenied}
+		}},
 		{"password control on another file", "H19/B: characterization inconclusive: the password logon decrypted another file", func(rs []Record) {
 			ev(t, rs, "H19/B#password-decrypt").EFS.Target = `C:\other.txt`
 		}},
@@ -186,7 +192,7 @@ func TestSummarizeRequiresCaseProofs(t *testing.T) {
 		// No password-bearing logon in the lifecycle phase.
 		{"password logon in the lifecycle phase", "H07/A: phase lifecycle ran after a password-bearing logon", func(rs []Record) {
 			r := ev(t, rs, "H07/A").Observer
-			r.Logons = []LogonFact{{ID: "1", SID: sidA, Type: logonInteractive, LogonTime: ft(1)}}
+			r.Logons = []LogonFact{{ID: "1", SID: sidA, Type: logonInteractive, LogonTime: ft(1), Source: "audit", Process: "User32"}}
 		}},
 	})
 }
@@ -432,5 +438,105 @@ func TestProtectedDACL(t *testing.T) {
 		if protectedDACL(dacl, sid) {
 			t.Errorf("%s accepted", name)
 		}
+	}
+}
+
+// A crash loop needs failed launches, a capped delay within its tolerance
+// and recovery; a cancellation needs a recovery that was actually waiting.
+func TestSummarizeRequiresFailureAndWaiting(t *testing.T) {
+	succeeded := func(r *ObserverReport, account string) {
+		for _, g := range gensOf(r, RoleManager, account) {
+			g.Crashed, g.ExitCode = 0, 0
+		}
+	}
+	runMutations(t, []mutationCase{
+		{"crash loop of successful exits", "G1/B: failures below its minimum", func(rs []Record) { succeeded(ev(t, rs, "G1/B").Observer, AccountB) }},
+		{"headless loop of successful exits", "G2/A: failures below its minimum", func(rs []Record) { succeeded(ev(t, rs, "G2/A").Observer, AccountA) }},
+		{"cancellation with nothing waiting", "G4/linger-A: failedBeforeQuiet not supported by the evidence", func(rs []Record) {
+			ev(t, rs, "G4/linger-A").Observer.Generations = nil
+		}},
+		{"cancellation long after the last failure", "G4/stop-B: waitingAtQuiet below its minimum", func(rs []Record) {
+			r := ev(t, rs, "G4/stop-B").Observer
+			r.Marks[0].At += 200e7
+			r.Ended += 200e7
+		}},
+		{"cancellation before the cap", "G4/linger-B: cappedBeforeQuiet below its minimum", func(rs []Record) {
+			r := ev(t, rs, "G4/linger-B").Observer
+			gs := gensOf(r, RoleManager, AccountB)
+			last := gs[len(gs)-1]
+			life := last.Exited - last.Created
+			last.Created = gs[len(gs)-2].Created + 40e7
+			last.Seen, last.Exited, last.Crashed = last.Created+5e5, last.Created+life, last.Created+life-1000
+		}},
+		{"capped gap far past the cap", "G2/B: overlongGaps above its maximum", func(rs []Record) {
+			r := ev(t, rs, "G2/B").Observer
+			gs := gensOf(r, RoleManager, AccountB)
+			for _, g := range gs[10:] {
+				g.Created += 30e7
+				g.Seen += 30e7
+				if g.Exited != 0 {
+					g.Exited += 30e7
+					g.Crashed += 30e7
+				}
+			}
+			r.Ended += 30e7
+		}},
+	})
+}
+
+// An observation that did not happen is unknown, not zero, and only an
+// observer running as SYSTEM over the admitted images counts.
+func TestSummarizeRequiresCompleteObservation(t *testing.T) {
+	shared := func(rs []Record, keys []string, fn func(*ObserverReport)) {
+		for _, k := range keys {
+			fn(ev(t, rs, k).Observer)
+		}
+	}
+	coldBoot := []string{"H01/A", "H02/B"}
+	runMutations(t, []mutationCase{
+		{"no sampling record", "H13/A: observer: the observer's session and logon sampling is incomplete", func(rs []Record) {
+			ev(t, rs, "H13/A").Observer.Sampling = nil
+		}},
+		{"failed session query", "H01/A: observer: the observer's session and logon sampling is incomplete", func(rs []Record) {
+			shared(rs, coldBoot, func(r *ObserverReport) { r.Sampling.Errors = []NativeError{{Op: "session-user", Win32: 5}} })
+		}},
+		{"one sample", "H14/B: observer: the observer's session and logon sampling is incomplete", func(rs []Record) {
+			ev(t, rs, "H14/B").Observer.Sampling.Samples = 1
+		}},
+		{"no audited history", "H17/A: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+			ev(t, rs, "H17/A").Observer.Audit = nil
+		}},
+		{"audit log cleared", "H07/B: phase lifecycle has no complete observed logon history since its boot", func(rs []Record) {
+			ev(t, rs, "H07/B").Observer.Audit.ClearedSinceBoot = true
+		}},
+		{"audit log begins after the boot", "H18/B: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+			r := ev(t, rs, "H18/B").Observer
+			r.Audit.Oldest = r.Boot.Time + 1
+		}},
+		{"audited password logon", "H13/B: phase fresh-boot ran after a password-bearing logon", func(rs []Record) {
+			r := ev(t, rs, "H13/B").Observer
+			r.Logons = []LogonFact{{ID: "1", SID: sidB, Type: logonInteractive, LogonTime: r.Boot.Time + 1, Source: "audit", Process: "User32"}}
+		}},
+		{"observer not SYSTEM", "H08/A: observer: the observer did not run as SYSTEM in session zero", func(rs []Record) {
+			ev(t, rs, "H08/A").Observer.Observer.SID = sidA
+		}},
+		{"observer in a session", "H05/B: observer: the observer did not run as SYSTEM in session zero", func(rs []Record) {
+			ev(t, rs, "H05/B").Observer.Observer.Session = 1
+		}},
+		{"another daemon watched", "H09/A: the observer watched images other than the admitted winunitd.exe and headless-workload.exe", func(rs []Record) {
+			shared(rs, []string{"H09/A", "H09/B"}, func(r *ObserverReport) { r.Images.Daemon = testOtherSHA })
+		}},
+	})
+}
+
+// The product's own S4U logons, which the audit shows as a batch or
+// network logon by its logon process, are not password-bearing logons.
+func TestProductS4ULogonsAreNotPasswordLogons(t *testing.T) {
+	m := testMatrix(t)
+	rs := cloneRecords(allPassing(t, m))
+	r := ev(t, rs, "H07/A").Observer
+	r.Logons = []LogonFact{{ID: "2", SID: sidA, Type: logonBatch, LogonTime: r.Boot.Time + 1, Source: "audit", Process: productTokenSource}}
+	if s := Summarize(m, rs, testRun(t), Selection{}); !s.Complete {
+		t.Fatalf("product S4U logon counted: %q", s.Problems)
 	}
 }

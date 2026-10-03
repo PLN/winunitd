@@ -25,6 +25,7 @@ const (
 	testRuntimeSHA = "7e57000000000000000000000000000000000000000000000000000000000001"
 	testOtherSHA   = "0e00000000000000000000000000000000000000000000000000000000000002"
 	testJournalSHA = "7e57000000000000000000000000000000000000000000000000000000000003"
+	testDaemonSHA  = "da00000000000000000000000000000000000000000000000000000000000004"
 	testShare      = `\\peer\share\nonce.txt`
 	testEFSFile    = `C:\Users\b\efs\secret.txt`
 )
@@ -35,7 +36,8 @@ var testAdmission = sync.OnceValues(func() ([]byte, error) {
 		return nil, err
 	}
 	return json.Marshal(Admission{Schema: AdmissionSchema, Source: testSource, Artifacts: []Artifact{
-		{Name: workloadImage, SHA256: exe}, {Name: "runtime.test.exe", SHA256: testRuntimeSHA}, {Name: "journal.test.exe", SHA256: testJournalSHA},
+		{Name: workloadImage, SHA256: exe}, {Name: daemonImage, SHA256: testDaemonSHA}, {Name: "runtime.test.exe", SHA256: testRuntimeSHA},
+		{Name: "journal.test.exe", SHA256: testJournalSHA},
 		{Name: "other.exe", SHA256: testOtherSHA}}})
 })
 
@@ -147,9 +149,14 @@ type observed struct {
 }
 
 func newObserved(phase int, end float64) *observed {
-	return &observed{ObserverReport: &ObserverReport{Schema: ObserverSchema, Executable: testExecutable(), Boot: testBoot(phase),
+	boot := testBoot(phase)
+	return &observed{ObserverReport: &ObserverReport{Schema: ObserverSchema, Executable: testExecutable(), Boot: boot,
 		Accounts: map[string]string{AccountA: sidA, AccountB: sidB}, Started: ft(-5), Ended: ft(end), Scans: 1000, MaxGap: 500000,
-		Stage: ObserverFinished}, pid: 1000}
+		Observer: ObserverIdentity{PID: 500, Created: ft(-3000), SID: SystemSID},
+		Images:   ObservedImages{Daemon: testDaemonSHA, Workload: testExecutable()},
+		Sampling: &SamplingFacts{Samples: 100, First: ft(-5), Last: ft(-4), MaxInterval: 1e7},
+		Audit:    &AuditFacts{Read: true, Oldest: boot.Time - 1e7},
+		Stage:    ObserverFinished}, pid: 1000}
 }
 
 // gen adds a generation created at sec; it is seen at the first scan or
@@ -342,7 +349,7 @@ func observerFor(e Entry) *ObserverReport {
 		o.gen(RoleManager, e.Account, ModeWTS, 20, 51, 0)
 		o.Marks = []Mark{{Name: MarkAdmissionRevoked, At: ft(10)}, {Name: MarkLingerDisabled, At: ft(30)}, {Name: MarkLogoff, At: ft(50)}}
 		o.Sessions = []SessionSample{{At: o.Started}, {At: ft(20), Users: []SessionUser{{Session: 2, SID: sid}}}, {At: ft(50.5)}}
-		o.Logons = []LogonFact{{ID: "00000000:00020000", SID: sid, Type: logonInteractive, LogonTime: ft(19)}}
+		o.Logons = []LogonFact{{ID: "00000000:00020000", SID: sid, Type: logonInteractive, LogonTime: ft(19), Source: "audit", Process: "User32"}}
 		return o.ObserverReport
 	case "H12", "G6":
 		// The manager the daemon-log proof needs started after the
@@ -366,7 +373,7 @@ func observerFor(e Entry) *ObserverReport {
 		sid := roleSID[e.Account]
 		o.gen(RoleManager, e.Account, ModeWTS, 10, 40, 0)
 		o.Sessions = []SessionSample{{At: o.Started}, {At: ft(10), Users: []SessionUser{{Session: 2, SID: sid, State: 0}}}, {At: ft(41)}}
-		o.Logons = []LogonFact{{ID: "00000000:00020000", SID: sid, Type: logonInteractive, LogonTime: ft(9)}}
+		o.Logons = []LogonFact{{ID: "00000000:00020000", SID: sid, Type: logonInteractive, LogonTime: ft(9), Source: "audit", Process: "User32"}}
 		return o.ObserverReport
 	case "H05":
 		o := newObserved(e.Phase, 90)
@@ -516,7 +523,7 @@ func evidenceFor(e Entry) Evidence {
 		ev.TCP = []TCPResult{{Target: "loopback", Connected: true, Sent: 33, Received: 33, Nonce: testNonce, Echoed: true},
 			{Target: "peer", Connected: true, Sent: 33, Received: 33, Nonce: testNonce, Echoed: true}}
 	case "H18":
-		ev.SMB = &SMBResult{Target: testShare, Started: ft(1), Ended: ft(2), Reachable: true, Read: OpResult{Op: "read", Win32: errLogonFailure},
+		ev.SMB = &SMBResult{Target: testShare, Started: ft(1), Ended: ft(2), Reachable: true, WriteTarget: `\\peer\share\s4u-bare.txt`, Read: OpResult{Op: "read", Win32: errLogonFailure},
 			Write: OpResult{Op: "write", Win32: errLogonFailure}, ExpectSHA256: testContent}
 	case "H19":
 		ev.EFS = &EFSResult{Target: testEFSFile, VolumeEncryption: true, Encrypted: true, Read: OpResult{Op: "read", Win32: errAccessDenied},
@@ -566,7 +573,7 @@ func controlEvidence(e Entry, c ControlEntry) Evidence {
 		ev.Endpoints = endpointHealth(e.Account)
 	case "password-share":
 		ev.Token = passwordProbe(e.Account)
-		ev.SMB = &SMBResult{Target: testShare, Started: ft(1000), Ended: ft(1001), Reachable: true, Read: OpResult{Op: "read", OK: true, SHA256: testContent},
+		ev.SMB = &SMBResult{Target: testShare, Started: ft(1000), Ended: ft(1001), Reachable: true, WriteTarget: `\\peer\share\s4u-control.txt`, Read: OpResult{Op: "read", OK: true, SHA256: testContent},
 			Write: OpResult{Op: "write", OK: true}, ExpectSHA256: testContent}
 	case "password-decrypt":
 		ev.Token = passwordProbe(e.Account)

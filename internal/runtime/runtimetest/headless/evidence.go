@@ -42,7 +42,12 @@ type NativeError struct {
 // metrics computes every metric the derived lifecycle and the status
 // snapshot support. A metric that they cannot support is absent, which fails
 // any requirement on it.
-func metrics(ev Lifecycle, status *UnitStatusProof, capSec float64) map[string]float64 {
+//
+// capSec is the configured delay cap and capTol the scheduler tolerance on
+// it: the process's own life before it fails, the linger reconciliation
+// period and slack. A gap past the cap by more than the tolerance is not
+// evidence of that cap.
+func metrics(ev Lifecycle, status *UnitStatusProof, capSec, capTol float64) map[string]float64 {
 	out := map[string]float64{}
 	att := append([]Attempt(nil), ev.Attempts...)
 	sort.SliceStable(att, func(i, j int) bool { return att[i].Launched.Before(att[j].Launched) })
@@ -73,17 +78,21 @@ func metrics(ev Lifecycle, status *UnitStatusProof, capSec float64) map[string]f
 		gaps = append(gaps, att[i].Launched.Sub(att[i-1].Launched).Seconds())
 	}
 	if capSec > 0 && len(gaps) > 0 {
-		capped, short, seenCap := 0, 0, false
+		capped, short, overlong, seenCap := 0, 0, 0, false
 		for _, g := range gaps {
 			if g >= capSec {
 				capped++
 				seenCap = true
+				if g > capSec+capTol {
+					overlong++
+				}
 			} else if seenCap && g < capSec/2 {
 				short++
 			}
 		}
 		out["cappedGaps"] = float64(capped)
 		out["shortGapsAfterCap"] = float64(short)
+		out["overlongGaps"] = float64(overlong)
 	}
 	// The stable attempt is the longest-lived exited one.
 	stable, life := -1, 0.0
@@ -112,6 +121,34 @@ func metrics(ev Lifecycle, status *UnitStatusProof, capSec float64) map[string]f
 		}
 		if stable+3 < len(att) {
 			out["postResetGrowth"] = boolMetric(gaps[stable+2] > gaps[stable+1])
+		}
+	}
+	// A waiting recovery to cancel: before the window opens, failed
+	// launches grew the delay to the cap, and the last one failed recently
+	// enough that its retry was still pending when the window opened.
+	if w := ev.Negative; w != nil && capSec > 0 {
+		var before []Attempt
+		for _, a := range att {
+			if a.Launched.Before(w.Since) {
+				before = append(before, a)
+			}
+		}
+		if len(before) > 0 {
+			failed, capped := 0, 0
+			for i, a := range before {
+				if !a.Exited.IsZero() && (a.Crashed || a.ExitCode != 0) {
+					failed++
+				}
+				if i > 0 && a.Launched.Sub(before[i-1].Launched).Seconds() >= capSec {
+					capped++
+				}
+			}
+			last := before[len(before)-1]
+			waiting := !last.Exited.IsZero() && (last.Crashed || last.ExitCode != 0) && last.Exited.Before(w.Since) &&
+				w.Since.Sub(last.Exited).Seconds() < capSec+capTol
+			out["failedBeforeQuiet"] = float64(failed)
+			out["cappedBeforeQuiet"] = float64(capped)
+			out["waitingAtQuiet"] = boolMetric(waiting)
 		}
 	}
 	if w := ev.Negative; w != nil && w.Until.After(w.Since) {
