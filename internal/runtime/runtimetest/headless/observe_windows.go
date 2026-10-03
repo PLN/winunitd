@@ -486,7 +486,7 @@ func (o *observer) crashDue() error {
 	}
 	var gens []int
 	for i, g := range o.rep.Generations {
-		if g.Role == o.cfg.Crash && g.Account == account {
+		if g.Role == o.cfg.Crash && g.Account == account && (o.cfg.CrashClass == "" || ClassifyToken(g.Token) == o.cfg.CrashClass) {
 			gens = append(gens, i)
 		}
 	}

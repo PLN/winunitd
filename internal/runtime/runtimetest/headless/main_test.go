@@ -268,8 +268,9 @@ func TestProbeConfig(t *testing.T) {
 	}
 	good := ProbeConfig{UnitFile: "/u/units/background.service", PeerRoot: "/peer", Absent: "/absent", Denied: "/denied",
 		Loopback: "127.0.0.1:7401", Peer: "192.0.2.10:7401", Pipe: `\\.\pipe\winunitd-qual\h15`,
-		SMB: &SMBTarget{Server: "peer", Path: `\\peer\share\nonce.txt`, ExpectSHA256: testContent},
-		EFS: &EFSTarget{Path: "/b/secret.txt", Plain: "/b/plain.txt", ExpectSHA256: testContent}}
+		SMB:       &SMBTarget{Server: "peer", Path: `\\peer\share\nonce.txt`, ExpectSHA256: testContent},
+		EFS:       &EFSTarget{Path: "/b/secret.txt", Plain: "/b/plain.txt", ExpectSHA256: testContent},
+		DenyPipes: map[string]string{ClientControlPipe: `\\.\pipe\winunitd\control`, ClientSystemOnly: `\\.\pipe\winunitd-qual\system-only`}}
 	if _, err := LoadProbeConfig(write(good)); err != nil {
 		t.Fatal(err)
 	}
@@ -281,8 +282,10 @@ func TestProbeConfig(t *testing.T) {
 		"smb other server": func(c *ProbeConfig) {
 			c.SMB = &SMBTarget{Server: "peer", Path: `\\other\share\x`, ExpectSHA256: testContent}
 		},
-		"smb no hash":  func(c *ProbeConfig) { c.SMB = &SMBTarget{Server: "peer", Path: `\\peer\share\x`} },
-		"efs relative": func(c *ProbeConfig) { c.EFS = &EFSTarget{Path: "x", Plain: "/p", ExpectSHA256: testContent} },
+		"smb no hash":                  func(c *ProbeConfig) { c.SMB = &SMBTarget{Server: "peer", Path: `\\peer\share\x`} },
+		"efs relative":                 func(c *ProbeConfig) { c.EFS = &EFSTarget{Path: "x", Plain: "/p", ExpectSHA256: testContent} },
+		"denial for an unknown client": func(c *ProbeConfig) { c.DenyPipes = map[string]string{"in-unit": `\\.\pipe\x`} },
+		"denial of a file":             func(c *ProbeConfig) { c.DenyPipes = map[string]string{ClientControlPipe: `C:\x`} },
 	} {
 		c := good
 		mutate(&c)

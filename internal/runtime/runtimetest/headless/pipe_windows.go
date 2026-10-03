@@ -387,10 +387,16 @@ func runProbePipe(args []string) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		if *name != "" || cfg.Pipe == "" {
+		// A denial client takes its pipe from the configuration's denial
+		// pipes; the in-unit client takes the qualification pipe.
+		want := cfg.Pipe
+		if p, ok := cfg.DenyPipes[*client]; ok {
+			want = p
+		}
+		if *name != "" || want == "" {
 			return nil, usage("--from-config needs a configured pipe and no --name")
 		}
-		*name = cfg.Pipe
+		*name = want
 	}
 	if !strings.HasPrefix(*name, `\\.\pipe\`) || !controlPattern.MatchString(*client) {
 		return nil, usage("--name must be a local pipe and --client a role")

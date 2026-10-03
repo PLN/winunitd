@@ -331,9 +331,28 @@ func runTestReceipt(args []string) error {
 	binary := fs.String("binary", "", "")
 	runner := fs.String("runner", "", "")
 	subject := fs.String("subject", "", "")
+	run := fs.String("run", "", "")
+	test2json := fs.String("test2json", "", "")
 	out := fs.String("out", "", "")
 	if err := parse(fs, args); err != nil {
 		return err
+	}
+	// With --run, the receipt runs the test itself through test2json in
+	// this process's context and keeps the events it prints.
+	if *run != "" {
+		if err := errors.Join(absPath("test2json", *test2json), absPath("binary", *binary), absPath("events", *events)); err != nil {
+			return err
+		}
+		pkg := strings.TrimSuffix(filepath.Base(*binary), ".test.exe")
+		cmd := exec.Command(*test2json, "-t", "-p", pkg, *binary, "-test.v=test2json", "-test.run", *run, "-test.count=1")
+		output, err := cmd.Output()
+		var exit *exec.ExitError
+		if err != nil && !errors.As(err, &exit) {
+			return fmt.Errorf("run the test: %w", err)
+		}
+		if err := os.WriteFile(*events, output, 0o600); err != nil {
+			return baseOnly(err)
+		}
 	}
 	if err := errors.Join(absPath("events", *events), absPath("binary", *binary), absPath("out", *out)); err != nil {
 		return err

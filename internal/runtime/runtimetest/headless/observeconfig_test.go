@@ -38,6 +38,9 @@ func TestParseObserve(t *testing.T) {
 	if _, crash := once.LifeOf(1); crash {
 		t.Fatal("a generation beyond the lives crashed without a rest")
 	}
+	if c, err := parseObserve(observeArgs(t, "--target", "B", "--crash", "manager", "--crash-lives", "5s", "--crash-class", "wts")); err != nil || c.CrashClass != SourceWTS {
+		t.Fatalf("crash class: %v", err)
+	}
 	if _, err := parseObserve(observeArgs(t, "--target", "B", "--release-file", filepath.Join(t.TempDir(), "release"), "--release-after", "10")); err != nil {
 		t.Fatalf("release: %v", err)
 	}
@@ -60,6 +63,9 @@ func TestParseObserve(t *testing.T) {
 		"release without file":   {"--target", "A", "--release-after", "3"},
 		"release without target": {"--release-file", filepath.Join(t.TempDir(), "r"), "--release-after", "3"},
 		"relative marks":         {"--marks", "marks"},
+		"crash class without plan": {"--crash-class", "wts"},
+		"unknown crash class":      {"--target", "B", "--crash", "manager", "--crash-lives", "5s", "--crash-class", "system"},
+		"broker crash class":       {"--crash", "broker", "--crash-lives", "5s", "--crash-class", "s4u"},
 		"extra argument":         {"extra"},
 	} {
 		if _, err := parseObserve(observeArgs(t, extra...)); err == nil {

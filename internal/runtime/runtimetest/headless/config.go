@@ -36,6 +36,9 @@ type ProbeConfig struct {
 	// own manager, as the account, with no password logon.
 	Winctl     string `json:"winctl,omitempty"`
 	StatusUnit string `json:"statusUnit,omitempty"`
+	// DenyPipes are H16's pipes, by client role, that the account must be
+	// denied from inside its unit.
+	DenyPipes map[string]string `json:"denyPipes,omitempty"`
 }
 
 // SMBTarget is the protected share's nonce file and its server.
@@ -68,6 +71,16 @@ func (c *ProbeConfig) validate() error {
 	}
 	if c.Pipe != "" && !strings.HasPrefix(c.Pipe, `\\.\pipe\winunitd-qual\`) {
 		return errors.New("the qualification pipe must be under the fixture's namespace")
+	}
+	for client, pipe := range c.DenyPipes {
+		switch client {
+		case ClientSystemOnly, ClientPeerUserPipe, ClientControlPipe, ClientMaintenancePipe:
+		default:
+			return errors.New("a denial pipe names an unknown client")
+		}
+		if !strings.HasPrefix(pipe, `\\.\pipe\`) {
+			return errors.New("a denial pipe must be a local pipe")
+		}
 	}
 	if c.Loopback != "" {
 		host, _, _ := net.SplitHostPort(c.Loopback)

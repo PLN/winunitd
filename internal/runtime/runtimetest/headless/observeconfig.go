@@ -36,6 +36,10 @@ type ObserveConfig struct {
 	// generations beyond Lives, and zero means they are not crashed.
 	Lives []time.Duration
 	Rest  time.Duration
+	// CrashClass, when set, limits the crash plan to generations under
+	// that token class (s4u or wts), so an account's other manager is
+	// left alone.
+	CrashClass string
 	// The observer creates ReleaseFile once it has seen ReleaseAfter failed
 	// workload generations of the target.
 	ReleaseFile  string
@@ -80,6 +84,7 @@ func parseObserve(args []string) (ObserveConfig, error) {
 	fs.StringVar(&c.Crash, "crash", "", "")
 	fs.Var(&lives, "crash-lives", "")
 	fs.DurationVar(&c.Rest, "crash-rest", 0, "")
+	fs.StringVar(&c.CrashClass, "crash-class", "", "")
 	fs.StringVar(&c.ReleaseFile, "release-file", "", "")
 	fs.IntVar(&c.ReleaseAfter, "release-after", 0, "")
 	if err := parse(fs, args); err != nil {
@@ -128,6 +133,9 @@ func parseObserve(args []string) (ObserveConfig, error) {
 		}
 	default:
 		errs = append(errs, usage("--crash must be broker, manager or workload"))
+	}
+	if c.CrashClass != "" && (c.CrashClass != SourceS4U && c.CrashClass != SourceWTS || c.Crash == "" || c.Crash == RoleBroker) {
+		errs = append(errs, usage("--crash-class must be s4u or wts, for an account's crash plan"))
 	}
 	if len(lives) > maxCrashLives {
 		errs = append(errs, usage("at most %d crash lives", maxCrashLives))
