@@ -25,16 +25,16 @@ func exposed(v bool) *bool    { return &v }
 func actorFor(c Case) *Process {
 	switch {
 	case c.Actor == ActorStandard:
-		return &Process{PID: 700, Created: 650, Token: TokenFacts{SID: sidStandard, Session: 2, ElevationType: elevationTypeDefault, Integrity: "medium",
+		return &Process{PID: 700, Created: 650, Token: TokenFacts{Read: true, SID: sidStandard, Session: 2, ElevationType: elevationTypeDefault, Integrity: "medium",
 			Source: "User32", LogonType: 2, AuthenticationID: "00000000:0001a000"}}
 	case c.Actor == ActorFilteredAdmin:
-		return &Process{PID: 701, Created: 651, Token: TokenFacts{SID: sidFiltered, Session: 3, ElevationType: elevationTypeLimited, AdminFlags: groupUseForDenyOnly,
+		return &Process{PID: 701, Created: 651, Token: TokenFacts{Read: true, SID: sidFiltered, Session: 3, ElevationType: elevationTypeLimited, AdminFlags: groupUseForDenyOnly,
 			Integrity: "medium", Source: "User32", LogonType: 10, AuthenticationID: "00000000:0001b000"}}
 	case c.Actor == ActorUser && c.Mode == "s4u":
-		return &Process{PID: 702, Created: 652, Token: TokenFacts{SID: sidStandard, Source: productTokenSource, LogonType: 3, Integrity: "medium",
+		return &Process{PID: 702, Created: 652, Token: TokenFacts{Read: true, SID: sidStandard, ElevationType: elevationTypeDefault, Source: productTokenSource, LogonType: 3, Integrity: "medium",
 			AuthenticationID: "00000000:0001c000"}}
 	case c.Actor == ActorUser:
-		return &Process{PID: 703, Created: 653, Token: TokenFacts{SID: sidStandard, Session: 2, ElevationType: elevationTypeDefault, Integrity: "medium",
+		return &Process{PID: 703, Created: 653, Token: TokenFacts{Read: true, SID: sidStandard, Session: 2, ElevationType: elevationTypeDefault, Integrity: "medium",
 			Source: "User32", LogonType: 2, AuthenticationID: "00000000:0001d000"}}
 	}
 	return nil
@@ -48,7 +48,7 @@ func actorFor(c Case) *Process {
 func passing(l *Ledger, c Case) *Observation {
 	o := &Observation{Schema: ObservationSchema, Ledger: l.Digest(), Case: c.ID, Actor: actorFor(c), States: map[string]map[string]ObjectState{},
 		Envelope: Envelope{Source: testRun.Source, Admission: testRun.Admission, Run: "run-1", Execution: "x-" + c.ID,
-			Observer: Process{PID: 500, Created: 50, Token: TokenFacts{SID: systemSID}}}}
+			Observer: Process{PID: 500, Created: 50, Token: TokenFacts{Read: true, SID: systemSID, ElevationType: elevationTypeDefault, Integrity: "system", Source: "*SYSTEM*"}}}}
 	for _, name := range stageOrder {
 		o.Envelope.Stages = append(o.Envelope.Stages, StageMark{Name: name, At: stageAt[name]})
 	}
@@ -80,13 +80,13 @@ func passing(l *Ledger, c Case) *Observation {
 		case ContextActor:
 			r.Performer = &Performer{Process: *o.Actor}
 		case ContextSystem:
-			r.Performer = &Performer{Process: Process{PID: 900, Created: 90, Token: TokenFacts{SID: systemSID}}}
+			r.Performer = &Performer{Process: Process{PID: 900, Created: 90, Token: TokenFacts{Read: true, SID: systemSID, ElevationType: elevationTypeDefault, Integrity: "system", Source: "*SYSTEM*"}}}
 		case ContextUserImpersonated:
 			effective := o.Actor.Token
-			r.Performer = &Performer{Process: Process{PID: 901, Created: 91, Token: TokenFacts{SID: systemSID}}, Impersonated: true, Effective: &effective}
+			r.Performer = &Performer{Process: Process{PID: 901, Created: 91, Token: TokenFacts{Read: true, SID: systemSID, ElevationType: elevationTypeDefault, Integrity: "system", Source: "*SYSTEM*"}}, Impersonated: true, Effective: &effective}
 		case ContextPeerImpersonated:
-			r.Performer = &Performer{Process: Process{PID: 901, Created: 91, Token: TokenFacts{SID: systemSID}}, Impersonated: true,
-				Effective: &TokenFacts{SID: sidPeer, Session: 4, ElevationType: elevationTypeDefault, Integrity: "medium", Source: "User32", LogonType: 2,
+			r.Performer = &Performer{Process: Process{PID: 901, Created: 91, Token: TokenFacts{Read: true, SID: systemSID, ElevationType: elevationTypeDefault, Integrity: "system", Source: "*SYSTEM*"}}, Impersonated: true,
+				Effective: &TokenFacts{Read: true, SID: sidPeer, Session: 4, ElevationType: elevationTypeDefault, Integrity: "medium", Source: "User32", LogonType: 2,
 					AuthenticationID: "00000000:0002a000"}}
 		}
 		switch st.Expect {
@@ -232,7 +232,42 @@ func TestEvaluateRefusesContradictions(t *testing.T) {
 		{"session-zero token for an interactive account", "user-units-nested-junction", "not a non-elevated interactive logon", func(o *Observation) {
 			o.Actor.Token.Session, o.Actor.Token.LogonType = 0, 3
 		}},
-		{"no logon identity", "data-child-rename-filtered", "elevated or has no logon", func(o *Observation) { o.Actor.Token.AuthenticationID = "" }},
+		{"no logon identity", "data-child-rename-filtered", "class facts were not read", func(o *Observation) { o.Actor.Token.AuthenticationID = "" }},
+		{"unread class facts on the account and both impersonations", "user-units-nested-junction", "the user token's class facts were not read", func(o *Observation) {
+			clear := func(t *TokenFacts) { t.ElevationType, t.Integrity, t.Source = 0, "", "" }
+			clear(&o.Actor.Token)
+			for i := range o.Steps {
+				if p := o.Steps[i].Performer; p != nil && p.Effective != nil {
+					clear(p.Effective)
+				}
+			}
+		}},
+		{"account token not read", "user-units-file-symlink", "the user token's class facts were not read", func(o *Observation) {
+			o.Actor.Token.Read = false
+			step(o, "delegated-admission").Performer.Effective.Read = false
+		}},
+		{"elevation type zero", "user-winunitd-component-junction", "the user token's class facts were not read", func(o *Observation) {
+			o.Actor.Token.ElevationType = 0
+		}},
+		{"unknown integrity", "user-units-nested-junction", "the user token's class facts were not read", func(o *Observation) {
+			o.Actor.Token.Integrity = "mid"
+		}},
+		{"high-integrity account context", "user-units-nested-junction", "not a non-elevated interactive logon", func(o *Observation) {
+			o.Actor.Token.Integrity = "high"
+		}},
+		{"impersonated account token not read", "user-units-nested-junction", "step delegated-admission: the user token's class facts were not read", func(o *Observation) {
+			step(o, "delegated-admission").Performer.Effective.Read = false
+		}},
+		{"peer token without integrity", "user-units-file-symlink", "step peer-regular-unit-admitted: the user token's class facts were not read", func(o *Observation) {
+			step(o, "peer-regular-unit-admitted").Performer.Effective.Integrity = ""
+		}},
+		{"standard token without source", "data-child-rename-standard", "the standard token's class facts were not read", func(o *Observation) {
+			o.Actor.Token.Source = ""
+		}},
+		{"observer token not read", "data-child-rename-standard", "the observer is not a SYSTEM process", func(o *Observation) { o.Envelope.Observer.Token.Read = false }},
+		{"performer token not read", "units-nested-junction-reload", "step daemon-reload: the performer's token was not read", func(o *Observation) {
+			step(o, "daemon-reload").Performer.Token.Read = false
+		}},
 		{"no held actor", "data-child-rename-standard", "no held actor process", func(o *Observation) { o.Actor.PID = 0 }},
 		{"run names no account", "data-child-rename-standard", "the run names no standard account", func(o *Observation) {}},
 		{"attempt by another process", "data-child-rename-standard", "step rename-units: not performed by the actor's own process", func(o *Observation) {
@@ -330,5 +365,33 @@ func TestEvaluateBindsTheEvaluatedPolicy(t *testing.T) {
 	}
 	if changed.Digest() == l.Digest() {
 		t.Fatal("a changed policy has the same digest")
+	}
+}
+
+// The product's S4U context needs its class facts read and recognized,
+// like an interactive one.
+func TestS4UTokenClass(t *testing.T) {
+	good := TokenFacts{Read: true, SID: sidStandard, ElevationType: elevationTypeDefault, Integrity: "medium", Source: productTokenSource, LogonType: 3,
+		AuthenticationID: "00000000:0001c000"}
+	if p := tokenClassProblem(ActorUser, "s4u", good); p != "" {
+		t.Fatal(p)
+	}
+	for name, mutate := range map[string]func(*TokenFacts){
+		"not read":            func(t *TokenFacts) { t.Read = false },
+		"elevation type zero": func(t *TokenFacts) { t.ElevationType = 0 },
+		"full elevation":      func(t *TokenFacts) { t.ElevationType = elevationTypeFull },
+		"no integrity":        func(t *TokenFacts) { t.Integrity = "" },
+		"high integrity":      func(t *TokenFacts) { t.Integrity = "high" },
+		"another source":      func(t *TokenFacts) { t.Source = "User32" },
+		"interactive logon":   func(t *TokenFacts) { t.LogonType = 2 },
+		"in a session":        func(t *TokenFacts) { t.Session = 1 },
+		"enabled admin group": func(t *TokenFacts) { t.AdminFlags = groupEnabled },
+		"no logon":            func(t *TokenFacts) { t.AuthenticationID = "" },
+	} {
+		tok := good
+		mutate(&tok)
+		if tokenClassProblem(ActorUser, "s4u", tok) == "" {
+			t.Errorf("%s accepted", name)
+		}
 	}
 }

@@ -99,8 +99,11 @@ type Process struct {
 	Token   TokenFacts `json:"token"`
 }
 
-// TokenFacts is a token as the native producer read it.
+// TokenFacts is a token as the native producer read it. Read says every
+// fact was collected; a token with any unread fact is unknown, never a
+// genuine token of some class.
 type TokenFacts struct {
+	Read             bool   `json:"read"`
 	SID              string `json:"sid"`
 	Session          uint32 `json:"session"`
 	Elevated         bool   `json:"elevated"`
@@ -211,7 +214,7 @@ func envelopeProblems(run Run, e *Envelope, add func(string, ...any)) map[string
 		add("the observation names no run and execution")
 	}
 	ob := e.Observer
-	if ob.PID == 0 || ob.Created == 0 || ob.Token.SID != systemSID || ob.Token.Session != 0 {
+	if ob.PID == 0 || ob.Created == 0 || !ob.Token.Read || ob.Token.SID != systemSID || ob.Token.Session != 0 {
 		add("the observer is not a SYSTEM process in session zero")
 	}
 	marks := map[string]uint64{}
@@ -234,10 +237,19 @@ func envelopeProblems(run Run, e *Envelope, add func(string, ...any)) map[string
 // interactive logon type.
 func interactiveLogon(t uint32) bool { return t == 2 || t == 10 || t == 11 }
 
-// tokenClassProblem checks a token against an actor class and mode.
+// integrityLevels are the mandatory integrity levels a producer reports.
+var integrityLevels = []string{"untrusted", "low", "medium", "medium-plus", "high", "system", "protected"}
+
+// tokenClassProblem checks a token against an actor class and mode: every
+// class fact read and recognized (elevation type 1 to 3, a known integrity
+// level, a token source and a logon), then the class's own facts.
 func tokenClassProblem(actor, mode string, t TokenFacts) string {
-	if t.Elevated || t.AuthenticationID == "" {
-		return "the " + actor + " token is elevated or has no logon"
+	if !t.Read || t.ElevationType < elevationTypeDefault || t.ElevationType > elevationTypeLimited || !slices.Contains(integrityLevels, t.Integrity) ||
+		t.Source == "" || t.AuthenticationID == "" {
+		return "the " + actor + " token's class facts were not read"
+	}
+	if t.Elevated {
+		return "the " + actor + " token is elevated"
 	}
 	switch actor {
 	case ActorStandard:
@@ -252,11 +264,13 @@ func tokenClassProblem(actor, mode string, t TokenFacts) string {
 	case ActorUser:
 		switch mode {
 		case "s4u":
-			if t.Session != 0 || t.Source != productTokenSource || t.LogonType != 3 && t.LogonType != 4 {
-				return "the account's context is not the product's S4U logon"
+			if t.Session != 0 || t.Source != productTokenSource || t.LogonType != 3 && t.LogonType != 4 || t.ElevationType == elevationTypeFull ||
+				t.Integrity != "medium" || t.AdminFlags&groupEnabled != 0 {
+				return "the account's context is not the product's non-elevated S4U logon"
 			}
 		default:
-			if t.Session == 0 || !interactiveLogon(t.LogonType) || t.ElevationType == elevationTypeFull || t.AdminFlags&groupEnabled != 0 {
+			if t.Session == 0 || !interactiveLogon(t.LogonType) || t.ElevationType == elevationTypeFull || t.Integrity != "medium" ||
+				t.AdminFlags&groupEnabled != 0 {
 				return "the account's context is not a non-elevated interactive logon"
 			}
 		}
@@ -423,6 +437,9 @@ func stepsProblems(c Case, run Run, o *Observation, marks map[string]uint64, add
 func performerProblem(c Case, run Run, actor *Process, context string, p *Performer) string {
 	if p == nil || p.PID == 0 || p.Created == 0 || p.Token.SID == "" {
 		return "no held performer"
+	}
+	if !p.Token.Read {
+		return "the performer's token was not read"
 	}
 	switch context {
 	case ContextActor:
