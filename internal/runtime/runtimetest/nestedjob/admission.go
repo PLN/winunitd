@@ -60,6 +60,9 @@ func (a *Admission) Admits(sum string) bool {
 
 // Lookup returns the admitted artifact name.
 func (a *Admission) Lookup(name string) (Artifact, bool) {
+	if a == nil {
+		return Artifact{}, false
+	}
 	for _, art := range a.Artifacts {
 		if art.Name == name {
 			return art, true
@@ -109,7 +112,7 @@ func DecodeAdmission(data []byte) (AdmittedRun, error) {
 func LoadAdmission(path string) (AdmittedRun, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return AdmittedRun{}, err
+		return AdmittedRun{}, baseOnly(err)
 	}
 	defer f.Close()
 	data, err := io.ReadAll(io.LimitReader(f, MaxStatusBytes+1))
@@ -123,12 +126,12 @@ func LoadAdmission(path string) (AdmittedRun, error) {
 func FileSHA256(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", err
+		return "", baseOnly(err)
 	}
 	defer f.Close()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return "", err
+		return "", baseOnly(err)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }

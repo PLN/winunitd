@@ -130,6 +130,23 @@ func TestFileErrorsDoNotNameDirectories(t *testing.T) {
 	if err := WriteJSON(filepath.Join(dir, "no", "such.json"), 1); err == nil || strings.Contains(err.Error(), dir) {
 		t.Fatalf("unwritable file: %v", err)
 	}
+	// The admitted run manifest and hashed files follow the same rule, so a
+	// record's admission error does not name where the manifest lives.
+	if _, err := LoadAdmission(filepath.Join(dir, "private-admission.json")); err == nil || strings.Contains(err.Error(), dir) || !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("missing admission: %v", err)
+	}
+	if _, err := FileSHA256(filepath.Join(dir, "missing.exe")); err == nil || strings.Contains(err.Error(), dir) {
+		t.Fatalf("missing hashed file: %v", err)
+	}
+	t.Setenv(EnvResults, absDir(t))
+	t.Setenv(EnvAdmission, filepath.Join(dir, "private-admission.json"))
+	rec, err := NewRecord("N01", ModeAssign, IdentitySystem, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Finish(ResultPass); err == nil || strings.Contains(err.Error(), dir) {
+		t.Fatalf("record without its admission: %v", err)
+	}
 	f := &Failure{Op: "CreateProcess", Win32: 5, Message: `access to C:\private\case-1 denied for S-1-5-21-1-2-3-1001`}
 	if s := SafeFailure(f); s != "CreateProcess win32 5" {
 		t.Fatalf("safe failure %q", s)
