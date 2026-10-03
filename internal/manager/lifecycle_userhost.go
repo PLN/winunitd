@@ -104,7 +104,7 @@ func (h *UserHost) acceptUserLaunch(sid, mode string, session uint32, wanted fun
 			return nil, fmt.Errorf("user manager recovery delayed until %s", previous.nextStart.Format(time.RFC3339Nano))
 		}
 	}
-	delay := userRecoveryDelay(previous, now)
+	delay := userRecoveryDelay(previous)
 	inst := h.newUserInstanceLocked(sid, mode, session, delay, now)
 	h.bySID[sid] = inst // shutdown retains accepted work even before process creation
 	return inst, nil
@@ -139,6 +139,21 @@ func (h *UserHost) applyUserLaunch(sid string, inst *userInstance, proc runtime.
 		inst.startedAt = now
 	}
 	return superseded
+}
+
+// observeUserAlive records a liveness check that saw proc running. sampled is
+// taken before the check, so a slow positive result never credits time after
+// the process exited. A stale observation of a replaced instance or process is
+// ignored.
+func (h *UserHost) observeUserAlive(sid string, inst *userInstance, proc runtime.UserManagerProc, sampled time.Time) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.bySID[sid] != inst || inst.proc != proc || inst.startedAt.IsZero() || sampled.Before(inst.startedAt) {
+		return
+	}
+	if sampled.After(inst.aliveAt) {
+		inst.aliveAt = sampled
+	}
 }
 
 func (h *UserHost) acceptUserCleanup(inst *userInstance) runtime.UserManagerProc {
