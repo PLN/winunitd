@@ -44,8 +44,9 @@ Basic Windows Installer UI is `/qb`. Do not force a reboot.
 | 0 | Success |
 | 3010 | Success; a reboot is required. The package does not start one |
 | 1602 | The operator canceled |
-| 1603 | Fatal error, including a downgrade or the beta-package launch condition |
-| 1618 | Another installation is already running |
+| 1603 | Fatal error, including a downgrade, the beta-package launch condition, or a preflight conflict such as the compatibility floor; the MSI log names the cause |
+| 1618 | Another installation is already running; retry later |
+| 1638 | Another version of this product is already installed; repair or upgrade it instead of installing beside it |
 
 A newer product package produces the message "A newer package is installed."
 The unsigned beta uses a different UpgradeCode. If that beta is present, this
@@ -171,12 +172,96 @@ rejects the transaction when any of the following is true:
 | `--base-dir` is not `%ProgramData%\winunitd` | Conflict. A custom base directory is not adopted or relocated |
 | A machine scheduled task or machine Run value launches `winunitd.exe` | Conflict on install, repair, and upgrade. Uninstall still removes this package. Per-user discovery stays with the explicit migration step |
 | `%ProgramData%\winunitd` or `units`, `enabled`, `journal`, `runtime`, `linger`, or `daemon` is a reparse point, is not owned by SYSTEM or Administrators, or grants write access to another principal | Conflict. The helper does not follow the link and does not try to repair the target ACL |
+| A [compatibility floor](#compatibility-floor) is set and this package's build is below it, or the floor record cannot be trusted | Conflict on install, repair, and upgrade, with `preflight conflict: compatibility floor:` and the reason. Uninstall still proceeds |
 
 The MSI log contains `preflight conflict:` and the reason. Fix the
 condition, or use the explicit migration path, and run the install again.
 Repair does not reapply ACLs on the mutable directories, so a safe
 existing ACL is left as it is. New directories inherit the data-root ACL,
 which grants control to SYSTEM and Administrators only.
+
+## Compatibility floor
+
+A compatibility floor is the minimum build that may admit hosted work on the
+machine. A consumer sets it when it admits workloads that need a release or
+a feature, so that repair, upgrade, rollback, or recovery cannot bring back a
+build those workloads cannot use. It is not raised automatically by an
+upgrade; rolling back to an earlier package that still meets the floor stays
+possible.
+
+The floor is the file `%ProgramData%\winunitd\daemon\compat-floor.json`. It
+survives repair, upgrade, and uninstall with the rest of the data tree. It is
+trusted only when it is a regular file, owned by SYSTEM or Administrators,
+whose DACL lets no other principal write it. Set and inspect it with the
+installed daemon binary, as an administrator:
+
+```text
+winunitd floor set --min-version 0.2.0 --require exec-stop --require-clean
+winunitd floor show
+winunitd floor check
+winunitd floor clear
+```
+
+| Field | Requirement |
+| --- | --- |
+| `minVersion` | The release is not lower, by semantic-version precedence (`0.1.0-alpha` is lower than `0.1.0`) |
+| `requireFeatures` | The build lists every named capability feature |
+| `requireCleanBuild` | The build has a known source revision from an unmodified tree; unknown state does not count as clean |
+
+`set` refuses a floor that this binary does not meet. `check` exits 0 when the
+binary meets the floor or none is set, and 1 when it is below the floor or
+the record cannot be trusted. Usage errors exit 2. A changed floor applies at
+the next manager start.
+
+The floor is enforced in two places. Before it stops the running manager,
+the package helper refuses to install, repair, or upgrade to a build below
+the floor (exit 1603, `preflight conflict: compatibility floor:`), so the
+installed manager and its workloads are left as they were. When the manager
+starts, including after a failed upgrade rolls back, after a reboot, and after
+SCM restarts it, it compares its own build with the floor before it starts
+anything. A build below the floor, or an untrusted or malformed floor record,
+holds admission: the control and maintenance endpoints stay available, but no
+unit starts (boot, explicit, timer, watch, or recovery) and no user manager is
+launched, so no user unit starts either. `winctl status` shows
+`AdmissionHold` (`admissionHold` in status and snapshot JSON) and the daemon
+log records `daemon.admission-held`. Only a manager restart after
+restoring a compatible build, or after changing the floor, reopens admission.
+
+The feature list that a floor can require comes from the capability query.
+Builds that do not report it yet cannot meet a floor that requires features.
+A build older than the first release with the floor cannot enforce it. The
+package already refuses to install a lower version while the product is
+installed; uninstalling and then installing such a build, or replacing files
+by hand, is outside supported servicing. This behavior has not yet been
+qualified on Windows.
+
+## Servicing without a hosted controller
+
+Servicing needs only local administrator rights and assets kept on the
+machine or a protected share: the current and previous product MSIs with
+their package manifests, outside the product directories. A hosted
+controller is not involved.
+
+1. Record `winctl status`, `winctl snapshot` (JSON), and
+   `winunitd floor show`.
+2. Run the repair, upgrade, or rollback package with `/qn /norestart
+   /L*v <log>`. The package quiesces and stops the manager before it changes
+   files and never forces a reboot.
+3. Check the exit code. 3010 means success with a reboot still required;
+   schedule it. For 1603, find the cause in the log. A failed upgrade rolls
+   back to the previous package, service configuration, and running state.
+4. Confirm that the service runs, that `winctl status` shows no
+   `AdmissionHold`, that `winunitd floor check` exits 0, and that the
+   installed files match the package manifest.
+5. Confirm the units you depend on.
+
+Global maintenance stops all system and user work and closes admission until
+the manager restarts. The restarted manager starts enabled units. The
+managers of lingering users and of users who are logged on start again with
+their enabled user units; other users' managers start at their next logon.
+Units that were started manually and are not enabled are not restored; start
+them again if they are still needed.
+A held manager starts nothing until admission reopens.
 
 ## Not in this package
 
