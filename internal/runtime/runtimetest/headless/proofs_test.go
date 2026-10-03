@@ -194,6 +194,21 @@ func TestSummarizeRequiresCaseProofs(t *testing.T) {
 				}
 			}
 		}},
+		{"fifteen recorders under five labels", "repetition H20/r3 ran under more than one recorder", func(rs []Record) {
+			for i := range rs {
+				if tr := rs[i].Evidence.TestRun; tr != nil && strings.HasPrefix(rs[i].Key, "H20/") {
+					tr.Runner.PID, tr.Runner.Created = incarnationOf("own recorder " + rs[i].Key)
+					tr.Owner.Created = max(tr.Owner.Created, tr.Runner.Created+1)
+					if tr.Subject != nil {
+						tr.Subject.OwnerCreated, tr.Subject.Created = tr.Owner.Created, tr.Owner.Created+1e7
+					}
+				}
+			}
+		}},
+		{"a repetition's recorder in another logon", "repetition H20/r2 ran under more than one recorder", func(rs []Record) {
+			ev(t, rs, "H20/deadline/r2").TestRun.Runner.Token.AuthenticationID = "00000000:000003e5"
+			ev(t, rs, "H20/deadline/r2").TestRun.Owner.Token.AuthenticationID = "00000000:000003e5"
+		}},
 		{"recorder of another case reused", "a runner or test process of H21/security-A ran it again", func(rs []Record) {
 			ev(t, rs, "H21/security-B").TestRun.Runner = ev(t, rs, "H21/security-A").TestRun.Runner
 			ev(t, rs, "H21/security-B").TestRun.Runner.ID = "runner-security-B"

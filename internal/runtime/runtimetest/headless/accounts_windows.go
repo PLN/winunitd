@@ -334,13 +334,19 @@ func runProbeEndpoint(args []string) error {
 	return writeJSONFile(*out, rep)
 }
 
-// runTestReceipt runs one admitted native test binary and writes its
-// receipt. The binary runs as this recorder's child, in its context and in
-// a kill-on-close job, bounded in time and output, with its output turned
-// into events by test2json. The receipt keeps this recorder's and the test
+// runTestReceipt runs admitted native tests and writes a receipt for each.
+// Each test binary runs as this recorder's child, in its context and in a
+// kill-on-close job, bounded in time and output, with its output turned
+// into events by test2json. A receipt keeps this recorder's and the test
 // process's incarnations and tokens, the test process's exit code, every
-// test and package action and, with --subject, the subject report the test
-// wrote during this run; an older report is removed first.
+// test and package action and, when asked, the subject report the test
+// wrote during that run; an older report is removed first.
+//
+// With --run, one run of the matching tests writes --out. With --each,
+// every named test runs on its own, in order, under this one recorder, and
+// writes <name>.json (with --subjects, <name>.subject.json) in --out-dir:
+// one repetition's tests share their recorder, each with its own test
+// process.
 func runTestReceipt(args []string) error {
 	fs := newFlags("test-receipt")
 	events := fs.String("events", "", "")
@@ -349,53 +355,99 @@ func runTestReceipt(args []string) error {
 	runner := fs.String("runner", "", "")
 	subject := fs.String("subject", "", "")
 	run := fs.String("run", "", "")
+	var each listFlag
+	fs.Var(&each, "each", "")
+	outDir := fs.String("out-dir", "", "")
+	subjects := fs.Bool("subjects", false, "")
 	test2json := fs.String("test2json", "", "")
 	timeout := fs.Duration("timeout", 25*time.Minute, "")
 	out := fs.String("out", "", "")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
-	if err := errors.Join(absPath("test2json", *test2json), absPath("binary", *binary), absPath("events", *events), absPath("out", *out)); err != nil {
+	if err := errors.Join(absPath("test2json", *test2json), absPath("binary", *binary)); err != nil {
 		return err
 	}
-	if !artifactName.MatchString(*artifact) || !executionPattern.MatchString(*runner) || *run == "" || *timeout <= 0 || *timeout > 2*time.Hour {
-		return usage("--artifact must be an artifact name, --runner an ID, --run the tests and --timeout at most 2h")
+	if !artifactName.MatchString(*artifact) || !executionPattern.MatchString(*runner) || *timeout <= 0 || *timeout > 2*time.Hour {
+		return usage("--artifact must be an artifact name, --runner an ID and --timeout at most 2h")
 	}
-	if _, err := regexp.Compile(*run); err != nil {
-		return usage("--run must be a test pattern")
-	}
-	if *subject != "" {
-		if err := absPath("subject", *subject); err != nil {
+	type testRun struct{ run, events, out, subject string }
+	var runs []testRun
+	switch {
+	case *run != "" && len(each) == 0 && *outDir == "" && !*subjects:
+		if _, err := regexp.Compile(*run); err != nil {
+			return usage("--run must be a test pattern")
+		}
+		if err := errors.Join(absPath("events", *events), absPath("out", *out)); err != nil {
 			return err
 		}
-		if err := os.Remove(*subject); err != nil && !notFound(err) {
-			return baseOnly(err)
+		if *subject != "" {
+			if err := absPath("subject", *subject); err != nil {
+				return err
+			}
 		}
+		runs = append(runs, testRun{*run, *events, *out, *subject})
+	case *run == "" && len(each) > 0 && *events == "" && *out == "" && *subject == "":
+		if err := absPath("out-dir", *outDir); err != nil {
+			return err
+		}
+		for _, name := range each {
+			if !testName.MatchString(name) || slices.ContainsFunc(runs, func(r testRun) bool { return r.run == "^"+name+"$" }) {
+				return usage("--each must name distinct tests")
+			}
+			r := testRun{run: "^" + name + "$", events: filepath.Join(*outDir, name+".events.json"), out: filepath.Join(*outDir, name+".json")}
+			if *subjects {
+				r.subject = filepath.Join(*outDir, name+".subject.json")
+			}
+			runs = append(runs, r)
+		}
+	default:
+		return usage("give either --run with --out, or --each with --out-dir")
 	}
 	self, err := selfClaim()
 	if err != nil {
 		return err
 	}
-	p := TestRunProof{Artifact: *artifact, Runner: RunnerFacts{ID: *runner, PID: self.PID, Created: self.Created}}
-	if p.Runner.Token, err = tokenFactsOf(windows.CurrentProcess()); err != nil {
+	recorder := RunnerFacts{ID: *runner, PID: self.PID, Created: self.Created}
+	if recorder.Token, err = tokenFactsOf(windows.CurrentProcess()); err != nil {
 		return err
 	}
-	if p.SHA256, err = FileSHA256(*binary); err != nil {
-		return err
-	}
-	output, err := runNativeTest(&p, *binary, *test2json, *run, *subject, *timeout)
+	sum, err := FileSHA256(*binary)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(*events, output, 0o600); err != nil {
+	var failed []error
+	for _, r := range runs {
+		if err := recordTestRun(TestRunProof{Artifact: *artifact, SHA256: sum, Runner: recorder}, *binary, *test2json, r.run, r.events, r.out, r.subject, *timeout); err != nil {
+			failed = append(failed, err)
+		}
+	}
+	return errors.Join(failed...)
+}
+
+// testName is a Go test function name.
+var testName = regexp.MustCompile(`^Test[A-Za-z0-9_]{1,128}$`)
+
+// recordTestRun runs one test selection and writes its receipt.
+func recordTestRun(p TestRunProof, binary, test2json, run, events, out, subject string, bound time.Duration) error {
+	if subject != "" {
+		if err := os.Remove(subject); err != nil && !notFound(err) {
+			return baseOnly(err)
+		}
+	}
+	output, err := runNativeTest(&p, binary, test2json, run, subject, bound)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(events, output, 0o600); err != nil {
 		return baseOnly(err)
 	}
 	if p.Events, err = ParseTestEvents(bytes.NewReader(output)); err != nil {
 		return err
 	}
-	if *subject != "" {
+	if subject != "" {
 		var s SubjectReport
-		data, err := readBounded(*subject)
+		data, err := readBounded(subject)
 		if err == nil {
 			err = decodeStrict(data, &s)
 		}
@@ -405,7 +457,7 @@ func runTestReceipt(args []string) error {
 			p.Subject = &s
 		}
 	}
-	if err := writeJSONFile(*out, p); err != nil {
+	if err := writeJSONFile(out, p); err != nil {
 		return err
 	}
 	switch {

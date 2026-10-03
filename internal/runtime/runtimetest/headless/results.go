@@ -843,12 +843,25 @@ func (ev *evaluation) checkRunners() {
 	}
 	sort.Strings(keys)
 	used := map[incarnation]string{}
+	// The tests of one repetition run under one real recorder: the same
+	// process incarnation in the same token context, not merely one label.
+	recorders := map[string]RunnerFacts{}
 	for _, k := range keys {
 		tr := ev.records[k].Evidence.TestRun
 		if tr == nil {
 			continue
 		}
 		g := group(k)
+		if g != k {
+			r := tr.Runner
+			if first, seen := recorders[g]; !seen {
+				recorders[g] = r
+			} else if r.PID != first.PID || r.Created != first.Created || r.Token.SID != first.Token.SID ||
+				r.Token.Session != first.Token.Session || r.Token.AuthenticationID != first.Token.AuthenticationID {
+				ev.problem("%s: repetition %s ran under more than one recorder", k, g)
+				ev.bad[primaryOf(k)] = true
+			}
+		}
 		for _, f := range []RunnerFacts{tr.Runner, tr.Owner} {
 			inc := incarnation{f.PID, f.Created}
 			if prev, dup := used[inc]; dup && prev != g {
