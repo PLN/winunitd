@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/PLN/winunitd/internal/core"
@@ -56,6 +58,11 @@ func TestServicingRestartRestoresEnabledUnitsAndKeepsRecords(t *testing.T) {
 	oldManual := mustInvocationID(t, before, "manual.service")
 	waitJournalMessage(t, before, "enabled.service", "before servicing")
 	waitJournalMessage(t, before, "manual.service", "before servicing")
+	st, err := before.Status("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldEvents := st.Machine.DaemonEvents
 	stopAll(before)
 
 	launch.mu.Lock()
@@ -91,15 +98,67 @@ func TestServicingRestartRestoresEnabledUnitsAndKeepsRecords(t *testing.T) {
 	}
 	assertLogInvocation(t, logs, "before servicing", oldManual)
 
-	st, err := after.Status("")
+	assertDaemonLogKept(t, after, oldEvents)
+}
+
+// The daemon log keeps what the previous manager recorded, including the
+// invocation and operation IDs of a start-limit record.
+func TestServicingRestartKeepsDaemonLogRecords(t *testing.T) {
+	dir := t.TempDir()
+	units := filepath.Join(dir, "units")
+	if err := os.MkdirAll(units, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeUnit(t, units, "limited.service", "[Unit]\nStartLimitIntervalSec=1h\nStartLimitBurst=1\n[Service]\nExecStart=C:\\Tools\\limited.exe\nRestart=on-failure\n")
+	before, err := New(Config{BaseDir: dir, Launch: &scriptedLauncher{exitAll: intPtr(2)}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	counts := map[string]int{}
-	for _, ev := range st.Machine.DaemonEvents {
-		counts[ev.Code]++
+	if _, err := before.Reload(); err != nil {
+		t.Fatal(err)
 	}
-	if counts[journal.DaemonEventOpen] < 2 || counts[journal.DaemonEventClose] < 1 {
-		t.Fatalf("daemon log after servicing: %v", counts)
+	op, err := before.Start(context.Background(), "limited.service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitCond(t, func() bool {
+		st, err := before.Status("limited.service")
+		return err == nil && st.Unit != nil && st.Unit.Reason == core.ReasonStartLimit
+	})
+	invocation := mustInvocationID(t, before, "limited.service")
+	st, err := before.Status("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldEvents := st.Machine.DaemonEvents
+	if !slices.ContainsFunc(oldEvents, func(ev protocol.DaemonEvent) bool {
+		return ev.Code == journal.DaemonEventStartLimit && ev.Unit == "limited.service" && ev.InvocationID == invocation && ev.OperationID == op.OperationID
+	}) {
+		t.Fatalf("no start-limit record with the invocation and operation: %+v", oldEvents)
+	}
+	stopAll(before)
+	after, err := New(Config{BaseDir: dir, Launch: &fakeLauncher{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopAll(after) })
+	assertDaemonLogKept(t, after, oldEvents)
+}
+
+// assertDaemonLogKept requires every record an earlier manager reported to
+// read back unchanged and in order, followed by that manager's close and
+// the new manager's open.
+func assertDaemonLogKept(t *testing.T, m *Manager, old []protocol.DaemonEvent) {
+	t.Helper()
+	st, err := m.Status("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := st.Machine.DaemonEvents
+	if len(events) < len(old)+2 || !reflect.DeepEqual(events[:len(old)], old) {
+		t.Fatalf("daemon log after servicing:\n%+v\nbefore:\n%+v", events, old)
+	}
+	if rest := events[len(old):]; rest[0].Code != journal.DaemonEventClose || rest[1].Code != journal.DaemonEventOpen {
+		t.Fatalf("daemon log after the earlier records: %+v", rest)
 	}
 }
