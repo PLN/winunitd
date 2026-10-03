@@ -345,18 +345,43 @@ its result says:
   directory, loaded hive or logon session, recorded on its own boot and bound
   to the very next boot, which the cold-boot observer saw;
 - `named-test`: a receipt of a native test run (`test-receipt`): the admitted
-  test binary by its name and hash, the SYSTEM runner and its token, every
-  test action from `go test -json`, exactly one run of the named test that
+  test binary by its name and hash, the runner and its token (SYSTEM in
+  session zero, or for a session lane the account's own interactive token, so
+  a test that needs a non-SYSTEM identity cannot pass by skipping), every
+  test action from `go test -json`, exactly one run of each named test that
   passed with no subtest skipped or failed, and for an S4U case the subject's
-  genuine S4U token as the test observed it;
+  genuine S4U token. The held native-launch and headless security tests write
+  that subject's token to the file named by `WINUNITD_QUAL_SUBJECT_OUT`, and
+  `test-receipt --subject` records it;
 - `receipt`, `principal`, `password` and `endpoint`: the echo peer's own
   record of the nonce; the SMB server's attribution of an access; the same
   account's password-bearing probe of the same file; SYSTEM's identification
   of the live servers behind the pipes the account was denied;
-- `pending`: no producer or validator exists yet. These records never pass:
-  the #253 diagnostics lanes (G6), H06's independent-permission sequence,
-  H12's rotation and H22's final inventory, and every reference that cites
-  one of them. Until they have one, the summary cannot be complete.
+- `daemon-log`: a manager's diagnostics from `probe-daemon-log` before and
+  after a declared intervention, held to one check. Rotation (H12 and the
+  standard and filtered-administrator session lanes): the stopped log padded
+  past 256 KiB becomes the archive unchanged when the manager starts again,
+  a fresh current log carries a new open record, the directory, log and
+  archive keep the protected DACL of the manager's account, SYSTEM and
+  Administrators only, and the observer held a manager of the account, under
+  the lane's token class, started after the padding and still running.
+  Repair: a legacy directory the account owned with an open DACL is
+  protected by the manager's first start with no manual grant. Protection:
+  the system manager's diagnostics keep the SYSTEM and Administrators DACL;
+- `session-probe`: probe results from the account's own interactive token
+  outside any unit, such as the peer-denial lane: the account reads its own
+  daemon log and is denied the peer's and the system manager's daemon
+  directories and logs with ACCESS_DENIED;
+- `inventory`: SYSTEM's final inventory (`inventory`), compared with its
+  record of the winunitd service taken at the baseline (`inventory
+  --service-only`): no user manager, workload, probe or client process, no
+  fixture pipe, scheduled task or firewall rule, no linger grant for the
+  qualification accounts and no WinUnit file in the Default profile template
+  remains, and the service's start type, binary path and recovery actions
+  equal the baseline's;
+- `pending`: a proof with no producer or validator; such a record never
+  passes, and neither does a reference that cites it. No case of the
+  current matrix is pending.
 
 Records are written by `headless-workload record --observation FILE
 [--observer FILE] --results DIR --admission FILE`. The record binds the
@@ -417,6 +442,12 @@ trusting a record's claim:
   account and an existing one for the other, and no interactive session;
 - a same-account interactive logon and logoff observed while the headless
   manager and workload stayed the same processes;
+- the independent-permission sequence, from the marks admission-revoked,
+  linger-disabled and logoff: the headless manager running when only
+  interactive admission was revoked still runs when linger is disabled; a
+  session manager running then, with the account's session present, still
+  runs at logoff; afterwards every process of the account drains and nothing
+  returns for the observation window;
 - unlimited unit recovery from a status snapshot (no start limit, the restart
   attempt count) against a finite control that stopped at its start limit
   with no more launches than its burst;
@@ -429,8 +460,9 @@ trusting a record's claim:
   observations, and the path sub-results, by their native codes;
 - each record's token against its account and mode: genuine session-zero S4U
   standard tokens for the two accounts, a nonzero session for interactive
-  rows, SYSTEM for SYSTEM rows, an administrator's filtered token for the
-  filtered-administrator row, one SID per account and distinct accounts;
+  rows, SYSTEM for SYSTEM rows, an administrator's filtered token (limited
+  elevation type) for the filtered-administrator rows, one SID per account
+  and distinct accounts;
 - phase order; the first phase on one fresh boot and the first two phases with
   no password-bearing logon since their boot, counted from the observer's
   logon sessions, so bare S4U network and EFS probes precede every credential
