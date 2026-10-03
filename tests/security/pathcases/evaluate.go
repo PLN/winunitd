@@ -362,8 +362,8 @@ func objectProblem(c Case, role string, s ObjectState) string {
 		return "no kind, file ID, owner or DACL"
 	}
 	if role != RoleLink {
-		if s.Kind != "file" && s.Kind != "directory" || s.ReparseTag != 0 || !sha256Hex.MatchString(s.Content) {
-			return "not a plain file or directory with a content witness"
+		if s.Kind != c.RoleKinds[role] || s.ReparseTag != 0 || !sha256Hex.MatchString(s.Content) {
+			return "not the case's " + c.RoleKinds[role] + " with a content witness"
 		}
 		return ""
 	}

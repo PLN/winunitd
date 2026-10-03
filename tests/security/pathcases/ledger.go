@@ -144,7 +144,10 @@ type Case struct {
 	Recommendation string   `json:"recommendation,omitempty"`
 	Basis          string   `json:"basis"`
 	Roles          []string `json:"roles"`
-	Steps          []Step   `json:"steps"`
+	// RoleKinds is the object kind, file or directory, every role but the
+	// link must be; the link's kind follows from the shape.
+	RoleKinds map[string]string `json:"roleKinds"`
+	Steps     []Step            `json:"steps"`
 }
 
 // Step is one operation of a case: by the actor, by the consumer, or a
@@ -321,6 +324,35 @@ func (l *Ledger) validateCase(c Case) error {
 	if !slices.Contains(c.Roles, RoleTarget) || !slices.Contains(c.Roles, RoleSibling) {
 		return errors.New("needs the external target and a safe sibling among its roles")
 	}
+	// Every role but the link has its object kind, bound to the shape: an
+	// ancestor case renames a directory through its directory parent; a
+	// file link reaches a file, a junction a directory.
+	for _, r := range c.Roles {
+		k, ok := c.RoleKinds[r]
+		switch {
+		case r == RoleLink && ok:
+			return errors.New("the link's kind follows from the shape")
+		case r != RoleLink && k != "file" && k != "directory":
+			return fmt.Errorf("role %s needs its object kind", r)
+		}
+	}
+	if len(c.RoleKinds) != len(c.Roles)-boolInt(slices.Contains(c.Roles, RoleLink)) {
+		return errors.New("an object kind for a role the case does not observe")
+	}
+	switch c.Shape {
+	case "ancestor-rename":
+		if c.RoleKinds[RoleAncestor] != "directory" || c.RoleKinds[RoleLeaf] != "directory" {
+			return errors.New("an ancestor case renames a directory through its directory parent")
+		}
+	case "descendant-file-link":
+		if c.RoleKinds[RoleTarget] != "file" {
+			return errors.New("a file link reaches a file")
+		}
+	case "descendant-junction", "component-junction":
+		if c.RoleKinds[RoleTarget] != "directory" {
+			return errors.New("a junction reaches a directory")
+		}
+	}
 	linked := c.Shape == "descendant-junction" || c.Shape == "descendant-file-link" || c.Shape == "component-junction"
 	if linked != slices.Contains(c.Roles, RoleLink) {
 		return errors.New("a link shape, and only one, observes its link")
@@ -459,4 +491,11 @@ func (l *Ledger) validateStep(c Case, s Step) error {
 		return errors.New("a fixture-made state has no actor context")
 	}
 	return nil
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

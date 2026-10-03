@@ -63,6 +63,10 @@
         "target",
         "sibling"
       ],
+      "roleKinds": {
+        "target": "directory",
+        "sibling": "directory"
+      },
       "steps": [
         {
           "name": "install",
@@ -104,6 +108,10 @@
         "target",
         "sibling"
       ],
+      "roleKinds": {
+        "target": "directory",
+        "sibling": "directory"
+      },
       "steps": [
         {
           "name": "enable",
@@ -145,6 +153,10 @@
         "target",
         "sibling"
       ],
+      "roleKinds": {
+        "target": "directory",
+        "sibling": "file"
+      },
       "steps": [
         {
           "name": "daemon-reload",
@@ -181,6 +193,10 @@
         "target",
         "sibling"
       ],
+      "roleKinds": {
+        "target": "file",
+        "sibling": "file"
+      },
       "steps": [
         {
           "name": "daemon-reload",
@@ -216,6 +232,10 @@
         "target",
         "sibling"
       ],
+      "roleKinds": {
+        "target": "file",
+        "sibling": "file"
+      },
       "steps": [
         {
           "name": "unit-output-append",
@@ -251,6 +271,10 @@
         "target",
         "sibling"
       ],
+      "roleKinds": {
+        "target": "file",
+        "sibling": "file"
+      },
       "steps": [
         {
           "name": "startup-grants",
@@ -285,6 +309,10 @@
         "target",
         "sibling"
       ],
+      "roleKinds": {
+        "target": "directory",
+        "sibling": "file"
+      },
       "steps": [
         {
           "name": "delegated-admission",
@@ -320,6 +348,10 @@
         "target",
         "sibling"
       ],
+      "roleKinds": {
+        "target": "file",
+        "sibling": "file"
+      },
       "steps": [
         {
           "name": "delegated-admission",
@@ -356,6 +388,10 @@
         "target",
         "sibling"
       ],
+      "roleKinds": {
+        "target": "directory",
+        "sibling": "file"
+      },
       "steps": [
         {
           "name": "delegated-admission",
@@ -391,6 +427,12 @@
         "target",
         "sibling"
       ],
+      "roleKinds": {
+        "ancestor": "directory",
+        "leaf": "directory",
+        "target": "file",
+        "sibling": "directory"
+      },
       "steps": [
         {
           "name": "rename-units",
@@ -426,6 +468,12 @@
         "target",
         "sibling"
       ],
+      "roleKinds": {
+        "ancestor": "directory",
+        "leaf": "directory",
+        "target": "file",
+        "sibling": "directory"
+      },
       "steps": [
         {
           "name": "rename-units",
@@ -461,6 +509,12 @@
         "target",
         "sibling"
       ],
+      "roleKinds": {
+        "ancestor": "directory",
+        "leaf": "directory",
+        "target": "file",
+        "sibling": "directory"
+      },
       "steps": [
         {
           "name": "rename-data-root",
@@ -497,6 +551,12 @@
         "target",
         "sibling"
       ],
+      "roleKinds": {
+        "ancestor": "directory",
+        "leaf": "directory",
+        "target": "file",
+        "sibling": "directory"
+      },
       "steps": [
         {
           "name": "rename-data-root",
@@ -536,6 +596,12 @@
         "target",
         "sibling"
       ],
+      "roleKinds": {
+        "ancestor": "directory",
+        "leaf": "directory",
+        "target": "file",
+        "sibling": "directory"
+      },
       "steps": [
         {
           "name": "rename-install-root",
@@ -572,6 +638,12 @@
         "target",
         "sibling"
       ],
+      "roleKinds": {
+        "ancestor": "directory",
+        "leaf": "directory",
+        "target": "file",
+        "sibling": "directory"
+      },
       "steps": [
         {
           "name": "rename-install-root",

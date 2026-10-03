@@ -55,7 +55,7 @@ func passing(l *Ledger, c Case) *Observation {
 	for _, stage := range stateStages {
 		o.States[stage] = map[string]ObjectState{}
 		for _, role := range c.Roles {
-			s := ObjectState{At: stageAt[stage] + 10, Read: true, Exists: true, Kind: "directory", FileID: "vol-1:" + role, Owner: "S-1-5-32-544",
+			s := ObjectState{At: stageAt[stage] + 10, Read: true, Exists: true, Kind: c.RoleKinds[role], FileID: "vol-1:" + role, Owner: "S-1-5-32-544",
 				DACL: "D:P(A;;FA;;;SY)(A;;FA;;;BA)", Content: strings.Repeat("c", 64)}
 			if role == RoleLink {
 				if stage == stageBaseline || stage == stageRestored {
@@ -156,8 +156,26 @@ func TestEvaluateRefusesContradictions(t *testing.T) {
 		{"failed baseline inspection taken as absence", "user-units-file-symlink", "the link was not read at baseline", func(o *Observation) {
 			state(o, stageBaseline, RoleLink, func(s *ObjectState) { s.Read = false })
 		}},
-		{"no content witness", "data-child-rename-standard", "not a plain file or directory with a content witness", func(o *Observation) {
+		{"no content witness", "data-child-rename-standard", "the leaf at after: not the case's directory with a content witness", func(o *Observation) {
 			everyStage(o, RoleLeaf, func(s *ObjectState) { s.Content = "" })
+		}},
+		{"a file as the ancestor", "data-child-rename-standard", "the ancestor at before: not the case's directory", func(o *Observation) {
+			everyStage(o, RoleAncestor, func(s *ObjectState) { s.Kind = "file" })
+		}},
+		{"a file as the renamed directory", "install-root-ancestor-rename-filtered", "the leaf at after: not the case's directory", func(o *Observation) {
+			everyStage(o, RoleLeaf, func(s *ObjectState) { s.Kind = "file" })
+		}},
+		{"a directory as the linked unit file", "user-units-file-symlink", "the target at before: not the case's file", func(o *Observation) {
+			everyStage(o, RoleTarget, func(s *ObjectState) { s.Kind = "directory" })
+		}},
+		{"a file behind a junction", "user-units-nested-junction", "the target at after: not the case's directory", func(o *Observation) {
+			everyStage(o, RoleTarget, func(s *ObjectState) { s.Kind = "file" })
+		}},
+		{"a directory as the peer's regular unit", "user-units-nested-junction", "the sibling at before: not the case's file", func(o *Observation) {
+			everyStage(o, RoleSibling, func(s *ObjectState) { s.Kind = "directory" })
+		}},
+		{"a kind that changes between stages", "data-child-rename-filtered", "the leaf at restored: not the case's directory", func(o *Observation) {
+			state(o, stageRestored, RoleLeaf, func(s *ObjectState) { s.Kind = "file" })
 		}},
 		{"junction for a file-link case", "user-units-file-symlink", "not a file symbolic link", func(o *Observation) {
 			for _, stage := range []string{stageBefore, stageAfter} {

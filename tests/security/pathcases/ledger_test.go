@@ -171,6 +171,16 @@ func TestLedgerRefusesInvalidCases(t *testing.T) {
 		"ancestor case without the parent's role": func(l *Ledger) {
 			find(l, "install-root-ancestor-rename-filtered").Roles = []string{RoleLeaf, RoleTarget, RoleSibling}
 		},
+		"role without its kind": func(l *Ledger) { delete(find(l, "user-units-nested-junction").RoleKinds, RoleSibling) },
+		"kind for the link":     func(l *Ledger) { find(l, "user-units-file-symlink").RoleKinds[RoleLink] = "file" },
+		"kind for an unobserved role": func(l *Ledger) {
+			find(l, "user-units-file-symlink").RoleKinds[RoleAncestor] = "directory"
+		},
+		"unknown kind":                     func(l *Ledger) { find(l, "journal-file-link-append").RoleKinds[RoleTarget] = "device" },
+		"file ancestor declared":           func(l *Ledger) { find(l, "data-root-ancestor-rename-standard").RoleKinds[RoleAncestor] = "file" },
+		"file leaf declared":               func(l *Ledger) { find(l, "data-child-rename-filtered").RoleKinds[RoleLeaf] = "file" },
+		"file link to a directory":         func(l *Ledger) { find(l, "units-file-symlink-reload").RoleKinds[RoleTarget] = "directory" },
+		"junction to a file":               func(l *Ledger) { find(l, "enabled-target-junction-enable").RoleKinds[RoleTarget] = "file" },
 		"recommendation on a decided case": func(l *Ledger) { find(l, "user-units-file-symlink").Recommendation = "Decide." },
 		"schema":                           func(l *Ledger) { l.Schema = 2 },
 	} {
