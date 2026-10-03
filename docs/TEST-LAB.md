@@ -406,12 +406,17 @@ elevation, groups, privileges, logon type and package where LSA allows, and the
 known folders from the token), `probe-path`, `probe-tcp`, `probe-smb` and
 `probe-efs`.
 
-`pipe-serve` is the SYSTEM qualification pipe. For each caller it takes the
-PID from Windows, opens and holds that process, records its creation time and
-account, impersonates the caller at Identification level on a dedicated
-thread, reads an optional claim of the caller's own incarnation and decides:
-accepted only for the allowed account, on a live held process whose tokens
-agree and whose claim, if sent, is the held one. A caller that exits within a
+`pipe-serve` is the SYSTEM qualification pipe; it refuses to serve unless it
+runs as SYSTEM in session zero and records its own process identity. For each
+caller it takes the PID from Windows, opens and holds that process and records
+its creation time and account, sends a ready line, reads one bounded request
+(an empty object or a claim of the caller's own incarnation), and only then
+impersonates the caller at Identification level on a dedicated thread and
+reverts, because a pipe server can impersonate only the context of a message
+it has read. A missing, oversized or malformed request is refused, never
+treated as a request without a claim. It decides: accepted only for the
+allowed account, on a live held process whose tokens agree and whose claim,
+if sent, is the held one. A caller that exits within a
 one-second settle window after its claim is rejected. Any process of the
 account is accepted; the pipe establishes the account and a held caller
 incarnation, not a unit, definition or launch, and it is not a WinUnit

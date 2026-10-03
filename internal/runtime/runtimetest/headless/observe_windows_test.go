@@ -19,10 +19,15 @@ const (
 	helperRole    = "HEADLESS_OBSERVER_HELPER"
 	helperWork    = "HEADLESS_OBSERVER_WORKLOAD"
 	helperRelease = "HEADLESS_OBSERVER_RELEASE"
+	helperPipe    = "HEADLESS_TEST_PIPE"
 )
 
 func TestMain(m *testing.M) {
 	switch os.Getenv(helperRole) {
+	case "pipe-exit":
+		// Sends its claim and exits without waiting for the verdict.
+		ProbePipe(os.Getenv(helperPipe), ClientExited, "self", false, true)
+		os.Exit(3)
 	case "manager":
 		for range 100 {
 			cmd := exec.Command(os.Getenv(helperWork))

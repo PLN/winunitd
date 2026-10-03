@@ -213,6 +213,9 @@ func TestDecide(t *testing.T) {
 		"other pid claimed":     {func(o *CallerObservation) { o.Claim = &Claim{PID: 11, Created: 100} }, ReasonClaim},
 		"other account claimed": {func(o *CallerObservation) { o.Claim = &Claim{PID: 10, Created: 100, SID: sidB} }, ReasonClaim},
 		"unreadable claim":      {func(o *CallerObservation) { o.Claim = &Claim{} }, ReasonClaim},
+		"no request":            {func(o *CallerObservation) { o.RequestError = "missing" }, ReasonRequest},
+		// A malformed request is refused before its impersonation is used.
+		"malformed request": {func(o *CallerObservation) { o.RequestError, o.ImpersonationSID = "malformed", "" }, ReasonRequest},
 	}
 	for name, c := range cases {
 		o := good

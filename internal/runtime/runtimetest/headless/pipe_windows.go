@@ -30,20 +30,6 @@ const settleWindow = time.Second
 
 var procImpersonateNamedPipeClient = advapi32.NewProc("ImpersonateNamedPipeClient")
 
-// ServerEntry is one connection as the server saw and decided it.
-type ServerEntry struct {
-	Observation CallerObservation `json:"observation"`
-	Verdict     Verdict           `json:"verdict"`
-}
-
-// ServerReport is the pipe server's bounded report.
-type ServerReport struct {
-	Name    string        `json:"name"`
-	Allowed string        `json:"allowed"`
-	ACL     []string      `json:"acl"`
-	Entries []ServerEntry `json:"entries"`
-}
-
 func pipeHandle(c net.Conn) (windows.Handle, bool) {
 	if f, ok := c.(interface{ Fd() uintptr }); ok {
 		return windows.Handle(f.Fd()), true
@@ -127,8 +113,19 @@ func creationTime(proc windows.Handle) (uint64, error) {
 	return uint64(created.HighDateTime)<<32 | uint64(created.LowDateTime), nil
 }
 
+// Request errors of the qualification pipe.
+const (
+	requestMissing   = "missing"
+	requestMalformed = "malformed"
+)
+
 // serveCaller observes, decides and answers one connection, holding the
-// caller's process until the connection ends.
+// caller's process until the connection ends. In order: it holds the
+// caller's incarnation by the PID Windows reports, sends ready, reads one
+// bounded request, and only then impersonates the caller, because a pipe
+// server can impersonate only the context of a message it has read. A
+// missing, oversized or malformed request is refused, never read as a
+// request without a claim.
 func serveCaller(c net.Conn, allowed string) ServerEntry {
 	defer c.Close()
 	var o CallerObservation
@@ -158,19 +155,13 @@ func serveCaller(c net.Conn, allowed string) ServerEntry {
 			o.OpenError = win32Code(err)
 		}
 	}
-	o.ImpersonationSID, o.ImpersonationError = impersonationSID(h)
 	_ = c.SetDeadline(time.Now().Add(probeTimeout))
 	w := bufio.NewWriter(c)
 	_, _ = w.WriteString("ready\n")
 	_ = w.Flush()
-	line, err := bufio.NewReader(&limitedReader{c, 4096}).ReadString('\n')
-	if err == nil && strings.TrimSpace(line) != "{}" {
-		var claim Claim
-		if decodeStrict([]byte(line), &claim) == nil {
-			o.Claim = &claim
-		} else {
-			o.Claim = &Claim{} // an unreadable claim matches nothing
-		}
+	o.Claim, o.RequestError = readRequest(c)
+	if o.RequestError == "" {
+		o.ImpersonationSID, o.ImpersonationError = impersonationSID(h)
 	}
 	if proc != 0 {
 		state, err := windows.WaitForSingleObject(proc, uint32(settleWindow.Milliseconds()))
@@ -186,6 +177,23 @@ func serveCaller(c net.Conn, allowed string) ServerEntry {
 	// Hold the caller until it hangs up, bounded by the deadline.
 	_, _ = bufio.NewReader(c).ReadString('\n')
 	return ServerEntry{Observation: o, Verdict: v}
+}
+
+// readRequest reads the caller's one request line: "{}" without a claim,
+// or a claim.
+func readRequest(c net.Conn) (*Claim, string) {
+	line, err := bufio.NewReader(&limitedReader{c, 4096}).ReadString('\n')
+	if err != nil {
+		return nil, requestMissing
+	}
+	if strings.TrimSpace(line) == "{}" {
+		return nil, ""
+	}
+	var claim Claim
+	if decodeStrict([]byte(line), &claim) != nil || claim.PID == 0 || claim.Created == 0 {
+		return nil, requestMalformed
+	}
+	return &claim, ""
 }
 
 // ListenQualificationPipe creates the pipe owned by this (SYSTEM) process
@@ -229,11 +237,24 @@ func runPipeServe(args []string) error {
 	if *maxConns < 1 || *maxConns > 64 {
 		return usage("--max must be 1 to 64")
 	}
+	// The qualification server is SYSTEM's: its own identity is part of
+	// the report, and anything else refuses to serve.
+	server, err := selfClaim()
+	if err != nil {
+		return err
+	}
+	var session uint32
+	if err := windows.ProcessIdToSessionId(server.PID, &session); err != nil {
+		return err
+	}
+	if server.SID != SystemSID || session != 0 {
+		return errors.New("the qualification pipe server must run as SYSTEM in session zero")
+	}
 	ln, err := ListenQualificationPipe(*name, acl)
 	if err != nil {
 		return err
 	}
-	rep := ServerReport{Name: *name, Allowed: *allow, ACL: acl}
+	rep := ServerReport{Name: *name, Allowed: *allow, ACL: acl, Server: ServerIdentity{PID: server.PID, Created: server.Created, SID: server.SID, Session: session}}
 	var mu sync.Mutex
 	write := func() error {
 		mu.Lock()
@@ -298,6 +319,12 @@ func ProbePipe(name, client, claimMode string, openOnly, exitAfterSend bool) Pip
 	}
 	defer c.Close()
 	rep.Result.Connected = true
+	self, err := selfClaim()
+	if err != nil {
+		rep.Result.Reason = "own identity"
+		return rep
+	}
+	rep.Result.PID, rep.Result.Created = self.PID, self.Created
 	if openOnly {
 		return rep
 	}
@@ -308,21 +335,23 @@ func ProbePipe(name, client, claimMode string, openOnly, exitAfterSend bool) Pip
 		return rep
 	}
 	var claim *Claim
+	line := []byte("{}")
 	switch claimMode {
 	case "self", "stale":
-		if claim, err = selfClaim(); err != nil {
-			rep.Result.Reason = "own identity: " + err.Error()
-			return rep
-		}
+		claim = self
 		if claimMode == "stale" {
-			claim.Created++
+			stale := *self
+			stale.Created++
+			claim = &stale
 		}
+		line, _ = json.Marshal(claim)
+	case "malformed":
+		line = []byte(`{"pid":"not a number"}`)
+	case "silent":
+		// Hang up without a request.
+		return rep
 	}
 	rep.Claim = claim
-	line := []byte("{}")
-	if claim != nil {
-		line, _ = json.Marshal(claim)
-	}
 	if _, err := c.Write(append(line, '\n')); err != nil {
 		rep.Result.Reason = "send claim: " + err.Error()
 		return rep
@@ -370,8 +399,10 @@ func runProbePipe(args []string) (any, error) {
 	if !strings.HasPrefix(*name, `\\.\pipe\`) || !controlPattern.MatchString(*client) {
 		return nil, usage("--name must be a local pipe and --client a role")
 	}
-	if *claim != "self" && *claim != "stale" && *claim != "none" {
-		return nil, usage("--claim must be self, stale or none")
+	switch *claim {
+	case "self", "stale", "none", "malformed", "silent":
+	default:
+		return nil, usage("--claim must be self, stale, none, malformed or silent")
 	}
 	if err := absPath("out", *out); err != nil && !*exitAfterSend {
 		return nil, err

@@ -6,6 +6,7 @@ import "fmt"
 const (
 	ReasonAccepted              = "accepted"
 	ReasonOpen                  = "open"                   // the caller could not be opened and held
+	ReasonRequest               = "request"                // no single well-formed request was read
 	ReasonImpersonation         = "impersonation"          // no Identification-level token
 	ReasonExited                = "exited"                 // the held caller exited before the decision
 	ReasonAccount               = "account"                // the caller's account is not the allowed one
@@ -23,14 +24,16 @@ type Claim struct {
 
 // CallerObservation is what the server established about one connection:
 // the client PID from Windows, the process it opened and held by that PID,
-// that process's creation time and primary-token account, the account of
-// the Identification-level impersonation token, and whether the held process
-// had exited by the decision.
+// that process's creation time and primary-token account, whether it read
+// one well-formed request, the account of the Identification-level
+// impersonation token of that request, and whether the held process had
+// exited by the decision.
 type CallerObservation struct {
 	PID                uint32 `json:"pid"`
 	OpenError          uint32 `json:"openError,omitempty"`
 	Created            uint64 `json:"created,omitempty"`
 	ProcessSID         string `json:"processSid,omitempty"`
+	RequestError       string `json:"requestError,omitempty"`
 	ImpersonationError uint32 `json:"impersonationError,omitempty"`
 	ImpersonationSID   string `json:"impersonationSid,omitempty"`
 	Exited             bool   `json:"exited"`
@@ -46,6 +49,8 @@ func Decide(allowedSID string, o CallerObservation) (bool, string) {
 	switch {
 	case o.PID == 0 || o.OpenError != 0 || o.Created == 0 || o.ProcessSID == "":
 		return false, ReasonOpen
+	case o.RequestError != "":
+		return false, ReasonRequest
 	case o.ImpersonationError != 0 || o.ImpersonationSID == "":
 		return false, ReasonImpersonation
 	case o.Exited:
@@ -60,6 +65,31 @@ func Decide(allowedSID string, o CallerObservation) (bool, string) {
 	return true, ReasonAccepted
 }
 
+// ServerEntry is one connection as the server saw and decided it.
+type ServerEntry struct {
+	Observation CallerObservation `json:"observation"`
+	Verdict     Verdict           `json:"verdict"`
+}
+
+// ServerIdentity is the qualification server's own process and token.
+type ServerIdentity struct {
+	PID     uint32 `json:"pid"`
+	Created uint64 `json:"created"`
+	SID     string `json:"sid"`
+	Session uint32 `json:"session"`
+}
+
+// ServerReport is the pipe server's bounded report: its own identity, the
+// pipe, the allowed account, the ACL and every connection's raw
+// observation and verdict.
+type ServerReport struct {
+	Name    string         `json:"name"`
+	Allowed string         `json:"allowed"`
+	ACL     []string       `json:"acl"`
+	Server  ServerIdentity `json:"server"`
+	Entries []ServerEntry  `json:"entries"`
+}
+
 // Verdict is the server's reply to one connection. Held reports that the
 // server held the caller's process through its decision.
 type Verdict struct {
@@ -71,11 +101,14 @@ type Verdict struct {
 }
 
 // PipeResult is one client's sub-result: how its open ended and, when it
-// connected, the server's verdict and whether the server held it.
+// connected, its own incarnation, the server's verdict and whether the
+// server held it.
 type PipeResult struct {
 	Client    string `json:"client"`
 	OpenError uint32 `json:"openError,omitempty"`
 	Connected bool   `json:"connected"`
+	PID       uint32 `json:"pid,omitempty"`
+	Created   uint64 `json:"created,omitempty"`
 	Accepted  bool   `json:"accepted"`
 	Reason    string `json:"reason,omitempty"`
 	Held      bool   `json:"held"`
