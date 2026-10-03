@@ -58,12 +58,12 @@ func closeNestedBroker() error {
 type managerOwner interface {
 	// start reloads and starts nested.service.
 	start(t *testing.T)
-	// stopUnit stops nested.service and reports how long the stop took.
-	stopUnit(t *testing.T) (time.Duration, error)
-	// stopAsync begins a stop; the returned function waits for its result.
-	// waitErr reports a stop that did not finish in time or was not
-	// answered; stopErr is the manager's own stop result.
-	stopAsync(t *testing.T) func(timeout time.Duration) (elapsed time.Duration, stopErr, waitErr error)
+	// stopUnit stops nested.service and returns the owner's outcome.
+	stopUnit(t *testing.T) stopOutcome
+	// stopAsync requests a stop now; the returned function waits until
+	// deadline for the outcome and reports a stop that had not finished.
+	stopAsync(t *testing.T) func(deadline time.Time) (stopOutcome, error)
+	// inspect returns a validated view; a failed observation fails the test.
 	inspect(t *testing.T) nestedjob.ManagerView
 	// inUnitJob checks an exact, observer-held process in the unit job.
 	inUnitJob(t *testing.T, h *nestedjob.Held) bool
@@ -75,26 +75,49 @@ type managerOwner interface {
 	close() error
 }
 
-// nestedView answers inspect for a manager and its observing launcher.
+// stopOutcome is one unit stop as its owner saw it: the time from the
+// stop request to Stop's return, measured where Stop ran, the manager's
+// result and the view taken the moment Stop returned.
+type stopOutcome struct {
+	elapsed time.Duration
+	err     error
+	view    nestedjob.ManagerView
+}
+
+// nestedView answers inspect for a manager and its observing launcher. A
+// failed status or limits query is reported as InspectError; a unit with
+// no process has no job, which is not an error.
 func nestedView(m *Manager, launch *nestedLauncher) nestedjob.ManagerView {
 	var v nestedjob.ManagerView
-	if st, err := m.Status(nestedUnitName); err == nil && st.Unit != nil {
-		u := st.Unit
-		v.ActiveState, v.Reason, v.Error, v.InvocationID = u.ActiveState, u.Reason, u.Error, u.InvocationID
-		v.TerminationUncertain, v.MainPID = u.TerminationUncertain, u.MainPID
-		v.CPUQuota, v.WindowsCPUQuota = u.CPUQuota, u.WindowsCPUQuota
+	st, err := m.Status(nestedUnitName)
+	switch {
+	case err != nil:
+		v.InspectError = nestedjob.FailureOf("status", err)
+		return v
+	case st.Unit == nil:
+		v.InspectError = &nestedjob.Failure{Op: "status", Message: "no unit status"}
+		return v
 	}
+	u := st.Unit
+	v.ActiveState, v.Reason, v.Error, v.InvocationID = u.ActiveState, u.Reason, u.Error, u.InvocationID
+	v.TerminationUncertain, v.MainPID = u.TerminationUncertain, u.MainPID
+	v.CPUQuota, v.WindowsCPUQuota = u.CPUQuota, u.WindowsCPUQuota
 	m.mu.Lock()
 	v.StopHelpers = len(m.stopHelpers)
 	proc := m.procOfLocked(nestedUnitName)
 	m.mu.Unlock()
 	if proc != nil {
-		if lim, err := proc.Job().QueryLimits(); err == nil {
-			v.HasJob = true
-			v.JobMemory, v.PeakJobMemory, v.LimitFlags = lim.JobMemory, lim.PeakJobMemory, lim.LimitFlags
-			v.CPURate, v.CPUControlFlags = lim.CPURate, lim.CPUControlFlags
+		lim, err := proc.Job().QueryLimits()
+		if err != nil {
+			v.InspectError = nestedjob.FailureOf("query-limits", err)
+			return v
 		}
+		v.HasJob = true
+		v.JobMemory, v.PeakJobMemory, v.LimitFlags = lim.JobMemory, lim.PeakJobMemory, lim.LimitFlags
+		v.CPURate, v.CPUControlFlags = lim.CPURate, lim.CPUControlFlags
 	}
+	// After the slot count: a released slot is observed before its helper.
+	v.Helpers = launch.helperStates()
 	v.Launches, v.Violations = launch.state()
 	return v
 }
@@ -153,28 +176,48 @@ func (o *localManagerOwner) start(t *testing.T) {
 	}
 }
 
-func (o *localManagerOwner) stopUnit(*testing.T) (time.Duration, error) {
-	started := time.Now()
-	_, err := o.m.Stop(nestedUnitName)
-	return time.Since(started), err
+func (o *localManagerOwner) stopUnit(t *testing.T) stopOutcome {
+	t.Helper()
+	out, err := o.stopAsync(t)(time.Now().Add(nestedAgentTimeout))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
-func (o *localManagerOwner) stopAsync(*testing.T) func(time.Duration) (time.Duration, error, error) {
-	started := time.Now()
-	done := make(chan error, 1)
-	go func() { _, err := o.m.Stop(nestedUnitName); done <- err }()
-	return func(timeout time.Duration) (time.Duration, error, error) {
+func (o *localManagerOwner) stopAsync(*testing.T) func(time.Time) (stopOutcome, error) {
+	requested := time.Now()
+	done := make(chan stopOutcome, 1)
+	go func() {
+		_, err := o.m.Stop(nestedUnitName)
+		out := stopOutcome{elapsed: time.Since(requested), err: err}
+		out.view = nestedView(o.m, o.launch)
+		done <- out
+	}()
+	return func(deadline time.Time) (stopOutcome, error) {
 		select {
-		case err := <-done:
-			return time.Since(started), err, nil
-		case <-time.After(timeout):
-			return time.Since(started), nil, errors.New("stop did not finish in time")
+		case out := <-done:
+			return out, nil
+		default:
+		}
+		timer := time.NewTimer(time.Until(deadline))
+		defer timer.Stop()
+		select {
+		case out := <-done:
+			return out, nil
+		case <-timer.C:
+			return stopOutcome{}, errors.New("stop did not finish by its deadline")
 		}
 	}
 }
 
-func (o *localManagerOwner) inspect(*testing.T) nestedjob.ManagerView {
-	return nestedView(o.m, o.launch)
+func (o *localManagerOwner) inspect(t *testing.T) nestedjob.ManagerView {
+	t.Helper()
+	v := nestedView(o.m, o.launch)
+	if err := v.Validate(); err != nil {
+		t.Fatalf("inspect: %v", err)
+	}
+	return v
 }
 
 func (o *localManagerOwner) inUnitJob(t *testing.T, h *nestedjob.Held) bool {
@@ -196,7 +239,7 @@ func (o *localManagerOwner) close() error {
 	o.launch.release()
 	_, err := o.m.Stop(nestedUnitName)
 	o.m.Close()
-	return err
+	return errors.Join(err, o.launch.close())
 }
 
 // agentManagerOwner drives a manager-owner agent in a genuine S4U process.
@@ -243,14 +286,20 @@ func newAgentManagerOwner(t *testing.T, sid, base string) *agentManagerOwner {
 		SID: sid, Token: tok, Exe: exe, Daemon: broker, LoadProfile: true,
 		ExtraArgs: []string{nestedManagerOwnerSelector, "--agent-dir", dir, "--base-dir", base},
 	})
-	if proc == nil && err != nil {
+	// A returned process is this test's to confirm gone, whatever happens
+	// next: Kill confirms the agent's whole tree exited and is idempotent
+	// after a successful close.
+	if proc != nil {
+		t.Cleanup(func() {
+			if err := proc.Kill(); err != nil {
+				t.Errorf("manager owner agent exit unconfirmed: %v", err)
+			}
+		})
+	}
+	if err != nil {
 		t.Fatal(err)
 	}
 	a := &agentManagerOwner{dir: dir, obs: nestedjob.NewObserver(base), proc: proc}
-	if err != nil {
-		_ = proc.Kill()
-		t.Fatal(err)
-	}
 	var self nestedjob.Identity
 	deadline := time.Now().Add(nestedAgentTimeout)
 	for {
@@ -259,15 +308,14 @@ func newAgentManagerOwner(t *testing.T, sid, base string) *agentManagerOwner {
 			break
 		}
 		if !proc.Alive() || time.Now().After(deadline) {
-			_ = proc.Kill()
 			t.Fatalf("manager owner agent did not start: %v", err)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	a.tok = &nestedjob.TokenContext{SID: self.SID, Session: self.Session, Elevated: self.Elevated, Source: nestedjob.TokenS4U}
 	if self.SID != sid || self.Session != 0 || self.Elevated || self.PID != uint32(proc.PID()) {
-		_ = proc.Kill()
-		t.Fatalf("manager owner agent token %+v is not the headless account in session zero", a.tok)
+		t.Fatalf("manager owner agent is not the headless account in session zero: account %t session %d elevated %t own pid %t",
+			self.SID == sid, self.Session, self.Elevated, self.PID == uint32(proc.PID()))
 	}
 	return a
 }
@@ -286,35 +334,41 @@ func (a *agentManagerOwner) start(t *testing.T) {
 	a.command(t, nestedjob.Command{Verb: nestedjob.VerbStart})
 }
 
-// stopResult maps an agent's acknowledgment to the manager's stop result.
-func stopResult(ack nestedjob.Ack, err error) (time.Duration, error) {
-	elapsed := time.Duration(ack.ElapsedMS) * time.Millisecond
-	switch {
-	case ack.Seq != 0 && ack.Failure != nil:
-		return elapsed, errors.New(ack.Failure.Message)
-	case err != nil:
-		return elapsed, fmt.Errorf("manager owner agent: %w", err)
+// stopResult maps an agent's stop-unit acknowledgment to the outcome. A
+// negative acknowledgment carries the manager's stop error; the agent
+// times the stop and takes the view where Stop ran.
+func stopResult(ack nestedjob.Ack, err error) (stopOutcome, error) {
+	if ack.Seq == 0 {
+		return stopOutcome{}, fmt.Errorf("manager owner agent did not answer the stop: %w", err)
 	}
-	return elapsed, nil
+	out := stopOutcome{elapsed: time.Duration(ack.ElapsedMS) * time.Millisecond}
+	if !ack.OK && ack.Failure != nil {
+		out.err = errors.New(ack.Failure.Message)
+	}
+	if ack.Manager == nil {
+		return out, errors.New("manager owner agent answered the stop without a view")
+	}
+	out.view = *ack.Manager
+	return out, nil
 }
 
-func (a *agentManagerOwner) stopUnit(*testing.T) (time.Duration, error) {
-	return stopResult(a.obs.CommandIn(a.dir, nestedjob.RoleManagerOwner, nestedjob.Command{Verb: nestedjob.VerbStopUnit}, nestedAgentTimeout))
+func (a *agentManagerOwner) stopUnit(t *testing.T) stopOutcome {
+	t.Helper()
+	out, err := a.stopAsync(t)(time.Now().Add(nestedAgentTimeout))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
-func (a *agentManagerOwner) stopAsync(t *testing.T) func(time.Duration) (time.Duration, error, error) {
+func (a *agentManagerOwner) stopAsync(t *testing.T) func(time.Time) (stopOutcome, error) {
 	t.Helper()
 	seq, err := a.obs.SendIn(a.dir, nestedjob.RoleManagerOwner, nestedjob.Command{Verb: nestedjob.VerbStopUnit})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return func(timeout time.Duration) (time.Duration, error, error) {
-		ack, err := a.obs.AwaitAck(a.dir, nestedjob.RoleManagerOwner, seq, timeout)
-		if ack.Seq == 0 {
-			return 0, nil, fmt.Errorf("manager owner agent did not answer the stop: %w", err)
-		}
-		elapsed, stopErr := stopResult(ack, err)
-		return elapsed, stopErr, nil
+	return func(deadline time.Time) (stopOutcome, error) {
+		return stopResult(a.obs.AwaitAck(a.dir, nestedjob.RoleManagerOwner, seq, time.Until(deadline)))
 	}
 }
 
@@ -323,6 +377,9 @@ func (a *agentManagerOwner) inspect(t *testing.T) nestedjob.ManagerView {
 	ack := a.command(t, nestedjob.Command{Verb: nestedjob.VerbInspect})
 	if ack.Manager == nil {
 		t.Fatal("manager owner agent answered without a view")
+	}
+	if err := ack.Manager.Validate(); err != nil {
+		t.Fatalf("inspect: %v", err)
 	}
 	return *ack.Manager
 }
@@ -463,6 +520,8 @@ func runNestedManagerAgent(args []string) error {
 			started := time.Now()
 			_, err := m.Stop(nestedUnitName)
 			ack.ElapsedMS = time.Since(started).Milliseconds()
+			v := nestedView(m, launch)
+			ack.Manager = &v
 			if err != nil {
 				return fail(err)
 			}
@@ -525,5 +584,5 @@ func runNestedManagerAgent(args []string) error {
 		serveErr = errors.Join(serveErr, err)
 	}
 	m.Close()
-	return errors.Join(serveErr, obs.Close(), job.Close())
+	return errors.Join(serveErr, launch.close(), obs.Close(), job.Close())
 }
