@@ -55,8 +55,10 @@ var baselinePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 // the account has no profile registration, profile directory, loaded hive
 // or logon session, taken on the sealed baseline it names.
 type FirstUseProof struct {
-	SID              string `json:"sid"`
-	Baseline         string `json:"baseline"`
+	SID      string `json:"sid"`
+	Baseline string `json:"baseline"`
+	// BaselineSHA256 is the hash of the baseline receipt's bytes.
+	BaselineSHA256   string `json:"baselineSha256"`
 	Boot             Boot   `json:"boot"`
 	At               uint64 `json:"at"`
 	ProfileList      bool   `json:"profileList"`
@@ -83,7 +85,7 @@ func CheckFirstUse(p *FirstUseProof, sid string, boot *ObserverReport) []string 
 	case p.ProfileList || p.ProfileDirectory || p.HiveLoaded || p.LogonSessions != 0:
 		problems = append(problems, "the account was already used")
 	}
-	if !baselinePattern.MatchString(p.Baseline) {
+	if !baselinePattern.MatchString(p.Baseline) || !hexSHA256.MatchString(p.BaselineSHA256) {
 		problems = append(problems, "the check names no baseline")
 	}
 	switch {

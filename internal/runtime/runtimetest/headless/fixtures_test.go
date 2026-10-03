@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -358,6 +359,7 @@ func observerFor(e Entry) *ObserverReport {
 		if e.Account == AccountAdmin {
 			o.Accounts[AccountAdmin] = sidAdmin
 		}
+		o.Profiles = map[string]ProfileFacts{e.Account: {Path: profileOf(e.Account), Registered: true, DirectoryCreated: ft(-90000), HiveLoaded: true}}
 		mode := e.Mode
 		m := o.gen(RoleManager, e.Account, mode, 15, -1, 0).PID
 		if mode == ModeS4U {
@@ -428,7 +430,39 @@ func protectedFor(sid string) string {
 	return "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;" + sid + ")"
 }
 
-const paddedSHA = "9added0000000000000000000000000000000000000000000000000000000000"
+const (
+	paddedSHA = "9added0000000000000000000000000000000000000000000000000000000000"
+	freshSHA  = "c0ffee0000000000000000000000000000000000000000000000000000000000"
+)
+
+// inventoryFor is the final inventory after every case: the baseline
+// receipt the first-use check hashed, nothing left besides the service's
+// process, and the baseline's machine state.
+func inventoryFor() *InventoryProof {
+	facts := func() MachineFacts {
+		return MachineFacts{
+			Service:   ServiceFacts{Installed: true, StartType: 2, BinaryPath: strings.Repeat("b", 64), Recovery: "1/60000;1/60000;0/0;reset/86400"},
+			DataDir:   &ObjectFacts{Owner: SystemSID, DACL: "D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)"},
+			Linger:    &ObjectFacts{Owner: SystemSID, DACL: "D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"},
+			Admission: &ObjectFacts{Owner: "S-1-5-32-544", DACL: "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;BU)", Size: 48, SHA256: freshSHA},
+		}
+	}
+	scope := func() InventoryScope {
+		return InventoryScope{Accounts: []string{sidA, sidB, sidAdmin}, Images: []string{daemonImage, workloadImage, "runtime.test.exe", "journal.test.exe", "other.exe"},
+			Resources: slices.Clone(InventoryResources)}
+	}
+	return &InventoryProof{
+		Baseline: InventoryBaseline{Name: "c5-baseline", At: ft(-7100), Boot: firstUseBoot,
+			Scope: InventoryScope{Accounts: []string{sidA, sidB, sidAdmin}, Resources: slices.Clone(MachineResources)}, Facts: facts()},
+		BaselineSHA256: baselineSHA, At: ft(90000), Boot: testBoot(5), Scope: scope(),
+		Broker: &InventoryProcess{Image: daemonImage, SID: SystemSID, PID: 603}, Facts: facts(),
+	}
+}
+
+const baselineSHA = "ba5e000000000000000000000000000000000000000000000000000000000000"
+
+// profileOf is an account's profile directory.
+func profileOf(account string) string { return `C:\Users\wu-` + strings.ToLower(account) }
 
 // daemonLogFor is a manager's diagnostics around the intervention at 10 s.
 func daemonLogFor(e Entry) *DaemonLogProof {
@@ -439,8 +473,11 @@ func daemonLogFor(e Entry) *DaemonLogProof {
 	obj := func(size int64, sha string) *ObjectFacts {
 		return &ObjectFacts{Owner: sid, DACL: protectedFor(sid), Size: size, SHA256: sha}
 	}
-	after := DaemonLogFacts{At: ft(40), Dir: obj(0, ""), Current: obj(300, "c0"), Tail: []LogRecord{{Code: daemonOpenCode, At: ft(15.5)}}}
-	p := &DaemonLogProof{SID: sid, After: after}
+	after := DaemonLogFacts{At: ft(40), Dir: obj(0, ""), Current: obj(300, freshSHA), Tail: []LogRecord{{Code: daemonOpenCode, At: ft(15.5)}}}
+	p := &DaemonLogProof{SID: sid, Root: profileOf(e.Account) + `\AppData\Local\winunitd`, After: after}
+	if e.Mode == ModeSystem {
+		p.Root = `C:\ProgramData\winunitd`
+	}
 	switch e.Check {
 	case CheckRotation:
 		p.Before = &DaemonLogFacts{At: ft(10), Dir: obj(0, ""), Current: obj(RotationBytes+100, paddedSHA)}
@@ -470,8 +507,7 @@ func evidenceFor(e Entry) Evidence {
 			{Probe: "system-directory", Win32: errAccessDenied}, {Probe: "system-log", Win32: errAccessDenied}}
 	}
 	if e.Proof == ProofInventory {
-		service := ServiceFacts{Installed: true, StartType: 2, BinaryPath: strings.Repeat("b", 64), Recovery: "restart/60000;restart/60000;none/0;86400"}
-		ev.Inventory = &InventoryProof{Baseline: "c5-baseline", At: ft(9000), Service: service, BaselineService: service}
+		ev.Inventory = inventoryFor()
 	}
 	var p probed
 	if e.Proof == ProofProbe {
@@ -551,7 +587,7 @@ func controlEvidence(e Entry, c ControlEntry) Evidence {
 	var ev Evidence
 	switch c.Name {
 	case "first-use":
-		ev.FirstUse = &FirstUseProof{SID: roleSID[e.Account], Baseline: "c5-baseline", Boot: firstUseBoot, At: ft(-3700)}
+		ev.FirstUse = &FirstUseProof{SID: roleSID[e.Account], Baseline: "c5-baseline", BaselineSHA256: baselineSHA, Boot: firstUseBoot, At: ft(-3700)}
 	case "finite-limit":
 		o := newObserved(e.Phase, 30)
 		m := o.gen(RoleManager, e.Account, e.Mode, -60, -1, 0).PID

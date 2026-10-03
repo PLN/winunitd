@@ -57,7 +57,7 @@ param(
 	[Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9-]{1,32}$')][string]$Variant,
 	[ValidatePattern('^(|r[1-9])$')][string]$Repetition = '',
 	[ValidatePattern('^(|[a-z][a-z0-9-]{0,31})$')][string]$Control = '',
-	[ValidateSet('run', 'prepare', 'collect')][string]$Stage = 'run',
+	[ValidateSet('run', 'baseline', 'prepare', 'collect')][string]$Stage = 'run',
 	[ValidateRange(1, 100000)][int]$Sequence = 1,
 	[ValidatePattern('^[A-Za-z0-9._-]{1,64}$')][string]$ExecutionId = 'execution',
 	[string]$Fixture = '',
@@ -88,7 +88,7 @@ param(
 	[string]$EfsPlain = '',
 	[ValidatePattern('^(|[0-9a-f]{64})$')][string]$EfsSha256 = '',
 	[ValidatePattern('^(|[A-Za-z0-9._-]{1,64})$')][string]$Baseline = '',
-	[string]$BaselineService = '',
+	[string]$BaselineReceipt = '',
 	[string]$TestBinary = '',
 	[string]$Test2Json = '',
 	[string]$Linger = '',
@@ -123,7 +123,7 @@ function Get-HeadlessCase([string]$Case, [string]$Variant, [string]$Control = ''
 		'^G6/go-tests' { @('wts-client', 'session-runner', 'test-binary', 'test2json'); break }
 		'^G6/(standard-wts|peer-denial)' { @('wts-client', 'session-runner'); break }
 		'^G6/filtered-admin' { @('wts-client', 'admin-account'); break }
-		'^H0[12]/' { @('baseline'); break }
+		'^H0[12]/' { @('baseline', 'admin-account'); break }
 		'^H0[46]/' { @('wts-client'); break }
 		'^H17/[AB]#$' { @('peer-echo'); break }
 		'#peer-receipt$' { @('peer-receipt'); break }
@@ -133,10 +133,10 @@ function Get-HeadlessCase([string]$Case, [string]$Variant, [string]$Control = ''
 		'^H19/B#$' { @('efs-fixture'); break }
 		'#password-decrypt$' { @('efs-fixture', 'password-runner'); break }
 		'^H2[01]/' { @('test-binary', 'test2json'); break }
-		'^H22/' { @('baseline', 'baseline-service'); break }
+		'^H22/' { @('baseline', 'admin-account'); break }
 		default { @() }
 	}
-	$stages = if ($Case -in @('H01', 'H02', 'H03')) { @('prepare', 'collect') } else { @('run') }
+	$stages = switch ($Case) { { $_ -in @('H01', 'H02') } { @('baseline', 'prepare', 'collect'); break } 'H03' { @('prepare', 'collect'); break } default { @('run') } }
 	return [ordered]@{ Case = $Case; Variant = $Variant; Account = $account; Mode = $mode; Needs = @($needs); Stages = @($stages) }
 }
 
@@ -148,7 +148,7 @@ function Get-MissingPrerequisites([string[]]$Needs, [hashtable]$Provided) {
 		'wts-client' = @('WtsClient'); 'password-runner' = @('PasswordRunner'); 'session-runner' = @('SessionRunner')
 		'peer-echo' = @('PeerEcho'); 'peer-receipt' = @('PeerReceipt'); 'peer-audit' = @('PeerAudit')
 		'smb-share' = @('SmbServer', 'SmbPath', 'SmbSha256'); 'efs-fixture' = @('EfsPath', 'EfsPlain', 'EfsSha256')
-		'baseline' = @('Baseline'); 'baseline-service' = @('BaselineService'); 'test-binary' = @('TestBinary'); 'test2json' = @('Test2Json')
+		'baseline' = @('Baseline', 'BaselineReceipt'); 'test-binary' = @('TestBinary'); 'test2json' = @('Test2Json')
 	}
 	$missing = @()
 	foreach ($need in $Needs) {
@@ -248,7 +248,7 @@ if (!$Linger) { $Linger = Join-Path $DataDir 'linger' }
 if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -ne 'S-1-5-18') { throw 'Expected SYSTEM' }
 if ($missing.Count -gt 0) { throw "Missing prerequisites: $($missing -join ', ')" }
 if ($Stage -notin $caseInfo.Stages) { throw "Stage $Stage does not apply to $Case" }
-foreach ($path in @($Fixture, $Admission, $CaseRoot, $Results, $InstallDir, $DataDir)) {
+foreach ($path in @(@($Fixture, $Admission, $CaseRoot, $Results, $InstallDir, $DataDir) + @($BaselineReceipt | Where-Object { $_ }))) {
 	if (![IO.Path]::IsPathRooted($path) -or $path -match '"') { throw 'Every path parameter must be absolute' }
 }
 
@@ -389,6 +389,37 @@ function Set-InteractiveAdmission([string]$Sid, [string]$State) {
 	Invoke-Native -File $winctl -Arguments @('daemon-reload') | Out-Null
 }
 
+# The baseline: SYSTEM's receipt of the machine state before any case, and
+# the interactive admission policy as it was, kept beside the receipt so
+# the final cleanup can put it back exactly. Both are written once.
+$inventoryScope = @('--account', "A=$SidA", '--account', "B=$SidB", '--account', "admin=$AdminSid", '--data-dir', $DataDir, '--linger', $Linger)
+$admissionPolicy = Join-Path $DataDir 'user-admission.json'
+function New-BaselineReceipt {
+	if (Test-Path -LiteralPath "$BaselineReceipt.admission") { throw 'The baseline was already taken' }
+	Invoke-Native -File $Fixture -Arguments (@('inventory', '--receipt', $Baseline) + $inventoryScope + @('--out', $BaselineReceipt)) | Out-Null
+	if (Test-Path -LiteralPath $admissionPolicy) {
+		Copy-Item -LiteralPath $admissionPolicy -Destination "$BaselineReceipt.admission"
+		(Get-Acl -LiteralPath $admissionPolicy).Sddl | Set-Content -LiteralPath "$BaselineReceipt.admission.sddl" -Encoding ASCII
+	} else {
+		New-Item -ItemType File -Path "$BaselineReceipt.admission.absent" | Out-Null
+	}
+}
+function Restore-AdmissionBaseline {
+	if (Test-Path -LiteralPath "$BaselineReceipt.admission") {
+		$tmp = "$admissionPolicy.tmp"
+		Copy-Item -LiteralPath "$BaselineReceipt.admission" -Destination $tmp -Force
+		$acl = Get-Acl -LiteralPath $tmp
+		$acl.SetSecurityDescriptorSddlForm((Get-Content -LiteralPath "$BaselineReceipt.admission.sddl" -Raw).Trim())
+		Set-Acl -LiteralPath $tmp -AclObject $acl
+		Move-Item -LiteralPath $tmp -Destination $admissionPolicy -Force
+	} elseif (Test-Path -LiteralPath "$BaselineReceipt.admission.absent") {
+		if (Test-Path -LiteralPath $admissionPolicy) { Remove-Item -LiteralPath $admissionPolicy -Force }
+	} else {
+		throw 'No saved admission policy beside the baseline receipt'
+	}
+	Invoke-Native -File $winctl -Arguments @('daemon-reload') | Out-Null
+}
+
 # Lab commands.
 function Invoke-Wts([string]$Action, [string]$Role) { Invoke-Native -File $WtsClient -Arguments @($Action, $accountOf[$Role]) | Out-Null }
 function Invoke-AsPassword([string]$Role, [string[]]$Arguments) { Invoke-Native -File $PasswordRunner -Arguments (@($accountOf[$Role], $Fixture) + $Arguments) | Out-Null }
@@ -457,9 +488,15 @@ try {
 	switch -Regex ("$Case/$Variant/$Stage/$Control") {
 		# Cold boot: SYSTEM's first-use check and a startup observer before
 		# the controller reboots; the records after it.
+		'^H0[12]/[AB]/baseline/' {
+			New-BaselineReceipt
+			$checks.Add('baseline receipt taken; the lab provisions next')
+			break
+		}
 		'^H0[12]/[AB]/prepare/' {
 			$firstUse = Join-Path $caseDir 'first-use.json'
-			Invoke-Native -File $Fixture -Arguments @('probe-first-use', '--sid', $SidA, '--baseline', $Baseline, '--out', $firstUse) | Out-Null
+			if (!(Test-Path -LiteralPath $BaselineReceipt)) { throw 'No baseline receipt: run the baseline stage on the sealed baseline before provisioning' }
+			Invoke-Native -File $Fixture -Arguments @('probe-first-use', '--sid', $SidA, '--baseline-receipt', $BaselineReceipt, '--out', $firstUse) | Out-Null
 			Add-Record (Get-HeadlessKey 'H01' 'A' '' 'first-use') 'control' (Get-HeadlessToken 'system' '' 0) ([ordered]@{ firstUse = (Get-Content -LiteralPath $firstUse -Raw | ConvertFrom-Json) })
 			$bootReport = Join-Path $CaseRoot 'cold-boot-observer.json'
 			$taskArgs = (@('observe', '--report', $bootReport, '--admission', $Admission, '--daemon-image', $daemon, '--workload-image', $Fixture,
@@ -855,11 +892,23 @@ try {
 			Add-Record $key 'control' (Get-HeadlessToken 'password' $sid ([int]$rep.identity.session)) $evidence
 			break
 		}
-		# Final cleanup: SYSTEM's inventory against the baseline's.
+		# Final cleanup: restore what the qualification changed, then
+		# SYSTEM's inventory against the baseline receipt.
 		'^H22/' {
+			foreach ($r in @('A', 'B', 'admin')) { if (Test-Path -LiteralPath (Join-Path $Linger $sidOf[$r])) { Set-Linger $r $false } }
+			Wait-Until { @(@($SidA, $SidB, $AdminSid) | ForEach-Object { Get-UserManagerPids $_ }).Count -eq 0 } 'the user managers to exit' 180
+			Get-ScheduledTask -TaskPath '\winunitd-qual\' -ErrorAction SilentlyContinue | Unregister-ScheduledTask -Confirm:$false
+			Restore-AdmissionBaseline
+			# The Default profile template had no WinUnit files at the
+			# baseline unless the receipt says so.
+			if (@((Get-Content -LiteralPath $BaselineReceipt -Raw | ConvertFrom-Json).facts.PSObject.Properties.Name) -notcontains 'templateFiles') {
+				$default = [Environment]::ExpandEnvironmentVariables((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList').Default)
+				$template = Join-Path $default 'AppData\Local\winunitd'
+				if (Test-Path -LiteralPath $template) { Remove-Item -LiteralPath $template -Recurse -Force }
+			}
 			$out = Join-Path $caseDir 'inventory.json'
-			Invoke-Native -File $Fixture -Arguments @('inventory', '--account', "A=$SidA", '--account', "B=$SidB", '--linger', $Linger, '--baseline', $Baseline,
-				'--baseline-service', $BaselineService, '--out', $out) | Out-Null
+			$images = @($manifest.artifacts | ForEach-Object { @('--image', $_.name) })
+			Invoke-Native -File $Fixture -Arguments (@('inventory', '--baseline', $BaselineReceipt) + $inventoryScope + $images + @('--out', $out)) | Out-Null
 			Add-Record $key 'primary' (Get-HeadlessToken 'system' '' 0) ([ordered]@{ inventory = (Get-Content -LiteralPath $out -Raw | ConvertFrom-Json) })
 			break
 		}

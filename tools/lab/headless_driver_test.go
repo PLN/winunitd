@@ -135,7 +135,7 @@ $provided = @{ Fixture = '/f'; Admission = '/a'; CaseRoot = '/c'; Results = '/r'
 	}
 	for _, c := range []struct{ kase, variant, control, need string }{
 		{"G6", "filtered-admin", "", "admin-account"}, {"G1", "B", "", "wts-client"}, {"H17", "A", "peer-receipt", "peer-receipt"},
-		{"H18", "B", "server-principal", "peer-audit"}, {"H20", "revocation", "", "test2json"}, {"H22", "all", "", "baseline-service"},
+		{"H18", "B", "server-principal", "peer-audit"}, {"H20", "revocation", "", "test2json"}, {"H22", "all", "", "baseline"}, {"H22", "all", "", "admin-account"},
 		{"G6", "go-tests", "", "session-runner"}, {"H01", "A", "", "baseline"},
 	} {
 		var needs struct{ Needs []string }
@@ -181,7 +181,7 @@ func TestHeadlessDriverObservationsRecord(t *testing.T) {
 	runHeadless(t, `
 $token = Get-HeadlessToken 'system' '' 0
 $o = New-HeadlessObservation -Key 'H22/all' -Kind 'primary' -Result 'pass' -Token $token -ExecutionId 'x-22' -Sequence 9 -BootId 'boot-3-133' `+
-		`-PasswordLogons 0 -RunnerId '' -Cleanup $true -Controls @() -Evidence ([ordered]@{ inventory = [ordered]@{ baseline = 'c5'; at = 1 } }) -Detail 'checks'
+		`-PasswordLogons 0 -RunnerId '' -Cleanup $true -Controls @() -Evidence ([ordered]@{ inventory = [ordered]@{ baseline = [ordered]@{ name = 'c5'; at = 1 }; at = 2 } }) -Detail 'checks'
 ConvertTo-Json -InputObject $o -Depth 8
 `, &raw)
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -190,7 +190,7 @@ ConvertTo-Json -InputObject $o -Depth 8
 	if err := dec.Decode(&o); err != nil {
 		t.Fatal(err)
 	}
-	if o.Token == nil || o.Token.SID != headless.SystemSID || o.Sequence != 9 || o.Evidence.Inventory == nil || o.Evidence.Inventory.Baseline != "c5" {
+	if o.Token == nil || o.Token.SID != headless.SystemSID || o.Sequence != 9 || o.Evidence.Inventory == nil || o.Evidence.Inventory.Baseline.Name != "c5" {
 		t.Fatalf("observation %+v", o)
 	}
 	m, err := headless.CaseMatrix()
@@ -235,6 +235,13 @@ func TestHeadlessDriverListsPrerequisites(t *testing.T) {
 	}
 	if got.Account != "B" || got.Mode != "s4u" || !strings.Contains(strings.Join(got.Needs, ","), "efs-fixture,password-runner") || len(got.Missing) == 0 {
 		t.Fatalf("listing %+v", got)
+	}
+	// The cold boot's baseline receipt is its own stage, before the lab
+	// provisions anything.
+	var cold struct{ Stages []string }
+	runHeadless(t, "Get-HeadlessCase 'H01' 'A' | ConvertTo-Json", &cold)
+	if strings.Join(cold.Stages, ",") != "baseline,prepare,collect" {
+		t.Fatalf("H01 stages %v", cold.Stages)
 	}
 }
 

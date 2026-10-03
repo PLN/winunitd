@@ -454,7 +454,7 @@ func (ev *evaluation) evaluate(e Entry) (status, bool, string) {
 			open("the probe did not run under the account's own %s token", e.Mode)
 		}
 	case ProofInventory:
-		for _, p := range CheckInventory(r.Evidence.Inventory) {
+		for _, p := range CheckInventory(r.Evidence.Inventory, ev.inventoryContext(e.Key)) {
 			open("%s", p)
 		}
 	default:
@@ -867,4 +867,37 @@ func ReadRecords(dir string) ([]Record, error) {
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+// inventoryContext is what the other records fix for the final inventory:
+// the one first-use check, the latest observation end and the run's
+// accounts and admitted images.
+func (ev *evaluation) inventoryContext(self string) InventoryContext {
+	var c InventoryContext
+	uses := 0
+	for k, r := range ev.records {
+		if k == self {
+			continue
+		}
+		if r.Evidence.FirstUse != nil {
+			uses++
+			c.FirstUse = r.Evidence.FirstUse
+		}
+		if o := r.Evidence.Observer; o != nil {
+			c.After = max(c.After, o.Ended)
+		}
+	}
+	if uses != 1 {
+		c.FirstUse = nil
+	}
+	for _, sid := range ev.roles {
+		c.Accounts = append(c.Accounts, sid)
+	}
+	c.Images = []string{daemonImage, workloadImage}
+	if ev.run.Manifest != nil {
+		for _, a := range ev.run.Manifest.Artifacts {
+			c.Images = append(c.Images, a.Name)
+		}
+	}
+	return c
 }

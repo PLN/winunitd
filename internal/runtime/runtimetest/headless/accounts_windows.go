@@ -128,7 +128,7 @@ func profileFacts(sid string) (ProfileFacts, string) {
 			fail("profile-path", err)
 			break
 		}
-		dir = path
+		dir, f.Path = path, path
 		if created, err := directoryCreated(path); err == nil {
 			f.DirectoryCreated = created
 		} else if !notFound(err) {
@@ -182,19 +182,31 @@ func workloadProgress(profileDir string) (Progress, bool) {
 func runProbeFirstUse(args []string) error {
 	fs := newFlags("probe-first-use")
 	sid := fs.String("sid", "", "")
-	baseline := fs.String("baseline", "", "")
+	receipt := fs.String("baseline-receipt", "", "")
 	out := fs.String("out", "", "")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
-	if !sidPattern.MatchString(*sid) || *sid == SystemSID || !baselinePattern.MatchString(*baseline) {
-		return usage("--sid must be an account SID and --baseline a name")
+	if !sidPattern.MatchString(*sid) || *sid == SystemSID {
+		return usage("--sid must be an account SID")
 	}
-	if err := absPath("out", *out); err != nil {
+	if err := errors.Join(absPath("out", *out), absPath("baseline-receipt", *receipt)); err != nil {
 		return err
 	}
-	p := FirstUseProof{SID: *sid, Baseline: *baseline}
-	var err error
+	// The baseline receipt this check follows: its name and the hash of
+	// its bytes, which the final inventory must present again.
+	data, err := readBounded(*receipt)
+	if err != nil {
+		return err
+	}
+	var b InventoryBaseline
+	if err := decodeStrict(data, &b); err != nil {
+		return fmt.Errorf("baseline receipt: %w", err)
+	}
+	if !baselinePattern.MatchString(b.Name) {
+		return errors.New("the baseline receipt names no baseline")
+	}
+	p := FirstUseProof{SID: *sid, Baseline: b.Name, BaselineSHA256: hashHex(data)}
 	if p.Boot, err = bootIdentity(); err != nil {
 		return err
 	}

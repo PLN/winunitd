@@ -330,7 +330,7 @@ func TestSummarizeRequiresDiagnosticsProofs(t *testing.T) {
 		{"no open record after the padding", "G6/standard-wts: no daemon.open record after the intervention", func(rs []Record) {
 			ev(t, rs, "G6/standard-wts").DaemonLog.After.Tail[0].At = ft(5)
 		}},
-		{"manager not restarted", "H12/A: the observer held no manager of the account started after the intervention and still running", func(rs []Record) {
+		{"manager not restarted", "H12/A: the observer held no manager of the account started after the intervention, before its open record and still running", func(rs []Record) {
 			gen(ev(t, rs, "H12/A").Observer, RoleManager, AccountA, 0).Created = ft(5)
 		}},
 		{"session lane under an elevated token", "G6/filtered-admin: the observer held no manager of the account started after the intervention", func(rs []Record) {
@@ -340,8 +340,42 @@ func TestSummarizeRequiresDiagnosticsProofs(t *testing.T) {
 		{"failed daemon-log query", "H12/A: a daemon-log query failed", func(rs []Record) {
 			ev(t, rs, "H12/A").DaemonLog.After.Errors = []NativeError{{Op: "archive", Win32: 5}}
 		}},
+		// Coherent, bound diagnostics.
+		{"no time on the final facts", "H12/A: the daemon-log facts have no time or root", func(rs []Record) { ev(t, rs, "H12/A").DaemonLog.After.At = 0 }},
+		{"open record after the final read", "H12/B: no daemon.open record after the intervention", func(rs []Record) {
+			ev(t, rs, "H12/B").DaemonLog.After.Tail[0].At = ft(500)
+		}},
+		{"open record beyond the observation", "H12/A: the open record is outside the observation", func(rs []Record) {
+			d := ev(t, rs, "H12/A").DaemonLog
+			d.After.At, d.After.Tail[0].At = ft(5000), ft(4000)
+		}},
+		{"manager started after its open record", "G6/standard-wts: the observer held no manager of the account started after the intervention, before its open record", func(rs []Record) {
+			ev(t, rs, "G6/standard-wts").DaemonLog.After.Tail[0].At = ft(12)
+		}},
+		{"negative log size", "H12/B: a log file has an incoherent size or hash", func(rs []Record) { ev(t, rs, "H12/B").DaemonLog.After.Current.Size = -1 }},
+		{"no archive hash", "G6/filtered-admin: a log file has an incoherent size or hash", func(rs []Record) {
+			ev(t, rs, "G6/filtered-admin").DaemonLog.After.Archive.SHA256 = ""
+		}},
+		{"log padded under a running manager", "H12/A: the account's manager was running when the log was prepared", func(rs []Record) {
+			ev(t, rs, "H12/A").DaemonLog.Before.ManagersRunning = 1
+		}},
+		{"facts read under another root", "H12/B: the daemon-log facts are not the account's manager's data root", func(rs []Record) {
+			ev(t, rs, "H12/B").DaemonLog.Root = `C:\Users\other\AppData\Local\winunitd`
+		}},
+		{"no measured profile", "G6/legacy-repair: the daemon-log facts are not the account's manager's data root", func(rs []Record) {
+			delete(ev(t, rs, "G6/legacy-repair").Observer.Profiles, AccountA)
+		}},
+		{"system facts under a user root", "G6/system-protection: the daemon-log facts are not the system manager's data root", func(rs []Record) {
+			ev(t, rs, "G6/system-protection").DaemonLog.Root = `C:\Users\wu-a\AppData\Local\winunitd`
+		}},
+		{"legacy directory denying everyone", "G6/legacy-repair: the directory was not the declared legacy", func(rs []Record) {
+			ev(t, rs, "G6/legacy-repair").DaemonLog.Before.Dir.DACL = "D:(D;OICI;FA;;;WD)"
+		}},
+		{"legacy directory not openly writable", "G6/legacy-repair: the directory was not the declared legacy", func(rs []Record) {
+			ev(t, rs, "G6/legacy-repair").DaemonLog.Before.Dir.DACL = "D:AI(A;OICI;FA;;;" + sidA + ")(A;OICIID;FR;;;BU)"
+		}},
 		// Repair and protection.
-		{"directory already protected", "G6/legacy-repair: the directory was not a legacy account-owned directory", func(rs []Record) {
+		{"directory already protected", "G6/legacy-repair: the directory was not the declared legacy account-owned, openly writable directory before the first start", func(rs []Record) {
 			b := ev(t, rs, "G6/legacy-repair").DaemonLog.Before.Dir
 			b.DACL = protectedFor(sidA)
 		}},
@@ -398,16 +432,76 @@ func TestSummarizeRequiresDiagnosticsProofs(t *testing.T) {
 		}},
 		// Final inventory.
 		{"no inventory", "H22/all: no final inventory", func(rs []Record) { ev(t, rs, "H22/all").Inventory = nil }},
-		{"grant left behind", "H22/all: qualification linger grants remain", func(rs []Record) { ev(t, rs, "H22/all").Inventory.Grants = []string{sidA} }},
+		{"inventory of a baseline name only", "H22/all: the inventory's baseline is not the one the first-use check recorded", func(rs []Record) {
+			*ev(t, rs, "H22/all").Inventory = InventoryProof{Baseline: InventoryBaseline{Name: "c5-baseline"}, At: ft(90000)}
+		}},
+		{"scope omitted", "H22/all: the inventory does not cover every account, image and resource of the run", func(rs []Record) {
+			ev(t, rs, "H22/all").Inventory.Scope = InventoryScope{}
+		}},
+		{"test binaries not inventoried", "H22/all: the inventory does not cover every account, image and resource", func(rs []Record) {
+			sc := &ev(t, rs, "H22/all").Inventory.Scope
+			sc.Images = slices.DeleteFunc(sc.Images, func(s string) bool { return s == "runtime.test.exe" })
+		}},
+		{"an account not inventoried", "H22/all: the inventory does not cover every account, image and resource", func(rs []Record) {
+			sc := &ev(t, rs, "H22/all").Inventory.Baseline.Scope
+			sc.Accounts = sc.Accounts[:2]
+		}},
+		{"firewall not read", "H22/all: the inventory does not cover every account, image and resource", func(rs []Record) {
+			sc := &ev(t, rs, "H22/all").Inventory.Scope
+			sc.Resources = slices.DeleteFunc(sc.Resources, func(s string) bool { return s == ResourceFirewall })
+		}},
+		{"unrelated baseline", "H22/all: the inventory's baseline is not the one the first-use check recorded", func(rs []Record) {
+			ev(t, rs, "H22/all").Inventory.Baseline.Name = "other-baseline"
+		}},
+		{"baseline receipt replaced", "H22/all: the inventory's baseline is not the one the first-use check recorded", func(rs []Record) {
+			ev(t, rs, "H22/all").Inventory.BaselineSHA256 = strings.Repeat("1", 64)
+		}},
+		{"no first-use check", "H22/all: no first-use check recorded the baseline", func(rs []Record) { ev(t, rs, "H01/A#first-use").FirstUse = nil }},
+		{"baseline after the first case", "H22/all: the baseline was not taken before the first case", func(rs []Record) {
+			ev(t, rs, "H22/all").Inventory.Baseline.At = ft(-3000)
+		}},
+		{"inventory before the last observation", "H22/all: the inventory was not taken after the last observation", func(rs []Record) {
+			ev(t, rs, "H22/all").Inventory.At = ft(100)
+		}},
+		{"service missing at both ends", "H22/all: the winunitd service is not installed", func(rs []Record) {
+			inv := ev(t, rs, "H22/all").Inventory
+			inv.Facts.Service, inv.Baseline.Facts.Service = ServiceFacts{}, ServiceFacts{}
+		}},
+		{"no broker", "H22/all: the service control manager names no running winunitd service process", func(rs []Record) {
+			ev(t, rs, "H22/all").Inventory.Broker = nil
+		}},
+		{"a user daemon as the broker", "H22/all: the service control manager names no running winunitd service process", func(rs []Record) {
+			ev(t, rs, "H22/all").Inventory.Broker.SID = sidA
+		}},
 		{"workload left running", "H22/all: owned processes remain", func(rs []Record) {
 			ev(t, rs, "H22/all").Inventory.Processes = []InventoryProcess{{Image: workloadImage, SID: sidB, PID: 7}}
 		}},
-		{"task left behind", "H22/all: fixture scheduled tasks remain", func(rs []Record) { ev(t, rs, "H22/all").Inventory.Tasks = []string{`\winunitd-qual\observer`} }},
-		{"template not restored", "H22/all: fixture files in the Default profile template remain", func(rs []Record) {
-			ev(t, rs, "H22/all").Inventory.TemplateFiles = []string{"background.service"}
+		{"fixture pipe left", "H22/all: fixture pipes remain", func(rs []Record) { ev(t, rs, "H22/all").Inventory.Pipes = []string{`winunitd-qual\a`} }},
+		{"grant left behind", "H22/all: the machine state differs from the baseline", func(rs []Record) { ev(t, rs, "H22/all").Inventory.Facts.Grants = []string{sidA} }},
+		{"task left behind", "H22/all: the machine state differs from the baseline", func(rs []Record) {
+			ev(t, rs, "H22/all").Inventory.Facts.Tasks = []string{`\winunitd-qual\observer`}
 		}},
-		{"service recovery changed", "H22/all: the winunitd service configuration differs from the baseline", func(rs []Record) {
-			ev(t, rs, "H22/all").Inventory.Service.Recovery = "none/0"
+		{"template not restored", "H22/all: the machine state differs from the baseline", func(rs []Record) {
+			ev(t, rs, "H22/all").Inventory.Facts.TemplateFiles = []string{"background.service"}
+		}},
+		{"firewall rule left", "H22/all: the machine state differs from the baseline", func(rs []Record) {
+			ev(t, rs, "H22/all").Inventory.Facts.FirewallRules = []string{"winunitd-qual-echo"}
+		}},
+		{"service recovery changed", "H22/all: the machine state differs from the baseline", func(rs []Record) {
+			ev(t, rs, "H22/all").Inventory.Facts.Service.Recovery = "0/0;reset/0"
+		}},
+		{"admission policy not restored", "H22/all: the machine state differs from the baseline", func(rs []Record) {
+			ev(t, rs, "H22/all").Inventory.Facts.Admission.SHA256 = strings.Repeat("2", 64)
+		}},
+		{"admission policy removed", "H22/all: the machine state differs from the baseline", func(rs []Record) {
+			ev(t, rs, "H22/all").Inventory.Facts.Admission = nil
+		}},
+		{"data root opened", "H22/all: the machine state differs from the baseline", func(rs []Record) {
+			ev(t, rs, "H22/all").Inventory.Facts.DataDir.DACL += "(A;OICI;FA;;;BU)"
+		}},
+		{"data root not read", "H22/all: the data root's security was not read", func(rs []Record) {
+			inv := ev(t, rs, "H22/all").Inventory
+			inv.Facts.Linger, inv.Baseline.Facts.Linger = nil, nil
 		}},
 		{"failed inventory query", "H22/all: an inventory query failed", func(rs []Record) {
 			ev(t, rs, "H22/all").Inventory.Errors = []NativeError{{Op: "tasks", Win32: 2}}

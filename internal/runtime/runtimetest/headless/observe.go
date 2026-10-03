@@ -191,6 +191,8 @@ func (r *ObserverReport) samplingComplete() bool {
 // creation time of its directory (zero when absent) and whether its hive is
 // loaded.
 type ProfileFacts struct {
+	// Path is the profile directory ProfileList names, private evidence.
+	Path             string        `json:"path,omitempty"`
 	Registered       bool          `json:"registered"`
 	DirectoryCreated uint64        `json:"directoryCreated,omitempty"`
 	HiveLoaded       bool          `json:"hiveLoaded"`

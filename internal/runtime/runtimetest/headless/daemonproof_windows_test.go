@@ -32,7 +32,7 @@ func TestDaemonLogFactsOfTheProductLog(t *testing.T) {
 	if len(first.Errors) != 0 || first.Archive != nil {
 		t.Fatalf("first open: %d errors, archive %t", len(first.Errors), first.Archive != nil)
 	}
-	p := &DaemonLogProof{SID: self, After: first}
+	p := &DaemonLogProof{SID: self, Root: root, After: first}
 	for _, problem := range CheckDaemonLog(p, CheckProtection, self, "", ModeSystem, nil) {
 		t.Errorf("the product's own log: %s", problem)
 	}

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unsafe"
 
@@ -105,10 +106,15 @@ func runProbeDaemonLog(args []string) error {
 		return usage("--sid must be the manager's SID and --phase before or after")
 	}
 	facts := daemonLogFacts(*root)
+	if n, err := managersRunning(*sid); err != nil {
+		facts.Errors = append(facts.Errors, NativeError{Op: "managers", Win32: win32Code(err)})
+	} else {
+		facts.ManagersRunning = n
+	}
 	if *phase == "before" {
 		return writeJSONFile(*out, facts)
 	}
-	p := DaemonLogProof{SID: *sid, After: facts}
+	p := DaemonLogProof{SID: *sid, Root: *root, After: facts}
 	if *before != "" {
 		if err := absPath("before", *before); err != nil {
 			return err
@@ -147,23 +153,39 @@ func daemonDenial(c *ProbeConfig) []PathResult {
 	}
 }
 
-// runInventory is SYSTEM's inventory. With --service-only it records the
-// winunitd service configuration at the baseline; otherwise it lists what
-// the qualification left behind and joins the baseline's service record.
+// runInventory is SYSTEM's inventory of the fixture's machine state. With
+// --receipt it writes the baseline receipt of that name before any case
+// and refuses an incomplete one; with --baseline it writes the final
+// inventory against that receipt, with what remains of the fixture.
 func runInventory(args []string) error {
 	fs := newFlags("inventory")
-	var accounts listFlag
+	var accounts, images listFlag
 	fs.Var(&accounts, "account", "")
+	fs.Var(&images, "image", "")
+	dataDir := fs.String("data-dir", "", "")
 	linger := fs.String("linger", "", "")
+	receipt := fs.String("receipt", "", "")
 	baseline := fs.String("baseline", "", "")
-	baselineService := fs.String("baseline-service", "", "")
-	serviceOnly := fs.Bool("service-only", false, "")
 	out := fs.String("out", "", "")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
-	if err := absPath("out", *out); err != nil {
+	if err := errors.Join(absPath("out", *out), absPath("data-dir", *dataDir), absPath("linger", *linger)); err != nil {
 		return err
+	}
+	if (*receipt == "") == (*baseline == "") {
+		return usage("give either --receipt NAME or --baseline PATH")
+	}
+	var sids []string
+	for _, a := range accounts {
+		_, sid, ok := strings.Cut(a, "=")
+		if !ok || !sidPattern.MatchString(sid) || sid == SystemSID || slices.Contains(sids, sid) {
+			return usage("--account must be ROLE=SID, once per account")
+		}
+		sids = append(sids, sid)
+	}
+	if len(sids) == 0 {
+		return usage("--account is required")
 	}
 	self, err := selfClaim()
 	if err != nil {
@@ -172,65 +194,157 @@ func runInventory(args []string) error {
 	if self.SID != SystemSID {
 		return errors.New("inventory must run as SYSTEM")
 	}
-	var p InventoryProof
-	fail := func(op string, err error) { p.Errors = append(p.Errors, NativeError{Op: op, Win32: win32Code(err)}) }
-	if p.Service, err = serviceFacts(); err != nil {
-		fail("service", err)
-	}
-	if *serviceOnly {
-		if len(p.Errors) > 0 {
-			return errors.New("the service configuration could not be read")
-		}
-		return writeJSONFile(*out, p.Service)
-	}
-	if !baselinePattern.MatchString(*baseline) {
-		return usage("--baseline must name the baseline")
-	}
-	if err := errors.Join(absPath("linger", *linger), absPath("baseline-service", *baselineService)); err != nil {
+	boot, err := bootIdentity()
+	if err != nil {
 		return err
 	}
-	sids := map[string]bool{}
-	for _, a := range accounts {
-		_, sid, ok := strings.Cut(a, "=")
-		if !ok || !sidPattern.MatchString(sid) || sid == SystemSID {
-			return usage("--account must be ROLE=SID")
+	at := filetimeNow()
+	if *receipt != "" {
+		if !baselinePattern.MatchString(*receipt) {
+			return usage("--receipt must name the baseline")
 		}
-		sids[sid] = true
+		if _, err := os.Lstat(*out); !notFound(err) {
+			return errors.New("the baseline receipt already exists; it is written once, at the baseline")
+		}
+		facts, resources, errs := machineFacts(*dataDir, *linger, sids)
+		if len(errs) > 0 {
+			return fmt.Errorf("the baseline could not be read completely: %s", nativeOps(errs))
+		}
+		return writeJSONFile(*out, InventoryBaseline{Name: *receipt, At: at, Boot: boot,
+			Scope: InventoryScope{Accounts: sids, Resources: resources}, Facts: facts})
 	}
-	if len(sids) == 0 {
-		return usage("--account is required")
+	for _, image := range images {
+		if !artifactName.MatchString(image) {
+			return usage("--image must name an executable image")
+		}
 	}
-	p.Baseline, p.At = *baseline, filetimeNow()
-	data, err := readBounded(*baselineService)
-	if err == nil {
-		err = decodeStrict(data, &p.BaselineService)
+	if err := absPath("baseline", *baseline); err != nil {
+		return err
 	}
+	data, err := readBounded(*baseline)
 	if err != nil {
-		fail("baseline-service", err)
+		return err
 	}
-	if p.Processes, err = ownedProcesses(self.PID); err != nil {
+	p := InventoryProof{At: at, Boot: boot, BaselineSHA256: hashHex(data)}
+	if err := decodeStrict(data, &p.Baseline); err != nil {
+		return fmt.Errorf("baseline: %w", err)
+	}
+	fail := func(op string, err error) { p.Errors = append(p.Errors, NativeError{Op: op, Win32: win32Code(err)}) }
+	var resources []string
+	broker, err := servicePID()
+	if err != nil {
+		fail("service-process", err)
+	}
+	if procs, err := imageProcesses(images, self.PID); err != nil {
 		fail("processes", err)
+	} else {
+		resources = append(resources, ResourceProcesses)
+		for _, pr := range procs {
+			if broker != 0 && pr.PID == broker {
+				b := pr
+				p.Broker = &b
+				continue
+			}
+			p.Processes = append(p.Processes, pr)
+		}
 	}
 	if p.Pipes, err = fixturePipes(); err != nil {
 		fail("pipes", err)
+	} else {
+		resources = append(resources, ResourcePipes)
 	}
-	if p.Tasks, err = fixtureTasks(); err != nil {
-		fail("tasks", err)
+	var machine []string
+	var errs []NativeError
+	p.Facts, machine, errs = machineFacts(*dataDir, *linger, sids)
+	p.Errors = append(p.Errors, errs...)
+	p.Scope = InventoryScope{Accounts: sids, Images: images, Resources: append(resources, machine...)}
+	return writeJSONFile(*out, p)
+}
+
+// machineFacts reads the machine state the qualification may change, and
+// which resources it read.
+func machineFacts(dataDir, linger string, sids []string) (MachineFacts, []string, []NativeError) {
+	var f MachineFacts
+	var resources []string
+	var errs []NativeError
+	read := func(resource string, err error) {
+		if err != nil {
+			errs = append(errs, NativeError{Op: resource, Win32: win32Code(err)})
+			return
+		}
+		resources = append(resources, resource)
 	}
-	if p.FirewallRules, err = fixtureFirewallRules(); err != nil {
-		fail("firewall", err)
+	var err error
+	f.Service, err = serviceFacts()
+	read(ResourceService, err)
+	f.DataDir, err = objectFacts(dataDir, false)
+	if err == nil {
+		f.Linger, err = objectFacts(linger, false)
 	}
-	for sid := range sids {
-		if _, err := os.Lstat(filepath.Join(*linger, sid)); err == nil {
-			p.Grants = append(p.Grants, sid)
-		} else if !notFound(err) {
-			fail("linger", err)
+	read(ResourceDataACL, err)
+	f.Admission, err = objectFacts(filepath.Join(dataDir, admissionPolicyName), true)
+	if notFound(err) {
+		f.Admission, err = nil, nil
+	}
+	read(ResourceAdmission, err)
+	err = nil
+	for _, sid := range sids {
+		if _, lerr := os.Lstat(filepath.Join(linger, sid)); lerr == nil {
+			f.Grants = append(f.Grants, sid)
+		} else if !notFound(lerr) {
+			err = lerr
 		}
 	}
-	if p.TemplateFiles, err = templateFiles(); err != nil {
-		fail("template", err)
+	slices.Sort(f.Grants)
+	read(ResourceGrants, err)
+	f.Tasks, err = fixtureTasks()
+	read(ResourceTasks, err)
+	f.FirewallRules, err = fixtureFirewallRules()
+	read(ResourceFirewall, err)
+	f.TemplateFiles, err = templateFiles()
+	read(ResourceTemplate, err)
+	return f, resources, errs
+}
+
+// admissionPolicyName is the interactive admission policy file under the
+// system data root.
+const admissionPolicyName = "user-admission.json"
+
+// nativeOps names the failed operations, without paths.
+func nativeOps(errs []NativeError) string {
+	ops := make([]string, 0, len(errs))
+	for _, e := range errs {
+		ops = append(ops, fmt.Sprintf("%s (%d)", e.Op, e.Win32))
 	}
-	return writeJSONFile(*out, p)
+	return strings.Join(ops, ", ")
+}
+
+func hashHex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// servicePID is the process the service control manager names as the
+// running winunitd service, or 0 when it is not running or not installed.
+func servicePID() (uint32, error) {
+	m, err := mgr.Connect()
+	if err != nil {
+		return 0, err
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService("winunitd")
+	if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer s.Close()
+	st, err := s.Query()
+	if err != nil {
+		return 0, err
+	}
+	return st.ProcessId, nil
 }
 
 // serviceFacts is the winunitd service's start type, binary path hash and
@@ -270,10 +384,11 @@ func serviceFacts() (ServiceFacts, error) {
 		Recovery: strings.Join(recovery, ";") + fmt.Sprintf(";reset/%d", reset)}, nil
 }
 
-// ownedProcesses lists processes of the daemon image not running as SYSTEM
-// (user managers) and of the workload image (workloads, probes, clients),
-// other than this one.
-func ownedProcesses(self uint32) ([]InventoryProcess, error) {
+// imageProcesses lists the running processes of the named images, other
+// than this one, with their owners. A process that exits while it is read
+// is skipped; one whose owner cannot be read is an error, since it could
+// be any account's.
+func imageProcesses(images []string, self uint32) ([]InventoryProcess, error) {
 	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
 		return nil, err
@@ -284,17 +399,20 @@ func ownedProcesses(self uint32) ([]InventoryProcess, error) {
 	var out []InventoryProcess
 	for err = windows.Process32First(snap, &e); err == nil; err = windows.Process32Next(snap, &e) {
 		name := windows.UTF16ToString(e.ExeFile[:])
-		daemon, work := strings.EqualFold(name, daemonImage), strings.EqualFold(name, workloadImage)
-		if e.ProcessID == self || !daemon && !work {
+		if e.ProcessID == self || !slices.ContainsFunc(images, func(i string) bool { return strings.EqualFold(i, name) }) {
 			continue
 		}
-		sid := ""
-		if h, oerr := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, e.ProcessID); oerr == nil {
-			sid, _ = processSID(h)
-			_ = windows.CloseHandle(h)
+		h, oerr := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, e.ProcessID)
+		if errors.Is(oerr, windows.ERROR_INVALID_PARAMETER) {
+			continue // exited
 		}
-		if daemon && sid == SystemSID {
-			continue // the broker
+		if oerr != nil {
+			return nil, oerr
+		}
+		sid, serr := processSID(h)
+		_ = windows.CloseHandle(h)
+		if serr != nil {
+			return nil, serr
 		}
 		out = append(out, InventoryProcess{Image: name, SID: sid, PID: e.ProcessID})
 	}
@@ -302,6 +420,18 @@ func ownedProcesses(self uint32) ([]InventoryProcess, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// managersRunning counts the daemon image's processes running as sid.
+func managersRunning(sid string) (int, error) {
+	procs, err := imageProcesses([]string{daemonImage}, 0)
+	n := 0
+	for _, p := range procs {
+		if p.SID == sid {
+			n++
+		}
+	}
+	return n, err
 }
 
 // fixturePipes lists served pipes in the fixture's namespace.
@@ -332,7 +462,7 @@ func fixturePipes() ([]string, error) {
 
 // fixtureTasks lists scheduled tasks in the fixture's folder.
 func fixtureTasks() ([]string, error) {
-	output, err := exec.Command("schtasks.exe", "/query", "/fo", "csv", "/nh").Output()
+	output, err := quietOutput(exec.Command("schtasks.exe", "/query", "/fo", "csv", "/nh"))
 	if err != nil {
 		return nil, err
 	}
@@ -346,14 +476,16 @@ func fixtureTasks() ([]string, error) {
 			out = append(out, row[0])
 		}
 	}
+	slices.Sort(out)
 	return out, nil
 }
 
 // fixtureFirewallRules lists firewall rules named with the fixture's
-// prefix.
+// prefix. It reads every rule and filters, so an empty result means none;
+// any provider or query error fails the read.
 func fixtureFirewallRules() ([]string, error) {
-	output, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
-		"Get-NetFirewallRule -Name '"+fixtureName+"*' -ErrorAction SilentlyContinue | ForEach-Object Name").Output()
+	output, err := quietOutput(exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+		"$ErrorActionPreference = 'Stop'; Get-NetFirewallRule | Where-Object { $_.Name -like '"+fixtureName+"*' } | ForEach-Object Name"))
 	if err != nil {
 		return nil, err
 	}
@@ -363,7 +495,24 @@ func fixtureFirewallRules() ([]string, error) {
 			out = append(out, line)
 		}
 	}
+	slices.Sort(out)
 	return out, nil
+}
+
+// quietOutput runs a query command and returns its output. A nonzero exit
+// or anything written to standard error fails the query; neither the
+// command's path nor its error text is reported.
+func quietOutput(cmd *exec.Cmd) ([]byte, error) {
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, baseOnly(err)
+	}
+	if stderr.Len() > 0 {
+		return nil, fmt.Errorf("%s reported an error", filepath.Base(cmd.Path))
+	}
+	return output, nil
 }
 
 // templateFiles lists WinUnit files left in the Default profile template.
@@ -395,5 +544,6 @@ func templateFiles() ([]string, error) {
 	if notFound(err) {
 		return nil, nil
 	}
+	slices.Sort(out)
 	return out, err
 }
