@@ -168,14 +168,20 @@ func newAgentOwner(t *testing.T, sid, caseDir string) *agentOwner {
 		SID: sid, Token: tok, Exe: testAbs(t), Daemon: broker, LoadProfile: true,
 		ExtraArgs: []string{nestedOwnerSelector, "--agent-dir", dir},
 	})
-	if proc == nil && err != nil {
+	// A returned process is this test's to confirm gone, whatever happens
+	// next: Kill confirms the agent's whole tree exited and is idempotent
+	// after a successful close.
+	if proc != nil {
+		t.Cleanup(func() {
+			if err := proc.Kill(); err != nil {
+				t.Errorf("owner agent exit unconfirmed: %v", err)
+			}
+		})
+	}
+	if err != nil {
 		t.Fatal(err)
 	}
 	a := &agentOwner{dir: dir, obs: nestedjob.NewObserver(caseDir), proc: proc}
-	if err != nil {
-		_ = proc.Kill()
-		t.Fatal(err)
-	}
 	var self nestedjob.Identity
 	deadline := time.Now().Add(agentTimeout)
 	for {
@@ -184,15 +190,14 @@ func newAgentOwner(t *testing.T, sid, caseDir string) *agentOwner {
 			break
 		}
 		if !proc.Alive() || time.Now().After(deadline) {
-			_ = proc.Kill()
 			t.Fatalf("owner agent did not start: %v", err)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	a.tok = &nestedjob.TokenContext{SID: self.SID, Session: self.Session, Elevated: self.Elevated, Source: nestedjob.TokenS4U}
 	if self.SID != sid || self.Session != 0 || self.Elevated || self.PID != uint32(proc.PID()) {
-		_ = proc.Kill()
-		t.Fatalf("owner agent token %+v is not the headless account in session zero", a.tok)
+		t.Fatalf("owner agent is not the headless account in session zero: account %t session %d elevated %t own pid %t",
+			self.SID == sid, self.Session, self.Elevated, self.PID == uint32(proc.PID()))
 	}
 	return a
 }

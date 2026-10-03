@@ -3,6 +3,7 @@
 package runtime
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -73,9 +74,11 @@ func startNested(t *testing.T, caseID, mode, identity, phase string, configure f
 			t.Error(err)
 		}
 		rec.Cleanup(u.drained && len(errs) == 0)
+		// Public diagnostics: event kinds and numeric errors only. The full
+		// report stays in the case directory as private evidence.
 		if r, err := u.obs.Report(1); t.Failed() && err == nil {
 			for _, e := range r.Events {
-				t.Logf("report %d %s %s %s", e.Seq, e.Kind, e.Note, e.Failure.Error())
+				t.Logf("report %d %s %s", e.Seq, e.Kind, nestedjob.SafeFailure(e.Failure))
 			}
 		}
 	})
@@ -89,13 +92,15 @@ func (u *nestedUnit) inUnitJob(t *testing.T, h *nestedjob.Held) bool {
 }
 
 // checkTokens requires every observed fixture process to run with the
-// owner's token, and the owner's token to be the lane's identity.
+// owner's token, and the owner's token to be the lane's identity. Messages
+// name roles, sessions and elevation, never account SIDs.
 func (u *nestedUnit) checkTokens(t *testing.T, ids ...nestedjob.Identity) {
 	t.Helper()
 	tok := u.owner.token()
 	for _, id := range ids {
 		if id.SID != tok.SID || id.Session != tok.Session || id.Elevated != tok.Elevated {
-			t.Fatalf("%s token %s/%d/%t differs from the owner's %s/%d/%t", id.Role, id.SID, id.Session, id.Elevated, tok.SID, tok.Session, tok.Elevated)
+			t.Fatalf("%s token (same account %t, session %d, elevated %t) differs from the owner's (session %d, elevated %t)",
+				id.Role, id.SID == tok.SID, id.Session, id.Elevated, tok.Session, tok.Elevated)
 		}
 	}
 	if got := nestedjob.IdentityOf(tok); got != u.identity {
@@ -113,7 +118,7 @@ func (u *nestedUnit) ready(t *testing.T) (*nestedjob.Report, []*nestedjob.Held) 
 	t.Helper()
 	_, held, err := u.obs.Ready(1)
 	if err != nil {
-		t.Fatal(err)
+		nestedFatal(t, err)
 	}
 	r, err := u.obs.Report(1)
 	if err != nil {
@@ -154,8 +159,19 @@ func (u *nestedUnit) checkInner(t *testing.T, h *nestedjob.Held) bool {
 	return *ack.InInner
 }
 
+// nestedFatal fails the test, or skips it with the reason when the fixture
+// reported a documented missing prerequisite. A skip is never a pass.
+func nestedFatal(t *testing.T, err error) {
+	t.Helper()
+	if errors.Is(err, nestedjob.ErrUnqualified) {
+		t.Skipf("UNQUALIFIED: %v", err)
+	}
+	t.Fatal(err)
+}
+
 // stopDrained stops the unit and requires every held process to be signaled
-// when the stop returns: an empty job list alone is not exit evidence.
+// when the stop returns: an empty job list alone is not exit evidence. MAIN
+// has then exited, so its report must be complete.
 func (u *nestedUnit) stopDrained(t *testing.T, held []*nestedjob.Held) {
 	t.Helper()
 	if err := u.owner.stop(5 * time.Second); err != nil {
@@ -170,11 +186,15 @@ func (u *nestedUnit) stopDrained(t *testing.T, held []*nestedjob.Held) {
 		t.Errorf("%s pid %d still running when the unit stop returned (after 5s more: %v)", h.ID.Role, h.ID.PID, late)
 	}
 	u.drained = len(running) == 0
+	if _, err := nestedjob.ReadFinalReport(u.cfg.CaseDir, 1); err != nil {
+		t.Errorf("final report: %v", err)
+	}
 }
 
-// probe asks role to create one suspended probe, holds it when created and
-// requires that it is still in the unit job.
-func (u *nestedUnit) probe(t *testing.T, role string, breakaway bool) (nestedjob.ProbeResult, *nestedjob.Held) {
+// probe asks role to create one suspended probe and observes it: a created
+// probe is held, its exact unit-job membership is queried and, with inner
+// set, MAIN reports whether it is still in the inner job. It never judges.
+func (u *nestedUnit) probe(t *testing.T, role string, breakaway, inner bool) (nestedjob.ProbeObservation, *nestedjob.Held) {
 	t.Helper()
 	ack, err := u.obs.Command(1, role, nestedjob.Command{Verb: nestedjob.VerbProbe, Breakaway: breakaway})
 	if err != nil {
@@ -183,31 +203,44 @@ func (u *nestedUnit) probe(t *testing.T, role string, breakaway bool) (nestedjob
 	if ack.Probe == nil {
 		t.Fatalf("%s probe acknowledged without a result", role)
 	}
-	res := *ack.Probe
-	if !res.Created {
-		t.Logf("%s probe breakaway=%t: not created: %s", role, breakaway, res.Failure.Error())
-		win32 := uint32(0)
-		if res.Failure != nil {
-			win32 = res.Failure.Win32
-		}
-		u.rec.Note(fmt.Sprintf("%s breakaway=%t not created win32=%d", role, breakaway, win32))
-		return res, nil
+	o := nestedjob.ProbeObservation{Result: *ack.Probe}
+	if !o.Result.Created {
+		return o, nil
 	}
-	if res.Identity == nil {
-		t.Fatalf("%s probe created without identity: %s", role, res.Failure.Error())
+	if o.Result.Identity == nil {
+		t.Fatalf("%s probe created without identity", role)
 	}
-	h, err := u.obs.Hold(*res.Identity, windows.PROCESS_TERMINATE)
+	h, err := u.obs.Hold(*o.Result.Identity, windows.PROCESS_TERMINATE)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !u.inUnitJob(t, h) {
-		t.Errorf("%s probe breakaway=%t escaped the unit job", role, breakaway)
+	in := u.inUnitJob(t, h)
+	o.InUnitJob = &in
+	if inner {
+		in := u.checkInner(t, h)
+		o.InInner = &in
 	}
 	threads, count, err := nestedjob.PrimarySuspendCount(h.ID.PID)
 	if err != nil || threads != 1 || count != 1 {
 		t.Errorf("%s probe ran: threads=%d suspend=%d err=%v", role, threads, count, err)
 	}
-	return res, h
+	return o, h
+}
+
+// judgeProbe applies the case's expectation to one observed probe. An
+// unrelated creation error or a missing observation fails; a documented
+// denial of a positive control is recorded as inconclusive.
+func (u *nestedUnit) judgeProbe(t *testing.T, role, expect string, o nestedjob.ProbeObservation) {
+	t.Helper()
+	verdict, why := nestedjob.ClassifyProbe(expect, o)
+	u.rec.Note(fmt.Sprintf("%s probe %s: %s (%s)", role, verdict, why, nestedjob.SafeFailure(o.Result.Failure)))
+	switch verdict {
+	case nestedjob.ProbeFail:
+		t.Errorf("%s probe: %s (%s)", role, why, nestedjob.SafeFailure(o.Result.Failure))
+	case nestedjob.ProbeUnqualified:
+		t.Logf("UNQUALIFIED: %s probe: %s", role, why)
+		u.rec.MarkInconclusive(role + " probe: " + why)
+	}
 }
 
 // N01: both launch modes establish the tree with simultaneous membership.
@@ -247,7 +280,7 @@ func TestNativeNestedJobSoleClose(t *testing.T) {
 		_, held := u.ready(t)
 		ack, err := u.obs.Command(1, nestedjob.RoleMain, nestedjob.Command{Verb: nestedjob.VerbCloseInner})
 		if err != nil || ack.Closed != 1 {
-			t.Fatalf("close inner: %+v %v", ack, err)
+			t.Fatalf("close inner: closed %d: %v", ack.Closed, err)
 		}
 		if err := nestedjob.WaitSignaled(held[1:], 5*time.Second); err != nil {
 			t.Fatalf("inner last-handle close: %v", err)
@@ -305,29 +338,31 @@ func TestNativeNestedJobBreakawayDenied(t *testing.T) {
 		u := startNested(t, "N11", mode, identity, "", nil)
 		_, held := u.ready(t)
 		for _, role := range []string{nestedjob.RoleMain, nestedjob.RoleEngine, nestedjob.RoleG1} {
-			res, h := u.probe(t, role, true)
+			o, h := u.probe(t, role, true, false)
 			if h != nil {
 				held = append(held, h)
-				t.Logf("%s breakaway probe created in any job=%t", role, res.InAnyJob)
-				u.rec.Note(fmt.Sprintf("%s breakaway created inAnyJob=%t", role, res.InAnyJob))
 			}
+			u.judgeProbe(t, role, nestedjob.ExpectContained, o)
 		}
 		u.stopDrained(t, held)
 	})
 }
 
 // N12: an inner job that permits explicit breakaway cannot pass it through
-// the unit job, which does not.
+// the unit job, which does not: an explicit breakaway leaves only the inner
+// job. Windows propagates a permitted breakaway up the chain until a job
+// blocks it.
 func TestNativeNestedJobInnerBreakaway(t *testing.T) {
-	testNestedInnerBreakaway(t, "N12", nestedjob.InnerBreakawayExplicit, true)
+	testNestedInnerBreakaway(t, "N12", nestedjob.InnerBreakawayExplicit, true, nestedjob.ExpectPartialBreakaway)
 }
 
-// N13: silent breakaway from the inner job still leaves probes in the unit job.
+// N13: silent breakaway removes ordinary children from the inner job only;
+// they must be created, outside the inner job and still in the unit job.
 func TestNativeNestedJobInnerSilentBreakaway(t *testing.T) {
-	testNestedInnerBreakaway(t, "N13", nestedjob.InnerBreakawaySilent, false)
+	testNestedInnerBreakaway(t, "N13", nestedjob.InnerBreakawaySilent, false, nestedjob.ExpectSilentBreakaway)
 }
 
-func testNestedInnerBreakaway(t *testing.T, caseID, setting string, breakaway bool) {
+func testNestedInnerBreakaway(t *testing.T, caseID, setting string, breakaway bool, expect string) {
 	eachNestedLane(t, nestedIdentities, func(t *testing.T, mode, identity string) {
 		u := startNested(t, caseID, mode, identity, "", nil)
 		_, held := u.ready(t)
@@ -346,14 +381,11 @@ func testNestedInnerBreakaway(t *testing.T, caseID, setting string, breakaway bo
 			}
 		}
 		for _, role := range []string{nestedjob.RoleEngine, nestedjob.RoleG1} {
-			res, h := u.probe(t, role, breakaway)
-			if h == nil {
-				continue
+			o, h := u.probe(t, role, breakaway, true)
+			if h != nil {
+				held = append(held, h)
 			}
-			held = append(held, h)
-			inner := u.checkInner(t, h)
-			t.Logf("%s probe breakaway=%t: unit job=true inner job=%t any job=%t", role, breakaway, inner, res.InAnyJob)
-			u.rec.Note(fmt.Sprintf("%s probe unit=true inner=%t", role, inner))
+			u.judgeProbe(t, role, expect, o)
 		}
 		u.stopDrained(t, held)
 	})
@@ -371,7 +403,7 @@ func TestNativeNestedJobLaunchGate(t *testing.T) {
 				u := startNested(t, "N14", mode, identity, gate, func(c *nestedjob.MainConfig) { c.Gate = gate })
 				r, err := u.obs.WaitReport(1, "gate", func(r *nestedjob.Report) bool { return r.Find(nestedjob.EventGate) != nil })
 				if err != nil {
-					t.Fatal(err)
+					nestedFatal(t, err)
 				}
 				if r.Find(nestedjob.EventResumed) != nil {
 					t.Fatal("ENGINE was resumed before the gate")
