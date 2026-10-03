@@ -1,6 +1,8 @@
 package headless
 
 import (
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -80,60 +82,6 @@ func TestSummarizeFailsClosed(t *testing.T) {
 		"finite control continued": func(rs []Record) []Record { rs[idx(rs, "G5/B#finite-limit")].Evidence.Terminal = "active"; return rs },
 		"foreign control link": func(rs []Record) []Record {
 			rs[idx(rs, "H13/A")].Controls = []string{"H14/A#restore"}
-			return rs
-		},
-		// Metrics recomputed from raw attempts.
-		"crash loop too short": func(rs []Record) []Record {
-			r := &rs[idx(rs, "G2/A")]
-			r.Evidence.Attempts = r.Evidence.Attempts[:10]
-			return rs
-		},
-		"reset after cap": func(rs []Record) []Record {
-			r := &rs[idx(rs, "G1/B")]
-			r.Evidence.Attempts = append(r.Evidence.Attempts, Attempt{Launched: r.Evidence.Attempts[len(r.Evidence.Attempts)-1].Launched.Add(1e9), ExitCode: 1})
-			return rs
-		},
-		"no reset after stable": func(rs []Record) []Record {
-			r := &rs[idx(rs, "G3/s4u-A")]
-			n := len(r.Evidence.Attempts)
-			r.Evidence.Attempts[n-1].Launched = r.Evidence.Attempts[n-2].Launched.Add(60e9)
-			return rs
-		},
-		"stable too short": func(rs []Record) []Record {
-			r := &rs[idx(rs, "G3/wts-B")]
-			s := &r.Evidence.Attempts[7]
-			s.Exited = s.Launched.Add(90e9)
-			return rs
-		},
-		"relaunch while cancelled": func(rs []Record) []Record {
-			r := &rs[idx(rs, "G4/linger-A")]
-			r.Evidence.Attempts = append(r.Evidence.Attempts, Attempt{Launched: r.Evidence.Negative.Since.Add(60e9)})
-			return rs
-		},
-		"short negative window": func(rs []Record) []Record {
-			r := &rs[idx(rs, "G4/stop-B")]
-			r.Evidence.Negative.Until = r.Evidence.Negative.Since.Add(90e9)
-			return rs
-		},
-		"too few unit failures": func(rs []Record) []Record {
-			r := &rs[idx(rs, "G5/A")]
-			r.Evidence.Attempts = r.Evidence.Attempts[:20]
-			return rs
-		},
-		"never more than five starts in ten seconds": func(rs []Record) []Record {
-			r := &rs[idx(rs, "G5/B")]
-			for i := range r.Evidence.Attempts {
-				r.Evidence.Attempts[i].Launched = at(float64(i) * 2.5)
-			}
-			return rs
-		},
-		"replacement before old exit": func(rs []Record) []Record {
-			rs[idx(rs, "H08/B")].Evidence.Replacement.Old[1].Exited = 400
-			return rs
-		},
-		"old survivor": func(rs []Record) []Record { rs[idx(rs, "H09/A")].Evidence.Replacement.Old[0].Exited = 0; return rs },
-		"no replacement evidence": func(rs []Record) []Record {
-			rs[idx(rs, "H07/B")].Evidence.Replacement = nil
 			return rs
 		},
 		// Characterizations recomputed from raw probes and controls.
@@ -229,6 +177,167 @@ func TestSummarizeFailsClosed(t *testing.T) {
 	}
 	if s := Summarize(m, base, AdmittedRun{}, Selection{}); s.Complete {
 		t.Error("complete without an admitted run")
+	}
+}
+
+// gensOf returns the generations of role and account in creation order.
+func gensOf(r *ObserverReport, role, account string) []*Generation {
+	var out []*Generation
+	for i := range r.Generations {
+		if g := &r.Generations[i]; g.Role == role && g.Account == account {
+			out = append(out, g)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Created < out[j].Created })
+	return out
+}
+
+// Lifecycle metrics come only from the observer's report, and each way the
+// report can fall short leaves the summary incomplete for that reason.
+func TestSummarizeObserverFailsClosed(t *testing.T) {
+	m := testMatrix(t)
+	run := testRun(t)
+	base := allPassing(t, m)
+	report := func(rs []Record, key string) *ObserverReport { return rs[findRecord(t, rs, key)].Evidence.Observer }
+	// shared applies fn to the report of every record of a shared execution.
+	shared := func(rs []Record, keys []string, fn func(*ObserverReport)) {
+		for _, k := range keys {
+			fn(report(rs, k))
+		}
+	}
+	shift := func(g *Generation, by float64) {
+		d := uint64(by * 1e7)
+		g.Created, g.Seen, g.Exited = g.Created+d, g.Seen+d, g.Exited+d
+		if g.Crashed != 0 {
+			g.Crashed += d
+		}
+	}
+	tests := []struct {
+		name, want string
+		mutate     func([]Record)
+	}{
+		{"crash loop too short", "G2/A: durationSec below its minimum", func(rs []Record) {
+			r := report(rs, "G2/A")
+			keep := gensOf(r, RoleManager, AccountA)[9].Created
+			r.Generations = slices.DeleteFunc(r.Generations, func(g Generation) bool { return g.Role == RoleManager && g.Account == AccountA && g.Created > keep })
+		}},
+		{"reset after cap", "G1/B: shortGapsAfterCap above its maximum", func(rs []Record) {
+			r := report(rs, "G1/B")
+			gs := gensOf(r, RoleManager, AccountB)
+			g := *gs[len(gs)-1]
+			g.PID++
+			shift(&g, 1)
+			r.Generations = append(r.Generations, g)
+			r.Ended = max(r.Ended, g.Exited)
+		}},
+		{"no reset after stable", "G3/s4u-A: postResetGapSec above its maximum", func(rs []Record) {
+			gs := gensOf(report(rs, "G3/s4u-A"), RoleManager, AccountA)
+			shift(gs[len(gs)-1], 59)
+			report(rs, "G3/s4u-A").Ended += 60e7
+		}},
+		{"stable too short", "G3/wts-B: stableSec below its minimum", func(rs []Record) {
+			g := gensOf(report(rs, "G3/wts-B"), RoleManager, AccountB)[7]
+			g.Exited = g.Created + 90e7
+			g.Crashed = g.Exited - 1000
+		}},
+		{"relaunch while cancelled", "G4/linger-A: negativeSec below its minimum", func(rs []Record) {
+			r := report(rs, "G4/linger-A")
+			r.Generations = append(r.Generations, Generation{Role: RoleManager, Account: AccountA, PID: 9, Created: r.Marks[0].At + 60e7,
+				Seen: r.Marks[0].At + 61e7, Token: tokenFacts(AccountA, ModeS4U)})
+		}},
+		{"short negative window", "G4/stop-B: negativeSec below its minimum", func(rs []Record) {
+			r := report(rs, "G4/stop-B")
+			r.Ended = r.Marks[0].At + 90e7
+		}},
+		{"no quiet mark", "G4/linger-B: observer: the observer saw no quiet mark", func(rs []Record) { report(rs, "G4/linger-B").Marks = nil }},
+		{"too few unit failures", "G5/A: failures below its minimum", func(rs []Record) {
+			r := report(rs, "G5/A")
+			keep := gensOf(r, RoleWorkload, AccountA)[19].Created
+			r.Generations = slices.DeleteFunc(r.Generations, func(g Generation) bool { return g.Role == RoleWorkload && g.Created > keep })
+		}},
+		{"never more than five starts in ten seconds", "G5/B: maxStartsIn10s below its minimum", func(rs []Record) {
+			for i, g := range gensOf(report(rs, "G5/B"), RoleWorkload, AccountB) {
+				life := g.Exited - g.Created
+				g.Created = ft(float64(i) * 2.5)
+				g.Seen, g.Exited = g.Created+5e5, g.Created+life
+			}
+		}},
+		{"short-lived generation", "G5/B: observer: a generation lived too briefly", func(rs []Record) {
+			g := gensOf(report(rs, "G5/B"), RoleWorkload, AccountB)[3]
+			g.Seen, g.Exited = g.Created+1, g.Created+5e5
+		}},
+		{"scans too far apart", "G5/A: observer: the observer's scans were too far apart", func(rs []Record) { report(rs, "G5/A").MaxGap = 3e6 }},
+		{"replacement before old exit", "H08/B: orderedReplacement below its minimum", func(rs []Record) {
+			gensOf(report(rs, "H08/B"), RoleWorkload, AccountB)[0].Exited = ft(8)
+		}},
+		{"old survivor", "H09/A: orderedReplacement below its minimum", func(rs []Record) {
+			shared(rs, []string{"H09/A", "H09/B"}, func(r *ObserverReport) { gensOf(r, RoleWorkload, AccountA)[0].Exited = 0 })
+		}},
+		{"no broker crash", "H09/B: observer: the observer crashed no broker", func(rs []Record) {
+			shared(rs, []string{"H09/A", "H09/B"}, func(r *ObserverReport) { gensOf(r, RoleBroker, "")[0].Crashed = 0 })
+		}},
+		{"shared execution with two reports", "shared execution broker-crash has two observer reports", func(rs []Record) {
+			report(rs, "H09/B").Ended += 1e7
+		}},
+		{"no workload crash", "H07/B: observer: the observer crashed no workload", func(rs []Record) {
+			gensOf(report(rs, "H07/B"), RoleWorkload, AccountB)[0].Crashed = 0
+		}},
+		{"no observer report", "H07/A: no observer report", func(rs []Record) { rs[findRecord(t, rs, "H07/A")].Evidence.Observer = nil }},
+		{"observer outside the run", "H08/A: observer executable outside the admitted run", func(rs []Record) {
+			report(rs, "H08/A").Executable = strings.Repeat("4", 64)
+		}},
+		{"observer on another boot", "H05/A: observer report is from another boot", func(rs []Record) { report(rs, "H05/A").Boot.Counter = 9 }},
+		{"unfinished observer", "G2/B: observer: observer stage", func(rs []Record) { report(rs, "G2/B").Stage = ObserverRunning }},
+		{"unidentified process", "H07/A: observer: 1 processes of a watched image were not identified", func(rs []Record) {
+			r := report(rs, "H07/A")
+			r.Unidentified = []Unidentified{{PID: 9, At: r.Started, Win32: 87}}
+		}},
+		{"manager under a session token", "G2/A: observer: an observed generation did not run under the account's s4u token", func(rs []Record) {
+			gensOf(report(rs, "G2/A"), RoleManager, AccountA)[2].Token = tokenFacts(AccountA, ModeWTS)
+		}},
+		{"replacement under another token source", "H08/A: observer: an observed generation did not run under the account's s4u token", func(rs []Record) {
+			gensOf(report(rs, "H08/A"), RoleWorkload, AccountA)[1].Token.Source = "User32"
+		}},
+		{"observer watched another SID", "H07/B: observer: the observer watched another SID for account B", func(rs []Record) {
+			r := report(rs, "H07/B")
+			r.Accounts[AccountB] = "S-1-5-21-7-7-7-1002"
+			for i := range r.Generations {
+				if r.Generations[i].Account == AccountB {
+					r.Generations[i].Token.SID = r.Accounts[AccountB]
+				}
+			}
+		}},
+		{"peer restarted", "H07/A: peerUnchanged below its minimum", func(rs []Record) {
+			gensOf(report(rs, "H07/A"), RoleWorkload, AccountB)[0].Exited = ft(6)
+		}},
+		{"own manager restarted", "H07/B: kept below its minimum", func(rs []Record) {
+			r := report(rs, "H07/B")
+			gensOf(r, RoleManager, AccountB)[0].Exited = ft(6)
+		}},
+		{"not drained", "H05/B: drained below its minimum", func(rs []Record) {
+			gensOf(report(rs, "H05/B"), RoleWorkload, AccountB)[0].Exited = 0
+		}},
+		{"manager after the no-grant reboot", "H03/A: negativeSec below its minimum", func(rs []Record) {
+			shared(rs, []string{"H03/A", "H03/B"}, func(r *ObserverReport) {
+				r.Generations = append(r.Generations, Generation{Role: RoleManager, Account: AccountA, PID: 9, Created: ft(30), Seen: ft(30.05),
+					Token: tokenFacts(AccountA, ModeS4U)})
+			})
+		}},
+		{"crash before it was seen", "H08/A: observer: generation", func(rs []Record) {
+			g := gensOf(report(rs, "H08/A"), RoleManager, AccountA)[0]
+			g.Crashed = g.Seen - 1
+		}},
+		{"report on an unobserved case", "H13/A: carries an observer report its case does not use", func(rs []Record) {
+			rs[findRecord(t, rs, "H13/A")].Evidence.Observer = report(rs, "H07/A")
+		}},
+	}
+	for _, tc := range tests {
+		rs := cloneRecords(base)
+		tc.mutate(rs)
+		s := Summarize(m, rs, run, Selection{})
+		if s.Complete || !strings.Contains(strings.Join(s.Problems, "\n"), tc.want) {
+			t.Errorf("%s: complete %t, problems %q", tc.name, s.Complete, s.Problems)
+		}
 	}
 }
 

@@ -250,11 +250,14 @@ func runServe(args []string) error {
 	}
 }
 
-// runFail exits with code until the release file exists, then serves.
+// runFail exits with code until the release file exists, then serves. Each
+// failing run first lives for --hold, so that the observer, which scans at
+// most MaxObservationGap apart, holds every one.
 func runFail(args []string) error {
 	fs := newFlags("fail")
 	code := fs.Uint("code", 7, "")
 	until := fs.String("until", "", "")
+	hold := fs.Duration("hold", 0, "")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
@@ -264,8 +267,12 @@ func runFail(args []string) error {
 	if *code == 0 || *code > 255 {
 		return usage("--code must be 1 to 255")
 	}
+	if err := durationIn("hold", *hold, 0, 10*time.Second); err != nil {
+		return err
+	}
 	if _, err := os.Stat(*until); err == nil {
 		return runServe(nil)
 	}
+	time.Sleep(*hold)
 	return exitCode(uint32(*code))
 }

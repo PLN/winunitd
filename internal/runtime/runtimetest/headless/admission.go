@@ -16,8 +16,9 @@ import (
 // AdmissionSchema is the admitted run manifest schema.
 const AdmissionSchema = 1
 
-// MaxFileBytes bounds every JSON file this package reads.
-const MaxFileBytes = 1 << 20
+// MaxFileBytes bounds every JSON file this package reads. A record carries
+// its observer report, up to MaxGenerations processes.
+const MaxFileBytes = 8 << 20
 
 // Admission is the controller's reviewed run manifest: the admitted clean
 // source and the SHA-256 of every executable a run may use.

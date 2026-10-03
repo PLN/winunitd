@@ -8,14 +8,10 @@ import (
 
 // Evidence is a record's raw observations. The summary recomputes every
 // metric, characterization and sub-result verdict from it; a record's own
-// claims about them are not trusted.
+// claims about them are not trusted. Lifecycle values (launches, negative
+// windows, replacements) come only from the observer's report.
 type Evidence struct {
-	// Attempts are the launches of the observed manager or unit, in order.
-	Attempts []Attempt `json:"attempts,omitempty"`
-	// Negative is a window in which no attempt may start.
-	Negative *Window `json:"negative,omitempty"`
-	// Replacement relates the old processes to their replacement.
-	Replacement *Replacement `json:"replacement,omitempty"`
+	Observer *ObserverReport `json:"observer,omitempty"`
 	// Terminal is the final unit state a status snapshot reported, such as
 	// "start-limit".
 	Terminal string        `json:"terminal,omitempty"`
@@ -32,45 +28,16 @@ type Evidence struct {
 	Native   []NativeError `json:"native,omitempty"`
 }
 
-// Attempt is one observed launch. Exited is zero while it still runs.
-type Attempt struct {
-	Launched time.Time `json:"launched"`
-	Exited   time.Time `json:"exited,omitzero"`
-	ExitCode uint32    `json:"exitCode,omitempty"`
-	PID      uint32    `json:"pid,omitempty"`
-	Created  uint64    `json:"created,omitempty"`
-}
-
-// Window is a closed observation interval.
-type Window struct {
-	Since time.Time `json:"since"`
-	Until time.Time `json:"until"`
-}
-
-// Process is one exact process: PID and creation FILETIME, and its exit
-// FILETIME from a held handle, zero while it runs.
-type Process struct {
-	Role    string `json:"role"`
-	PID     uint32 `json:"pid"`
-	Created uint64 `json:"created"`
-	Exited  uint64 `json:"exited,omitempty"`
-}
-
-// Replacement lists the old processes and the replacement's first process.
-type Replacement struct {
-	Old []Process `json:"old"`
-	New Process   `json:"new"`
-}
-
 // NativeError is an operation's exact native result.
 type NativeError struct {
 	Op    string `json:"op"`
 	Win32 uint32 `json:"win32"`
 }
 
-// metrics computes every metric the evidence supports. A metric that the
-// evidence cannot support is absent, which fails any requirement on it.
-func metrics(ev Evidence, capSec float64) map[string]float64 {
+// metrics computes every metric the derived lifecycle and the terminal state
+// support. A metric that they cannot support is absent, which fails any
+// requirement on it.
+func metrics(ev Lifecycle, terminal string, capSec float64) map[string]float64 {
 	out := map[string]float64{}
 	att := append([]Attempt(nil), ev.Attempts...)
 	sort.SliceStable(att, func(i, j int) bool { return att[i].Launched.Before(att[j].Launched) })
@@ -144,8 +111,17 @@ func metrics(ev Evidence, capSec float64) map[string]float64 {
 		}
 		out["orderedReplacement"] = boolMetric(ordered)
 	}
-	if ev.Terminal != "" {
-		out["startLimited"] = boolMetric(ev.Terminal == "start-limit")
+	if ev.Kept != nil {
+		out["kept"] = boolMetric(*ev.Kept)
+	}
+	if ev.Peer != nil {
+		out["peerUnchanged"] = boolMetric(*ev.Peer)
+	}
+	if ev.Drained != nil {
+		out["drained"] = boolMetric(*ev.Drained)
+	}
+	if terminal != "" {
+		out["startLimited"] = boolMetric(terminal == "start-limit")
 	}
 	return out
 }

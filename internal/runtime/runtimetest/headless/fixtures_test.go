@@ -101,35 +101,171 @@ func launches(gaps ...float64) []Attempt {
 	return out
 }
 
-// evidenceFor gives each case realistic raw evidence that meets it.
-func evidenceFor(e Entry) Evidence {
-	var ev Evidence
+// Observer report fixtures. ft(sec) is the FILETIME sec seconds after t0.
+var ft0 = uint64(t0.UnixNano()/100) + 116444736000000000
+
+func ft(sec float64) uint64 { return uint64(int64(ft0) + int64(sec*1e7)) }
+
+// testBoot is the boot of a phase; phase 1 is one fresh boot.
+func testBoot(phase int) Boot { return Boot{Time: ft(-3600), Counter: uint32(phase)} }
+
+var testExecutable = sync.OnceValue(func() string {
+	exe, _ := ExecutableSHA256()
+	return exe
+})
+
+func tokenFacts(account, mode string) TokenFacts {
+	if mode == ModeWTS {
+		return TokenFacts{SID: roleSID[account], Session: 2, Source: "User32", LogonType: logonInteractive, AuthPackage: "Negotiate", AuthenticationID: "00000000:00020000"}
+	}
+	return TokenFacts{SID: roleSID[account], Source: productTokenSource, LogonType: logonNetwork, AuthPackage: "Kerberos", AuthenticationID: "00000000:00010000"}
+}
+
+// observed builds a finished observer report for phase that scanned from
+// 5 seconds before t0 until end.
+type observed struct {
+	*ObserverReport
+	pid uint32
+}
+
+func newObserved(phase int, end float64) *observed {
+	return &observed{ObserverReport: &ObserverReport{Schema: ObserverSchema, Executable: testExecutable(), Boot: testBoot(phase),
+		Accounts: map[string]string{AccountA: sidA, AccountB: sidB}, Started: ft(-5), Ended: ft(end), Scans: 1000, MaxGap: 500000,
+		Stage: ObserverFinished}, pid: 1000}
+}
+
+// gen adds a generation created at sec; it is seen at the first scan or
+// 50 ms after its creation, and exits at exit unless that is negative.
+func (o *observed) gen(role, account, mode string, created, exit float64, code uint32) *Generation {
+	o.pid++
+	g := Generation{Role: role, Account: account, PID: o.pid, Created: ft(created), Seen: max(ft(created+0.05), o.Started), Token: tokenFacts(account, mode)}
+	if role == RoleBroker {
+		g.Account, g.Token = "", TokenFacts{SID: SystemSID, Source: "*SYSTEM*", AuthenticationID: "00000000:000003e7"}
+	}
+	if exit >= 0 {
+		g.Exited, g.ExitCode = ft(exit), code
+	}
+	o.Generations = append(o.Generations, g)
+	return &o.Generations[len(o.Generations)-1]
+}
+
+// crash marks a generation as terminated by the observer just before its exit.
+func crash(g *Generation) { g.Crashed, g.ExitCode = g.Exited-1000, 0xdead }
+
+// stable adds the account's manager and workload running throughout.
+func (o *observed) stable(account string) {
+	o.gen(RoleManager, account, ModeS4U, -60, -1, 0)
+	o.gen(RoleWorkload, account, ModeS4U, -59, -1, 0)
+}
+
+func peerOf(account string) string {
+	if account == AccountA {
+		return AccountB
+	}
+	return AccountA
+}
+
+// loop adds crashed manager generations at the attempts' times.
+func (o *observed) loop(account, mode string, att []Attempt) {
+	for _, a := range att {
+		g := o.gen(RoleManager, account, mode, a.Launched.Sub(t0).Seconds(), a.Exited.Sub(t0).Seconds(), 0)
+		crash(g)
+	}
+}
+
+func lastLaunch(att []Attempt) float64 { return att[len(att)-1].Launched.Sub(t0).Seconds() }
+
+// observerFor builds the report an observed case's records carry. Shared
+// executions get the same report for every account.
+func observerFor(e Entry) *ObserverReport {
 	switch e.Case {
 	case "G1", "G2":
-		ev.Attempts = launches(1, 2, 4, 8, 16, 32, 60, 61, 60, 62, 60, 60, 63, 60, 60)
+		att := launches(1, 2, 4, 8, 16, 32, 60, 61, 60, 62, 60, 60, 63, 60, 60)
+		o := newObserved(e.Phase, lastLaunch(att)+5)
+		o.stable(peerOf(e.Account))
+		o.loop(e.Account, e.Mode, att)
+		return o.ObserverReport
 	case "G3":
 		att := launches(1, 2, 4, 8, 16, 32)
 		last := att[len(att)-1].Launched
-		stable := Attempt{Launched: last.Add(32 * time.Second), Exited: last.Add(162 * time.Second), ExitCode: 1, PID: 300, Created: 3000}
-		r1 := Attempt{Launched: stable.Exited.Add(5 * time.Second), Exited: stable.Exited.Add(5500 * time.Millisecond), ExitCode: 1, PID: 301, Created: 3001}
-		r2 := Attempt{Launched: r1.Launched.Add(time.Second), Exited: r1.Launched.Add(1500 * time.Millisecond), ExitCode: 1, PID: 302, Created: 3002}
-		ev.Attempts = append(att, stable, r1, r2)
+		stable := Attempt{Launched: last.Add(32 * time.Second), Exited: last.Add(162 * time.Second)}
+		r1 := Attempt{Launched: stable.Exited.Add(5 * time.Second), Exited: stable.Exited.Add(5500 * time.Millisecond)}
+		r2 := Attempt{Launched: r1.Launched.Add(time.Second), Exited: r1.Launched.Add(1500 * time.Millisecond)}
+		att = append(att, stable, r1, r2)
+		o := newObserved(e.Phase, lastLaunch(att)+5)
+		o.loop(e.Account, e.Mode, att)
+		return o.ObserverReport
 	case "G4":
-		ev.Attempts = launches(1, 2, 4, 8, 16, 32, 60)
-		end := ev.Attempts[len(ev.Attempts)-1].Launched
-		ev.Negative = &Window{Since: end.Add(10 * time.Second), Until: end.Add(140 * time.Second)}
+		att := launches(1, 2, 4, 8, 16, 32, 60)
+		end := lastLaunch(att)
+		o := newObserved(e.Phase, end+140)
+		o.loop(e.Account, e.Mode, att)
+		o.Marks = []Mark{{Name: "quiet", At: ft(end + 10)}}
+		return o.ObserverReport
 	case "G5":
 		var gaps []float64
 		for range 9 {
-			gaps = append(gaps, 0.3)
+			gaps = append(gaps, 0.6)
 		}
 		for range 20 {
 			gaps = append(gaps, 30)
 		}
-		ev.Attempts = launches(gaps...)
-	case "H07", "H08", "H09":
-		ev.Replacement = &Replacement{Old: []Process{{Role: "main", PID: 10, Created: 100, Exited: 200}, {Role: "child", PID: 11, Created: 110, Exited: 205}},
-			New: Process{Role: "main", PID: 20, Created: 300}}
+		att := launches(gaps...)
+		o := newObserved(e.Phase, lastLaunch(att)+5)
+		o.gen(RoleManager, e.Account, e.Mode, -60, -1, 0)
+		for _, a := range att {
+			o.gen(RoleWorkload, e.Account, e.Mode, a.Launched.Sub(t0).Seconds(), a.Exited.Sub(t0).Seconds(), 7)
+		}
+		o.Releases = []Mark{{Name: "release", At: ft(lastLaunch(att) + 1)}}
+		return o.ObserverReport
+	case "H03":
+		return newObserved(e.Phase, 130).ObserverReport
+	case "H05":
+		o := newObserved(e.Phase, 90)
+		o.stable(peerOf(e.Account))
+		o.gen(RoleManager, e.Account, e.Mode, -60, 10.5, 0)
+		o.gen(RoleWorkload, e.Account, e.Mode, -59, 10.2, 1)
+		o.Marks = []Mark{{Name: "quiet", At: ft(10)}}
+		return o.ObserverReport
+	case "H07":
+		o := newObserved(e.Phase, 30)
+		o.stable(peerOf(e.Account))
+		o.gen(RoleManager, e.Account, e.Mode, -60, -1, 0)
+		crash(o.gen(RoleWorkload, e.Account, e.Mode, -59, 5.2, 0))
+		o.gen(RoleWorkload, e.Account, e.Mode, 7, -1, 0)
+		return o.ObserverReport
+	case "H08":
+		o := newObserved(e.Phase, 30)
+		o.stable(peerOf(e.Account))
+		crash(o.gen(RoleManager, e.Account, e.Mode, -60, 5.1, 0))
+		o.gen(RoleWorkload, e.Account, e.Mode, -59, 5.3, 1)
+		o.gen(RoleManager, e.Account, e.Mode, 6.5, -1, 0)
+		o.gen(RoleWorkload, e.Account, e.Mode, 7, -1, 0)
+		return o.ObserverReport
+	case "H09":
+		o := newObserved(e.Phase, 60)
+		crash(o.gen(RoleBroker, "", ModeSystem, -120, 5.1, 0))
+		for _, acct := range []string{AccountA, AccountB} {
+			o.gen(RoleManager, acct, ModeS4U, -60, 5.2, 1)
+			o.gen(RoleWorkload, acct, ModeS4U, -59, 5.3, 1)
+		}
+		o.gen(RoleBroker, "", ModeSystem, 20, -1, 0)
+		for _, acct := range []string{AccountA, AccountB} {
+			o.gen(RoleManager, acct, ModeS4U, 21, -1, 0)
+			o.gen(RoleWorkload, acct, ModeS4U, 22, -1, 0)
+		}
+		return o.ObserverReport
+	}
+	return nil
+}
+
+// evidenceFor gives each case realistic raw evidence that meets it.
+func evidenceFor(e Entry) Evidence {
+	var ev Evidence
+	if e.Observe != nil {
+		ev.Observer = observerFor(e)
+	}
+	switch e.Case {
 	case "H13":
 		ev.Paths = []PathResult{{Probe: "unit-fixture", OK: true}, {Probe: "state-write", OK: true}, {Probe: "state-read", OK: true},
 			{Probe: "hkcu", OK: true}, {Probe: "known-folders", OK: true}, {Probe: "peer-root", Win32: errAccessDenied}}
@@ -164,7 +300,6 @@ func controlEvidence(c ControlEntry) Evidence {
 	var ev Evidence
 	switch c.Name {
 	case "finite-limit":
-		ev.Attempts = launches(0.2, 0.2, 0.2, 0.2)
 		ev.Terminal = "start-limit"
 	case "peer-receipt":
 		ev.Receipt = &EchoReceipt{Nonce: testNonce, Received: true}
@@ -233,9 +368,8 @@ func allPassing(t *testing.T, m *Matrix) []Record {
 	for i, it := range items {
 		r := it.rec
 		r.Sequence = i + 1
-		r.BootID = "boot-1"
+		r.BootID = testBoot(it.phase).String()
 		if it.phase > 1 {
-			r.BootID = "boot-" + string(rune('0'+it.phase))
 			r.PasswordLogons = 1
 		}
 		out = append(out, r)

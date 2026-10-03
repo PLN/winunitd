@@ -68,7 +68,16 @@ const (
 // Metrics a case can require; they are computed from raw evidence.
 var knownMetrics = []string{
 	"durationSec", "cappedGaps", "shortGapsAfterCap", "grownGapSec", "stableSec", "postResetGapSec",
-	"negativeSec", "failures", "maxStartsIn10s", "orderedReplacement", "startLimited",
+	"negativeSec", "failures", "maxStartsIn10s", "orderedReplacement", "startLimited", "peerUnchanged", "drained", "kept",
+}
+
+// The observer report derivation each lifecycle metric needs: launches of
+// the observed role, a negative window, a replacement, the peer or the
+// account's drained processes. startLimited comes from a status snapshot.
+var metricNeeds = map[string]string{
+	"durationSec": "role", "cappedGaps": "role", "shortGapsAfterCap": "role", "grownGapSec": "role", "stableSec": "role",
+	"postResetGapSec": "role", "failures": "role", "maxStartsIn10s": "role", "negativeSec": "negative",
+	"orderedReplacement": "crash", "peerUnchanged": "peer", "drained": "drained", "kept": "kept",
 }
 
 //go:embed matrix.json
@@ -110,6 +119,31 @@ type Case struct {
 	// Runners is the number of fresh test runners whose repetitions each
 	// run every variant once.
 	Runners int `json:"runners,omitempty"`
+	// Observe is what the summary derives from the SYSTEM observer's
+	// report; a case with lifecycle requirements needs it.
+	Observe *ObserveSpec `json:"observe,omitempty"`
+}
+
+// ObserveSpec names the lifecycle values derived from an observer report.
+type ObserveSpec struct {
+	// Role is the observed role whose generations are the launches.
+	Role string `json:"role,omitempty"`
+	// Negative starts the negative window at this mark, or at the
+	// observer's first scan for "start"; it ends at the last scan.
+	Negative string `json:"negative,omitempty"`
+	// Crash is the role the observer terminates; Old are the roles whose
+	// processes alive then must exit before the first New process.
+	Crash string   `json:"crash,omitempty"`
+	Old   []string `json:"old,omitempty"`
+	New   string   `json:"new,omitempty"`
+	// Kept are roles of the account whose one process must stay the same
+	// throughout.
+	Kept []string `json:"kept,omitempty"`
+	// Peer requires the other account's manager and workload to stay the
+	// same processes throughout.
+	Peer bool `json:"peer,omitempty"`
+	// Drained requires every process of the account to have exited.
+	Drained bool `json:"drained,omitempty"`
 }
 
 // Variant is one account, mode or subcase of a case.
@@ -164,6 +198,7 @@ type Entry struct {
 	Paths        string         `json:"paths,omitempty"`
 	Pipe         string         `json:"pipe,omitempty"`
 	Controls     []ControlEntry `json:"controls,omitempty"`
+	Observe      *ObserveSpec   `json:"observe,omitempty"`
 }
 
 // ControlEntry is one expected control record.
@@ -266,6 +301,56 @@ func validRequirements(reqs []Requirement) error {
 	return nil
 }
 
+func validRole(role string, broker bool) bool {
+	return role == RoleManager || role == RoleWorkload || role == RoleChild || broker && role == RoleBroker
+}
+
+// validObserve requires an observer derivation for every lifecycle
+// requirement, and only for daemon-plane cases.
+func validObserve(c Case) error {
+	o := c.Observe
+	if o == nil {
+		for _, r := range c.Requires {
+			if metricNeeds[r.Metric] != "" {
+				return fmt.Errorf("requirement %s needs an observer derivation", r.Metric)
+			}
+		}
+		return nil
+	}
+	if c.Plane != PlaneDaemon {
+		return errors.New("only daemon cases are observed")
+	}
+	if o.Role != "" && !validRole(o.Role, false) {
+		return fmt.Errorf("observed role %q", o.Role)
+	}
+	if o.Negative != "" && (!markPattern.MatchString(o.Negative) || o.Role == "") {
+		return fmt.Errorf("negative window %q", o.Negative)
+	}
+	if o.Crash != "" || o.New != "" || len(o.Old) > 0 {
+		if !validRole(o.Crash, true) || !validRole(o.New, false) || o.New == RoleChild || len(o.Old) == 0 || !slices.Contains(o.Old, o.Crash) {
+			return errors.New("a replacement needs a crashed role among the old roles and a new role")
+		}
+		for _, r := range o.Old {
+			if !validRole(r, true) {
+				return fmt.Errorf("old role %q", r)
+			}
+		}
+	}
+	for _, r := range o.Kept {
+		if !validRole(r, false) {
+			return fmt.Errorf("kept role %q", r)
+		}
+	}
+	has := map[string]bool{"role": o.Role != "", "negative": o.Negative != "", "crash": o.Crash != "", "peer": o.Peer, "drained": o.Drained,
+		"kept": len(o.Kept) > 0}
+	for _, r := range c.Requires {
+		if need := metricNeeds[r.Metric]; need != "" && !has[need] {
+			return fmt.Errorf("requirement %s needs the observer's %s", r.Metric, need)
+		}
+	}
+	return nil
+}
+
 func (m *Matrix) validateCase(id string, c Case) error {
 	if !caseIDPattern.MatchString(id) || c.Title == "" || c.Expect == "" || len(c.Variants) == 0 {
 		return errors.New("needs an ID, title, expectation and variants")
@@ -275,6 +360,9 @@ func (m *Matrix) validateCase(id string, c Case) error {
 		return fmt.Errorf("ledger %q", c.Ledger)
 	}
 	if err := validRequirements(c.Requires); err != nil {
+		return err
+	}
+	if err := validObserve(c); err != nil {
 		return err
 	}
 	switch c.Characterize {
@@ -335,6 +423,9 @@ func (m *Matrix) validateCase(id string, c Case) error {
 		if v.Plane != "" {
 			plane = v.Plane
 		}
+		if c.Observe != nil && plane != PlaneDaemon {
+			return fmt.Errorf("variant %s of an observed case is not a daemon record", v.ID)
+		}
 		if plane != PlaneDaemon && plane != PlaneOwnerTest {
 			return fmt.Errorf("variant %s plane %q", v.ID, plane)
 		}
@@ -382,11 +473,11 @@ func (m *Matrix) expand() ([]Entry, error) {
 		for _, v := range c.Variants {
 			e := Entry{Case: id, Variant: v.ID, Ledger: c.Ledger, Account: v.Account, Mode: v.Mode, Execution: v.Execution,
 				Refs: slices.Clone(v.Refs), Test: v.Test, CapSec: c.CapSec, Requires: c.Requires,
-				Characterize: c.Characterize, Paths: c.Paths, Pipe: c.Pipe}
+				Characterize: c.Characterize, Paths: c.Paths, Pipe: c.Pipe, Observe: c.Observe}
 			if len(v.Refs) > 0 {
 				e.Plane = PlaneReference
 				e.Key = id + "/" + v.ID
-				e.Requires, e.Characterize, e.Paths, e.Pipe, e.CapSec = nil, "", "", "", 0
+				e.Requires, e.Characterize, e.Paths, e.Pipe, e.CapSec, e.Observe = nil, "", "", "", 0, nil
 				out = append(out, e)
 				continue
 			}

@@ -99,7 +99,29 @@ func TestDecodeMatrixRejectsInvalidTables(t *testing.T) {
 		"unbounded metric": func(m map[string]any) {
 			cases(m)["H07"].(map[string]any)["requires"] = []any{map[string]any{"metric": "durationSec"}}
 		},
-		"unknown reference": func(m map[string]any) { variant(m, "B01", 0)["refs"] = []any{"G2/C"} },
+		"lifecycle without observer": func(m map[string]any) { delete(cases(m)["G2"].(map[string]any), "observe") },
+		"replacement without crash": func(m map[string]any) {
+			delete(cases(m)["H07"].(map[string]any)["observe"].(map[string]any), "crash")
+		},
+		"crash outside old roles": func(m map[string]any) {
+			cases(m)["H08"].(map[string]any)["observe"].(map[string]any)["old"] = []any{"workload"}
+		},
+		"child as replacement": func(m map[string]any) { cases(m)["H07"].(map[string]any)["observe"].(map[string]any)["new"] = "child" },
+		"unknown observed role": func(m map[string]any) {
+			cases(m)["G5"].(map[string]any)["observe"].(map[string]any)["role"] = "service"
+		},
+		"negative without role": func(m map[string]any) {
+			delete(cases(m)["G4"].(map[string]any)["observe"].(map[string]any), "role")
+		},
+		"peer metric without peer": func(m map[string]any) {
+			delete(cases(m)["H07"].(map[string]any)["observe"].(map[string]any), "peer")
+		},
+		"kept metric without kept": func(m map[string]any) {
+			delete(cases(m)["H07"].(map[string]any)["observe"].(map[string]any), "kept")
+		},
+		"observed owner test": func(m map[string]any) { variant(m, "G5", 0)["plane"] = PlaneOwnerTest },
+		"observed field":      func(m map[string]any) { cases(m)["G5"].(map[string]any)["observe"].(map[string]any)["extra"] = 1 },
+		"unknown reference":   func(m map[string]any) { variant(m, "B01", 0)["refs"] = []any{"G2/C"} },
 		"executed B record": func(m map[string]any) {
 			cases(m)["B01"].(map[string]any)["variants"] = []any{map[string]any{"id": "A", "account": "A", "mode": "s4u"}}
 		},
@@ -131,37 +153,37 @@ func TestDecodeMatrixRejectsInvalidTables(t *testing.T) {
 }
 
 func TestMetrics(t *testing.T) {
-	ev := Evidence{Attempts: launches(1, 2, 4, 8, 16, 32, 60, 60, 61)}
-	got := metrics(ev, 60)
+	ev := Lifecycle{Attempts: launches(1, 2, 4, 8, 16, 32, 60, 60, 61)}
+	got := metrics(ev, "", 60)
 	if got["cappedGaps"] != 3 || got["shortGapsAfterCap"] != 0 || got["durationSec"] != 244 || got["failures"] != 10 {
 		t.Fatalf("crash loop metrics %v", got)
 	}
 	ev.Attempts = append(ev.Attempts, Attempt{Launched: ev.Attempts[9].Launched.Add(2e9)})
-	if got := metrics(ev, 60); got["shortGapsAfterCap"] != 1 || got["failures"] != 10 {
+	if got := metrics(ev, "", 60); got["shortGapsAfterCap"] != 1 || got["failures"] != 10 {
 		t.Fatalf("reset after the cap %v", got)
 	}
-	if got := metrics(Evidence{Attempts: launches(1, 1, 1, 1, 1, 1, 1, 1, 20)}, 0); got["maxStartsIn10s"] != 9 {
+	if got := metrics(Lifecycle{Attempts: launches(1, 1, 1, 1, 1, 1, 1, 1, 20)}, "", 0); got["maxStartsIn10s"] != 9 {
 		t.Fatalf("starts in ten seconds %v", got)
 	}
-	if got := metrics(Evidence{}, 60); len(got) != 0 {
+	if got := metrics(Lifecycle{}, "", 60); len(got) != 0 {
 		t.Fatalf("metrics without evidence %v", got)
 	}
 	w := &Window{Since: at(100), Until: at(250)}
-	if got := metrics(Evidence{Attempts: launches(1), Negative: w}, 0); got["negativeSec"] != 150 {
+	if got := metrics(Lifecycle{Attempts: launches(1), Negative: w}, "", 0); got["negativeSec"] != 150 {
 		t.Fatalf("negative window %v", got)
 	}
-	if got := metrics(Evidence{Attempts: []Attempt{{Launched: at(250)}}, Negative: w}, 0); got["negativeSec"] != 0 {
+	if got := metrics(Lifecycle{Attempts: []Attempt{{Launched: at(250)}}, Negative: w}, "", 0); got["negativeSec"] != 0 {
 		t.Fatalf("launch at the window's end %v", got)
 	}
 	r := &Replacement{Old: []Process{{PID: 1, Created: 1, Exited: 5}}, New: Process{PID: 2, Created: 5}}
-	if got := metrics(Evidence{Replacement: r}, 0); got["orderedReplacement"] != 0 {
+	if got := metrics(Lifecycle{Replacement: r}, "", 0); got["orderedReplacement"] != 0 {
 		t.Fatalf("equal exit and creation time counted as ordered: %v", got)
 	}
 	r.New.Created = 6
-	if got := metrics(Evidence{Replacement: r}, 0); got["orderedReplacement"] != 1 {
+	if got := metrics(Lifecycle{Replacement: r}, "", 0); got["orderedReplacement"] != 1 {
 		t.Fatalf("ordered replacement %v", got)
 	}
-	if got := metrics(Evidence{Replacement: &Replacement{New: Process{PID: 2, Created: 6}}}, 0); got["orderedReplacement"] != 0 {
+	if got := metrics(Lifecycle{Replacement: &Replacement{New: Process{PID: 2, Created: 6}}}, "", 0); got["orderedReplacement"] != 0 {
 		t.Fatalf("replacement without old processes %v", got)
 	}
 }

@@ -13,14 +13,16 @@
       "title": "Interactive WTS user-manager crash loop",
       "expect": "Each attempt is a successful native creation followed by a short-lived exit; the delay grows 1/2/4/8/16/32/60 and stays capped for at least five retries over ten minutes, with no renewed short delays; the peer stays healthy.",
       "variants": [{"id": "B", "account": "B", "mode": "wts"}],
-      "requires": [{"metric": "durationSec", "min": 600}, {"metric": "cappedGaps", "min": 5}, {"metric": "shortGapsAfterCap", "max": 0}]
+      "requires": [{"metric": "durationSec", "min": 600}, {"metric": "cappedGaps", "min": 5}, {"metric": "shortGapsAfterCap", "max": 0}, {"metric": "peerUnchanged", "min": 1}],
+      "observe": {"role": "manager", "peer": true}
     },
     "G2": {
       "ledger": "C3", "plane": "daemon", "phase": 2, "capSec": 60,
       "title": "Headless S4U user-manager crash loop",
       "expect": "As G1 through the linger path with no logon; the reversible failure is then repaired and the manager recovers on its own.",
       "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}],
-      "requires": [{"metric": "durationSec", "min": 600}, {"metric": "cappedGaps", "min": 5}, {"metric": "shortGapsAfterCap", "max": 0}]
+      "requires": [{"metric": "durationSec", "min": 600}, {"metric": "cappedGaps", "min": 5}, {"metric": "shortGapsAfterCap", "max": 0}, {"metric": "peerUnchanged", "min": 1}],
+      "observe": {"role": "manager", "peer": true}
     },
     "G3": {
       "ledger": "C3", "plane": "daemon", "phase": 2, "capSec": 60,
@@ -31,7 +33,8 @@
         {"id": "s4u-B", "account": "B", "mode": "s4u"},
         {"id": "wts-B", "account": "B", "mode": "wts", "phase": 3}
       ],
-      "requires": [{"metric": "grownGapSec", "min": 30}, {"metric": "stableSec", "min": 120}, {"metric": "postResetGapSec", "max": 30}]
+      "requires": [{"metric": "grownGapSec", "min": 30}, {"metric": "stableSec", "min": 120}, {"metric": "postResetGapSec", "max": 30}],
+      "observe": {"role": "manager"}
     },
     "G4": {
       "ledger": "C3", "plane": "daemon", "phase": 2, "capSec": 60,
@@ -46,7 +49,8 @@
         {"id": "stop-B", "account": "B", "mode": "s4u"},
         {"id": "crash", "refs": ["H09/A", "H09/B"]}
       ],
-      "requires": [{"metric": "negativeSec", "min": 120}]
+      "requires": [{"metric": "negativeSec", "min": 120}, {"metric": "drained", "min": 1}],
+      "observe": {"role": "manager", "negative": "quiet", "drained": true}
     },
     "G5": {
       "ledger": "C3", "plane": "daemon", "phase": 2,
@@ -54,6 +58,7 @@
       "expect": "A short-lived nonzero-exit unit with StartLimitBurst=0 and a short capped exponential delay keeps retrying for ten minutes and more than twenty failures, more than five accepted starts in one real ten-second window, unlimited status and a confirmed stop. The finite control stops at its start limit.",
       "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}],
       "requires": [{"metric": "durationSec", "min": 600}, {"metric": "failures", "min": 21}, {"metric": "maxStartsIn10s", "min": 6}],
+      "observe": {"role": "workload"},
       "controls": [{"name": "finite-limit", "requires": [{"metric": "startLimited", "min": 1}]}]
     },
     "G6": {
@@ -88,13 +93,13 @@
       "expect": "The same boot starts B's genuine S4U manager and workload on its existing, previously unloaded profile; both accounts progress concurrently.",
       "variants": [{"id": "B", "account": "B", "mode": "s4u", "execution": "cold-boot"}]
     },
-    "H03": {"ledger": "H", "plane": "daemon", "phase": 2, "title": "No implicit grant", "expect": "With linger removed and the enabled units left in place, a reboot starts no headless manager or workload; explicit re-enable recovers.", "variants": [{"id": "A", "account": "A", "mode": "s4u", "execution": "no-grant-reboot"}, {"id": "B", "account": "B", "mode": "s4u", "execution": "no-grant-reboot"}]},
+    "H03": {"ledger": "H", "plane": "daemon", "phase": 2, "title": "No implicit grant", "expect": "With linger removed and the enabled units left in place, a reboot starts no headless manager or workload; explicit re-enable recovers.", "variants": [{"id": "A", "account": "A", "mode": "s4u", "execution": "no-grant-reboot"}, {"id": "B", "account": "B", "mode": "s4u", "execution": "no-grant-reboot"}], "requires": [{"metric": "negativeSec", "min": 120}], "observe": {"role": "manager", "negative": "start"}},
     "H04": {"ledger": "H", "plane": "daemon", "phase": 3, "title": "Same-account session leaves the headless manager", "expect": "A genuine WTS logon and logoff of the account leave the headless manager, workload, AuthenticationId, session zero and headless-s4u mode unchanged.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}]},
-    "H05": {"ledger": "H", "plane": "daemon", "phase": 2, "title": "Revocation", "expect": "Disabling linger with no session drains every owned process and the profile; nothing returns for the observation window or after a reboot; the peer is preserved.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}]},
+    "H05": {"ledger": "H", "plane": "daemon", "phase": 2, "title": "Revocation", "expect": "Disabling linger with no session drains every owned process and the profile; nothing returns for the observation window or after a reboot; the peer is preserved.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}], "requires": [{"metric": "negativeSec", "min": 75}, {"metric": "drained", "min": 1}, {"metric": "peerUnchanged", "min": 1}], "observe": {"role": "manager", "negative": "quiet", "drained": true, "peer": true}},
     "H06": {"ledger": "H", "plane": "daemon", "phase": 3, "title": "Independent permissions", "expect": "Linger stays effective when only interactive admission changes; disabling linger while a session remains admitted keeps the session-backed manager until the final logoff drains it.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}]},
-    "H07": {"ledger": "H", "plane": "daemon", "phase": 2, "title": "Unit crash", "expect": "The old unit tree exits before the new invocation is accepted; the user manager and the peer are unaffected.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}], "requires": [{"metric": "orderedReplacement", "min": 1}]},
-    "H08": {"ledger": "H", "plane": "daemon", "phase": 2, "title": "User-manager crash", "expect": "The old owned tree exits before a new genuine S4U manager and the enabled work recover without a controller start.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}], "requires": [{"metric": "orderedReplacement", "min": 1}]},
-    "H09": {"ledger": "H", "plane": "daemon", "phase": 2, "title": "Broker crash", "expect": "SCM recovery under the recorded policy restarts the broker and both accounts' enabled workloads; the old trees exit first; no controller restart.", "variants": [{"id": "A", "account": "A", "mode": "s4u", "execution": "broker-crash"}, {"id": "B", "account": "B", "mode": "s4u", "execution": "broker-crash"}], "requires": [{"metric": "orderedReplacement", "min": 1}]},
+    "H07": {"ledger": "H", "plane": "daemon", "phase": 2, "title": "Unit crash", "expect": "The old unit tree exits before the new invocation is accepted; the user manager and the peer are unaffected.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}], "requires": [{"metric": "orderedReplacement", "min": 1}, {"metric": "kept", "min": 1}, {"metric": "peerUnchanged", "min": 1}], "observe": {"crash": "workload", "old": ["workload", "child"], "new": "workload", "kept": ["manager"], "peer": true}},
+    "H08": {"ledger": "H", "plane": "daemon", "phase": 2, "title": "User-manager crash", "expect": "The old owned tree exits before a new genuine S4U manager and the enabled work recover without a controller start.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}], "requires": [{"metric": "orderedReplacement", "min": 1}, {"metric": "peerUnchanged", "min": 1}], "observe": {"crash": "manager", "old": ["manager", "workload", "child"], "new": "workload", "peer": true}},
+    "H09": {"ledger": "H", "plane": "daemon", "phase": 2, "title": "Broker crash", "expect": "SCM recovery under the recorded policy restarts the broker and both accounts' enabled workloads; the old trees exit first; no controller restart.", "variants": [{"id": "A", "account": "A", "mode": "s4u", "execution": "broker-crash"}, {"id": "B", "account": "B", "mode": "s4u", "execution": "broker-crash"}], "requires": [{"metric": "orderedReplacement", "min": 1}], "observe": {"crash": "broker", "old": ["broker", "manager", "workload", "child"], "new": "workload"}},
     "H10": {"ledger": "H", "title": "Short-lived user-manager failures", "expect": "See B01 and B02.", "variants": [{"id": "A", "refs": ["B01/A", "B02/A"]}, {"id": "B", "refs": ["B01/B", "B02/B"]}]},
     "H11": {"ledger": "H", "title": "Unlimited unit retries", "expect": "See G5: an unlimited budget is shown only by more than five accepted starts in one ten-second window, against a finite control.", "variants": [{"id": "A", "refs": ["G5/A"]}, {"id": "B", "refs": ["G5/B"]}]},
     "H12": {"ledger": "H", "plane": "daemon", "phase": 2, "title": "Startup and rotation", "expect": "With a padded stopped log, the product rotates it on reopen, persists fresh protected diagnostics and stays healthy; the padding is a declared intervention.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}]},

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -48,20 +49,47 @@ func TestRecordAndSummarizeCommands(t *testing.T) {
 	admission := writeTestAdmission(t)
 	results := t.TempDir()
 	all := allPassing(t, m)
-	for _, r := range all[1:] {
-		if err := WriteRecord(results, r); err != nil {
+	observedKey := "H07/A"
+	write := func(name string, v any) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), name)
+		data, _ := json.Marshal(v)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
 			t.Fatal(err)
 		}
+		return path
 	}
-	// The first record goes through the record command, as a driver would.
-	r := all[0]
-	o := Observation{Key: r.Key, Kind: r.Kind, Result: r.Result, Token: r.Token, ExecutionID: r.ExecutionID, Sequence: r.Sequence,
-		BootID: r.BootID, PasswordLogons: r.PasswordLogons, RunnerID: r.RunnerID, CleanupConfirmed: r.CleanupConfirmed,
-		Controls: r.Controls, Evidence: r.Evidence}
-	obsPath := filepath.Join(t.TempDir(), "observation.json")
-	data, _ := json.Marshal(o)
-	if err := os.WriteFile(obsPath, data, 0o600); err != nil {
-		t.Fatal(err)
+	// The first record and an observed one go through the record command,
+	// as a driver would; the observed one with its observer's report.
+	first, observed := all[0], all[findRecord(t, all, observedKey)]
+	for _, r := range all {
+		if r.Key != first.Key && r.Key != observedKey {
+			if err := WriteRecord(results, r); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	observation := func(r Record) Observation {
+		return Observation{Key: r.Key, Kind: r.Kind, Result: r.Result, Token: r.Token, ExecutionID: r.ExecutionID, Sequence: r.Sequence,
+			BootID: r.BootID, PasswordLogons: r.PasswordLogons, RunnerID: r.RunnerID, CleanupConfirmed: r.CleanupConfirmed,
+			Controls: r.Controls, Evidence: r.Evidence}
+	}
+	reportPath := write("observer.json", observed.Evidence.Observer)
+	o := observation(observed)
+	if code, _, errOut := runMain("record", "--observation", write("inline.json", o), "--results", results, "--admission", admission); code != 1 || !strings.Contains(errOut, "cannot carry an observer report") {
+		t.Fatalf("inline observer report: %d %s", code, errOut)
+	}
+	o.Evidence.Observer = nil
+	observedPath := write("observed.json", o)
+	if code, _, errOut := runMain("record", "--observation", observedPath, "--results", results, "--admission", admission); code != 1 || !strings.Contains(errOut, "needs the observer's report") {
+		t.Fatalf("observed record without its report: %d %s", code, errOut)
+	}
+	if code, _, errOut := runMain("record", "--observation", observedPath, "--observer", reportPath, "--results", results, "--admission", admission); code != 0 {
+		t.Fatalf("record with observer: %d %s", code, errOut)
+	}
+	obsPath := write("observation.json", observation(first))
+	if code, _, errOut := runMain("record", "--observation", obsPath, "--observer", reportPath, "--results", results, "--admission", admission); code != 1 || !strings.Contains(errOut, "not an observed case") {
+		t.Fatalf("observer report on an unobserved record: %d %s", code, errOut)
 	}
 	if code, _, errOut := runMain("record", "--observation", obsPath, "--results", results, "--admission", admission); code != 0 {
 		t.Fatalf("record: %d %s", code, errOut)
@@ -99,13 +127,13 @@ func TestBuildRecord(t *testing.T) {
 	m := testMatrix(t)
 	run := testRun(t)
 	exe := run.Manifest.Artifacts[0].SHA256
-	good := Observation{Key: "H07/A", Kind: KindPrimary, Result: ResultPass, ExecutionID: "run-1", Sequence: 3, BootID: "boot-1"}
-	r, err := BuildRecord(m, good, run, exe)
+	good := Observation{Key: "H13/A", Kind: KindPrimary, Result: ResultPass, ExecutionID: "run-1", Sequence: 3, BootID: "boot-1"}
+	r, err := BuildRecord(m, good, nil, run, exe)
 	if err != nil || r.Source != testSource || r.Admission != run.Hash || r.Matrix != MatrixHash() || r.Executable != exe {
 		t.Fatalf("record %+v %v", r, err)
 	}
 	control := Observation{Key: "H14/A#restore", Kind: KindControl, Result: ResultPass, Sequence: 4, BootID: "boot-1"}
-	if _, err := BuildRecord(m, control, run, exe); err != nil {
+	if _, err := BuildRecord(m, control, nil, run, exe); err != nil {
 		t.Fatalf("control: %v", err)
 	}
 	for name, mutate := range map[string]func(*Observation){
@@ -123,12 +151,41 @@ func TestBuildRecord(t *testing.T) {
 	} {
 		o := good
 		mutate(&o)
-		if _, err := BuildRecord(m, o, run, exe); err == nil {
+		if _, err := BuildRecord(m, o, nil, run, exe); err == nil {
 			t.Errorf("%s accepted", name)
 		}
 	}
-	if _, err := BuildRecord(m, good, AdmittedRun{}, exe); err == nil {
+	if _, err := BuildRecord(m, good, nil, AdmittedRun{}, exe); err == nil {
 		t.Error("record without an admitted run")
+	}
+
+	// An observed case's report: admitted, valid and from the record's boot.
+	e := m.Expand()[slices.IndexFunc(m.Expand(), func(e Entry) bool { return e.Key == "H07/A" })]
+	report := observerFor(e)
+	observed := Observation{Key: "H07/A", Kind: KindPrimary, Result: ResultPass, ExecutionID: "run-2", Sequence: 5, BootID: report.Boot.String()}
+	if r, err := BuildRecord(m, observed, report, run, exe); err != nil || r.Evidence.Observer != report {
+		t.Fatalf("observed record %v", err)
+	}
+	failed := observed
+	failed.Result = ResultFail
+	if _, err := BuildRecord(m, failed, nil, run, exe); err != nil {
+		t.Fatalf("failed observed record without a report: %v", err)
+	}
+	for name, mutate := range map[string]func(*Observation, *ObserverReport){
+		"no report":          func(o *Observation, r *ObserverReport) { *r = ObserverReport{} },
+		"another boot":       func(o *Observation, r *ObserverReport) { o.BootID = "boot-1" },
+		"unadmitted":         func(o *Observation, r *ObserverReport) { r.Executable = strings.Repeat("5", 64) },
+		"unfinished":         func(o *Observation, r *ObserverReport) { r.Stage = ObserverRunning },
+		"unobserved case":    func(o *Observation, r *ObserverReport) { o.Key = "H13/A" },
+		"inline report":      func(o *Observation, r *ObserverReport) { o.Evidence.Observer = r },
+		"generation reorder": func(o *Observation, r *ObserverReport) { r.Generations[0].Seen = r.Generations[0].Created - 1 },
+	} {
+		o, r := observed, *report
+		r.Generations = slices.Clone(report.Generations)
+		mutate(&o, &r)
+		if _, err := BuildRecord(m, o, &r, run, exe); err == nil {
+			t.Errorf("%s accepted", name)
+		}
 	}
 	var o Observation
 	if err := decodeStrict([]byte(`{"key":"H07/A","kind":"primary","extra":1}`), &o); err == nil {

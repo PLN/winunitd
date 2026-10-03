@@ -23,7 +23,7 @@ const (
 )
 
 // Roles that run only on Windows, with the workload's token or SYSTEM's.
-var windowsRoles = []string{"serve", "fail", "probe-token", "probe-path", "probe-tcp", "probe-smb", "probe-efs", "pipe-serve", "probe-pipe"}
+var windowsRoles = []string{"serve", "fail", "probe-token", "probe-path", "probe-tcp", "probe-smb", "probe-efs", "pipe-serve", "probe-pipe", "observe"}
 
 // Main runs one fixture role and returns its exit code.
 func Main(args []string, stdout, stderr io.Writer) int {
@@ -243,10 +243,16 @@ var executionPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
 // BuildRecord binds an observation to the admitted run, the matrix and the
 // recording executable. It accepts only keys of the matrix; the summary
-// judges the evidence.
-func BuildRecord(m *Matrix, o Observation, run AdmittedRun, executable string) (Record, error) {
+// judges the evidence. An observed case's lifecycle evidence is the
+// observer's report, passed separately and never inside the observation; a
+// passing observed record needs one from an admitted observer on the
+// record's boot.
+func BuildRecord(m *Matrix, o Observation, report *ObserverReport, run AdmittedRun, executable string) (Record, error) {
 	if run.Manifest == nil {
 		return Record{}, errors.New("no admitted run")
+	}
+	if o.Evidence.Observer != nil {
+		return Record{}, errors.New("an observation cannot carry an observer report")
 	}
 	entries := map[string]Entry{}
 	controls := map[string]bool{}
@@ -279,6 +285,24 @@ func BuildRecord(m *Matrix, o Observation, run AdmittedRun, executable string) (
 	if len(o.Detail) > 512 || strings.ContainsAny(o.Detail, "\r\n") {
 		return Record{}, errors.New("detail must be one line of at most 512 bytes")
 	}
+	observed := o.Kind == KindPrimary && entries[o.Key].Observe != nil
+	switch {
+	case report != nil && !observed:
+		return Record{}, fmt.Errorf("%s is not an observed case", o.Key)
+	case report == nil && observed && o.Result == ResultPass:
+		return Record{}, fmt.Errorf("a passing %s record needs the observer's report", o.Key)
+	case report != nil:
+		if err := report.Validate(); err != nil {
+			return Record{}, fmt.Errorf("observer report: %w", err)
+		}
+		if !run.Manifest.Admits(report.Executable) {
+			return Record{}, errors.New("the observer is not in the admitted run manifest")
+		}
+		if report.Boot.String() != o.BootID {
+			return Record{}, errors.New("the observer report is from another boot")
+		}
+		o.Evidence.Observer = report
+	}
 	return Record{
 		Schema: RecordSchema, Key: o.Key, Kind: o.Kind, Result: o.Result, Source: run.Manifest.Source, Admission: run.Hash,
 		Executable: executable, Matrix: MatrixHash(), Token: o.Token, ExecutionID: o.ExecutionID, Sequence: o.Sequence,
@@ -290,6 +314,7 @@ func BuildRecord(m *Matrix, o Observation, run AdmittedRun, executable string) (
 func runRecord(args []string) error {
 	fs := newFlags("record")
 	observation := fs.String("observation", "", "")
+	observer := fs.String("observer", "", "")
 	results := fs.String("results", "", "")
 	admission := fs.String("admission", "", "")
 	if err := parse(fs, args); err != nil {
@@ -297,6 +322,20 @@ func runRecord(args []string) error {
 	}
 	if err := errors.Join(absPath("observation", *observation), absPath("results", *results), absPath("admission", *admission)); err != nil {
 		return err
+	}
+	var report *ObserverReport
+	if *observer != "" {
+		if err := absPath("observer", *observer); err != nil {
+			return err
+		}
+		data, err := readBounded(*observer)
+		if err != nil {
+			return err
+		}
+		report = &ObserverReport{}
+		if err := decodeStrict(data, report); err != nil {
+			return fmt.Errorf("observer report: %w", err)
+		}
 	}
 	m, err := CaseMatrix()
 	if err != nil {
@@ -321,7 +360,7 @@ func runRecord(args []string) error {
 	if err := decodeStrict(data, &o); err != nil {
 		return fmt.Errorf("observation: %w", err)
 	}
-	r, err := BuildRecord(m, o, run, exe)
+	r, err := BuildRecord(m, o, report, run, exe)
 	if err != nil {
 		return err
 	}

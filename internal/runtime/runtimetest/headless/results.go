@@ -277,6 +277,9 @@ func (ev *evaluation) check(r Record) error {
 	if r.Token != nil && r.Token.Source != SourcePeer && !sidPattern.MatchString(r.Token.SID) {
 		return errors.New("token without an account SID")
 	}
+	if r.Evidence.Observer != nil && (r.Kind != KindPrimary || ev.entries[r.Key].Observe == nil) {
+		return errors.New("carries an observer report its case does not use")
+	}
 	return nil
 }
 
@@ -394,7 +397,11 @@ func (ev *evaluation) evaluate(e Entry) (status, bool, string) {
 	if err := ev.tokenFits(r.Token, e.Account, e.Mode); err != nil {
 		open("token: %v", err)
 	}
-	for _, f := range meets(e.Requires, metrics(r.Evidence, e.CapSec)) {
+	var life Lifecycle
+	if e.Observe != nil {
+		life = ev.lifecycle(e, r, open)
+	}
+	for _, f := range meets(e.Requires, metrics(life, r.Evidence.Terminal, e.CapSec)) {
 		open("%s", f)
 	}
 	if e.Paths != "" {
@@ -425,7 +432,7 @@ func (ev *evaluation) evaluate(e Entry) (status, bool, string) {
 			if err := ev.tokenFits(cr.Token, c.Account, c.Mode); err != nil {
 				open("control %s token: %v", c.Name, err)
 			}
-			for _, f := range meets(c.Requires, metrics(cr.Evidence, 0)) {
+			for _, f := range meets(c.Requires, metrics(Lifecycle{}, cr.Evidence.Terminal, 0)) {
 				open("control %s %s", c.Name, f)
 			}
 			controls[c.Name] = cr
@@ -466,6 +473,32 @@ func (ev *evaluation) evaluate(e Entry) (status, bool, string) {
 		}
 	}
 	return st, false, char
+}
+
+// lifecycle derives an observed case's lifecycle from the observer report
+// the record carries: made by an admitted observer on the record's boot,
+// watching the record's account under its SID and mode.
+func (ev *evaluation) lifecycle(e Entry, r Record, open func(string, ...any)) Lifecycle {
+	rep := r.Evidence.Observer
+	if rep == nil {
+		open("no observer report")
+		return Lifecycle{}
+	}
+	if !ev.run.Manifest.Admits(rep.Executable) {
+		open("observer executable outside the admitted run")
+	}
+	if rep.Boot.String() != r.BootID {
+		open("observer report is from another boot")
+	}
+	sid := ""
+	if r.Token != nil {
+		sid = r.Token.SID
+	}
+	life, problems := DeriveLifecycle(rep, *e.Observe, e.Account, sid, e.Mode)
+	for _, p := range problems {
+		open("observer: %s", p)
+	}
+	return life
 }
 
 // checkOrder enforces phase order, the fresh-boot phase, controls that must
@@ -559,6 +592,7 @@ func (ev *evaluation) sameExecution(a, b string) bool {
 func (ev *evaluation) checkExecutions() {
 	byID := map[string][]string{}
 	groupIDs := map[string]string{}
+	groupReports := map[string]string{}
 	for k, r := range ev.records {
 		if r.Kind != KindPrimary || ev.bad[k] {
 			continue
@@ -569,6 +603,11 @@ func (ev *evaluation) checkExecutions() {
 				ev.problem("%s: shared execution %s recorded under two IDs", k, g)
 			}
 			groupIDs[g] = r.ExecutionID
+			report, _ := json.Marshal(r.Evidence.Observer)
+			if prev, ok := groupReports[g]; ok && prev != string(report) {
+				ev.problem("%s: shared execution %s has two observer reports", k, g)
+			}
+			groupReports[g] = string(report)
 		}
 	}
 	for id, keys := range byID {
