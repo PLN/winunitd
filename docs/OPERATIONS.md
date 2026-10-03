@@ -525,7 +525,11 @@ and recovery activations fail with `admission is held:` and the reason. The
 broker launches no user managers, and `enable-linger` is refused rather than
 recorded for later. Status, stop, disable, `disable-linger`, reload, verify,
 and maintenance stay available. Restart the manager after restoring a compatible
-build or changing the floor.
+build or changing the floor. The hold covers the system manager and the user
+managers it brokers; a user manager started directly with
+`winunitd --user-manager` is outside the floor's scope. A floor raise is
+written only while the system manager is stopped; see
+[enforcement](INSTALLATION.md#enforcement).
 
 ## Headless user managers
 
