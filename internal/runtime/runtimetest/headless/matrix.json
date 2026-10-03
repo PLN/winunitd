@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "phases": [
+    {"id": 1, "name": "fresh-boot", "description": "First boot of the baseline: no logon, no password-bearing logon since boot; network and file probes run before any credential control.", "oneBoot": true, "noPassword": true},
+    {"id": 2, "name": "lifecycle", "description": "No-password lifecycle, recovery and revocation cases."},
+    {"id": 3, "name": "password-and-wts", "description": "Password-bearing controls and genuine interactive sessions."},
+    {"id": 4, "name": "owner-runners", "description": "Native test-owner runners with the broker stopped and profiles unloaded."},
+    {"id": 5, "name": "cleanup", "description": "Final cleanup and restoration."}
+  ],
+  "cases": {
+    "G1": {
+      "ledger": "C3", "plane": "daemon", "phase": 3, "capSec": 60,
+      "title": "Interactive WTS user-manager crash loop",
+      "expect": "Each attempt is a successful native creation followed by a short-lived exit; the delay grows 1/2/4/8/16/32/60 and stays capped for at least five retries over ten minutes, with no renewed short delays; the peer stays healthy.",
+      "variants": [{"id": "B", "account": "B", "mode": "wts"}],
+      "requires": [{"metric": "durationSec", "min": 600}, {"metric": "cappedGaps", "min": 5}, {"metric": "shortGapsAfterCap", "max": 0}]
+    },
+    "G2": {
+      "ledger": "C3", "plane": "daemon", "phase": 2, "capSec": 60,
+      "title": "Headless S4U user-manager crash loop",
+      "expect": "As G1 through the linger path with no logon; the reversible failure is then repaired and the manager recovers on its own.",
+      "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}],
+      "requires": [{"metric": "durationSec", "min": 600}, {"metric": "cappedGaps", "min": 5}, {"metric": "shortGapsAfterCap", "max": 0}]
+    },
+    "G3": {
+      "ledger": "C3", "plane": "daemon", "phase": 2, "capSec": 60,
+      "title": "Confirmed stable runtime resets the recovery delay",
+      "expect": "After the delay has grown, a manager observed alive for over two minutes is killed; its replacements grow from 1 again instead of keeping the capped delay.",
+      "variants": [
+        {"id": "s4u-A", "account": "A", "mode": "s4u"},
+        {"id": "s4u-B", "account": "B", "mode": "s4u"},
+        {"id": "wts-B", "account": "B", "mode": "wts", "phase": 3}
+      ],
+      "requires": [{"metric": "grownGapSec", "min": 30}, {"metric": "stableSec", "min": 120}, {"metric": "postResetGapSec", "max": 30}]
+    },
+    "G4": {
+      "ledger": "C3", "plane": "daemon", "phase": 2, "capSec": 60,
+      "title": "Waiting recovery cancellation and broker crash recovery",
+      "expect": "A waiting capped recovery is cancelled by the applied policy or stop, every owned process and profile drains, and nothing is relaunched for at least two capped periods; the orderly broker stop is followed by a restart with the grant revoked, which restores nothing. The broker crash is H09's event.",
+      "variants": [
+        {"id": "logoff-B", "account": "B", "mode": "wts", "phase": 3},
+        {"id": "admission-B", "account": "B", "mode": "wts", "phase": 3},
+        {"id": "linger-A", "account": "A", "mode": "s4u"},
+        {"id": "linger-B", "account": "B", "mode": "s4u"},
+        {"id": "stop-A", "account": "A", "mode": "s4u"},
+        {"id": "stop-B", "account": "B", "mode": "s4u"},
+        {"id": "crash", "refs": ["H09/A", "H09/B"]}
+      ],
+      "requires": [{"metric": "negativeSec", "min": 120}]
+    },
+    "G5": {
+      "ledger": "C3", "plane": "daemon", "phase": 2,
+      "title": "Unlimited unit recovery under a healthy headless manager",
+      "expect": "A short-lived nonzero-exit unit with StartLimitBurst=0 and a short capped exponential delay keeps retrying for ten minutes and more than twenty failures, more than five accepted starts in one real ten-second window, unlimited status and a confirmed stop. The finite control stops at its start limit.",
+      "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}],
+      "requires": [{"metric": "durationSec", "min": 600}, {"metric": "failures", "min": 21}, {"metric": "maxStartsIn10s", "min": 6}],
+      "controls": [{"name": "finite-limit", "requires": [{"metric": "startLimited", "min": 1}]}]
+    },
+    "G6": {
+      "ledger": "C3", "plane": "daemon", "phase": 3,
+      "title": "#253/#255 startup and daemon-log regressions",
+      "expect": "Named regressions run without skipping in their real token lanes; startup, diagnostics persistence, rotation, protection, peer denial and legacy repair hold on this artifact.",
+      "variants": [
+        {"id": "go-tests", "account": "B", "mode": "wts", "plane": "owner-test"},
+        {"id": "standard-wts", "account": "B", "mode": "wts"},
+        {"id": "filtered-admin", "account": "admin", "mode": "filtered-admin"},
+        {"id": "system-protection", "account": "system", "mode": "system", "phase": 4},
+        {"id": "peer-denial", "account": "B", "mode": "wts"},
+        {"id": "legacy-repair", "account": "A", "mode": "s4u", "phase": 2},
+        {"id": "headless-A", "refs": ["H12/A"]},
+        {"id": "headless-B", "refs": ["H12/B"]}
+      ]
+    },
+    "B01": {"ledger": "B", "title": "Capped user-host retries for short-lived managers", "expect": "See G2.", "variants": [{"id": "A", "refs": ["G2/A"]}, {"id": "B", "refs": ["G2/B"]}]},
+    "B02": {"ledger": "B", "title": "Reset only after confirmed runtime", "expect": "See G3.", "variants": [{"id": "A", "refs": ["G3/s4u-A"]}, {"id": "B", "refs": ["G3/s4u-B"]}]},
+    "B03": {"ledger": "B", "title": "Grant revocation cancels a waiting retry", "expect": "See G4.", "variants": [{"id": "A", "refs": ["G4/linger-A"]}, {"id": "B", "refs": ["G4/linger-B"]}]},
+    "B04": {"ledger": "B", "title": "Broker stop cancels a waiting retry; restart with a revoked grant restores nothing", "expect": "See G4.", "variants": [{"id": "A", "refs": ["G4/stop-A"]}, {"id": "B", "refs": ["G4/stop-B"]}]},
+    "H01": {
+      "ledger": "H", "plane": "daemon", "phase": 1,
+      "title": "Cold boot, first-use profile",
+      "expect": "With no prior profile, registration or logon, the boot creates and loads A's profile and starts a genuine session-zero S4U manager and the enabled workload without controller intervention.",
+      "variants": [{"id": "A", "account": "A", "mode": "s4u", "execution": "cold-boot"}],
+      "controls": [{"name": "first-use", "mode": "system", "immediatelyBefore": true}]
+    },
+    "H02": {
+      "ledger": "H", "plane": "daemon", "phase": 1,
+      "title": "Cold boot, existing profile",
+      "expect": "The same boot starts B's genuine S4U manager and workload on its existing, previously unloaded profile; both accounts progress concurrently.",
+      "variants": [{"id": "B", "account": "B", "mode": "s4u", "execution": "cold-boot"}]
+    },
+    "H03": {"ledger": "H", "plane": "daemon", "phase": 2, "title": "No implicit grant", "expect": "With linger removed and the enabled units left in place, a reboot starts no headless manager or workload; explicit re-enable recovers.", "variants": [{"id": "A", "account": "A", "mode": "s4u", "execution": "no-grant-reboot"}, {"id": "B", "account": "B", "mode": "s4u", "execution": "no-grant-reboot"}]},
+    "H04": {"ledger": "H", "plane": "daemon", "phase": 3, "title": "Same-account session leaves the headless manager", "expect": "A genuine WTS logon and logoff of the account leave the headless manager, workload, AuthenticationId, session zero and headless-s4u mode unchanged.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}]},
+    "H05": {"ledger": "H", "plane": "daemon", "phase": 2, "title": "Revocation", "expect": "Disabling linger with no session drains every owned process and the profile; nothing returns for the observation window or after a reboot; the peer is preserved.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}]},
+    "H06": {"ledger": "H", "plane": "daemon", "phase": 3, "title": "Independent permissions", "expect": "Linger stays effective when only interactive admission changes; disabling linger while a session remains admitted keeps the session-backed manager until the final logoff drains it.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}]},
+    "H07": {"ledger": "H", "plane": "daemon", "phase": 2, "title": "Unit crash", "expect": "The old unit tree exits before the new invocation is accepted; the user manager and the peer are unaffected.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}], "requires": [{"metric": "orderedReplacement", "min": 1}]},
+    "H08": {"ledger": "H", "plane": "daemon", "phase": 2, "title": "User-manager crash", "expect": "The old owned tree exits before a new genuine S4U manager and the enabled work recover without a controller start.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}], "requires": [{"metric": "orderedReplacement", "min": 1}]},
+    "H09": {"ledger": "H", "plane": "daemon", "phase": 2, "title": "Broker crash", "expect": "SCM recovery under the recorded policy restarts the broker and both accounts' enabled workloads; the old trees exit first; no controller restart.", "variants": [{"id": "A", "account": "A", "mode": "s4u", "execution": "broker-crash"}, {"id": "B", "account": "B", "mode": "s4u", "execution": "broker-crash"}], "requires": [{"metric": "orderedReplacement", "min": 1}]},
+    "H10": {"ledger": "H", "title": "Short-lived user-manager failures", "expect": "See B01 and B02.", "variants": [{"id": "A", "refs": ["B01/A", "B02/A"]}, {"id": "B", "refs": ["B01/B", "B02/B"]}]},
+    "H11": {"ledger": "H", "title": "Unlimited unit retries", "expect": "See G5: an unlimited budget is shown only by more than five accepted starts in one ten-second window, against a finite control.", "variants": [{"id": "A", "refs": ["G5/A"]}, {"id": "B", "refs": ["G5/B"]}]},
+    "H12": {"ledger": "H", "plane": "daemon", "phase": 2, "title": "Startup and rotation", "expect": "With a padded stopped log, the product rotates it on reopen, persists fresh protected diagnostics and stays healthy; the padding is a declared intervention.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}]},
+    "H13": {"ledger": "H", "plane": "daemon", "phase": 1, "title": "Own roots and state", "expect": "The workload reads its unit fixture, writes flushed state, resolves HKCU and known folders; the peer's root is denied.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}], "paths": "own-roots"},
+    "H14": {"ledger": "H", "plane": "daemon", "phase": 1, "title": "Missing and denied roots", "expect": "An absent path fails as not found and a SYSTEM-owned path as access denied, visibly; restoring the good path recovers.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}], "paths": "missing-and-denied", "controls": [{"name": "restore"}]},
+    "H15": {"ledger": "H", "plane": "daemon", "phase": 1, "title": "Authorized SYSTEM qualification pipe", "expect": "The in-unit workload and an outside-unit process of the same account are accepted on account and held incarnation; the wrong account, an exited caller and a stale claim are denied.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}], "pipe": "authorized"},
+    "H16": {"ledger": "H", "plane": "daemon", "phase": 1, "title": "Pipe denial", "expect": "A SYSTEM-only pipe, the peer's user pipe and the production control and maintenance pipes deny the account with ACCESS_DENIED; SYSTEM stays healthy.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}], "pipe": "denied", "controls": [{"name": "pipe-health", "mode": "system"}]},
+    "H17": {"ledger": "H", "plane": "daemon", "phase": 1, "title": "Transport", "expect": "Loopback and isolated-peer nonce round trips from the workload token; qualifies this route only.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}], "characterize": "tcp", "controls": [{"name": "peer-receipt", "mode": "peer"}]},
+    "H18": {"ledger": "H", "plane": "daemon", "phase": 1, "title": "Authenticated SMB", "expect": "Bare S4U UNC access with no supplied credentials is characterized against a reachable share and a password-bearing control; no guest or machine access is credited.", "variants": [{"id": "A", "account": "A", "mode": "s4u"}, {"id": "B", "account": "B", "mode": "s4u"}], "characterize": "smb", "controls": [{"name": "password-share", "mode": "password", "account": "control", "phase": 3}, {"name": "server-principal", "mode": "peer", "phase": 3}]},
+    "H19": {"ledger": "H", "plane": "daemon", "phase": 1, "title": "EFS", "expect": "A plaintext read of B's encrypted fixture under bare S4U is characterized against the volume capability, a plain sibling and a same-account password decryption.", "variants": [{"id": "B", "account": "B", "mode": "s4u"}], "characterize": "efs", "controls": [{"name": "password-decrypt", "mode": "password", "phase": 3}]},
+    "H20": {
+      "ledger": "H", "plane": "owner-test", "phase": 4,
+      "title": "Held native launch (#229 headless tests)",
+      "expect": "Accepted decisions and the held suspended stage with real S4U, profile and desktop; retained ownership on deadline; release and retry drain; zero skips. Five fresh SYSTEM runners, three cases each.",
+      "runners": 5,
+      "variants": [
+        {"id": "revocation", "account": "A", "mode": "s4u", "repetitions": 5, "test": "TestLingerRevocationOverlapsNativeHeadlessManagerCreation"},
+        {"id": "shutdown", "account": "A", "mode": "s4u", "repetitions": 5, "test": "TestShutdownOverlapsNativeHeadlessManagerCreation"},
+        {"id": "deadline", "account": "A", "mode": "s4u", "repetitions": 5, "test": "TestShutdownDeadlineOverlapsNativeHeadlessManagerCreation"}
+      ]
+    },
+    "H21": {
+      "ledger": "H", "plane": "owner-test", "phase": 4,
+      "title": "Native inherited handles",
+      "expect": "The headless security test excludes sentinel inheritance with exact file-object identity and real pipe authorization; the sensitivity control, which runs with the runner's own SYSTEM token, proves the probe detects deliberate inheritance.",
+      "variants": [
+        {"id": "security-A", "account": "A", "mode": "s4u", "test": "TestNativeHeadlessUserManagerSecurity"},
+        {"id": "security-B", "account": "B", "mode": "s4u", "test": "TestNativeHeadlessUserManagerSecurity"},
+        {"id": "sensitivity-A", "account": "system", "mode": "system", "test": "TestNativeSecurityProbeDetectsSelectiveInheritance"},
+        {"id": "sensitivity-B", "account": "system", "mode": "system", "test": "TestNativeSecurityProbeDetectsSelectiveInheritance"}
+      ]
+    },
+    "H22": {"ledger": "H", "plane": "daemon", "phase": 5, "title": "Final cleanup", "expect": "No owned daemon, helper, workload, client, task or grant remains; configuration, template, ACL, network and SCM state are restored and verified before the snapshot revert.", "variants": [{"id": "all", "account": "system", "mode": "system"}]}
+  }
+}

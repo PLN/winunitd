@@ -1,0 +1,107 @@
+package headless
+
+import (
+	"errors"
+	"fmt"
+	"net"
+	"path/filepath"
+	"strings"
+)
+
+// ProbeConfig names the targets of a workload's probes. The driver writes it
+// into the workload's own state root before the case; commands name a probe,
+// never a target, a credential or command text.
+type ProbeConfig struct {
+	// UnitFile is the workload's own unit definition (H13).
+	UnitFile string `json:"unitFile,omitempty"`
+	// PeerRoot is the other account's protected root (H13 negative).
+	PeerRoot string `json:"peerRoot,omitempty"`
+	// Absent and Denied are H14's missing and SYSTEM-owned paths.
+	Absent string `json:"absent,omitempty"`
+	Denied string `json:"denied,omitempty"`
+	// Loopback is the workload's own echo listener, Peer the isolated peer's.
+	Loopback string     `json:"loopback,omitempty"`
+	Peer     string     `json:"peer,omitempty"`
+	SMB      *SMBTarget `json:"smb,omitempty"`
+	EFS      *EFSTarget `json:"efs,omitempty"`
+	// Pipe is the SYSTEM qualification pipe the in-unit probe connects to.
+	Pipe string `json:"pipe,omitempty"`
+}
+
+// SMBTarget is the protected share's nonce file and its server.
+type SMBTarget struct {
+	Server       string `json:"server"`
+	Path         string `json:"path"`
+	ExpectSHA256 string `json:"expectSha256"`
+}
+
+// EFSTarget is the encrypted fixture and its unencrypted sibling.
+type EFSTarget struct {
+	Path         string `json:"path"`
+	Plain        string `json:"plain"`
+	ExpectSHA256 string `json:"expectSha256"`
+}
+
+func (c *ProbeConfig) validate() error {
+	for _, p := range []string{c.UnitFile, c.PeerRoot, c.Absent, c.Denied} {
+		if p != "" && (!filepath.IsAbs(p) || filepath.Clean(p) != p) {
+			return errors.New("probe paths must be clean absolute paths")
+		}
+	}
+	for _, a := range []string{c.Loopback, c.Peer} {
+		if a == "" {
+			continue
+		}
+		if _, _, err := net.SplitHostPort(a); err != nil {
+			return fmt.Errorf("address %q", a)
+		}
+	}
+	if c.Pipe != "" && !strings.HasPrefix(c.Pipe, `\\.\pipe\winunitd-qual\`) {
+		return errors.New("the qualification pipe must be under the fixture's namespace")
+	}
+	if c.Loopback != "" {
+		host, _, _ := net.SplitHostPort(c.Loopback)
+		if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+			return errors.New("the loopback address must be a loopback IP")
+		}
+	}
+	if s := c.SMB; s != nil {
+		if s.Server == "" || strings.ContainsAny(s.Server, `\/ `) || !strings.HasPrefix(s.Path, `\\`+s.Server+`\`) || !sha256Hex.MatchString(s.ExpectSHA256) {
+			return errors.New("smb target needs a server, a UNC path on it and the expected hash")
+		}
+	}
+	if e := c.EFS; e != nil {
+		if !filepath.IsAbs(e.Path) || !filepath.IsAbs(e.Plain) || !sha256Hex.MatchString(e.ExpectSHA256) {
+			return errors.New("efs target needs absolute paths and the expected hash")
+		}
+	}
+	return nil
+}
+
+// LoadProbeConfig strictly reads a probe configuration.
+func LoadProbeConfig(path string) (*ProbeConfig, error) {
+	data, err := readBounded(path)
+	if err != nil {
+		return nil, err
+	}
+	var c ProbeConfig
+	if err := decodeStrict(data, &c); err != nil {
+		return nil, fmt.Errorf("probe config: %w", err)
+	}
+	if err := c.validate(); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// ProbeReport is one probe's output: what it found and the token of the
+// process that ran it.
+type ProbeReport struct {
+	Probe    string       `json:"probe"`
+	Time     string       `json:"time"`
+	Identity *TokenProbe  `json:"identity,omitempty"`
+	TCP      *TCPResult   `json:"tcp,omitempty"`
+	SMB      *SMBResult   `json:"smb,omitempty"`
+	EFS      *EFSResult   `json:"efs,omitempty"`
+	Paths    []PathResult `json:"paths,omitempty"`
+}
