@@ -201,6 +201,20 @@ func TestSummarizeRequiresCaseProofs(t *testing.T) {
 		// Status snapshots.
 		{"not unlimited", "G5/A: unlimited below its minimum", func(rs []Record) { ev(t, rs, "G5/A").Status.Budget.Burst = 5 }},
 		{"no status", "G5/B: unlimited not supported by the evidence", func(rs []Record) { ev(t, rs, "G5/B").Status = nil }},
+		{"status read long after the observation", "G5/A: the status was not read during or just after the observation", func(rs []Record) {
+			e := ev(t, rs, "G5/A")
+			e.Status.At = e.Observer.Ended + 600e7
+		}},
+		{"status of another process", "G5/B: the active unit's main process is not the running workload the observer held", func(rs []Record) {
+			ev(t, rs, "G5/B").Status.MainPID = 4
+		}},
+		{"finite status from before its observation", "G5/A: control finite-limit the status was not read during or just after the observation", func(rs []Record) {
+			e := ev(t, rs, "G5/A#finite-limit")
+			e.Status.At = e.Observer.Started - 1
+		}},
+		{"crash plan of another token class", "G1/B: the observer's crash plan targets another token class", func(rs []Record) {
+			ev(t, rs, "G1/B").Observer.Plan.CrashClass = SourceS4U
+		}},
 		{"finite control past its burst", "G5/A: control finite-limit withinBurst below its minimum", func(rs []Record) {
 			r := ev(t, rs, "G5/A#finite-limit").Observer
 			o := &observed{ObserverReport: r, pid: 9000}

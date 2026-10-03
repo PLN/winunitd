@@ -578,6 +578,11 @@ func evidenceFor(e Entry) Evidence {
 	switch e.Case {
 	case "G5":
 		ev.Status = &UnitStatusProof{Unit: "failing.service", ActiveState: "active", RestartAttempt: 404, Budget: &StatusBudget{Policy: "always", IntervalSec: 10}, At: ft(700)}
+		for _, g := range ev.Observer.Generations {
+			if g.Role == RoleWorkload && g.Exited == 0 {
+				ev.Status.MainPID = g.PID
+			}
+		}
 	case "H13":
 		ev.Paths = []PathResult{{Probe: "unit-fixture", OK: true}, {Probe: "state-write", OK: true}, {Probe: "state-read", OK: true},
 			{Probe: "hkcu", OK: true}, {Probe: "known-folders", OK: true}, {Probe: "peer-root", Win32: errAccessDenied}}

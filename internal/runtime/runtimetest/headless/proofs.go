@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/PLN/winunitd/internal/protocol"
 )
@@ -288,8 +289,32 @@ type UnitStatusProof struct {
 	ActiveState    string        `json:"activeState"`
 	Reason         string        `json:"reason,omitempty"`
 	RestartAttempt uint32        `json:"restartAttempt"`
+	MainPID        uint32        `json:"mainPid,omitempty"`
 	Budget         *StatusBudget `json:"budget,omitempty"`
 	At             uint64        `json:"at"`
+}
+
+// StatusLag bounds how long after the observation a status snapshot may be
+// read.
+const StatusLag = 5 * time.Minute
+
+// CheckStatus binds a unit status snapshot to the observation: read during
+// it or just after, and, for an active unit, naming as its main process the
+// account's running workload the observer held.
+func CheckStatus(s *UnitStatusProof, rep *ObserverReport, account string) []string {
+	if s == nil || rep == nil {
+		return nil
+	}
+	var problems []string
+	if s.At < rep.Started || s.At > rep.Ended+uint64(StatusLag/100) {
+		problems = append(problems, "the status was not read during or just after the observation")
+	}
+	if s.ActiveState == "active" && !slices.ContainsFunc(rep.Generations, func(g Generation) bool {
+		return g.Role == RoleWorkload && g.Account == account && g.Exited == 0 && s.MainPID != 0 && g.PID == s.MainPID
+	}) {
+		problems = append(problems, "the active unit's main process is not the running workload the observer held")
+	}
+	return problems
 }
 
 // StatusBudget is the snapshot's start-limit budget.

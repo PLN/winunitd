@@ -15,7 +15,7 @@ func StatusFromSnapshot(snap *protocol.SnapshotResult, unit string, at uint64) (
 		if u.Name != unit {
 			continue
 		}
-		p := UnitStatusProof{Unit: u.Name, ActiveState: u.ActiveState, Reason: u.Reason, RestartAttempt: u.RestartAttempt, At: at}
+		p := UnitStatusProof{Unit: u.Name, ActiveState: u.ActiveState, Reason: u.Reason, RestartAttempt: u.RestartAttempt, MainPID: uint32(max(u.MainPID, 0)), At: at}
 		if b := u.RestartBudget; b != nil {
 			p.Budget = &StatusBudget{Policy: b.Policy, IntervalSec: b.IntervalSec, Burst: b.Burst, Remaining: b.Remaining}
 		}

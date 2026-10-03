@@ -460,6 +460,9 @@ func (ev *evaluation) evaluate(e Entry) (status, bool, string) {
 	default:
 		open("proof %q", e.Proof)
 	}
+	for _, p := range CheckStatus(r.Evidence.Status, r.Evidence.Observer, e.Account) {
+		open("%s", p)
+	}
 	for _, f := range meets(e.Requires, metrics(life, r.Evidence.Status, e.CapSec, e.CapToleranceSec)) {
 		open("%s", f)
 	}
@@ -596,6 +599,9 @@ func (ev *evaluation) control(e Entry, r Record, c ControlEntry, cr Record, open
 	default:
 		fail("proof %q", c.Proof)
 	}
+	for _, p := range CheckStatus(cr.Evidence.Status, cr.Evidence.Observer, e.Account) {
+		fail("%s", p)
+	}
 	for _, f := range meets(c.Requires, metrics(life, cr.Evidence.Status, 0, 0)) {
 		fail("%s", f)
 	}
@@ -630,6 +636,9 @@ func (ev *evaluation) lifecycle(spec *ObserveSpec, account, mode string, r Recor
 	}
 	if rep.Boot.String() != r.BootID {
 		open("observer report is from another boot")
+	}
+	if c := rep.Plan.CrashClass; c != "" && c != tokenClass(mode) {
+		open("the observer's crash plan targets another token class")
 	}
 	if err := rep.Validate(); err != nil {
 		open("observer: %v", err)

@@ -48,7 +48,7 @@ type ObserveConfig struct {
 
 // Plan is the config as the report records it.
 func (c ObserveConfig) Plan() ObserverPlan {
-	p := ObserverPlan{Target: c.Target, Crash: c.Crash, ReleaseAfter: c.ReleaseAfter}
+	p := ObserverPlan{Target: c.Target, Crash: c.Crash, CrashClass: c.CrashClass, ReleaseAfter: c.ReleaseAfter}
 	for _, l := range c.Lives {
 		p.Lives = append(p.Lives, l.String())
 	}

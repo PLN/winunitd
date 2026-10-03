@@ -275,6 +275,7 @@ func (b Boot) String() string { return fmt.Sprintf("boot-%d-%d", b.Counter, b.Ti
 type ObserverPlan struct {
 	Target       string   `json:"target,omitempty"`
 	Crash        string   `json:"crash,omitempty"`
+	CrashClass   string   `json:"crashClass,omitempty"`
 	Lives        []string `json:"lives,omitempty"`
 	Rest         string   `json:"rest,omitempty"`
 	ReleaseAfter int      `json:"releaseAfter,omitempty"`
