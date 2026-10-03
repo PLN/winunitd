@@ -36,6 +36,8 @@ func runWindowsRole(role string, args []string, stdout io.Writer) error {
 		return runInventory(args)
 	case "unit-status":
 		return runUnitStatus(args)
+	case "start-unit":
+		return runStartUnit(args)
 	case "boot-id":
 		b, err := bootIdentity()
 		if err != nil {

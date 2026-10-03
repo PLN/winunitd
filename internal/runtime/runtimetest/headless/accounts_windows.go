@@ -432,3 +432,31 @@ func runUnitStatus(args []string) error {
 	}
 	return writeJSONFile(*out, p)
 }
+
+// runStartUnit starts the account's outside unit through its own manager
+// with winctl --user, as the account. The unit runs H15's outside-unit
+// client, which writes its own result.
+func runStartUnit(args []string) error {
+	fs := newFlags("start-unit")
+	config := fs.String("config", "", "")
+	out := fs.String("out", "", "")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	if err := errors.Join(absPath("config", *config), absPath("out", *out)); err != nil {
+		return err
+	}
+	cfg, err := LoadProbeConfig(*config)
+	if err != nil {
+		return err
+	}
+	if cfg.Winctl == "" || !strings.HasSuffix(cfg.OutsideUnit, ".service") {
+		return usage("the configuration names no winctl or outside unit")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+	if err := exec.CommandContext(ctx, cfg.Winctl, "--user", "start", cfg.OutsideUnit).Run(); err != nil {
+		return fmt.Errorf("start the outside unit: %w", err)
+	}
+	return writeJSONFile(*out, map[string]bool{"started": true})
+}

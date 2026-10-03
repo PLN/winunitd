@@ -553,6 +553,61 @@ an existing profile. `pad-log` appends only spaces and a newline to a stopped
 log until it exceeds the rotation size, bounded, with its security unchanged;
 it is a declared fixture intervention, not daemon output.
 
+`tools/lab/assets/headless-workload-checks.ps1` runs one execution as SYSTEM
+on a disposable machine (`-DisposableLab`) and records its records. It takes
+the case, variant, repetition or control, the stage, the run-wide sequence
+(it prints the next one) and an execution ID; it checks the installed
+`winunitd.exe` and `winctl.exe`, the fixture and any test binaries against
+the admitted run manifest before anything runs, undoes what it changed in a
+`finally`, and never reboots, stores a password or publishes evidence.
+`-ListPrerequisites` prints, without touching the machine, the account, mode,
+stages and lab prerequisites of a case and which are missing. H01/H02 and
+H03 have a `prepare` stage before the controller reboots and a `collect`
+stage after it. The first two phases need no password runner, interactive
+session or WTS logon; H15's clients are all S4U processes (the probing unit,
+the account's other unit and the peer's workload).
+
+What the lab provides for this driver:
+
+- Accounts: two disposable local standard accounts A and B, A never used
+  before H01 and B with an existing, unloaded profile; for the
+  filtered-administrator lane, an administrator account with UAC filtering.
+  `-BaseA`, `-BaseB` and `-AdminBase` are their `%LOCALAPPDATA%\winunitd`.
+  The nested-job lane uses other accounts or precedes a verified restore of
+  the pre-profile baseline; the #254 groups run on A and B after H01/H02.
+- Grants and units, staged with `provision-linger` and `provision-unit` while
+  the broker is stopped: linger for A and B; `background.service` running
+  `serve` in the Default profile template and in B's profile;
+  `failing.service` running a byte-equal copy of the fixture at
+  `headless-fail\headless-workload.exe` beside it with `fail --code 7 --until
+  <that directory>\release-<A|B> --hold 500ms` (Restart=always,
+  RestartSec=100ms, RestartBackoff=exponential, RestartMaxDelaySec=1s,
+  StartLimitBurst=0); `finite.service` running a copy at
+  `headless-finite\headless-workload.exe` that always fails (Restart=always,
+  RestartSec=100ms, StartLimitBurst=5, StartLimitIntervalSec=60s); and `pipe-client.service`, not enabled, running `probe-pipe
+  --from-config <state root>\config.json --client outside-unit --out <state
+  root>\probes\outside-unit.json`.
+- Commands, each waiting for its work and exiting 0 only on success:
+  `-WtsClient logon|logoff <account>` (a genuine automated interactive logon
+  and logoff), `-PasswordRunner <account> <exe> <args>` (a password-bearing
+  logon of that account) and `-SessionRunner <account> <exe> <args>` (inside
+  that account's live session). Credentials stay with the lab.
+- The isolated peer: `echo-serve` at `-PeerEcho` and its receipt file for
+  each H17 run; the SMB share with the nonce file (`-SmbServer`, `-SmbPath`,
+  `-SmbSha256`) and the server's authentication and file-share audit
+  joined into an attribution file (class, SID, target, time) for each H18
+  run (`-PeerAudit`); B's encrypted EFS fixture and its plain sibling.
+- On the guest: logon success auditing, and a Security log large enough
+  and never cleared during the qualification, so the logon history reaches
+  back past each boot; otherwise the no-password phases stay unproven.
+- The run manifest admits `winunitd.exe`, `winctl.exe`,
+  `headless-workload.exe`, `runtime.test.exe`, `journal.test.exe` and
+  `test2json.exe` of the one integration artifact; `-Baseline` names the
+  sealed baseline and `-BaselineService` is `inventory --service-only`
+  taken there before any case.
+- Scheduled tasks and firewall rules the lab adds for the fixture are named
+  `winunitd-qual*`, so the final inventory finds them.
+
 Case configurations, probe outputs, observer and server reports and records
 contain account SIDs, profile paths and peer addresses. They are private
 qualification evidence and must not be published as CI artifacts or attached

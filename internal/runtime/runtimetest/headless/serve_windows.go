@@ -60,6 +60,16 @@ func probeArgs(name, config, out, state string) ([]string, bool) {
 		return []string{"probe-pipe", "--from-config", config, "--client", ClientInUnit, "--out", out}, true
 	case "unit-status":
 		return []string{"unit-status", "--config", config, "--out", out}, true
+	case "pipe-stale":
+		return []string{"probe-pipe", "--from-config", config, "--client", ClientStaleClaim, "--claim", "stale", "--out", out}, true
+	case "pipe-exited":
+		return []string{"probe-pipe", "--from-config", config, "--client", ClientExited, "--claim", "self", "--exit-after-send", "--out", out}, true
+	case "pipe-wrong-decision":
+		return []string{"probe-pipe", "--from-config", config, "--client", ClientWrongDecision, "--claim", "none", "--out", out}, true
+	case "pipe-wrong-acl":
+		return []string{"probe-pipe", "--from-config", config, "--client", ClientWrongACL, "--claim", "none", "--open-only", "--out", out}, true
+	case "start-outside":
+		return []string{"start-unit", "--config", config, "--out", out}, true
 	case "deny-" + ClientSystemOnly, "deny-" + ClientPeerUserPipe, "deny-" + ClientControlPipe, "deny-" + ClientMaintenancePipe:
 		return []string{"probe-pipe", "--from-config", config, "--client", strings.TrimPrefix(name, "deny-"), "--open-only", "--out", out}, true
 	}

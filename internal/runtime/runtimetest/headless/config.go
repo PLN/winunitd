@@ -36,6 +36,9 @@ type ProbeConfig struct {
 	// own manager, as the account, with no password logon.
 	Winctl     string `json:"winctl,omitempty"`
 	StatusUnit string `json:"statusUnit,omitempty"`
+	// OutsideUnit is another unit of the account, which runs H15's
+	// outside-unit pipe client.
+	OutsideUnit string `json:"outsideUnit,omitempty"`
 	// DenyPipes are H16's pipes, by client role, that the account must be
 	// denied from inside its unit.
 	DenyPipes map[string]string `json:"denyPipes,omitempty"`

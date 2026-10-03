@@ -540,3 +540,32 @@ func TestProductS4ULogonsAreNotPasswordLogons(t *testing.T) {
 		t.Fatalf("product S4U logon counted: %q", s.Problems)
 	}
 }
+
+// The outside-unit client is the account outside the probed unit: another
+// unit's process is outside it, a process of the same unit is not.
+func TestOutsideUnitClient(t *testing.T) {
+	m := testMatrix(t)
+	run := testRun(t)
+	base := allPassing(t, m)
+	move := func(parent func(r *ObserverReport, workload *Generation) uint32, role string) Summary {
+		rs := cloneRecords(base)
+		e := ev(t, rs, "H15/A")
+		r := e.Observer
+		workload := gensOf(r, RoleWorkload, AccountA)[0]
+		for i := range r.Generations {
+			g := &r.Generations[i]
+			if g.PID == e.Pipe[1].PID && g.Created == e.Pipe[1].Created {
+				g.ParentPID, g.Role = parent(r, workload), role
+			}
+		}
+		return Summarize(m, rs, run, Selection{})
+	}
+	sameUnit := move(func(_ *ObserverReport, w *Generation) uint32 { return w.PID }, RoleChild)
+	if !strings.Contains(strings.Join(sameUnit.Problems, "\n"), "H15/A: pipe the outside-unit client was a process of the account's unit") {
+		t.Fatalf("a client of the same unit counted as outside: %q", sameUnit.Problems)
+	}
+	otherUnit := move(func(r *ObserverReport, _ *Generation) uint32 { return gensOf(r, RoleManager, AccountA)[0].PID }, RoleWorkload)
+	if !otherUnit.Complete {
+		t.Fatalf("another unit's client not counted as outside: %q", otherUnit.Problems)
+	}
+}

@@ -183,12 +183,19 @@ func CheckPipe(set string, results []PipeResult) []string {
 	return problems
 }
 
-// inUnit reports whether a process is part of the account's unit as the
-// observer held it: the workload, or a process started by one, at any
+// inUnit reports whether a process is part of one of the account's units
+// as the observer held it: a workload, or a process started by one, at any
 // depth.
 func inUnit(rep *ObserverReport, pid uint32, created uint64, account string) bool {
+	_, ok := unitOf(rep, pid, created, account)
+	return ok
+}
+
+// unitOf returns the workload whose unit a process belongs to: the process
+// itself when it is a workload, or the workload it descends from.
+func unitOf(rep *ObserverReport, pid uint32, created uint64, account string) (Generation, bool) {
 	if rep == nil || pid == 0 {
-		return false
+		return Generation{}, false
 	}
 	find := func(pid uint32, created uint64) *Generation {
 		for i, g := range rep.Generations {
@@ -202,18 +209,18 @@ func inUnit(rep *ObserverReport, pid uint32, created uint64, account string) boo
 	for depth := 0; g != nil && depth < 8; depth++ {
 		switch g.Role {
 		case RoleWorkload:
-			return true
+			return *g, true
 		case RoleChild:
 			parent := find(g.ParentPID, 0)
 			if parent == nil || parent.Created > g.Created {
-				return false
+				return Generation{}, false
 			}
 			g = parent
 		default:
-			return false
+			return Generation{}, false
 		}
 	}
-	return false
+	return Generation{}, false
 }
 
 // CheckPipeClients binds the clients of H15 and H16 to the observer and,
@@ -284,11 +291,16 @@ func CheckPipeClients(set string, results []PipeResult, servers []ServerReport, 
 		}
 		return f
 	}
-	if decided(ClientInUnit, ReasonAccepted, sid) != nil && !inUnit(rep, by[ClientInUnit].PID, by[ClientInUnit].Created, account) {
+	// The outside-unit client is the same account, but not under the
+	// in-unit client's workload: another unit, or no unit at all.
+	unit, inside := unitOf(rep, by[ClientInUnit].PID, by[ClientInUnit].Created, account)
+	if decided(ClientInUnit, ReasonAccepted, sid) != nil && !inside {
 		problems = append(problems, "the in-unit client was not a process of the account's unit")
 	}
-	if decided(ClientOutsideUnit, ReasonAccepted, sid) != nil && inUnit(rep, by[ClientOutsideUnit].PID, by[ClientOutsideUnit].Created, account) {
-		problems = append(problems, "the outside-unit client was a process of the account's unit")
+	if decided(ClientOutsideUnit, ReasonAccepted, sid) != nil {
+		if other, ok := unitOf(rep, by[ClientOutsideUnit].PID, by[ClientOutsideUnit].Created, account); ok && inside && other.PID == unit.PID && other.Created == unit.Created {
+			problems = append(problems, "the outside-unit client was a process of the account's unit")
+		}
 	}
 	if f := decided(ClientWrongDecision, ReasonAccount, peerSID); f != nil && !slices.Contains(f.server.ACL, peerSID) {
 		problems = append(problems, "the wrong-account decision was not made through an ACL that admitted it")
