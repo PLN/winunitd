@@ -1,0 +1,223 @@
+{
+  "schema": 1,
+  "consumers": {
+    "preflight": "Installer service preflight before install or repair (tools/msi-check)",
+    "system-reload": "System manager unit load and daemon-reload of units",
+    "system-enable": "System manager enable and disable records under enabled\\<target>",
+    "journal-store": "System manager unit journal files under journal",
+    "linger-store": "Linger grant records under linger, read at startup and by enable-linger",
+    "admission-probe": "Delegated admission probe, SYSTEM impersonating the user, over the user's units directory",
+    "os-acl": "Windows access checks on the caller's own operation; no product code runs"
+  },
+  "policies": {
+    "unsafe-directories": {
+      "source": "docs/INSTALLATION.md#conflicts-and-unsafe-directories",
+      "statement": "The data root and its immediate units, enabled, journal, runtime, linger and daemon directories conflict when they are a reparse point, not owned by SYSTEM or Administrators, or writable by another principal; new directories inherit the data-root ACL, which grants control to SYSTEM and Administrators only."
+    },
+    "no-recursive-follow": {
+      "source": "docs/MSI-INSTALLER-PLAN.md#msi-ownership-security-and-custom-actions",
+      "statement": "Inspect existing privileged directories, reject unexpected reparse points and do not recursively follow links to repair ACLs."
+    },
+    "enable-records": {
+      "source": "docs/RUNTIME-REFERENCE.md#enable-links",
+      "statement": "Enable writes small files under <base-dir>\\enabled\\<target>\\<unit>, not NTFS symlinks."
+    },
+    "delegation-regular-files": {
+      "source": "docs/USER-ADMISSION.md#file-based-delegation",
+      "statement": "A qualifying entry is a regular file with a recognized unit filename in the user's unit directory; untrusted reparse points are not followed to grant admission."
+    },
+    "delegation-probe": {
+      "source": "docs/USER-ADMISSION.md#implementation-evidence-and-limits",
+      "statement": "The probe impersonates the user, pins directory ancestors against replacement and rejects reparse points; delegation rejects UNC and reparse-point paths."
+    }
+  },
+  "qualified": [
+    "Junction at the data root, and at the immediate units and linger children, refused by install and repair (Case C and preflight-reparse).",
+    "Untrusted owner, non-administrator write grant and custom base directory refused by install and repair (Case C).",
+    "Create, write, append, same-parent rename and delete on sentinels inside the protected trees denied to standard and filtered callers (Case C).",
+    "Junction in the delegated known-folder path rejected by the admission probe (interactive profile redirection).",
+    "Daemon log symlink or reparse chain refused (daemon-log regression)."
+  ],
+  "cases": [
+    {
+      "id": "enabled-target-junction-install",
+      "title": "Junction at enabled\\<target> presented to install and repair",
+      "tree": "enabled", "shape": "descendant-junction", "depth": 2, "path": "enabled\\default.target",
+      "actor": "system-fixture", "consumer": "preflight", "outcome": "decision-needed", "policy": "unsafe-directories",
+      "question": "Must install and repair refuse a reparse point below an immediate data-root child, as they refuse one at the child itself, or is such a pre-existing link supported?",
+      "basis": "Preflight inspects the data root and its immediate children only; code reading, not observed natively.",
+      "roles": ["link", "target", "sibling"],
+      "steps": [
+        {"name": "install", "by": "consumer", "expect": "refused"},
+        {"name": "repair", "by": "consumer", "expect": "refused"},
+        {"name": "sibling-target-listing", "by": "control", "expect": "ok"}
+      ]
+    },
+    {
+      "id": "enabled-target-junction-enable",
+      "title": "Enable and disable through a junction at enabled\\<target>",
+      "tree": "enabled", "shape": "descendant-junction", "depth": 2, "path": "enabled\\default.target",
+      "actor": "system-fixture", "consumer": "system-enable", "outcome": "decision-needed", "policy": "enable-records",
+      "question": "Must the system manager refuse to read, create or write enable records through a reparse point at enabled\\<target>, instead of writing into its target?",
+      "basis": "Enumeration skips name-surrogate reparse entries, which Go reports as non-directories; enable creates enabled\\<target>\\<unit> with MkdirAll and WriteFile, which follow an existing junction. Code reading, not observed natively.",
+      "roles": ["link", "target", "sibling"],
+      "steps": [
+        {"name": "enable", "by": "consumer", "expect": "refused"},
+        {"name": "startup-enabled-wants", "by": "consumer", "expect": "no-follow"},
+        {"name": "sibling-target-enable", "by": "control", "expect": "ok"}
+      ]
+    },
+    {
+      "id": "units-nested-junction-reload",
+      "title": "Junction below units holding a canary unit",
+      "tree": "units", "shape": "descendant-junction", "depth": 2, "path": "units\\nested",
+      "actor": "system-fixture", "consumer": "system-reload", "outcome": "decision-needed",
+      "question": "Are system unit files only the regular files directly in units, so that nested directories and links below it are ignored, as the loader does today?",
+      "basis": "The loader reads only the top-level entries of units and skips directories and entries without a unit name; code reading, not observed natively.",
+      "roles": ["link", "target", "sibling"],
+      "steps": [
+        {"name": "daemon-reload", "by": "consumer", "expect": "no-follow"},
+        {"name": "sibling-unit-loads", "by": "control", "expect": "ok"}
+      ]
+    },
+    {
+      "id": "journal-file-link-append",
+      "title": "File link in journal at a unit's journal file",
+      "tree": "journal", "shape": "descendant-file-link", "depth": 2, "path": "journal\\<unit journal file>",
+      "actor": "system-fixture", "consumer": "journal-store", "outcome": "decision-needed", "policy": "no-recursive-follow",
+      "question": "Must the journal store refuse a reparse point at a unit's journal file, as the daemon log does, instead of appending through it?",
+      "basis": "The journal store opens a unit's journal file for create and append with an ordinary open, which follows a link; the daemon log alone opens with reparse-point refusal. Code reading, not observed natively.",
+      "roles": ["link", "target", "sibling"],
+      "steps": [
+        {"name": "unit-output-append", "by": "consumer", "expect": "refused"},
+        {"name": "sibling-unit-journal", "by": "control", "expect": "ok"}
+      ]
+    },
+    {
+      "id": "linger-record-link-startup",
+      "title": "File link at a linger record",
+      "tree": "linger", "shape": "descendant-file-link", "depth": 2, "path": "linger\\<SID>",
+      "actor": "system-fixture", "consumer": "linger-store", "outcome": "decision-needed", "policy": "no-recursive-follow",
+      "question": "Must the linger store refuse a reparse point at a grant record when it reads it, instead of reading the link's target as the grant?",
+      "basis": "The linger store reads a record with an ordinary open, which follows a link, and writes one by renaming a new file over the record, which replaces the link itself. Code reading, not observed natively.",
+      "roles": ["link", "target", "sibling"],
+      "steps": [
+        {"name": "startup-grants", "by": "consumer", "expect": "refused"},
+        {"name": "sibling-grant", "by": "control", "expect": "ok"}
+      ]
+    },
+    {
+      "id": "user-units-nested-junction",
+      "title": "Junction below the user's units holding the only unit",
+      "tree": "user-units", "shape": "descendant-junction", "depth": 2, "path": "units\\nested",
+      "actor": "user", "consumer": "admission-probe", "outcome": "no-follow", "policy": "delegation-regular-files",
+      "basis": "The probe admits only a regular file with a unit name directly in units and skips directory and reparse entries.",
+      "roles": ["link", "target", "sibling"],
+      "steps": [
+        {"name": "delegated-admission", "by": "consumer", "expect": "no-follow"},
+        {"name": "peer-regular-unit-admitted", "by": "control", "expect": "ok"}
+      ]
+    },
+    {
+      "id": "user-units-file-symlink",
+      "title": "Symbolic link in the user's units naming a unit outside",
+      "tree": "user-units", "shape": "descendant-file-link", "depth": 2, "path": "units\\canary.service",
+      "actor": "user", "consumer": "admission-probe", "outcome": "no-follow", "policy": "delegation-regular-files",
+      "basis": "The probe skips entries with the reparse-point attribute while it looks for a unit file.",
+      "roles": ["link", "target", "sibling"],
+      "steps": [
+        {"name": "delegated-admission", "by": "consumer", "expect": "no-follow"},
+        {"name": "peer-regular-unit-admitted", "by": "control", "expect": "ok"}
+      ]
+    },
+    {
+      "id": "user-winunitd-component-junction",
+      "title": "Junction at the user's winunitd directory above units",
+      "tree": "user-root", "shape": "component-junction", "depth": 1, "path": "winunitd",
+      "actor": "user", "consumer": "admission-probe", "outcome": "refuse", "policy": "delegation-probe",
+      "diagnostic": "unit directory contains a reparse point or non-directory",
+      "basis": "The probe opens every path component with reparse-point semantics and refuses a reparse point; the qualified redirection case put the junction at the known folder, not here.",
+      "roles": ["link", "target", "sibling"],
+      "steps": [
+        {"name": "delegated-admission", "by": "consumer", "expect": "refused"},
+        {"name": "peer-regular-unit-admitted", "by": "control", "expect": "ok"}
+      ]
+    },
+    {
+      "id": "data-child-rename-standard",
+      "title": "Standard caller renames an immediate data-root child",
+      "tree": "data-root", "shape": "ancestor-rename", "depth": 1, "path": "units",
+      "actor": "standard", "consumer": "os-acl", "outcome": "protected", "policy": "unsafe-directories",
+      "basis": "The data root grants control to SYSTEM and Administrators only, so a caller has no delete or delete-child right on its children.",
+      "roles": ["leaf", "target", "sibling"],
+      "steps": [
+        {"name": "rename-units", "by": "actor", "expect": "denied"},
+        {"name": "rename-own-directory", "by": "control", "expect": "ok"}
+      ]
+    },
+    {
+      "id": "data-child-rename-filtered",
+      "title": "Filtered administrator renames an immediate data-root child",
+      "tree": "data-root", "shape": "ancestor-rename", "depth": 1, "path": "units",
+      "actor": "filtered-admin", "consumer": "os-acl", "outcome": "protected", "policy": "unsafe-directories",
+      "basis": "The data root grants control to SYSTEM and Administrators only; a filtered token holds Administrators for deny only.",
+      "roles": ["leaf", "target", "sibling"],
+      "steps": [
+        {"name": "rename-units", "by": "actor", "expect": "denied"},
+        {"name": "rename-own-directory", "by": "control", "expect": "ok"}
+      ]
+    },
+    {
+      "id": "data-root-ancestor-rename-standard",
+      "title": "Standard caller with %ProgramData% rights renames the data root",
+      "tree": "programdata", "shape": "ancestor-rename", "depth": 1, "path": "winunitd",
+      "actor": "standard", "consumer": "os-acl", "outcome": "decision-needed",
+      "question": "Is the operating system's default %ProgramData% ACL the supported ancestor policy for the data root, so that preflight need not inspect ancestors, and must a caller who can create folders there still be denied renaming or replacing the data root?",
+      "basis": "Preflight inspects the data root and its children but not %ProgramData%; ordinary callers can create folders in %ProgramData% by default. Not observed natively.",
+      "roles": ["leaf", "target", "sibling"],
+      "steps": [
+        {"name": "rename-data-root", "by": "actor", "expect": "denied"},
+        {"name": "create-programdata-sibling", "by": "control", "expect": "ok"}
+      ]
+    },
+    {
+      "id": "data-root-ancestor-rename-filtered",
+      "title": "Filtered administrator with %ProgramData% rights renames the data root",
+      "tree": "programdata", "shape": "ancestor-rename", "depth": 1, "path": "winunitd",
+      "actor": "filtered-admin", "consumer": "os-acl", "outcome": "decision-needed",
+      "question": "Is the operating system's default %ProgramData% ACL the supported ancestor policy for the data root, so that preflight need not inspect ancestors, and must a caller who can create folders there still be denied renaming or replacing the data root?",
+      "basis": "Preflight inspects the data root and its children but not %ProgramData%; ordinary callers can create folders in %ProgramData% by default. Not observed natively.",
+      "roles": ["leaf", "target", "sibling"],
+      "steps": [
+        {"name": "rename-data-root", "by": "actor", "expect": "denied"},
+        {"name": "create-programdata-sibling", "by": "control", "expect": "ok"}
+      ]
+    },
+    {
+      "id": "install-bin-rename-standard",
+      "title": "Standard caller renames the installed bin directory",
+      "tree": "install", "shape": "ancestor-rename", "depth": 1, "path": "bin",
+      "actor": "standard", "consumer": "os-acl", "outcome": "decision-needed",
+      "question": "Is the operating system's default %ProgramFiles% ACL the supported ancestor policy for the install directory, which preflight does not inspect above bin?",
+      "basis": "Preflight inspects the install directory and bin; renaming bin needs rights on the install directory itself. Not observed natively.",
+      "roles": ["leaf", "target", "sibling"],
+      "steps": [
+        {"name": "rename-bin", "by": "actor", "expect": "denied"},
+        {"name": "rename-own-directory", "by": "control", "expect": "ok"}
+      ]
+    },
+    {
+      "id": "install-bin-rename-filtered",
+      "title": "Filtered administrator renames the installed bin directory",
+      "tree": "install", "shape": "ancestor-rename", "depth": 1, "path": "bin",
+      "actor": "filtered-admin", "consumer": "os-acl", "outcome": "decision-needed",
+      "question": "Is the operating system's default %ProgramFiles% ACL the supported ancestor policy for the install directory, which preflight does not inspect above bin?",
+      "basis": "Preflight inspects the install directory and bin; renaming bin needs rights on the install directory itself. Not observed natively.",
+      "roles": ["leaf", "target", "sibling"],
+      "steps": [
+        {"name": "rename-bin", "by": "actor", "expect": "denied"},
+        {"name": "rename-own-directory", "by": "control", "expect": "ok"}
+      ]
+    }
+  ]
+}

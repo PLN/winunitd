@@ -277,6 +277,25 @@ session and non-elevation. Mutexes, semaphores, jobs, processes, threads,
 tokens, pipes, sockets and registry keys remain separate classes and are not
 inferred from these.
 
+`tests/security/pathcases` holds the case ledger for nested-descendant and
+ancestor-path cases that remain open in R4. It excludes the shapes already
+qualified: the data root and its immediate children at install and repair,
+caller mutation inside the protected trees, the delegated known-folder
+junction and the daemon-log chain. Each case names the privileged consumer,
+the shape and depth, the actor, a safe sibling control and the target that
+must stay unchanged. Its expected outcome rests on a cited product rule:
+`protected` (the caller's attempt is denied), `refuse` (the consumer refuses
+with its exact diagnostic) or `no-follow` (the consumer works and never
+reaches the target). Where the product is silent, the case is
+`decision-needed` with its policy question, and it cannot pass until the
+maintainer decides. Standard and UAC-filtered callers come in pairs. The
+evaluator recomputes a verdict from one native observation: the actor's own
+token, the identity of each object before and after the steps and after
+restoration, and each step's result. A SYSTEM or elevated substitute, a
+changed target or link, a broken control, a missing restoration or a
+consumer that showed the target's canary fails the case. The ledger and
+evaluator are fixture preparation, not qualification evidence.
+
 The [live-manager qualification](R4-EVIDENCE.md#live-manager-cross-user-rejection-and-production-client-server-owner-validation)
 adds genuine interactive callers, independent endpoint/server identity checks,
 own-manager positive controls and peer/system access-denied observations. A
