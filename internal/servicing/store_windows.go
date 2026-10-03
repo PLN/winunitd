@@ -32,9 +32,6 @@ const (
 	replaceRights = fileDeleteChild | windows.DELETE | windows.WRITE_DAC | windows.WRITE_OWNER | windows.GENERIC_ALL
 )
 
-// trustedInstaller is NT SERVICE\TrustedInstaller.
-const trustedInstaller = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
-
 // principals is the calling process's account and whether its token is
 // elevated. The manager and the package helper run as SYSTEM.
 func principals() (*windows.SID, bool, error) {
@@ -47,8 +44,14 @@ func principals() (*windows.SID, bool, error) {
 }
 
 func trustedSID(sid, self *windows.SID) bool {
-	return sid != nil && (sid.IsWellKnown(windows.WinLocalSystemSid) || sid.IsWellKnown(windows.WinBuiltinAdministratorsSid) ||
-		sid.String() == trustedInstaller || (self != nil && sid.Equals(self)))
+	if sid == nil {
+		return false
+	}
+	var me string
+	if self != nil {
+		me = self.String()
+	}
+	return trustedPrincipal(sid.String(), me)
 }
 
 // heldDirs keeps the checked chain open. The handles deny delete sharing, so
@@ -143,7 +146,7 @@ func checkSecurity(h windows.Handle, name string, forbidden uint32, inheritOnly 
 	}
 	owner, _, err := sd.Owner()
 	if err != nil || !trustedSID(owner, self) {
-		return fmt.Errorf("%s must be owned by SYSTEM or Administrators", name)
+		return fmt.Errorf("%s must be owned by SYSTEM, Administrators, TrustedInstaller or the checking account", name)
 	}
 	acl, _, err := sd.DACL()
 	if err != nil || acl == nil {
@@ -165,7 +168,7 @@ func checkSecurity(h windows.Handle, name string, forbidden uint32, inheritOnly 
 			continue
 		}
 		if uint32(ace.Mask)&forbidden != 0 && !trustedSID((*windows.SID)(unsafe.Pointer(&ace.SidStart)), self) {
-			return fmt.Errorf("%s permits non-administrator writes", name)
+			return fmt.Errorf("%s permits writes by a principal other than SYSTEM, Administrators, TrustedInstaller or the checking account", name)
 		}
 	}
 	return nil

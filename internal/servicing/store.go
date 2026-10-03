@@ -33,8 +33,9 @@ func FloorPath(baseDir string) string {
 //     inherit-only grants.
 //
 // Trusted principals are SYSTEM, Administrators, TrustedInstaller and the
-// account of the calling process, which is SYSTEM for the manager and the
-// package helper. A missing data root or daemon directory is a first install
+// account of the checking process (see trustedPrincipal), which is SYSTEM
+// for the manager and the package helper. A missing data root or daemon
+// directory is a first install
 // or bootstrap: no record can exist there, so there is no floor. An unsafe
 // existing level is an error, so a record that another account could have
 // removed or replaced is never read as absent.
@@ -198,6 +199,27 @@ func RemoveFloor(path string) error {
 		return err
 	}
 	return errors.Join(c.Remove(), c.Close())
+}
+
+// The machine principals every check trusts.
+const (
+	sidLocalSystem      = "S-1-5-18"
+	sidAdministrators   = "S-1-5-32-544"
+	sidTrustedInstaller = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+)
+
+// trustedPrincipal reports whether a check run by the account self trusts
+// the principal sid as an owner or writer: the machine principals for every
+// check, and the checking account for its own checks only. The trust is
+// relative to the checker: a directory or record that an account's own check
+// accepts because that account owns or may write it is still untrusted for
+// the system manager, which checks as SYSTEM.
+func trustedPrincipal(sid, self string) bool {
+	switch sid {
+	case sidLocalSystem, sidAdministrators, sidTrustedInstaller:
+		return true
+	}
+	return sid != "" && sid == self
 }
 
 // floorChain names the levels openFloorDirs checks for the record at path.

@@ -231,6 +231,14 @@ path on its open handle and keeps them open for the operation:
 | `compat-floor.json` | A regular file, not a reparse point, with the same owner and write rule |
 | `compat-floor.lock` | The lock that serializes floor changes, with the same rules as the record. It is created with the first change and never removed |
 
+These are the rules as the system manager and the package helper apply
+them; both run as SYSTEM. A check run by another account, such as
+`winunitd floor show` or `floor check` from an administrator's console,
+also trusts that account itself as an owner or writer, so it can accept a
+directory or record that the system manager rejects. After changing the
+floor or these permissions, the running manager's `AdmissionHold` in
+`winctl status` is authoritative, not a check run from a console.
+
 A missing `winunitd` or `daemon` directory under a safe `%ProgramData%` is a
 first install: there is no floor, and `floor set` refuses until the product
 is installed. Anything else that fails these checks makes the record
@@ -273,10 +281,15 @@ manager stopped. To raise it before admitting a workload that depends on it:
 3. Run `winunitd floor set ...`. A floor that raises any requirement is
    written only when the service is stopped with no process, nothing serves
    the system control or maintenance endpoint, and no other `winunitd.exe`
-   process runs. The check is repeated after the write; if a manager started
-   meanwhile, the command exits 1 and that manager must be restarted.
+   process runs. That includes a user manager started directly with
+   `winunitd --user-manager`: the floor does not govern it, but while it
+   runs a raise is refused. Stop it yourself; `floor set` stops nothing. The
+   check is repeated after the write; if a manager started meanwhile, the
+   command exits 1 and that manager must be restarted.
 4. Start the service. `winunitd floor check` must exit 0 and `winctl status`
-   must show no `AdmissionHold`: the manager that loaded is compatible.
+   must show no `AdmissionHold`: the manager that loaded is compatible. The
+   status is authoritative; `floor check` evaluates the binary it runs from
+   with the trust of the account that runs it.
 5. Admit the workload.
 
 Lowering the floor (a floor that requires nothing the current one did not)

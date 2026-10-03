@@ -323,3 +323,32 @@ func TestFloorWithin(t *testing.T) {
 		t.Error("a first floor counted as a lowering")
 	}
 }
+
+// Trust is relative to the checking account: an account's own check trusts
+// it, but a SYSTEM check, the manager's, does not. Machine principals are
+// trusted by every check.
+func TestTrustedPrincipalIsCallerRelative(t *testing.T) {
+	const (
+		a     = "S-1-5-21-1000-2000-3000-1001"
+		b     = "S-1-5-21-1000-2000-3000-1002"
+		users = "S-1-5-32-545"
+		world = "S-1-1-0"
+	)
+	for _, machine := range []string{sidLocalSystem, sidAdministrators, sidTrustedInstaller} {
+		for _, self := range []string{sidLocalSystem, a, ""} {
+			if !trustedPrincipal(machine, self) {
+				t.Errorf("%s untrusted for the checker %q", machine, self)
+			}
+		}
+	}
+	if !trustedPrincipal(a, a) {
+		t.Error("an account's own check does not trust it")
+	}
+	for _, c := range []struct{ sid, self string }{
+		{a, sidLocalSystem}, {a, b}, {a, ""}, {users, a}, {users, sidLocalSystem}, {world, sidLocalSystem}, {"", ""},
+	} {
+		if trustedPrincipal(c.sid, c.self) {
+			t.Errorf("%q trusted for the checker %q", c.sid, c.self)
+		}
+	}
+}

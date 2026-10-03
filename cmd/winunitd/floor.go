@@ -40,9 +40,11 @@ exits 1. show and check do not wait.
 To raise the floor before admitting a workload that needs it:
   1. winctl maintenance          quiesce system and user work
   2. stop the winunitd service and wait for its process to exit
-  3. winunitd floor set ...       checks the stop before and after writing
+  3. winunitd floor set ...       checks the stop before and after writing;
+     a directly started user manager is outside the floor but still
+     prevents a raise, and floor set stops nothing
   4. start the service; winunitd floor check and winctl status must show
-     no admission hold
+     no admission hold (the running manager's status is authoritative)
   5. admit the workload
 
 A manager below the floor keeps its control endpoint but starts no units and

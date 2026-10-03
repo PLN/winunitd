@@ -104,7 +104,7 @@ func TestWindowsFloorRejectsWritableLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	setSecurity(t, filepath.Join(filepath.Dir(path), LockFileName), "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FW;;;BU)", windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION)
-	if err := WriteFloor(path, &Floor{Schema: 1, MinVersion: "0.2.0"}); err == nil || !strings.Contains(err.Error(), "floor lock permits non-administrator writes") {
+	if err := WriteFloor(path, &Floor{Schema: 1, MinVersion: "0.2.0"}); err == nil || !strings.Contains(err.Error(), "floor lock permits writes by a principal other than") {
 		t.Fatalf("write under a writable lock: %v", err)
 	}
 	if err := RemoveFloor(path); err == nil {
@@ -123,7 +123,7 @@ func TestWindowsFloorRejectsWritableRecord(t *testing.T) {
 	}
 	// An inherited-only or direct write grant to Users makes it untrusted.
 	setSecurity(t, path, "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FW;;;BU)", windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION)
-	if _, err := ReadFloor(path); err == nil || !strings.Contains(err.Error(), "non-administrator") {
+	if _, err := ReadFloor(path); err == nil || !strings.Contains(err.Error(), "permits writes by a principal other than") {
 		t.Fatalf("writable record: %v", err)
 	}
 	if hold := AdmissionHold(path, Build{Version: "9.9.9"}); !strings.HasPrefix(hold, "compatibility floor record is unusable") {
