@@ -69,14 +69,52 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+#region pure functions: parameters in, values out, no machine state
+# Parameter rules. The headless account, its name and its manager directory
+# are required only for headless cases; SYSTEM cases ignore them.
+function Test-NestedJobParameters {
+	param([string]$Case, [string]$Identity, [string]$HeadlessSid, [string]$HeadlessAccount, [string]$HeadlessBase, [string[]]$Paths)
+	if ($Case -eq 'N06' -and $Identity -ne 'headless') { throw 'N06 has no SYSTEM variant' }
+	$headless = $Identity -eq 'headless'
+	if ($headless -and (!$HeadlessSid -or !$HeadlessAccount -or !$HeadlessBase)) { throw 'Headless cases need the account SID, name and manager directory' }
+	foreach ($path in @($Paths) + @($(if ($headless) { $HeadlessBase }))) {
+		if (!$path -or ![IO.Path]::IsPathRooted($path) -or $path -match '"') { throw 'Every path parameter must be absolute' }
+	}
+}
+
+# The case's unit name, case directory, unit file and, for a headless case
+# only, the enable link in the account's manager directory.
+function Get-NestedJobLayout {
+	param([string]$Case, [string]$Mode, [string]$Identity, [string]$Repetition, [string]$CaseRoot, [string]$DataDir, [string]$HeadlessBase)
+	$name = "nested-$($Case.ToLowerInvariant())-$Mode-$Repetition.service"
+	$layout = [ordered]@{ Name = $name; CaseDir = (Join-Path $CaseRoot "$($Case.ToLowerInvariant())-$Mode-$Identity-$Repetition"); UnitDir = $null; UnitPath = $null; EnablePath = $null }
+	if ($Identity -eq 'headless') {
+		$layout.UnitDir = Join-Path $HeadlessBase 'units'
+		$layout.EnablePath = Join-Path (Join-Path (Join-Path $HeadlessBase 'enabled') 'default.target') $name
+	} else {
+		$layout.UnitDir = Join-Path $DataDir 'units'
+	}
+	$layout.UnitPath = Join-Path $layout.UnitDir $name
+	return $layout
+}
+
+# Kill a process this driver started and confirm that it exited. A kill
+# request is not an exit: an unconfirmed exit is reported, and the case
+# directory stays as evidence.
+function Stop-ExactProcess([Diagnostics.Process]$Process, [string]$What) {
+	try { if (!$Process.HasExited) { $Process.Kill() } } catch { }
+	if ($Process.WaitForExit(30000)) { return "$What was killed after its deadline" }
+	return "$What did not exit after kill: cleanup unconfirmed, case evidence kept"
+}
+#endregion
+
 if (!$DisposableLab) { throw 'Explicit disposable-lab acknowledgement required' }
 if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -ne 'S-1-5-18') { throw 'Expected SYSTEM' }
-if ($Case -eq 'N06' -and $Identity -ne 'headless') { throw 'N06 has no SYSTEM variant' }
+Test-NestedJobParameters -Case $Case -Identity $Identity -HeadlessSid $HeadlessSid -HeadlessAccount $HeadlessAccount -HeadlessBase $HeadlessBase `
+	-Paths @($Fixture, $Admission, $CaseRoot, $Results, $InstallDir, $DataDir)
 $headless = $Identity -eq 'headless'
-if ($headless -and (!$HeadlessSid -or !$HeadlessAccount -or !$HeadlessBase)) { throw 'Headless cases need the account SID, name and manager directory' }
-foreach ($path in @($Fixture, $Admission, $CaseRoot, $Results, $InstallDir, $DataDir) + @($(if ($headless) { $HeadlessBase }))) {
-	if (![IO.Path]::IsPathRooted($path) -or $path -match '"') { throw 'Every path parameter must be absolute' }
-}
+$layout = Get-NestedJobLayout -Case $Case -Mode $Mode -Identity $Identity -Repetition $Repetition -CaseRoot $CaseRoot -DataDir $DataDir -HeadlessBase $HeadlessBase
+$name, $caseDir = $layout.Name, $layout.CaseDir
 $expectSid = if ($headless) { $HeadlessSid } else { 'S-1-5-18' }
 $daemon = Join-Path $InstallDir 'winunitd.exe'
 $winctl = Join-Path $InstallDir 'winctl.exe'
@@ -95,17 +133,6 @@ foreach ($file in $admitted.Keys) {
 }
 $service = Get-CimInstance Win32_Service -Filter "Name='winunitd'"
 if (!$service -or $service.State -ne 'Running' -or $service.PathName -notlike "*$daemon*") { throw 'The installed winunitd service must be running from the install directory' }
-
-$name = "nested-$($Case.ToLowerInvariant())-$Mode-$Repetition.service"
-$caseDir = Join-Path $CaseRoot "$($Case.ToLowerInvariant())-$Mode-$Identity-$Repetition"
-if (Test-Path -LiteralPath $caseDir) { throw 'Fresh case directory required' }
-New-Item -ItemType Directory -Path $caseDir | Out-Null
-New-Item -ItemType Directory -Force -Path $Results | Out-Null
-if ($headless) {
-	& icacls.exe $caseDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' "*${HeadlessSid}:(OI)(CI)F" | Out-Null
-	if ($LASTEXITCODE) { throw 'Case directory ACL failed' }
-}
-Start-Transcript -LiteralPath (Join-Path $caseDir 'driver.log') | Out-Null
 
 # Windows command-line quoting for one argument (CommandLineToArgvW rules).
 function ConvertTo-NativeArgument([string]$Value) {
@@ -127,7 +154,10 @@ function Invoke-Native {
 	try {
 		$output = $process.StandardOutput.ReadToEndAsync()
 		$errors = $process.StandardError.ReadToEndAsync()
-		if (!$process.WaitForExit($TimeoutMs)) { $process.Kill(); throw "Command exceeded its deadline: $(Split-Path -Leaf $File) $($Arguments[0])" }
+		if (!$process.WaitForExit($TimeoutMs)) {
+			$state = Stop-ExactProcess $process 'the command'
+			throw "Command exceeded its deadline: $(Split-Path -Leaf $File) $($Arguments[0]); $state"
+		}
 		$text = $output.GetAwaiter().GetResult()
 		$errorText = $errors.GetAwaiter().GetResult()
 		if ($process.ExitCode -notin $Expected) { throw "Command failed ($($process.ExitCode)): $(Split-Path -Leaf $File) $($Arguments[0]): $errorText" }
@@ -171,14 +201,29 @@ $brokerBefore = [uint32]$service.ProcessId
 $checks = New-Object Collections.Generic.List[string]
 $failures = New-Object Collections.Generic.List[string]
 $observer = $null
-$unitDir = if ($headless) { Join-Path $HeadlessBase 'units' } else { Join-Path $DataDir 'units' }
-$unitPath = Join-Path $unitDir $name
-$enablePath = Join-Path (Join-Path $HeadlessBase 'enabled\default.target') $name
+$unitDir, $unitPath, $enablePath = $layout.UnitDir, $layout.UnitPath, $layout.EnablePath
 $report = Join-Path $caseDir 'observer.json'
 $finish = Join-Path $caseDir 'driver-finished'
+# What the case has changed so far; teardown undoes exactly that.
+$caseCreated = $false
+$transcript = $false
+$unitWritten = $false
+$lingerCycled = $false
+$systemEnabled = $false
 try {
+	if (Test-Path -LiteralPath $caseDir) { throw 'Fresh case directory required' }
+	New-Item -ItemType Directory -Path $caseDir | Out-Null
+	$caseCreated = $true
+	New-Item -ItemType Directory -Force -Path $Results | Out-Null
+	if ($headless) {
+		& icacls.exe $caseDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' "*${HeadlessSid}:(OI)(CI)F" | Out-Null
+		if ($LASTEXITCODE) { throw 'Case directory ACL failed' }
+	}
+	Start-Transcript -LiteralPath (Join-Path $caseDir 'driver.log') | Out-Null
+	$transcript = $true
 	$exec = ConvertTo-Json -Compress -InputObject @($Fixture, 'main', '--launch-mode', $Mode, '--case-dir', $caseDir, '--generation', 'auto')
 	New-Item -ItemType Directory -Force -Path $unitDir | Out-Null
+	$unitWritten = $true
 	@"
 [Unit]
 Description=Nested job qualification
@@ -196,11 +241,13 @@ WantedBy=default.target
 		New-Item -ItemType Directory -Force -Path (Split-Path -Parent $enablePath) | Out-Null
 		"$name`n" | Set-Content -LiteralPath $enablePath -Encoding ASCII -NoNewline
 		# Restart the account's manager so it boots the newly enabled unit.
+		$lingerCycled = $true
 		Invoke-Native $winctl @('disable-linger', $HeadlessAccount) | Out-Null
 		Wait-Until { $null -eq (Get-UserManagerPid) } 'the previous user manager to exit'
 		Invoke-Native $winctl @('enable-linger', $HeadlessAccount) | Out-Null
 	} else {
 		Invoke-Native $winctl @('daemon-reload') | Out-Null
+		$systemEnabled = $true
 		Invoke-Native $winctl @('enable', $name) | Out-Null
 		Invoke-Native $winctl @('start', $name) | Out-Null
 	}
@@ -251,23 +298,30 @@ WantedBy=default.target
 } catch {
 	$failures.Add("driver: $($_.Exception.Message)")
 } finally {
-	# Teardown stops the replacement before the observer confirms cleanup.
+	# Teardown stops the replacement before the observer confirms cleanup,
+	# and undoes only what this case changed.
 	try {
-		if ($headless) {
+		if ($headless -and $unitWritten) {
 			Remove-Item -LiteralPath $enablePath, $unitPath -ErrorAction SilentlyContinue
-			Invoke-Native $winctl @('disable-linger', $HeadlessAccount) | Out-Null
-			Wait-Until { $null -eq (Get-UserManagerPid) } 'the user manager to stop'
-			Invoke-Native $winctl @('enable-linger', $HeadlessAccount) | Out-Null
-		} else {
-			Invoke-Native $winctl @('stop', $name) -Expected @(0, 1) | Out-Null
-			Invoke-Native $winctl @('disable', $name) -Expected @(0, 1) | Out-Null
+			if ($lingerCycled) {
+				Invoke-Native $winctl @('disable-linger', $HeadlessAccount) | Out-Null
+				Wait-Until { $null -eq (Get-UserManagerPid) } 'the user manager to stop'
+				Invoke-Native $winctl @('enable-linger', $HeadlessAccount) | Out-Null
+			}
+		} elseif ($unitWritten) {
+			if ($systemEnabled) {
+				Invoke-Native $winctl @('stop', $name) -Expected @(0, 1) | Out-Null
+				Invoke-Native $winctl @('disable', $name) -Expected @(0, 1) | Out-Null
+			}
 			Remove-Item -LiteralPath $unitPath -ErrorAction SilentlyContinue
 			Invoke-Native $winctl @('daemon-reload') | Out-Null
 		}
 	} catch { $failures.Add("teardown: $($_.Exception.Message)") }
-	New-Item -ItemType File -Path $finish -Force | Out-Null
+	if ($caseCreated) { New-Item -ItemType File -Path $finish -Force | Out-Null }
 	if ($observer) {
-		if (!$observer.WaitForExit(($TimeoutSeconds + 30) * 1000)) { $observer.Kill(); $failures.Add('observer did not finish') }
+		if (!$observer.WaitForExit(($TimeoutSeconds + 30) * 1000)) {
+			$failures.Add('observer did not finish: ' + (Stop-ExactProcess $observer 'the observer'))
+		}
 		$observer.Dispose()
 	}
 }
@@ -278,9 +332,13 @@ if ($detail.Length -gt 500) { $detail = $detail.Substring(0, 500) }
 $recordArgs = @('record', '--report', $report, '--results', $Results, '--admission', $Admission, '--case', $Case, '--mode', $Mode,
 	'--identity', $Identity, '--repetition', $Repetition, '--expect-sid', $expectSid, '--driver-result', $driverResult, '--detail', $detail)
 $code = 1
-try {
-	Invoke-Native $Fixture $recordArgs | Out-Null
-	$code = 0
-} catch { Write-Output "record: $($_.Exception.Message)" }
-Stop-Transcript | Out-Null
+if ($caseCreated) {
+	try {
+		Invoke-Native $Fixture $recordArgs | Out-Null
+		$code = 0
+	} catch { Write-Output "record: $(Protect-Detail $_.Exception.Message)" }
+} else {
+	Write-Output "no case was run: $detail"
+}
+if ($transcript) { Stop-Transcript | Out-Null }
 exit $code
