@@ -32,6 +32,9 @@ type NativeSecurityReport struct {
 	WritableStdio bool
 	Folders       bool
 	Denied        []bool
+	// Objects are the identities found at the non-file sentinel handle
+	// numbers the child was asked about, in order.
+	Objects []ObjectIdentity `json:",omitempty"`
 }
 
 type NativeFileIdentity struct {
@@ -79,12 +82,23 @@ func runSecurityReportHelper() error {
 			r.AdminFlags = group.Attributes
 		}
 	}
-	for _, value := range strings.Split(args["--sentinel-handles"], ",") {
-		h, err := strconv.ParseUint(value, 10, 64)
+	if value := args["--sentinel-handles"]; value != "" {
+		for _, value := range strings.Split(value, ",") {
+			h, err := strconv.ParseUint(value, 10, 64)
+			if err != nil {
+				return err
+			}
+			r.Files = append(r.Files, NativeHandleFileIdentity(windows.Handle(h)))
+		}
+	}
+	if value, ok := args["--object-sentinels"]; ok {
+		refs, err := ParseObjectSentinels(value)
 		if err != nil {
 			return err
 		}
-		r.Files = append(r.Files, NativeHandleFileIdentity(windows.Handle(h)))
+		for _, ref := range refs {
+			r.Objects = append(r.Objects, ObjectIdentityOf(windows.Handle(ref.Handle), ref.Kind))
+		}
 	}
 	_, r.BrokerEnv = os.LookupEnv("WINUNITD_SECURITY_BROKER_ONLY")
 	var startup windows.StartupInfo

@@ -259,6 +259,24 @@ validation, pipe squatting, privileged filesystem paths, or every possible
 native handle type. Record those checks separately. Guest drivers own account,
 logon, payload ACL and restoration evidence; test output omits fixture SIDs.
 
+Non-file handle classes have their own tests, so a native run of them does not
+repeat the file, environment, stdio and pipe-denial cases above. Each event and
+section sentinel is a named object whose name carries a fresh nonce; a section
+also holds a second nonce in its contents. The child reads the object type at
+each handle number first and reads the name, and for a section the contents
+through a read-only view, only for the expected type. The parent counts a
+sentinel as inherited only when type, full name and contents all match its own
+reading. `TestNativeObjectProbeDetectsSelectiveInheritance` is the positive
+control: two inheritable sentinels of each kind, only the first of each in the
+explicit inherit list, so the child must find exactly those two. It runs under
+any token. `TestNativeInteractiveUserManagerObjectIsolation` and
+`TestNativeHeadlessUserManagerObjectIsolation` use the same WTS, filtered WTS
+and S4U fixtures and gating as the security cases above. The production launch
+must expose no sentinel, and the child must report the expected identity,
+session and non-elevation. Mutexes, semaphores, jobs, processes, threads,
+tokens, pipes, sockets and registry keys remain separate classes and are not
+inferred from these.
+
 The [live-manager qualification](R4-EVIDENCE.md#live-manager-cross-user-rejection-and-production-client-server-owner-validation)
 adds genuine interactive callers, independent endpoint/server identity checks,
 own-manager positive controls and peer/system access-denied observations. A
