@@ -6,10 +6,26 @@ records one result for the case matrix.
 
 The native fixture does the process work: its observer holds every old
 process, terminates the exact crash target, waits for the replacement
-generation, compares kernel exit and creation times and confirms cleanup.
-This script renders and removes the unit, checks the daemon and records.
-Machine-specific inputs (paths, the dedicated headless account and its
-manager directory) are parameters; nothing environment-specific is built in.
+generation, records kernel exit and creation times of the raw identities
+and confirms cleanup. Its record step recomputes the verdict from those
+identities and binds the result to the case, mode, repetition, expected
+account and admitted run. This script checks the admitted build, renders
+and removes the unit, checks the daemon and records. Machine-specific
+inputs (paths, the dedicated headless account and its manager directory)
+are parameters; nothing environment-specific is built in.
+
+Admission: -Admission names the controller's reviewed run manifest (schema
+1, a full clean source commit and the SHA-256 of every admitted executable).
+Before anything is installed or crashed, the installed winunitd.exe and
+winctl.exe and the fixture must match its artifacts named winunitd.exe,
+winctl.exe and nested-job.exe; the fixture checks the manifest again and
+records its hash in the result.
+
+Evidence: the transcript (driver.log), the observer report and the case
+directory contain machine paths, account names and SIDs. They are private
+qualification evidence: never publish them as CI artifacts or attach them
+to issues or pull requests. The result record's detail is a summary with
+those values replaced by placeholders.
 
 Preconditions owned by the caller: the account for headless cases is a
 dedicated, local standard account with linger enabled and no interactive
@@ -39,8 +55,7 @@ param(
 	[Parameter(Mandatory)][ValidateSet('system', 'headless')][string]$Identity,
 	[Parameter(Mandatory)][ValidatePattern('^r[1-9]$')][string]$Repetition,
 	[Parameter(Mandatory)][string]$Fixture,
-	[Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{64}$')][string]$FixtureSha256,
-	[Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string]$Source,
+	[Parameter(Mandatory)][string]$Admission,
 	[Parameter(Mandatory)][string]$CaseRoot,
 	[Parameter(Mandatory)][string]$Results,
 	[string]$InstallDir = (Join-Path $env:ProgramFiles 'winunitd\bin'),
@@ -59,12 +74,25 @@ if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -ne 'S-1-5-18'
 if ($Case -eq 'N06' -and $Identity -ne 'headless') { throw 'N06 has no SYSTEM variant' }
 $headless = $Identity -eq 'headless'
 if ($headless -and (!$HeadlessSid -or !$HeadlessAccount -or !$HeadlessBase)) { throw 'Headless cases need the account SID, name and manager directory' }
-foreach ($path in @($Fixture, $CaseRoot, $Results, $InstallDir, $DataDir) + @($(if ($headless) { $HeadlessBase }))) {
-	if (![IO.Path]::IsPathRooted($path) -or $path -match '"') { throw "Path must be absolute: $path" }
+foreach ($path in @($Fixture, $Admission, $CaseRoot, $Results, $InstallDir, $DataDir) + @($(if ($headless) { $HeadlessBase }))) {
+	if (![IO.Path]::IsPathRooted($path) -or $path -match '"') { throw 'Every path parameter must be absolute' }
 }
-if ((Get-FileHash -LiteralPath $Fixture -Algorithm SHA256).Hash.ToLowerInvariant() -ne $FixtureSha256) { throw 'Fixture hash mismatch' }
+$expectSid = if ($headless) { $HeadlessSid } else { 'S-1-5-18' }
 $daemon = Join-Path $InstallDir 'winunitd.exe'
 $winctl = Join-Path $InstallDir 'winctl.exe'
+
+# The admitted build, checked before anything is installed or crashed.
+$manifest = Get-Content -LiteralPath $Admission -Raw | ConvertFrom-Json
+if ($manifest.schema -ne 1 -or $manifest.source -notmatch '^[0-9a-f]{40}$' -or $manifest.dirty) { throw 'The admission manifest must name one clean, full source commit' }
+function Get-AdmittedHash([string]$Name) {
+	$found = @($manifest.artifacts | Where-Object { $_.name -eq $Name })
+	if ($found.Count -ne 1 -or $found[0].sha256 -notmatch '^[0-9a-f]{64}$') { throw "The admission manifest does not admit $Name" }
+	return $found[0].sha256
+}
+$admitted = @{ $Fixture = Get-AdmittedHash 'nested-job.exe'; $daemon = Get-AdmittedHash 'winunitd.exe'; $winctl = Get-AdmittedHash 'winctl.exe' }
+foreach ($file in $admitted.Keys) {
+	if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -ne $admitted[$file]) { throw "$(Split-Path -Leaf $file) is not the admitted build" }
+}
 $service = Get-CimInstance Win32_Service -Filter "Name='winunitd'"
 if (!$service -or $service.State -ne 'Running' -or $service.PathName -notlike "*$daemon*") { throw 'The installed winunitd service must be running from the install directory' }
 
@@ -120,6 +148,17 @@ function Wait-Until([scriptblock]$Condition, [string]$What, [int]$Seconds = $Tim
 		if ((Get-Date) -ge $deadline) { throw "Timed out waiting for $What" }
 		Start-Sleep -Milliseconds 200
 	}
+}
+
+# The record's detail: driver checks and failures with machine paths, the
+# account and its SID replaced by placeholders.
+function Protect-Detail([string]$Text) {
+	$pairs = @(@($caseDir, '<case>'), @($CaseRoot, '<case-root>'), @($Results, '<results>'), @($InstallDir, '<install>'),
+		@($DataDir, '<data>'), @($Fixture, '<fixture>'), @($Admission, '<admission>'))
+	if ($headless) { $pairs += @(@($HeadlessBase, '<account-base>'), @($HeadlessSid, '<account-sid>'), @($HeadlessAccount, '<account>')) }
+	# Longest first, so a case directory is replaced before its root.
+	foreach ($pair in ($pairs | Where-Object { $_[0] } | Sort-Object { $_[0].Length } -Descending)) { $Text = $Text.Replace($pair[0], $pair[1]) }
+	return $Text -replace '[\r\n]+', ' '
 }
 
 function Read-ObserverStage([string]$Path) {
@@ -178,8 +217,9 @@ WantedBy=default.target
 			$holds = @('--hold-pid', [string](Get-UserManagerPid))
 		}
 	}
-	$observeArgs = @('observe', '--case-dir', $caseDir, '--generation', '1', '--replacement', '2', '--crash-pid', [string]$crash,
-		'--report', $report, '--finish-file', $finish, '--timeout', "$($TimeoutSeconds)s") + $holds
+	$observeArgs = @('observe', '--case-dir', $caseDir, '--generation', '1', '--crash-pid', [string]$crash,
+		'--report', $report, '--finish-file', $finish, '--timeout', "$($TimeoutSeconds)s", '--admission', $Admission,
+		'--case', $Case, '--mode', $Mode, '--identity', $Identity, '--repetition', $Repetition, '--expect-sid', $expectSid) + $holds
 	$start = New-Object Diagnostics.ProcessStartInfo
 	$start.FileName = $Fixture
 	$start.Arguments = ($observeArgs | ForEach-Object { ConvertTo-NativeArgument $_ }) -join ' '
@@ -192,7 +232,7 @@ WantedBy=default.target
 	foreach ($file in @($daemon, $winctl)) {
 		if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $hashesBefore[$file]) { $failures.Add("$(Split-Path -Leaf $file) changed") }
 	}
-	$checks.Add('daemon and CLI hashes unchanged')
+	$checks.Add('daemon, CLI and fixture are the admitted build and unchanged')
 	$serviceAfter = Get-CimInstance Win32_Service -Filter "Name='winunitd'"
 	if ($serviceAfter.State -ne 'Running') { $failures.Add('service not running after recovery') }
 	if ($Case -eq 'N07') {
@@ -209,7 +249,7 @@ WantedBy=default.target
 		$checks.Add('unit active after recovery')
 	}
 } catch {
-	$failures.Add("driver: $($_.Exception.Message -replace '[\r\n]+', ' ')")
+	$failures.Add("driver: $($_.Exception.Message)")
 } finally {
 	# Teardown stops the replacement before the observer confirms cleanup.
 	try {
@@ -224,7 +264,7 @@ WantedBy=default.target
 			Remove-Item -LiteralPath $unitPath -ErrorAction SilentlyContinue
 			Invoke-Native $winctl @('daemon-reload') | Out-Null
 		}
-	} catch { $failures.Add("teardown: $($_.Exception.Message -replace '[\r\n]+', ' ')") }
+	} catch { $failures.Add("teardown: $($_.Exception.Message)") }
 	New-Item -ItemType File -Path $finish -Force | Out-Null
 	if ($observer) {
 		if (!$observer.WaitForExit(($TimeoutSeconds + 30) * 1000)) { $observer.Kill(); $failures.Add('observer did not finish') }
@@ -233,11 +273,10 @@ WantedBy=default.target
 }
 
 $driverResult = if ($failures.Count) { 'fail' } else { 'pass' }
-$detail = (@($checks) + @($failures)) -join '; '
+$detail = Protect-Detail ((@($checks) + @($failures)) -join '; ')
 if ($detail.Length -gt 500) { $detail = $detail.Substring(0, 500) }
-$tokenSource = if ($headless) { 's4u' } else { 'process' }
-$recordArgs = @('record', '--report', $report, '--results', $Results, '--case', $Case, '--mode', $Mode, '--identity', $Identity,
-	'--repetition', $Repetition, '--source', $Source, '--token-source', $tokenSource, '--driver-result', $driverResult, '--detail', $detail)
+$recordArgs = @('record', '--report', $report, '--results', $Results, '--admission', $Admission, '--case', $Case, '--mode', $Mode,
+	'--identity', $Identity, '--repetition', $Repetition, '--expect-sid', $expectSid, '--driver-result', $driverResult, '--detail', $detail)
 $code = 1
 try {
 	Invoke-Native $Fixture $recordArgs | Out-Null
