@@ -474,8 +474,17 @@ func CheckInventory(p *InventoryProof, c InventoryContext) []string {
 	if p.Facts.DataDir == nil {
 		add("the data root's security was not read")
 	}
-	if p.Facts.Audit == nil {
-		add("the audit policy was not read")
+	// Every scope account's effective logon auditing must have been read at
+	// both ends; equal omissions are not an unchanged policy.
+	for _, audit := range []*MachineAudit{b.Facts.Audit, p.Facts.Audit} {
+		if audit == nil {
+			add("the audit policy was not read")
+			break
+		}
+		if slices.ContainsFunc(c.Accounts, func(sid string) bool { _, ok := audit.Accounts[sid]; return !ok }) {
+			add("an account's effective audit policy was not read")
+			break
+		}
 	}
 	if b.Facts.fixtureObjects() {
 		add("the sealed baseline already held fixture tasks, firewall rules or template files")

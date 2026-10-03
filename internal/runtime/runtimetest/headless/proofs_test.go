@@ -652,6 +652,21 @@ func TestSummarizeRequiresDiagnosticsProofs(t *testing.T) {
 			inv := ev(t, rs, "H22/all").Inventory
 			inv.Facts.Audit, inv.Baseline.Facts.Audit = nil, nil
 		}},
+		{"no account audit facts at either end", "H22/all: an account's effective audit policy was not read", func(rs []Record) {
+			inv := ev(t, rs, "H22/all").Inventory
+			inv.Facts.Audit.Accounts, inv.Baseline.Facts.Audit.Accounts = map[string]bool{}, map[string]bool{}
+		}},
+		{"one account's audit missing at the end", "H22/all: an account's effective audit policy was not read", func(rs []Record) {
+			delete(ev(t, rs, "H22/all").Inventory.Facts.Audit.Accounts, sidB)
+		}},
+		{"incomplete baseline audit", "H22/all: an account's effective audit policy was not read", func(rs []Record) {
+			inv := ev(t, rs, "H22/all").Inventory
+			delete(inv.Baseline.Facts.Audit.Accounts, sidAdmin)
+			delete(inv.Facts.Audit.Accounts, sidAdmin)
+		}},
+		{"baseline audit not read", "H22/all: the audit policy was not read", func(rs []Record) {
+			ev(t, rs, "H22/all").Inventory.Baseline.Facts.Audit = nil
+		}},
 		{"per-user audit exclusion left behind", "H22/all: the machine state differs from the baseline", func(rs []Record) {
 			ev(t, rs, "H22/all").Inventory.Facts.Audit.Accounts[sidB] = false
 		}},
