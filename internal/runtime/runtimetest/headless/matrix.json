@@ -1,8 +1,8 @@
 {
   "version": 1,
   "phases": [
-    {"id": 1, "name": "fresh-boot", "description": "First boot of the baseline: no logon, no password-bearing logon since boot; network and file probes run before any credential control.", "oneBoot": true, "noPassword": true},
-    {"id": 2, "name": "lifecycle", "description": "Lifecycle, recovery and revocation cases, still with no password-bearing logon since each boot.", "noPassword": true},
+    {"id": 1, "name": "fresh-boot", "description": "First boot of the baseline: no logon, and no password-bearing logon observed since boot; network and file probes run before any credential control. Complete event delivery is not established, so the absence is observed, not proven.", "oneBoot": true, "noPassword": true, "logonHistory": "observed"},
+    {"id": 2, "name": "lifecycle", "description": "Lifecycle, recovery and revocation cases, still with no password-bearing logon observed since each boot.", "noPassword": true, "logonHistory": "observed"},
     {"id": 3, "name": "password-and-wts", "description": "Password-bearing controls and genuine interactive sessions."},
     {"id": 4, "name": "owner-runners", "description": "Native test-owner runners with the broker stopped and profiles unloaded."},
     {"id": 5, "name": "cleanup", "description": "Final cleanup and restoration."}

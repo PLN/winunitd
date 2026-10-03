@@ -99,7 +99,16 @@ type Summary struct {
 	// Complete is true only for the whole matrix with every record passed
 	// and no problem. Only a complete summary can support #266.
 	Complete bool `json:"complete"`
+	// Limits are what the summarized evidence does not establish, such as
+	// the coverage of the logon history.
+	Limits []string `json:"limits"`
 }
+
+// LogonHistoryLimit is the logon-history coverage a summary records for
+// its no-password phases.
+const LogonHistoryLimit = "logon history coverage unknown: absence of password-bearing logons since each boot is observed through " +
+	"complete sampling and the audited history read after the observer's marker logon; complete event delivery is not established, " +
+	"so the no-password phases show that none was seen, not that none happened"
 
 type status int
 
@@ -235,6 +244,10 @@ func Summarize(m *Matrix, records []Record, run AdmittedRun, sel Selection) Summ
 		})
 	}
 	s.Complete = !s.Partial && s.Passed == s.Required && len(s.Problems) == 0
+	s.Limits = []string{}
+	if slices.ContainsFunc(m.Phases, func(p Phase) bool { return p.NoPassword && p.LogonHistory == LogonHistoryObserved }) {
+		s.Limits = append(s.Limits, LogonHistoryLimit)
+	}
 	return s
 }
 
@@ -678,7 +691,7 @@ func (ev *evaluation) checkOrder() {
 		p := placed{key: k, seq: r.Sequence, boot: r.BootID, passwords: r.PasswordLogons}
 		if rep := r.Evidence.Observer; rep != nil {
 			p.passwords = max(p.passwords, rep.PasswordLogonsSince())
-			p.observed = rep.LogonHistoryKnown()
+			p.observed = rep.LogonHistoryObserved()
 		}
 		if c, ok := ev.controls[k]; ok {
 			p.phase, p.account, p.preboot = c.Phase, c.Account, c.ImmediatelyBefore
@@ -714,7 +727,7 @@ func (ev *evaluation) checkOrder() {
 				ev.problem("%s: phase %s ran after a password-bearing logon", p.key, ph.Name)
 			}
 			if ph.NoPassword && p.primary && !p.observed && ev.entries[p.key].Proof != ProofPending {
-				ev.problem("%s: phase %s has no complete observed logon history since its boot", p.key, ph.Name)
+				ev.problem("%s: phase %s has no observed logon history since its boot", p.key, ph.Name)
 			}
 		}
 	}

@@ -86,6 +86,15 @@ func TestDecodeMatrixRejectsInvalidTables(t *testing.T) {
 		return cases(m)[id].(map[string]any)["variants"].([]any)[i].(map[string]any)
 	}
 	mutations := map[string]func(map[string]any){
+		"proven logon history": func(m map[string]any) {
+			m["phases"].([]any)[0].(map[string]any)["logonHistory"] = "proven"
+		},
+		"no-password phase without its history scope": func(m map[string]any) {
+			delete(m["phases"].([]any)[1].(map[string]any), "logonHistory")
+		},
+		"history scope without a no-password phase": func(m map[string]any) {
+			m["phases"].([]any)[2].(map[string]any)["logonHistory"] = "observed"
+		},
 		"status requirement without its unit": func(m map[string]any) { delete(cases(m)["G5"].(map[string]any), "statusUnit") },
 		"control status without its unit": func(m map[string]any) {
 			ctl := cases(m)["G5"].(map[string]any)["controls"].([]any)[0].(map[string]any)

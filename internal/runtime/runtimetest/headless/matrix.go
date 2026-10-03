@@ -110,9 +110,21 @@ type Phase struct {
 	Description string `json:"description"`
 	// OneBoot requires all of the phase's records to share one boot.
 	OneBoot bool `json:"oneBoot,omitempty"`
-	// NoPassword requires no password-bearing logon since that boot.
+	// NoPassword requires that no password-bearing logon since that boot
+	// was seen, to the extent LogonHistory states.
 	NoPassword bool `json:"noPassword,omitempty"`
+	// LogonHistory is what a no-password phase's logon history
+	// establishes. Only "observed" is supported: complete sampling and the
+	// audited history read after the observer's marker logon, under an
+	// unchanged policy. Complete event delivery is not established, so the
+	// history shows that no password-bearing logon was seen, not that none
+	// happened; "proven" would need a reviewed delivery contract, which this
+	// harness does not have.
+	LogonHistory string `json:"logonHistory,omitempty"`
 }
+
+// LogonHistoryObserved is the only supported logon-history scope.
+const LogonHistoryObserved = "observed"
 
 // Case is one case and its variants.
 type Case struct {
@@ -303,6 +315,12 @@ func DecodeMatrix(data []byte) (*Matrix, error) {
 	for i, p := range m.Phases {
 		if p.ID != i+1 || p.Name == "" {
 			return nil, fmt.Errorf("phase %d", i+1)
+		}
+		switch {
+		case p.LogonHistory == "proven":
+			return nil, fmt.Errorf("phase %d: a proven logon history needs a reviewed event delivery contract, which this harness does not have", p.ID)
+		case p.NoPassword != (p.LogonHistory == LogonHistoryObserved):
+			return nil, fmt.Errorf("phase %d: a no-password phase, and only one, states its logon history as observed", p.ID)
 		}
 	}
 	for id, c := range m.Cases {

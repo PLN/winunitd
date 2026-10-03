@@ -850,59 +850,59 @@ func TestSummarizeRequiresCompleteObservation(t *testing.T) {
 			r := ev(t, rs, "H08/B").Observer
 			r.Generations[len(r.Generations)-1].Exited = r.Ended + 1e7
 		}},
-		{"logon auditing off at the start", "H13/A: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+		{"logon auditing off at the start", "H13/A: phase fresh-boot has no observed logon history since its boot", func(rs []Record) {
 			ev(t, rs, "H13/A").Observer.Audit.PolicyStart.LogonSuccess = false
 		}},
-		{"policy-change auditing off at the end", "H07/B: phase lifecycle has no complete observed logon history since its boot", func(rs []Record) {
+		{"policy-change auditing off at the end", "H07/B: phase lifecycle has no observed logon history since its boot", func(rs []Record) {
 			ev(t, rs, "H07/B").Observer.Audit.PolicyEnd.PolicyChangeSuccess = false
 		}},
-		{"no policy read at the end", "H17/B: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+		{"no policy read at the end", "H17/B: phase fresh-boot has no observed logon history since its boot", func(rs []Record) {
 			ev(t, rs, "H17/B").Observer.Audit.PolicyEnd = nil
 		}},
-		{"audit policy changed since the boot", "H08/A: phase lifecycle has no complete observed logon history since its boot", func(rs []Record) {
+		{"audit policy changed since the boot", "H08/A: phase lifecycle has no observed logon history since its boot", func(rs []Record) {
 			ev(t, rs, "H08/A").Observer.Audit.PolicyChanges = 1
 		}},
-		{"account excluded by per-user policy", "H13/A: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+		{"account excluded by per-user policy", "H13/A: phase fresh-boot has no observed logon history since its boot", func(rs []Record) {
 			ev(t, rs, "H13/A").Observer.Audit.Accounts[sidA] = AccountAudit{Start: false, End: true}
 		}},
-		{"account policy not read at the end", "H13/B: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+		{"account policy not read at the end", "H13/B: phase fresh-boot has no observed logon history since its boot", func(rs []Record) {
 			ev(t, rs, "H13/B").Observer.Audit.Accounts[sidB] = AccountAudit{Start: true}
 		}},
-		{"no effective policy for a watched account", "H14/A: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+		{"no effective policy for a watched account", "H14/A: phase fresh-boot has no observed logon history since its boot", func(rs []Record) {
 			delete(ev(t, rs, "H14/A").Observer.Audit.Accounts, sidB)
 		}},
-		{"per-user policy changed since the boot", "H07/A: phase lifecycle has no complete observed logon history since its boot", func(rs []Record) {
+		{"per-user policy changed since the boot", "H07/A: phase lifecycle has no observed logon history since its boot", func(rs []Record) {
 			ev(t, rs, "H07/A").Observer.Audit.UserPolicyChanges = 1
 		}},
-		{"no marker logon", "H15/B: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+		{"no marker logon", "H15/B: phase fresh-boot has no observed logon history since its boot", func(rs []Record) {
 			ev(t, rs, "H15/B").Observer.Audit.Marker = nil
 		}},
-		{"marker made before the final scan", "H16/A: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+		{"marker made before the final scan", "H16/A: phase fresh-boot has no observed logon history since its boot", func(rs []Record) {
 			r := ev(t, rs, "H16/A").Observer
 			r.Audit.Marker.Requested = r.Ended - 1e7
 		}},
-		{"coverage claimed past the marker", "H17/A: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+		{"coverage claimed past the marker", "H17/A: phase fresh-boot has no observed logon history since its boot", func(rs []Record) {
 			r := ev(t, rs, "H17/A").Observer
 			r.Audit.To = r.Audit.Marker.Logged + 60e7
 		}},
-		{"marker never found in the log", "H18/A: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+		{"marker never found in the log", "H18/A: phase fresh-boot has no observed logon history since its boot", func(rs []Record) {
 			ev(t, rs, "H18/A").Observer.Audit.Marker.Logged = 0
 		}},
-		{"history read before the observation ended", "H15/A: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+		{"history read before the observation ended", "H15/A: phase fresh-boot has no observed logon history since its boot", func(rs []Record) {
 			r := ev(t, rs, "H15/A").Observer
 			r.Audit.To = r.Ended - 1
 		}},
-		{"audited logon beyond the read", "H16/B: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+		{"audited logon beyond the read", "H16/B: phase fresh-boot has no observed logon history since its boot", func(rs []Record) {
 			r := ev(t, rs, "H16/B").Observer
 			r.Logons = []LogonFact{{ID: "2", SID: sidB, Type: logonNetwork, LogonTime: r.Audit.To + 1, Source: "audit", Process: productTokenSource}}
 		}},
-		{"no audited history", "H17/A: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+		{"no audited history", "H17/A: phase fresh-boot has no observed logon history since its boot", func(rs []Record) {
 			ev(t, rs, "H17/A").Observer.Audit = nil
 		}},
-		{"audit log cleared", "H07/B: phase lifecycle has no complete observed logon history since its boot", func(rs []Record) {
+		{"audit log cleared", "H07/B: phase lifecycle has no observed logon history since its boot", func(rs []Record) {
 			ev(t, rs, "H07/B").Observer.Audit.ClearedSinceBoot = true
 		}},
-		{"audit log begins after the boot", "H18/B: phase fresh-boot has no complete observed logon history since its boot", func(rs []Record) {
+		{"audit log begins after the boot", "H18/B: phase fresh-boot has no observed logon history since its boot", func(rs []Record) {
 			r := ev(t, rs, "H18/B").Observer
 			r.Audit.Oldest = r.Boot.Time + 1
 		}},
@@ -960,5 +960,31 @@ func TestOutsideUnitClient(t *testing.T) {
 	otherUnit := move(func(r *ObserverReport, _ *Generation) uint32 { return gensOf(r, RoleManager, AccountA)[0].PID }, RoleWorkload)
 	if !otherUnit.Complete {
 		t.Fatalf("another unit's client not counted as outside: %q", otherUnit.Problems)
+	}
+}
+
+// The logon history is observed, not proven: a complete summary records
+// that its coverage is unknown, and a password-bearing logon that the read
+// did see, even one dated before the marker, still fails the phase.
+func TestLogonHistoryCoverageIsObservedOnly(t *testing.T) {
+	m := testMatrix(t)
+	run := testRun(t)
+	base := allPassing(t, m)
+	s := Summarize(m, base, run, Selection{})
+	if !s.Complete || !slices.Contains(s.Limits, LogonHistoryLimit) {
+		t.Fatalf("complete=%t limits=%q", s.Complete, s.Limits)
+	}
+	rs := cloneRecords(base)
+	r := ev(t, rs, "H13/B").Observer
+	// A logon from another writer, dated before the marker, delivered to
+	// the read after all.
+	r.Logons = append(r.Logons, LogonFact{ID: "00000000:000b0001", SID: sidB, Type: logonInteractive, LogonTime: r.Audit.Marker.Logged - 1e7,
+		Source: "audit", Process: "User32"})
+	s = Summarize(m, rs, run, Selection{})
+	if s.Complete || !strings.Contains(strings.Join(s.Problems, "\n"), "H13/B: phase fresh-boot ran after a password-bearing logon") {
+		t.Fatalf("a delivered earlier logon passed: %q", s.Problems)
+	}
+	if !slices.Contains(s.Limits, LogonHistoryLimit) {
+		t.Fatal("the coverage limit is not recorded")
 	}
 }

@@ -452,14 +452,15 @@ watched account's effective logon auditing (system and per-user policy
 combined) when it starts and again after the final scan. It then makes an
 attributable marker logon, a service logon of the local service account,
 and waits up to two minutes for that logon's audit event to appear in the
-Security log; the marker's event time is how far the history read covers
-the log. Only then does it read the logon history since the boot: the
-oldest event the log holds, whether it was cleared, changes to the Logon and
-Audit Policy Change subcategories and per-user policy changes for the
-watched accounts since the boot, and the watched accounts' logons. A marker
-that does not appear leaves the history unknown. The marker bound rests on
-the audit path writing logons in order; it is a fixture claim until the
-native procedure shows it on the selected OS. Batch logons are counted from
+Security log, a positive control that the read sees new events. Only then
+does it read the logon history since the boot: the oldest event the log
+holds, whether it was cleared, changes to the Logon and Audit Policy Change
+subcategories and per-user policy changes for the watched accounts since the
+boot, and the watched accounts' logons. A marker that does not appear leaves
+the history unobserved. The marker is not a delivery barrier: events from
+different writers can reach the log out of order, so a logon dated before the
+marker could still arrive after the read. The history therefore shows which
+password-bearing logons were seen, not that no other happened. Batch logons are counted from
 that history, which names the logon process, so the product's own S4U logons
 are not counted. Its report also
 records the boot (kernel boot time and boot counter), the longest interval
@@ -469,7 +470,8 @@ record's boot, and embeds it, and a passing lifecycle record needs one.
 
 `headless-workload summarize --results DIR --admission FILE` exits 0 only when
 every record of the matrix passed with its proof and confirmed cleanup and
-nothing is wrong. It recomputes every judgement from raw evidence instead of
+nothing is wrong. Its `limits` list what the evidence does not establish,
+such as the logon history's coverage; a complete summary carries them too. It recomputes every judgement from raw evidence instead of
 trusting a record's claim:
 
 - failed launches (crashed or nonzero exit), durations, capped retries
@@ -523,14 +525,18 @@ trusting a record's claim:
   elevation type) for the filtered-administrator rows, one SID per account
   and distinct accounts;
 - phase order; the first phase on one fresh boot and the first two phases with
-  no password-bearing logon since their boot, counted from the observer's
-  samples and the Security log's history, which must reach back past the
-  boot uncleared, under a system policy that audited successful logons and
-  audit policy changes and an effective policy that audited each watched
-  account's successful logons at both ends, with no system or per-user
-  policy change logged since the boot, and cover the log up to the
-  observer's own marker logon after the final scan, so bare S4U network and EFS
-  probes precede every credential
+  no password-bearing logon observed since their boot, counted from the
+  observer's samples and the Security log's history. The history must reach
+  back past the boot uncleared, under a system policy that audited successful
+  logons and audit policy changes and an effective policy that audited each
+  watched account's successful logons at both ends, with no system or per-user
+  policy change logged since the boot, and be read after the observer's own
+  marker logon appeared. The matrix scopes these phases' logon history as
+  `observed`, and every summary lists its coverage as unknown under `limits`.
+  Complete event delivery is not established, so a password-bearing logon the
+  log delivered late would go unseen; the phases show that none was seen, not
+  that none happened. A `proven` scope is refused until a reviewed delivery
+  contract exists. Bare S4U network and EFS probes precede every credential
   control; the first-use check immediately before the first-use cold boot;
   shared executions only where declared and with one observer report; five
   distinct test runners for the held native-launch repetitions, by label and
@@ -670,7 +676,8 @@ What the lab provides for this driver:
   account; logon success auditing for the local service account, whose
   service logon is the observer's marker; and a Security log large enough
   and never cleared during the qualification, so the logon history reaches
-  back past each boot. Otherwise the no-password phases stay unproven.
+  back past each boot. Otherwise the no-password phases have no observed
+  history and stay incomplete.
 - The run manifest admits `winunitd.exe`, `winctl.exe`,
   `headless-workload.exe`, `runtime.test.exe`, `journal.test.exe` and
   `test2json.exe` of the one integration artifact; `-Baseline` names the

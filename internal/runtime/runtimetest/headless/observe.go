@@ -189,9 +189,11 @@ type AuditFacts struct {
 	// by SID.
 	Accounts map[string]AccountAudit `json:"accounts,omitempty"`
 	// Marker is the attributable logon the observer made after its final
-	// scan and then found in the log.
+	// scan and then found in the log: a positive control, not a delivery
+	// barrier.
 	Marker *AuditMarker `json:"marker,omitempty"`
-	// To is the marker's event time: the read covers the log up to it.
+	// To is the marker's event time, the read's cutoff: events from other
+	// writers dated before it may still arrive after the read.
 	To     uint64        `json:"to,omitempty"`
 	Errors []NativeError `json:"errors,omitempty"`
 }
@@ -225,15 +227,21 @@ func (p *AuditPolicy) audits() bool { return p != nil && p.LogonSuccess && p.Pol
 // MaxSampleInterval bounds the time between two samples.
 const MaxSampleInterval = 5 * time.Second
 
-// LogonHistoryKnown reports whether the report lists every password-bearing
-// logon of the watched accounts since its boot: sampling covered the
-// observation; the audited history reaches back past the boot, uncleared;
-// the system policy and every watched account's effective policy audited
-// successful logons at both ends, with no system or per-user policy change
-// logged since the boot; and the observer's own marker logon, made after the
-// final scan, appeared in the log before the history was read, which bounds
-// the collection.
-func (r *ObserverReport) LogonHistoryKnown() bool {
+// LogonHistoryObserved reports whether the report's logon history supports
+// an observed absence of password-bearing logons since its boot: sampling
+// covered the observation; the audited history reaches back past the boot,
+// uncleared; the system policy and every watched account's effective policy
+// audited successful logons at both ends, with no system or per-user policy
+// change logged since the boot; and the observer's own marker logon, made
+// after the final scan, appeared in the log before the history was read, a
+// positive control that the read sees new events.
+//
+// It does not establish complete delivery: events from different writers
+// can reach the log out of order, so an earlier logon could still arrive
+// after the marker and the read. A logon missing from the history is
+// therefore unseen, not proven absent; the matrix scopes its no-password
+// phases accordingly.
+func (r *ObserverReport) LogonHistoryObserved() bool {
 	a := r.Audit
 	if !r.samplingComplete() || a == nil || !a.Read || len(a.Errors) > 0 || a.ClearedSinceBoot || a.Oldest == 0 || a.Oldest > r.Boot.Time ||
 		!a.PolicyStart.audits() || !a.PolicyEnd.audits() || a.PolicyChanges != 0 || a.UserPolicyChanges != 0 {
