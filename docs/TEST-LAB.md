@@ -415,13 +415,23 @@ of N06 or N07. Before anything is installed or crashed it requires the
 installed daemon and CLI and the fixture to match the admitted manifest. It
 renders an enabled unit, lets the fixture's observer crash the exact user
 manager or broker, checks the recovered daemon and records the result. The
-observer reports raw identities: both generations' MAIN, ENGINE, G1 and G2
-with parent links, account, session and image hash, the crash target and any
-held user manager with their accounts, and kernel exit and creation times.
-The record step recomputes every check from them, binds the result to the
-case, mode, repetition, expected account and admitted run, and links it to
-the N01 native-owner proof, which must have run under the same account. Its
-account, directories and paths are parameters.
+observer refuses to crash anything unless the running generation's own
+report shows the bound launch mode. It reports raw identities: both
+generations' MAIN, ENGINE, G1 and G2 with parent links, account, session and
+image hash, the crash target and any held user manager with their accounts,
+kernel exit and creation times, and both generations' complete MAIN reports,
+read after their writers exited. The record step recomputes every check from
+them: each report is complete and READY in the bound mode with its launch
+sequence and inner job, and names exactly the held tree; the replacement's
+entry check covers each old process exactly once without an error; every
+workload image is the admitted `nested-job.exe`, which must also be the
+recorder. It binds the result to the case, mode, repetition, expected account
+and admitted run, and links it to the N01 native-owner proof, which must have
+run under the same account. Its account, directories and paths are
+parameters; a SYSTEM case needs none of the headless ones. Every change the
+driver makes runs inside its try block and teardown undoes exactly what was
+done; a process it kills after a deadline counts as stopped only once its exit
+is confirmed, and an unconfirmed exit fails the case and leaves its evidence.
 
 For headless installed-daemon cases an administrator cannot reach the
 account's manager pipe, so the driver installs the unit itself. It writes
@@ -437,9 +447,12 @@ fits its account conventions.
 Case directories, observer reports, agent files and the driver's transcript
 contain machine paths, account names and SIDs. They are private
 qualification evidence and must not be published as CI artifacts or attached
-to issues or pull requests. Test failure messages name roles, states and
-numeric errors only, and the driver's result detail replaces paths and the
-account with placeholders.
+to issues or pull requests. New test failure messages name roles, states and
+numeric errors, and the fixture's file errors, including a missing admission
+manifest, name only the file. The driver's result detail replaces its own
+path and account parameters with placeholders on a best-effort basis; it is
+not a publication sanitizer. A public summary is written separately from an
+allowlist of fields.
 
 `nested-job-fixture summarize --results DIR --admission FILE` exits 0 only
 when every required execution and its required controls passed for that
