@@ -122,6 +122,9 @@ func win32Code(err error) uint32 {
 	return 0
 }
 
+// FailureOf records a native error with its Win32 code, or nil.
+func FailureOf(op string, err error) *Failure { return failure(op, err) }
+
 func failure(op string, err error) *Failure {
 	if err == nil {
 		return nil
@@ -184,7 +187,8 @@ func selfIdentity(role string, generation int) (Identity, error) {
 }
 
 // probeHandle queries a numeric handle value as a job. Finding a job there
-// means a job handle was inherited; any error is the expected result.
+// means a job handle was inherited; ERROR_INVALID_HANDLE means none is there.
+// The numeric error is kept so CheckHandleProbes can reject any other result.
 func probeHandle(value uint64) HandleProbe {
 	p := HandleProbe{Value: value}
 	var info windows.JOBOBJECT_BASIC_LIMIT_INFORMATION
@@ -257,7 +261,12 @@ func startProcess(argv []string, flags uint32, jobList []windows.Handle, inherit
 			// The attribute stores a pointer; the container keeps the slice
 			// alive until Delete, after CreateProcess has returned.
 			if err := list.Update(procThreadAttributeJobList, unsafe.Pointer(&jobList[0]), uintptr(len(jobList))*unsafe.Sizeof(jobList[0])); err != nil {
-				return pi, &unavailableError{err: err}
+				// The attribute exists from Windows 10 and Server 2016 on;
+				// there a rejection is a real error, not a missing feature.
+				if windows.RtlGetVersion().MajorVersion < 10 {
+					return pi, &unavailableError{err: err}
+				}
+				return pi, fmt.Errorf("job list: %w", err)
 			}
 		}
 		if len(inherit) > 0 {
@@ -281,8 +290,9 @@ func startProcess(argv []string, flags uint32, jobList []windows.Handle, inherit
 	return pi, nil
 }
 
-// unavailableError marks a JOB_LIST attribute the OS rejected: an explicit
-// unqualified lane, never a reason to fall back to assignment.
+// unavailableError marks a JOB_LIST attribute that an OS older than
+// Windows 10 rejected: an explicit unqualified lane, never a reason to fall
+// back to assignment.
 type unavailableError struct{ err error }
 
 func (e *unavailableError) Error() string { return "PROC_THREAD_ATTRIBUTE_JOB_LIST: " + e.err.Error() }
@@ -410,4 +420,18 @@ func imagePath(process windows.Handle) (string, error) {
 		return "", err
 	}
 	return windows.UTF16ToString(buf[:n]), nil
+}
+
+// processSID is the user SID of another process's token.
+func processSID(process windows.Handle) (string, error) {
+	var tok windows.Token
+	if err := windows.OpenProcessToken(process, windows.TOKEN_QUERY, &tok); err != nil {
+		return "", err
+	}
+	defer tok.Close()
+	user, err := tok.GetTokenUser()
+	if err != nil {
+		return "", err
+	}
+	return user.User.Sid.String(), nil
 }

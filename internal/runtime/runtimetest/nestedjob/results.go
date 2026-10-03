@@ -39,7 +39,7 @@ const (
 const SystemSID = "S-1-5-18"
 
 // ResultSchema is the result record schema.
-const ResultSchema = 1
+const ResultSchema = 2
 
 // TokenContext is the actual token that ran a scenario's owner and fixture.
 type TokenContext struct {
@@ -63,7 +63,10 @@ type Result struct {
 	Lane             string        `json:"lane"`
 	Result           string        `json:"result"`
 	Source           string        `json:"source"`
+	Admission        string        `json:"admission"`
+	Executable       string        `json:"executable"`
 	Matrix           string        `json:"matrix"`
+	Processors       int           `json:"processors"`
 	Token            *TokenContext `json:"token,omitempty"`
 	CleanupConfirmed bool          `json:"cleanupConfirmed"`
 	Controls         []string      `json:"controls,omitempty"`
@@ -94,6 +97,7 @@ func IdentityOf(t *TokenContext) string {
 type Summary struct {
 	Matrix        string   `json:"matrix"`
 	Source        string   `json:"source"`
+	Admission     string   `json:"admission"`
 	Required      int      `json:"required"`
 	Selected      int      `json:"selected"`
 	Passed        int      `json:"passed"`
@@ -110,12 +114,16 @@ type Summary struct {
 	Complete bool `json:"complete"`
 }
 
-// Summarize evaluates results for source against m under selection. Unknown,
-// duplicate, stale or inconsistent records are problems, never ignored.
-func Summarize(m *Matrix, results []Result, source string, sel Selection) Summary {
+// Summarize evaluates results for one admitted run against m under
+// selection. Unknown, duplicate, stale or inconsistent records are problems,
+// never ignored.
+func Summarize(m *Matrix, results []Result, run AdmittedRun, sel Selection) Summary {
 	all := m.Expand()
 	selected := m.Select(sel)
-	s := Summary{Matrix: MatrixHash(), Source: source, Required: len(all), Selected: len(selected), Partial: !sel.Empty()}
+	s := Summary{Matrix: MatrixHash(), Required: len(all), Selected: len(selected), Partial: !sel.Empty(), Admission: run.Hash}
+	if run.Manifest != nil {
+		s.Source = run.Manifest.Source
+	}
 	known := map[string]Execution{}
 	for _, e := range all {
 		known[e.Key] = e
@@ -132,6 +140,9 @@ func Summarize(m *Matrix, results []Result, source string, sel Selection) Summar
 		}
 	}
 	problem := func(format string, args ...any) { s.Problems = append(s.Problems, fmt.Sprintf(format, args...)) }
+	if run.Manifest == nil || run.Hash == "" {
+		problem("no admitted run manifest")
+	}
 	primaries := map[string]Result{}
 	controls := map[string]Result{}
 	bad := map[string]bool{}
@@ -143,7 +154,7 @@ func Summarize(m *Matrix, results []Result, source string, sel Selection) Summar
 			continue
 		}
 		seen[r.Key] = true
-		if err := r.check(source, known); err != nil {
+		if err := r.check(run, known); err != nil {
 			problem("%s: %v", r.Key, err)
 			bad[primaryOf(r)] = true
 			continue
@@ -173,7 +184,7 @@ func Summarize(m *Matrix, results []Result, source string, sel Selection) Summar
 		case !r.CleanupConfirmed:
 			problem("%s: passed without confirmed cleanup", r.Key)
 			s.Incomplete++
-		case !controlsPassed(r, controls, problem):
+		case !controlsPassed(r, e, controls, problem):
 			s.Incomplete++
 		case e.OwnerProof != "" && !ownerProofPassed(r, e, primaries, problem):
 			s.Incomplete++
@@ -190,8 +201,9 @@ func primaryOf(r Result) string {
 	return key
 }
 
-// check validates one record's shape and its binding to source and matrix.
-func (r Result) check(source string, known map[string]Execution) error {
+// check validates one record's shape and its binding to the admitted run
+// and the matrix.
+func (r Result) check(run AdmittedRun, known map[string]Execution) error {
 	if r.Schema != ResultSchema {
 		return fmt.Errorf("schema %d", r.Schema)
 	}
@@ -200,11 +212,17 @@ func (r Result) check(source string, known map[string]Execution) error {
 	default:
 		return fmt.Errorf("result %q", r.Result)
 	}
-	if r.Source == "" || r.Source != source {
-		return fmt.Errorf("source %q is not the selected source", r.Source)
+	if run.Manifest == nil || r.Source != run.Manifest.Source || r.Admission != run.Hash {
+		return errors.New("not recorded for the admitted run")
+	}
+	if !run.Manifest.Admits(r.Executable) {
+		return errors.New("made by an executable outside the admitted run")
 	}
 	if r.Matrix != MatrixHash() {
 		return errors.New("recorded against another matrix")
+	}
+	if r.Processors < 1 {
+		return errors.New("no processor count")
 	}
 	primary := r.PrimaryKey()
 	switch r.Kind {
@@ -214,11 +232,11 @@ func (r Result) check(source string, known map[string]Execution) error {
 		}
 	case KindControl:
 		name, ok := strings.CutPrefix(r.Key, primary+"#")
-		if !ok || name == "" || strings.ContainsAny(name, "#/") {
+		if !ok || !controlName.MatchString(name) {
 			return fmt.Errorf("control key does not name its primary execution %s", primary)
 		}
 	case KindSupplementary:
-		if r.Key == "" || known[r.Key].Key != "" {
+		if r.Key == "" || known[r.Key].Key != "" || strings.Contains(r.Key, "#") {
 			return errors.New("supplementary record reuses a primary key")
 		}
 		return nil
@@ -240,8 +258,19 @@ func (r Result) check(source string, known map[string]Execution) error {
 	return nil
 }
 
-func controlsPassed(r Result, controls map[string]Result, problem func(string, ...any)) bool {
+// controlsPassed requires every control the case needs, linked by the
+// record, passed with confirmed cleanup under the same account.
+func controlsPassed(r Result, e Execution, controls map[string]Result, problem func(string, ...any)) bool {
 	ok := true
+	required := map[string]bool{}
+	for _, name := range e.RequiredControls {
+		key := e.Key + "#" + name
+		required[key] = true
+		if !slices.Contains(r.Controls, key) {
+			problem("%s: required control %s is not linked", r.Key, name)
+			ok = false
+		}
+	}
 	for _, key := range r.Controls {
 		c, found := controls[key]
 		switch {
@@ -250,15 +279,30 @@ func controlsPassed(r Result, controls map[string]Result, problem func(string, .
 			ok = false
 		case c.Result != ResultPass:
 			ok = false
+		case !c.CleanupConfirmed:
+			problem("%s: control %s passed without confirmed cleanup", r.Key, key)
+			ok = false
+		case c.Token == nil || r.Token == nil || *c.Token != *r.Token:
+			problem("%s: control %s ran under another token", r.Key, key)
+			ok = false
+		case c.Processors != r.Processors || c.Executable != r.Executable:
+			problem("%s: control %s ran on other processors or another executable", r.Key, key)
+			ok = false
 		}
 	}
 	return ok
 }
 
+// ownerProofPassed requires the linked native-owner proof to have passed
+// under the same account as the record it supports.
 func ownerProofPassed(r Result, e Execution, primaries map[string]Result, problem func(string, ...any)) bool {
 	proof, ok := primaries[e.OwnerProof]
-	if !ok || proof.Result != ResultPass || !proof.CleanupConfirmed {
+	switch {
+	case !ok || proof.Result != ResultPass || !proof.CleanupConfirmed:
 		problem("%s: owner proof %s has not passed", r.Key, e.OwnerProof)
+		return false
+	case proof.Token == nil || r.Token == nil || proof.Token.SID != r.Token.SID || proof.Token.Session != r.Token.Session || proof.Token.Elevated != r.Token.Elevated:
+		problem("%s: owner proof %s ran under another account", r.Key, e.OwnerProof)
 		return false
 	}
 	return true
@@ -309,10 +353,8 @@ func ReadResults(dir string) ([]Result, error) {
 		if len(data) > MaxStatusBytes {
 			return nil, fmt.Errorf("%s exceeds %d bytes", name, MaxStatusBytes)
 		}
-		dec := json.NewDecoder(bytes.NewReader(bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})))
-		dec.DisallowUnknownFields()
 		var r Result
-		if err := dec.Decode(&r); err != nil {
+		if err := decodeStrict(bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf}), &r); err != nil {
 			return nil, fmt.Errorf("%s: %w", name, err)
 		}
 		if ResultFileName(r.Key) != name {

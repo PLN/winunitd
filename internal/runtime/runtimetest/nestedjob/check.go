@@ -19,8 +19,11 @@ func CheckTree(r *Report, mode string) error {
 	if r == nil || !r.Ready() {
 		return errors.New("report is not ready")
 	}
+	if r.Truncated {
+		return errors.New("report was truncated")
+	}
 	if f := r.Fatal(); f != nil {
-		return fmt.Errorf("fixture %s: %s", f.Kind, f.Failure.Error())
+		return fmt.Errorf("fixture %s: %s", f.Kind, SafeFailure(f.Failure))
 	}
 	start, tree := r.Find(EventStart), r.Find(EventTree)
 	if start.Mode != mode {
@@ -86,20 +89,36 @@ func checkInner(inner InnerJob) error {
 	return nil
 }
 
+// ErrUnqualified marks a documented missing prerequisite, such as the
+// JOB_LIST attribute on an OS older than Windows 10. It is a skip with the
+// reason, never a pass and never a silent fallback to another mode.
+var ErrUnqualified = errors.New("unqualified")
+
+// ErrorInvalidHandle is the Win32 code of a job query at a value that is no
+// handle, or a handle to another object type.
+const ErrorInvalidHandle = 6
+
 // CheckHandleProbes validates the negative inheritance probe of ENGINE, G1
 // and G2: none may find a job at the probed value, unless inherited names the
 // one role that deliberately received a duplicate (the sensitivity control).
+// Only ERROR_INVALID_HANDLE shows that no job handle is there; any other
+// query error, such as an inherited handle without query access, is not
+// evidence either way and fails the check.
 func CheckHandleProbes(statuses map[string]RoleStatus, value uint64, inherited string) error {
 	for _, role := range []string{RoleEngine, RoleG1, RoleG2} {
 		st, ok := statuses[role]
 		if !ok {
 			return fmt.Errorf("%s status missing", role)
 		}
-		if st.HandleProbe.Value != value {
-			return fmt.Errorf("%s probed %#x, want %#x", role, st.HandleProbe.Value, value)
+		p := st.HandleProbe
+		if p.Value != value {
+			return fmt.Errorf("%s probed %#x, want %#x", role, p.Value, value)
 		}
-		if st.HandleProbe.IsJob != (role == inherited) {
-			return fmt.Errorf("%s found a job at %#x: %t", role, value, st.HandleProbe.IsJob)
+		if p.IsJob != (role == inherited) {
+			return fmt.Errorf("%s found a job at %#x: %t", role, value, p.IsJob)
+		}
+		if !p.IsJob && p.Win32 != ErrorInvalidHandle {
+			return fmt.Errorf("%s probe at %#x is inconclusive: win32 %d", role, value, p.Win32)
 		}
 	}
 	return nil

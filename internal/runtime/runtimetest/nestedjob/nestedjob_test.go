@@ -455,6 +455,17 @@ func TestCheckHandleProbes(t *testing.T) {
 	if err := CheckHandleProbes(statuses, 0x1a8, ""); err == nil {
 		t.Error("probe of another value accepted")
 	}
+	for _, code := range []uint32{0, 5, 87} {
+		denied := statuses[RoleG1]
+		denied.HandleProbe.Win32 = code
+		statuses[RoleG1] = denied
+		if err := CheckHandleProbes(statuses, 0x1a4, ""); err == nil {
+			t.Errorf("probe error win32 %d accepted as no inherited job", code)
+		}
+	}
+	restored := statuses[RoleG1]
+	restored.HandleProbe.Win32 = 6
+	statuses[RoleG1] = restored
 	leaked := statuses[RoleG2]
 	leaked.HandleProbe.IsJob = true
 	statuses[RoleG2] = leaked

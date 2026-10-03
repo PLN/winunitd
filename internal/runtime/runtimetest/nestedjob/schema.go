@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -99,11 +100,13 @@ func (id Identity) validate(self bool) error {
 }
 
 // Member is a tree identity with MAIN's inner-job membership check and the
-// process's committed private bytes at that moment.
+// process's committed private bytes at that moment. A failed measurement
+// is reported as such, never as zero bytes.
 type Member struct {
 	Identity
-	InInner      bool   `json:"inInner"`
-	PrivateBytes uint64 `json:"privateBytes,omitempty"`
+	InInner           bool     `json:"inInner"`
+	PrivateBytes      uint64   `json:"privateBytes,omitempty"`
+	PrivateBytesError *Failure `json:"privateBytesError,omitempty"`
 }
 
 // InnerJob is MAIN's query of its own inner job and handle.
@@ -249,10 +252,12 @@ func (e Event) validate() error {
 	}
 }
 
-// Report is a decoded, validated MAIN report.
+// Report is a decoded, validated MAIN report. Partial means a trailing
+// incomplete line was ignored, which is normal only while MAIN still writes.
 type Report struct {
 	Events    []Event
 	Truncated bool
+	Partial   bool
 }
 
 // Find returns the first event of kind, or nil.
@@ -299,12 +304,14 @@ func DecodeReport(r io.Reader, generation int) (*Report, error) {
 	if len(data) > MaxReportBytes {
 		return nil, fmt.Errorf("report exceeds %d bytes", MaxReportBytes)
 	}
+	out := &Report{}
 	if i := bytes.LastIndexByte(data, '\n'); i >= 0 {
+		out.Partial = i+1 < len(data)
 		data = data[:i+1]
 	} else {
+		out.Partial = len(data) > 0
 		data = nil
 	}
-	out := &Report{}
 	sc := bufio.NewScanner(bytes.NewReader(data))
 	sc.Buffer(make([]byte, 0, 4096), MaxLineBytes)
 	for sc.Scan() {
@@ -312,13 +319,8 @@ func DecodeReport(r io.Reader, generation int) (*Report, error) {
 			return nil, errors.New("event after truncation marker")
 		}
 		var e Event
-		dec := json.NewDecoder(bytes.NewReader(sc.Bytes()))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&e); err != nil {
+		if err := decodeStrict(sc.Bytes(), &e); err != nil {
 			return nil, fmt.Errorf("report line %d: %w", len(out.Events)+1, err)
-		}
-		if dec.More() {
-			return nil, fmt.Errorf("report line %d has trailing data", len(out.Events)+1)
 		}
 		if e.Seq != len(out.Events)+1 {
 			return nil, fmt.Errorf("report sequence %d, want %d", e.Seq, len(out.Events)+1)
@@ -341,11 +343,27 @@ func DecodeReport(r io.Reader, generation int) (*Report, error) {
 	return out, nil
 }
 
+// ReadFinalReport decodes a report whose writer has exited. A truncated
+// report or an incomplete last line is not acceptance evidence.
+func ReadFinalReport(caseDir string, generation int) (*Report, error) {
+	r, err := ReadReport(caseDir, generation)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case r.Truncated:
+		return r, errors.New("report was truncated")
+	case r.Partial:
+		return r, errors.New("report ends with an incomplete line")
+	}
+	return r, nil
+}
+
 // ReadReport decodes gen-NNNN/report.jsonl in caseDir.
 func ReadReport(caseDir string, generation int) (*Report, error) {
 	f, err := os.Open(filepath.Join(caseDir, GenerationDir(generation), ReportFile))
 	if err != nil {
-		return nil, err
+		return nil, baseOnly(err)
 	}
 	defer f.Close()
 	return DecodeReport(f, generation)
@@ -514,27 +532,60 @@ const (
 // MaxHeldIdentities bounds an expect-drained request.
 const MaxHeldIdentities = 16
 
+// HelperState is one ExecStop helper the owner's launcher held from its
+// creation, and whether it had exited when the view was taken.
+type HelperState struct {
+	PID     uint32   `json:"pid"`
+	Created uint64   `json:"created"`
+	Exited  bool     `json:"exited"`
+	Error   *Failure `json:"error,omitempty"`
+}
+
 // ManagerView is a manager owner's bounded answer about its nested unit:
-// lifecycle status, the unit job's native limits and the launches its
-// observing launcher saw.
+// lifecycle status, the unit job's native limits, the launches its
+// observing launcher saw and the ExecStop helpers it holds. A failed
+// observation is reported in InspectError, never as empty or zero state;
+// HasJob false with no error means the unit deliberately has no job.
 type ManagerView struct {
-	ActiveState          string   `json:"activeState"`
-	Reason               string   `json:"reason,omitempty"`
-	Error                string   `json:"error,omitempty"`
-	InvocationID         string   `json:"invocationId,omitempty"`
-	TerminationUncertain bool     `json:"terminationUncertain"`
-	MainPID              int      `json:"mainPid,omitempty"`
-	CPUQuota             uint32   `json:"cpuQuota,omitempty"`
-	WindowsCPUQuota      uint32   `json:"windowsCPUQuota,omitempty"`
-	StopHelpers          int      `json:"stopHelpers"`
-	Launches             int      `json:"launches"`
-	Violations           []string `json:"violations,omitempty"`
-	HasJob               bool     `json:"hasJob"`
-	JobMemory            uint64   `json:"jobMemory,omitempty"`
-	PeakJobMemory        uint64   `json:"peakJobMemory,omitempty"`
-	LimitFlags           uint32   `json:"limitFlags,omitempty"`
-	CPURate              uint32   `json:"cpuRate,omitempty"`
-	CPUControlFlags      uint32   `json:"cpuControlFlags,omitempty"`
+	InspectError         *Failure      `json:"inspectError,omitempty"`
+	Helpers              []HelperState `json:"helpers,omitempty"`
+	ActiveState          string        `json:"activeState"`
+	Reason               string        `json:"reason,omitempty"`
+	Error                string        `json:"error,omitempty"`
+	InvocationID         string        `json:"invocationId,omitempty"`
+	TerminationUncertain bool          `json:"terminationUncertain"`
+	MainPID              int           `json:"mainPid,omitempty"`
+	CPUQuota             uint32        `json:"cpuQuota,omitempty"`
+	WindowsCPUQuota      uint32        `json:"windowsCPUQuota,omitempty"`
+	StopHelpers          int           `json:"stopHelpers"`
+	Launches             int           `json:"launches"`
+	Violations           []string      `json:"violations,omitempty"`
+	HasJob               bool          `json:"hasJob"`
+	JobMemory            uint64        `json:"jobMemory,omitempty"`
+	PeakJobMemory        uint64        `json:"peakJobMemory,omitempty"`
+	LimitFlags           uint32        `json:"limitFlags,omitempty"`
+	CPURate              uint32        `json:"cpuRate,omitempty"`
+	CPUControlFlags      uint32        `json:"cpuControlFlags,omitempty"`
+}
+
+// Validate requires a view that observed a unit state and every native
+// value it reports. Tests assert nothing on a view that fails it.
+func (v ManagerView) Validate() error {
+	if v.InspectError != nil {
+		return fmt.Errorf("inspection failed: %s", SafeFailure(v.InspectError))
+	}
+	if v.ActiveState == "" {
+		return errors.New("no observed unit state")
+	}
+	if !v.HasJob && (v.JobMemory != 0 || v.PeakJobMemory != 0 || v.LimitFlags != 0 || v.CPURate != 0 || v.CPUControlFlags != 0) {
+		return errors.New("job limits without a job")
+	}
+	for _, h := range v.Helpers {
+		if h.Error != nil || h.PID == 0 || h.Created == 0 {
+			return fmt.Errorf("stop helper %d unobserved: %s", h.PID, SafeFailure(h.Error))
+		}
+	}
+	return nil
 }
 
 // MaxOwnerStopMS bounds an owner agent's unit stop.
@@ -657,10 +708,11 @@ type HandleProbe struct {
 
 // RoleStatus is written by ENGINE, G1 and G2 after they start running.
 type RoleStatus struct {
-	Identity     Identity    `json:"identity"`
-	Children     []Identity  `json:"children,omitempty"`
-	HandleProbe  HandleProbe `json:"handleProbe"`
-	PrivateBytes uint64      `json:"privateBytes"`
+	Identity          Identity    `json:"identity"`
+	Children          []Identity  `json:"children,omitempty"`
+	HandleProbe       HandleProbe `json:"handleProbe"`
+	PrivateBytes      uint64      `json:"privateBytes"`
+	PrivateBytesError *Failure    `json:"privateBytesError,omitempty"`
 }
 
 // WorkStatus records commit or CPU work progress and its native error.
@@ -698,7 +750,7 @@ func WriteJSON(path string, v any) error {
 	}
 	tmp := path + ".tmp-" + strconv.Itoa(os.Getpid())
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
+		return baseOnly(err)
 	}
 	// Windows refuses to replace a file another process has open without
 	// delete sharing (as os.Open does); readers hold it only briefly.
@@ -710,7 +762,7 @@ func WriteJSON(path string, v any) error {
 		}
 		if time.Now().After(deadline) {
 			_ = os.Remove(tmp)
-			return err
+			return baseOnly(err)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -722,7 +774,7 @@ const renameRetry = 2 * time.Second
 func ReadJSON(path string, v any) error {
 	f, err := os.Open(path)
 	if err != nil {
-		return err
+		return baseOnly(err)
 	}
 	defer f.Close()
 	data, err := io.ReadAll(io.LimitReader(f, MaxStatusBytes+1))
@@ -732,13 +784,33 @@ func ReadJSON(path string, v any) error {
 	if len(data) > MaxStatusBytes {
 		return fmt.Errorf("%s exceeds %d bytes", filepath.Base(path), MaxStatusBytes)
 	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
+	if err := decodeStrict(data, v); err != nil {
 		return fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
-	if dec.More() {
-		return fmt.Errorf("%s has trailing data", filepath.Base(path))
-	}
 	return nil
+}
+
+// baseOnly reduces a file error's path to its base name, keeping its type
+// and cause, so test diagnostics do not reveal where a case directory is.
+// Full paths stay in the private evidence, not in failure messages.
+func baseOnly(err error) error {
+	var pe *fs.PathError
+	var le *os.LinkError
+	switch {
+	case errors.As(err, &pe):
+		return &fs.PathError{Op: pe.Op, Path: filepath.Base(pe.Path), Err: pe.Err}
+	case errors.As(err, &le):
+		return &os.LinkError{Op: le.Op, Old: filepath.Base(le.Old), New: filepath.Base(le.New), Err: le.Err}
+	}
+	return err
+}
+
+// SafeFailure formats a failure for public test output: its operation and
+// numeric Win32 code, never the raw message, which can name paths or
+// accounts.
+func SafeFailure(f *Failure) string {
+	if f == nil {
+		return "none"
+	}
+	return fmt.Sprintf("%s win32 %d", f.Op, f.Win32)
 }

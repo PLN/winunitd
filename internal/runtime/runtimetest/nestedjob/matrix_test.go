@@ -128,25 +128,47 @@ func TestDecodeMatrixRejectsInvalidTables(t *testing.T) {
 	}
 }
 
-const testSource = "0123456789abcdef0123456789abcdef01234567"
+const testHeadlessSID = "S-1-5-21-1-2-3-1001"
 
 func passing(t *testing.T, e Execution) Result {
 	t.Helper()
-	tok := &TokenContext{SID: SystemSID, Source: TokenProcess}
+	run := testRun(t)
+	tok := &TokenContext{SID: SystemSID, Source: TokenProcess, Elevated: true}
 	if e.Identity == IdentityHeadless {
-		tok = &TokenContext{SID: "S-1-5-21-1-2-3-1001", Source: TokenS4U}
+		tok = &TokenContext{SID: testHeadlessSID, Source: TokenS4U}
+	}
+	exe, _ := run.Manifest.Lookup("nestedjob.test")
+	if e.Lane == LaneDaemon {
+		exe, _ = run.Manifest.Lookup("nested-job.exe")
 	}
 	return Result{
 		Schema: ResultSchema, Key: e.Key, Kind: KindPrimary, Case: e.Case, Mode: e.Mode, Identity: e.Identity,
-		Phase: e.Phase, Repetition: e.Repetition, Lane: e.Lane, Result: ResultPass, Source: testSource,
-		Matrix: MatrixHash(), Token: tok, CleanupConfirmed: true, OwnerProof: e.OwnerProof,
+		Phase: e.Phase, Repetition: e.Repetition, Lane: e.Lane, Result: ResultPass, Source: run.Manifest.Source,
+		Admission: run.Hash, Executable: exe.SHA256, Matrix: MatrixHash(), Processors: 4, Token: tok,
+		CleanupConfirmed: true, OwnerProof: e.OwnerProof,
 	}
 }
 
+// passingControl is a passing control of e's primary record p.
+func passingControl(p Result, name string) Result {
+	c := p
+	tok := *p.Token
+	c.Kind, c.Key, c.Token, c.OwnerProof, c.Controls = KindControl, p.Key+"#"+name, &tok, "", nil
+	return c
+}
+
+// allPassing is the complete passing set: every required execution and
+// every control the matrix requires, linked by its primary record.
 func allPassing(t *testing.T, m *Matrix) []Result {
 	var out []Result
 	for _, e := range m.Expand() {
-		out = append(out, passing(t, e))
+		p := passing(t, e)
+		for _, name := range e.RequiredControls {
+			c := passingControl(p, name)
+			p.Controls = append(p.Controls, c.Key)
+			out = append(out, c)
+		}
+		out = append(out, p)
 	}
 	return out
 }
@@ -156,8 +178,9 @@ func TestSummarizeRequiresTheExactPassingSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	run := testRun(t)
 	results := allPassing(t, m)
-	if s := Summarize(m, results, testSource, Selection{}); !s.Complete || s.Passed != 68 || len(s.Problems) != 0 {
+	if s := Summarize(m, results, run, Selection{}); !s.Complete || s.Passed != 68 || s.Controls != 16 || len(s.Problems) != 0 {
 		t.Fatalf("complete set: %+v", s)
 	}
 	find := func(rs []Result, key string) int {
@@ -181,6 +204,8 @@ func TestSummarizeRequiresTheExactPassingSet(t *testing.T) {
 	}
 	const h = "N01/job-list/headless/r1/native-owner"
 	const d = "N07/job-list/headless/r2/immutable-daemon"
+	const cpu = "N09/assign/system/r1/native-owner"
+	const hcpu = "N10/job-list/headless/r1/native-owner"
 	cases := map[string]func([]Result) []Result{
 		"missing":      func(rs []Result) []Result { i := find(rs, h); return append(rs[:i:i], rs[i+1:]...) },
 		"duplicate":    func(rs []Result) []Result { return append(rs, rs[find(rs, h)]) },
@@ -210,23 +235,69 @@ func TestSummarizeRequiresTheExactPassingSet(t *testing.T) {
 			rs[i].Phase = GatePreResume
 			return rs
 		},
-		"stale source": func(rs []Result) []Result { rs[find(rs, h)].Source = "fedcba9876543210"; return rs },
+		"stale source": func(rs []Result) []Result { rs[find(rs, h)].Source = strings.Repeat("f", 40); return rs },
 		"stale matrix": func(rs []Result) []Result { rs[find(rs, h)].Matrix = strings.Repeat("0", 64); return rs },
 		"unconfirmed cleanup": func(rs []Result) []Result {
 			rs[find(rs, h)].CleanupConfirmed = false
 			return rs
 		},
 		"missing control": func(rs []Result) []Result {
-			rs[find(rs, "N09/assign/system/r1/native-owner")].Controls = []string{"N09/assign/system/r1/native-owner#uncapped"}
+			rs[find(rs, "N09/assign/system/r1/native-owner")].Controls = []string{"N09/assign/system/r1/native-owner#uncapped2"}
+			return rs
+		},
+		"omitted required control": func(rs []Result) []Result {
+			i := find(rs, cpu+"#uncapped")
+			rs[find(rs, cpu)].Controls = nil
+			return append(rs[:i:i], rs[i+1:]...)
+		},
+		"unlinked required control": func(rs []Result) []Result { rs[find(rs, cpu)].Controls = nil; return rs },
+		"settings-only CPU pass": func(rs []Result) []Result {
+			for _, key := range []string{cpu + "#uncapped", cpu} {
+				i := find(rs, key)
+				rs = append(rs[:i:i], rs[i+1:]...)
+			}
+			p := passing(t, Execution{Key: cpu, Case: "N09", Mode: ModeAssign, Identity: IdentitySystem, Repetition: "r1", Lane: LaneOwner})
+			return append(rs, p)
+		},
+		"one seam control missing": func(rs []Result) []Result {
+			key := "N16/job-list/system/r1/native-owner"
+			i := find(rs, key+"#seam-live-process")
+			rs[find(rs, key)].Controls = []string{key + "#seam-failure"}
+			return append(rs[:i:i], rs[i+1:]...)
+		},
+		"control cleanup unconfirmed": func(rs []Result) []Result { rs[find(rs, cpu+"#uncapped")].CleanupConfirmed = false; return rs },
+		"control failed":              func(rs []Result) []Result { rs[find(rs, cpu+"#uncapped")].Result = ResultFail; return rs },
+		"control inconclusive":        func(rs []Result) []Result { rs[find(rs, cpu+"#uncapped")].Result = ResultInconclusive; return rs },
+		"control without token":       func(rs []Result) []Result { rs[find(rs, cpu+"#uncapped")].Token = nil; return rs },
+		"control under another token": func(rs []Result) []Result {
+			rs[find(rs, hcpu+"#uncapped")].Token.SID = "S-1-5-21-1-2-3-1002"
+			return rs
+		},
+		"control on other processors": func(rs []Result) []Result { rs[find(rs, cpu+"#uncapped")].Processors = 2; return rs },
+		"control of another admission": func(rs []Result) []Result {
+			rs[find(rs, cpu+"#uncapped")].Admission = strings.Repeat("1", 64)
 			return rs
 		},
 		"control of another execution": func(rs []Result) []Result {
 			key := "N10/assign/system/r1/native-owner#uncapped"
-			c := passing(t, Execution{Key: key, Case: "N10", Mode: ModeAssign, Identity: IdentitySystem, Repetition: "r1", Lane: LaneOwner})
-			c.Kind = KindControl
-			rs[find(rs, "N09/assign/system/r1/native-owner")].Controls = []string{key}
+			rs[find(rs, cpu)].Controls = []string{key}
+			return rs
+		},
+		"control name": func(rs []Result) []Result {
+			c := passingControl(rs[find(rs, h)], "Bad/Name")
+			rs[find(rs, h)].Controls = []string{c.Key}
 			return append(rs, c)
 		},
+		"owner proof under another account": func(rs []Result) []Result {
+			rs[find(rs, "N01/job-list/headless/r1/native-owner")].Token.SID = "S-1-5-21-1-2-3-1002"
+			return rs
+		},
+		"other admission": func(rs []Result) []Result { rs[find(rs, h)].Admission = strings.Repeat("1", 64); return rs },
+		"unadmitted executable": func(rs []Result) []Result {
+			rs[find(rs, h)].Executable = strings.Repeat("cd", 32)
+			return rs
+		},
+		"no processor count": func(rs []Result) []Result { rs[find(rs, h)].Processors = 0; return rs },
 		"failed owner proof": func(rs []Result) []Result {
 			rs[find(rs, "N01/job-list/headless/r1/native-owner")].Result = ResultFail
 			return rs
@@ -237,29 +308,38 @@ func TestSummarizeRequiresTheExactPassingSet(t *testing.T) {
 			r.Repetition, r.Key = "r2", "N01/job-list/headless/r2/native-owner"
 			return append(rs, r)
 		},
-		"unknown schema": func(rs []Result) []Result { rs[find(rs, h)].Schema = 2; return rs },
+		"unknown schema": func(rs []Result) []Result { rs[find(rs, h)].Schema = 1; return rs },
 	}
 	for name, mutate := range cases {
-		s := Summarize(m, mutate(clone()), testSource, Selection{})
+		s := Summarize(m, mutate(clone()), run, Selection{})
 		if s.Complete {
 			t.Errorf("%s: summary complete", name)
 		}
 	}
-	// A matching control passes; an inconclusive one leaves the execution open.
+	if s := Summarize(m, results, AdmittedRun{}, Selection{}); s.Complete {
+		t.Error("a summary without an admitted run is complete")
+	}
+	other := run
+	other.Hash = strings.Repeat("2", 64)
+	if s := Summarize(m, results, other, Selection{}); s.Complete || s.Passed != 0 {
+		t.Errorf("records of another admitted run: %+v", s)
+	}
+	// An extra passing control is counted; an inconclusive one leaves the
+	// execution open.
 	withControl := clone()
-	key := "N09/assign/system/r1/native-owner"
-	control := passing(t, Execution{Key: key + "#uncapped", Case: "N09", Mode: ModeAssign, Identity: IdentitySystem, Repetition: "r1", Lane: LaneOwner})
-	control.Kind = KindControl
-	withControl[find(withControl, key)].Controls = []string{control.Key}
-	if s := Summarize(m, append(withControl, control), testSource, Selection{}); !s.Complete || s.Controls != 1 {
-		t.Fatalf("passing control: %+v", s)
+	i := find(withControl, h)
+	control := passingControl(withControl[i], "repeat")
+	withControl[i].Controls = []string{control.Key}
+	if s := Summarize(m, append(withControl, control), run, Selection{}); !s.Complete || s.Controls != 17 {
+		t.Fatalf("extra passing control: %+v", s)
 	}
 	control.Result = ResultInconclusive
-	if s := Summarize(m, append(withControl, control), testSource, Selection{}); s.Complete || s.Incomplete != 1 {
+	if s := Summarize(m, append(withControl, control), run, Selection{}); s.Complete || s.Incomplete != 1 {
 		t.Fatalf("inconclusive control: %+v", s)
 	}
-	supplementary := Result{Schema: ResultSchema, Key: "owner-crash/assign/system", Kind: KindSupplementary, Result: ResultPass, Source: testSource, Matrix: MatrixHash()}
-	if s := Summarize(m, append(clone(), supplementary), testSource, Selection{}); !s.Complete || s.Supplementary != 1 {
+	supplementary := Result{Schema: ResultSchema, Key: "owner-crash/assign/system", Kind: KindSupplementary, Result: ResultPass,
+		Source: run.Manifest.Source, Admission: run.Hash, Executable: results[0].Executable, Matrix: MatrixHash(), Processors: 4}
+	if s := Summarize(m, append(clone(), supplementary), run, Selection{}); !s.Complete || s.Supplementary != 1 {
 		t.Fatalf("supplementary record: %+v", s)
 	}
 }
@@ -269,15 +349,16 @@ func TestSummarizeSelectionIsPartial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	run := testRun(t)
 	var results []Result
 	for _, e := range m.Select(Selection{FirstIncrement: true, Identities: []string{IdentitySystem}}) {
 		results = append(results, passing(t, e))
 	}
-	s := Summarize(m, results, testSource, Selection{FirstIncrement: true, Identities: []string{IdentitySystem}})
+	s := Summarize(m, results, run, Selection{FirstIncrement: true, Identities: []string{IdentitySystem}})
 	if s.Complete || !s.Partial || s.Selected != 11 || s.Passed != 11 || len(s.Omitted) != 57 {
 		t.Fatalf("SYSTEM-only first pass: %+v", s)
 	}
-	if s := Summarize(m, results, testSource, Selection{FirstIncrement: true}); s.Complete || s.Passed != 11 || len(s.Missing) != 9 {
+	if s := Summarize(m, results, run, Selection{FirstIncrement: true}); s.Complete || s.Passed != 11 || len(s.Missing) != 9 {
 		t.Fatalf("first increment without headless: %+v", s)
 	}
 }
@@ -296,16 +377,28 @@ func TestResultFilesAndSummarizeCommand(t *testing.T) {
 	if err := WriteResult(dir, allPassing(t, m)[0]); err == nil {
 		t.Fatal("a record was replaced")
 	}
+	admission := writeTestAdmission(t)
 	var out, errOut bytes.Buffer
-	if code := Main(nil, []string{"summarize", "--results", dir, "--source", testSource}, &out, &errOut); code != SummaryComplete {
+	if code := Main(nil, []string{"summarize", "--results", dir, "--admission", admission}, &out, &errOut); code != SummaryComplete {
 		t.Fatalf("complete exit %d: %s %s", code, out.String(), errOut.String())
 	}
 	out.Reset()
-	if code := Main(nil, []string{"summarize", "--results", dir, "--source", testSource, "--identity", "system"}, &out, &errOut); code != SummaryPartial {
+	if code := Main(nil, []string{"summarize", "--results", dir, "--admission", admission, "--identity", "system"}, &out, &errOut); code != SummaryPartial {
 		t.Fatalf("partial exit %d", code)
 	}
-	if code := Main(nil, []string{"summarize", "--results", dir, "--source", "abcdef0"}, &out, &errOut); code != SummaryFailed {
-		t.Fatalf("stale source exit %d", code)
+	other := filepath.Join(filepath.Dir(admission), "other.json")
+	data, err := os.ReadFile(admission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(other, append(data, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := Main(nil, []string{"summarize", "--results", dir, "--admission", other}, &out, &errOut); code != SummaryFailed {
+		t.Fatalf("another manifest exit %d", code)
+	}
+	if code := Main(nil, []string{"summarize", "--results", dir, "--admission", filepath.Join(dir, "missing.json")}, &out, &errOut); code != SummaryFailed {
+		t.Fatalf("missing manifest exit %d", code)
 	}
 	name := filepath.Join(dir, ResultFileName("N01/assign/system/r1/native-owner"))
 	if err := os.Rename(name, filepath.Join(dir, "renamed.json")); err != nil {
@@ -315,9 +408,11 @@ func TestResultFilesAndSummarizeCommand(t *testing.T) {
 		t.Fatal("a renamed record was accepted")
 	}
 	for _, args := range [][]string{
-		{"summarize", "--results", "relative", "--source", testSource},
+		{"summarize", "--results", "relative", "--admission", admission},
 		{"summarize", "--results", dir},
-		{"summarize", "--results", dir, "--source", testSource, "--hash"},
+		{"summarize", "--results", dir, "--admission", "admission.json"},
+		{"summarize", "--results", dir, "--source", testSource},
+		{"summarize", "--results", dir, "--admission", admission, "--hash"},
 		{"matrix", "--hash", "--identity", "system"},
 		{"matrix", "--case", "C4"},
 	} {

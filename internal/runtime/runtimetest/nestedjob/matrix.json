@@ -24,13 +24,13 @@
     },
     "N03": {
       "action": "Explicit stop with a cooperative ExecStop helper.",
-      "expect": "Helper runs once for the captured main; inner descendants, MAIN and helper exit; stop succeeds; no restart afterwards.",
+      "expect": "Helper runs once for the captured main; inner descendants and MAIN exit, and the helper, held since its launch, has exited when the stop returns; stop succeeds; no restart afterwards.",
       "ownerPackage": "internal/manager",
       "ownerTest": "TestWindowsNestedJobCooperativeStop"
     },
     "N04": {
       "action": "Hung ExecStop helper and a MAIN that ignores the request, TimeoutStopSec=5s.",
-      "expect": "Forced cleanup removes both jobs' processes and the helper; stop reports failure within the budget; explicit stop stays down.",
+      "expect": "Forced cleanup removes both jobs' processes; stop reports failure after the cooperative phase and within TimeoutStopSec plus the documented allowance, timed from the request; the held helper has exited when its slot is released; explicit stop stays down.",
       "ownerPackage": "internal/manager",
       "ownerTest": "TestWindowsNestedJobForcedStop"
     },
@@ -52,17 +52,23 @@
     },
     "N08": {
       "action": "ENGINE, G1 and G2 commit 96 MiB each under MemoryMax=256M.",
-      "expect": "The unit-job commit limit is enforced and reported as a resource limit; the inner job has no limit to credit; the whole tree is cleaned up.",
+      "expect": "The unit-job commit limit is enforced and reported as a resource limit, with every role's commitment and native error recorded; the same workload commits its full amount without the limit (control); the inner job has no limit to credit; the whole tree is cleaned up.",
       "ownerPackage": "internal/manager",
-      "ownerTest": "TestWindowsNestedJobMemoryMax"
+      "ownerTest": "TestWindowsNestedJobMemoryMax",
+      "requiredControls": [
+        "uncapped-commit"
+      ]
     },
     "N09": {
       "action": "Format 1 CPUQuota=25% with busy descendants, compared with an uncapped control.",
-      "expect": "Native CpuRate 2500 with a hard cap on the unit job, none on the inner job; measured use within the declared bound, or explicitly inconclusive.",
+      "expect": "Native CpuRate 2500 with a hard cap on the unit job, none on the inner job; a metered busy tree within the declared bound against a passing uncapped control, or explicitly inconclusive.",
       "ownerPackage": "internal/manager",
       "ownerTest": "TestWindowsNestedJobCPUQuota",
       "ownerEnv": [
         "WINUNITD_NATIVE_NESTED_METER=1"
+      ],
+      "requiredControls": [
+        "uncapped"
       ]
     },
     "N10": {
@@ -72,23 +78,26 @@
       "ownerTest": "TestWindowsNestedJobWindowsCPUQuota",
       "ownerEnv": [
         "WINUNITD_NATIVE_NESTED_METER=1"
+      ],
+      "requiredControls": [
+        "uncapped"
       ]
     },
     "N11": {
       "action": "MAIN, ENGINE and G1 request CREATE_BREAKAWAY_FROM_JOB with no inner breakaway flags.",
-      "expect": "No created process is outside the unit job; every attempt and its result is recorded.",
+      "expect": "Every attempt is refused with ERROR_ACCESS_DENIED or creates a probe that stays in the unit job; any other creation error fails; every attempt and its numeric result is recorded.",
       "ownerPackage": "internal/runtime",
       "ownerTest": "TestNativeNestedJobBreakawayDenied"
     },
     "N12": {
       "action": "After READY, set only inner BREAKAWAY_OK; ENGINE and G1 request breakaway for new probes.",
-      "expect": "Probes may leave the inner job but never the unit job; existing members keep inner membership; the unit stop removes every process.",
+      "expect": "Probes are created outside the inner job and inside the unit job (a documented denial is inconclusive; any other error fails); existing members keep inner membership; the unit stop removes every process.",
       "ownerPackage": "internal/runtime",
       "ownerTest": "TestNativeNestedJobInnerBreakaway"
     },
     "N13": {
       "action": "After READY, set only inner SILENT_BREAKAWAY_OK; ENGINE and G1 create normal probes.",
-      "expect": "Probes stay in the unit job even when they leave the inner job; the unit stop removes every process.",
+      "expect": "Probes are created, outside the inner job and inside the unit job; any creation error fails; the unit stop removes every process.",
       "ownerPackage": "internal/runtime",
       "ownerTest": "TestNativeNestedJobInnerSilentBreakaway"
     },
@@ -106,9 +115,13 @@
     },
     "N16": {
       "action": "A test-only seam fails the first cleanup of a real nested tree; request a start while it is held, then release and retry.",
-      "expect": "No replacement is launched or admitted while cleanup is unconfirmed; an early start return is a refusal; after release every held process exits, cleanup is confirmed and a fresh invocation succeeds.",
+      "expect": "No replacement is launched or admitted while cleanup is unconfirmed; an early start return is the uncertain-termination refusal, and a pending start is cancelled and joined before release; after release every held process exits, cleanup is confirmed, nothing launches on its own and a fresh invocation succeeds. Each seam variant is a control.",
       "ownerPackage": "internal/manager",
-      "ownerTest": "TestWindowsNestedJobCleanupUncertainty"
+      "ownerTest": "TestWindowsNestedJobCleanupUncertainty",
+      "requiredControls": [
+        "seam-failure",
+        "seam-live-process"
+      ]
     }
   },
   "groups": [

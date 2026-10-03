@@ -533,19 +533,19 @@ func TestWindowsNestedJobOwnerCrash(t *testing.T) {
 // writeSupplementary records a supplementary regression under its own key.
 func writeSupplementary(t *testing.T, key string, cleanup bool) {
 	t.Helper()
-	dir := os.Getenv(nestedjob.EnvResults)
-	if dir == "" {
-		return
-	}
 	result := nestedjob.ResultPass
-	if t.Failed() {
+	switch {
+	case t.Failed():
 		result = nestedjob.ResultFail
+	case t.Skipped():
+		result = nestedjob.ResultSkip
 	}
-	tok, _ := nestedjob.CurrentTokenContext()
-	r := nestedjob.Result{Schema: nestedjob.ResultSchema, Key: key, Kind: nestedjob.KindSupplementary, Result: result,
-		Source: os.Getenv(nestedjob.EnvSource), Matrix: nestedjob.MatrixHash(), Token: tok, CleanupConfirmed: cleanup}
-	if err := nestedjob.WriteResult(dir, r); err != nil {
-		t.Errorf("supplementary record: %v", err)
+	tok, err := nestedjob.CurrentTokenContext()
+	if err != nil {
+		t.Errorf("token: %v", err)
+	}
+	if err := nestedjob.WriteSupplementary(key, result, cleanup, tok); err != nil {
+		t.Error(err)
 	}
 }
 
@@ -681,7 +681,7 @@ func testNestedCPUQuota(t *testing.T, caseID, unitLines, quota string, legacy, n
 			if control < 0.60 {
 				result = nestedjob.ResultInconclusive
 			}
-			rec.Control("uncapped", result, fmt.Sprintf("%.1f%% of %d processors", control*100, goruntime.NumCPU()))
+			rec.Control("uncapped", result, fmt.Sprintf("%.1f%% of %d processors", control*100, goruntime.NumCPU()), c.owner.token())
 		}
 		c, held := start(t, quota)
 		v := c.owner.inspect(t)

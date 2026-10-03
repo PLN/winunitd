@@ -4,20 +4,24 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"regexp"
+	goruntime "runtime"
+	"slices"
 	"strings"
 	"time"
 )
 
 // Installed-daemon lane (N06, N07). The observer holds the old tree and any
 // named manager processes, terminates the exact crash target, waits for the
-// replacement generation and compares kernel exit times of every old process
-// with the replacement MAIN's creation time. That ordering, not a later poll
-// or MAIN's own entry check, supports "gone before replacement". Entry checks
-// are reported separately as entry observations.
+// replacement generation and records kernel exit times of every old process
+// and the replacement MAIN's creation time. That exit-before-creation order
+// proves native process ordering at the replacement launch; it is a
+// different claim from the manager's internal admission boundary pinned by
+// N05. The replacement MAIN's own check of the previous generation is an
+// entry observation, reported separately. The recorder trusts nothing the
+// report concludes: it recomputes every check from the raw identities.
 
 // ObserverReportSchema is the observer report schema.
-const ObserverReportSchema = 1
+const ObserverReportSchema = 2
 
 // Observer report stages.
 const (
@@ -35,12 +39,20 @@ const (
 	OrderingSurvivor = "survivor"
 )
 
+// Crash roles and the held manager role.
+const (
+	CrashUserManager = "user-manager"
+	CrashBroker      = "broker"
+	DaemonImage      = "winunitd.exe"
+)
+
 // HeldExit is one held old process and how it ended.
 type HeldExit struct {
 	Role     string `json:"role"`
 	PID      uint32 `json:"pid"`
 	Created  uint64 `json:"created"`
 	Image    string `json:"image,omitempty"`
+	SID      string `json:"sid,omitempty"`
 	Exited   bool   `json:"exited"`
 	ExitTime uint64 `json:"exitTime,omitempty"`
 }
@@ -84,20 +96,229 @@ func ClassifyOrdering(old []HeldExit, replacementCreated uint64) Ordering {
 	return o
 }
 
+// DaemonBinding fixes what one observer report is evidence of.
+type DaemonBinding struct {
+	Case       string `json:"case"`
+	Mode       string `json:"mode"`
+	Identity   string `json:"identity"`
+	Repetition string `json:"repetition"`
+	Source     string `json:"source"`
+	Admission  string `json:"admission"`
+	ExpectSID  string `json:"expectSid"`
+	CrashRole  string `json:"crashRole"`
+}
+
 // ObserverReport is the observer's evidence file, rewritten at each stage.
 type ObserverReport struct {
-	Schema           int             `json:"schema"`
-	Stage            string          `json:"stage"`
-	Generation       int             `json:"generation"`
-	Replacement      int             `json:"replacement"`
-	Old              []HeldExit      `json:"old"`
-	Crash            *HeldExit       `json:"crash,omitempty"`
-	CrashAt          uint64          `json:"crashAt,omitempty"`
-	New              []Identity      `json:"new,omitempty"`
-	Ordering         *Ordering       `json:"ordering,omitempty"`
-	EntryObservation []PreviousCheck `json:"entryObservation,omitempty"`
-	CleanupConfirmed bool            `json:"cleanupConfirmed"`
-	Failure          string          `json:"failure,omitempty"`
+	Schema             int             `json:"schema"`
+	Stage              string          `json:"stage"`
+	Binding            DaemonBinding   `json:"binding"`
+	Generation         int             `json:"generation"`
+	Replacement        int             `json:"replacement"`
+	OldTree            []Identity      `json:"oldTree,omitempty"`
+	NewTree            []Identity      `json:"newTree,omitempty"`
+	Crash              *HeldExit       `json:"crash,omitempty"`
+	Managers           []HeldExit      `json:"managers,omitempty"`
+	Old                []HeldExit      `json:"old,omitempty"`
+	CrashAt            uint64          `json:"crashAt,omitempty"`
+	ReplacementCreated uint64          `json:"replacementCreated,omitempty"`
+	Ordering           *Ordering       `json:"ordering,omitempty"`
+	EntryObservation   []PreviousCheck `json:"entryObservation,omitempty"`
+	CleanupConfirmed   bool            `json:"cleanupConfirmed"`
+	Failure            string          `json:"failure,omitempty"`
+}
+
+// ExpectedCrashRole is the crash target of a daemon case.
+func ExpectedCrashRole(caseID string) string {
+	if caseID == "N06" {
+		return CrashUserManager
+	}
+	return CrashBroker
+}
+
+func (b DaemonBinding) validate() error {
+	switch {
+	case !caseIDPattern.MatchString(b.Case) || (b.Case != "N06" && b.Case != "N07"):
+		return fmt.Errorf("binding case %q", b.Case)
+	case !slices.Contains(LaunchModes, b.Mode):
+		return fmt.Errorf("binding mode %q", b.Mode)
+	case b.Identity != IdentitySystem && b.Identity != IdentityHeadless:
+		return fmt.Errorf("binding identity %q", b.Identity)
+	case b.Case == "N06" && b.Identity != IdentityHeadless:
+		return errors.New("N06 has no SYSTEM variant")
+	case !repetitionPattern.MatchString(b.Repetition):
+		return fmt.Errorf("binding repetition %q", b.Repetition)
+	case !fullCommit.MatchString(b.Source) || !sha256Hex.MatchString(b.Admission):
+		return errors.New("binding needs the admitted source and manifest hash")
+	case b.CrashRole != ExpectedCrashRole(b.Case):
+		return fmt.Errorf("binding crash role %q for %s", b.CrashRole, b.Case)
+	case b.Identity == IdentitySystem && b.ExpectSID != SystemSID:
+		return errors.New("SYSTEM cases expect the LocalSystem SID")
+	case b.Identity == IdentityHeadless && (!sidPattern.MatchString(b.ExpectSID) || b.ExpectSID == SystemSID):
+		return errors.New("headless cases expect a local account SID")
+	}
+	return nil
+}
+
+// heldManagers is how many user managers the observer holds besides the
+// crash target: a broker crash in the headless lane must also end the
+// account's user manager.
+func (b DaemonBinding) heldManagers() int {
+	if b.CrashRole == CrashBroker && b.Identity == IdentityHeadless {
+		return 1
+	}
+	return 0
+}
+
+// checkDaemonTree validates one generation's MAIN, ENGINE, G1 and G2 and
+// that every one of them ran an admitted fixture image.
+func checkDaemonTree(ids []Identity, gen int, b DaemonBinding, run *Admission) error {
+	roles := []string{RoleMain, RoleEngine, RoleG1, RoleG2}
+	if len(ids) != len(roles) {
+		return fmt.Errorf("generation %d has %d processes", gen, len(ids))
+	}
+	seen := map[[2]uint64]bool{}
+	for i, id := range ids {
+		if id.Role != roles[i] {
+			return fmt.Errorf("generation %d tree order", gen)
+		}
+		if err := id.validate(true); err != nil {
+			return err
+		}
+		key := [2]uint64{uint64(id.PID), id.Created}
+		if seen[key] {
+			return fmt.Errorf("generation %d repeats %s", gen, id.Role)
+		}
+		seen[key] = true
+		if id.Generation != gen {
+			return fmt.Errorf("%s belongs to generation %d, want %d", id.Role, id.Generation, gen)
+		}
+		if id.SID != b.ExpectSID || id.Session != 0 || (b.Identity == IdentityHeadless && id.Elevated) {
+			return fmt.Errorf("generation %d %s does not run as the expected account in session zero", gen, id.Role)
+		}
+		if !run.Admits(id.ImageSHA256) {
+			return fmt.Errorf("generation %d %s image is not admitted", gen, id.Role)
+		}
+	}
+	main, engine := ids[0], ids[1]
+	if engine.ParentPID != main.PID || engine.ParentCreated != main.Created {
+		return fmt.Errorf("generation %d ENGINE was not created by MAIN", gen)
+	}
+	for _, leaf := range ids[2:] {
+		if leaf.ParentPID != engine.PID || leaf.ParentCreated != engine.Created {
+			return fmt.Errorf("generation %d %s was not created by ENGINE", gen, leaf.Role)
+		}
+	}
+	return nil
+}
+
+// ValidateDaemonReport recomputes an installed-daemon execution's proof. It
+// returns nil only for a finished report bound to want whose old and new
+// trees, crash target, managers, timestamps and cleanup all check out, with
+// fixture images from the admitted run.
+func ValidateDaemonReport(rep ObserverReport, want DaemonBinding, run *Admission) error {
+	if rep.Schema != ObserverReportSchema {
+		return fmt.Errorf("observer report schema %d", rep.Schema)
+	}
+	if err := want.validate(); err != nil {
+		return err
+	}
+	if run == nil || run.Source != want.Source {
+		return errors.New("no admitted run for this binding")
+	}
+	if rep.Binding != want {
+		return errors.New("report is bound to another case, account or admitted run")
+	}
+	if rep.Stage != StageFinished || !rep.CleanupConfirmed {
+		return fmt.Errorf("observer stage %s without confirmed cleanup", rep.Stage)
+	}
+	if rep.Generation < 1 || rep.Replacement != rep.Generation+1 {
+		return fmt.Errorf("generations %d and %d are not consecutive", rep.Generation, rep.Replacement)
+	}
+	if err := checkDaemonTree(rep.OldTree, rep.Generation, want, run); err != nil {
+		return fmt.Errorf("old tree: %w", err)
+	}
+	if err := checkDaemonTree(rep.NewTree, rep.Replacement, want, run); err != nil {
+		return fmt.Errorf("new tree: %w", err)
+	}
+	for _, n := range rep.NewTree {
+		for _, o := range rep.OldTree {
+			if n.Same(o) {
+				return errors.New("the replacement tree reuses an old process")
+			}
+		}
+	}
+	// The user manager runs as the unit's account, the broker as SYSTEM.
+	crashSID := want.ExpectSID
+	if want.CrashRole == CrashBroker {
+		crashSID = SystemSID
+	}
+	if rep.Crash == nil || rep.Crash.Role != want.CrashRole || !strings.EqualFold(rep.Crash.Image, DaemonImage) ||
+		rep.Crash.PID == 0 || rep.Crash.Created == 0 || rep.Crash.SID != crashSID {
+		return errors.New("the crash target is not the expected daemon process")
+	}
+	if len(rep.Managers) != want.heldManagers() {
+		return fmt.Errorf("%d held managers, want %d", len(rep.Managers), want.heldManagers())
+	}
+	for _, m := range rep.Managers {
+		if m.Role != CrashUserManager || !strings.EqualFold(m.Image, DaemonImage) || m.PID == 0 || m.Created == 0 || m.SID != want.ExpectSID {
+			return errors.New("a held manager is not the account's user-manager daemon process")
+		}
+	}
+	// Old holds exactly the old tree, the crash target and the managers.
+	expected := map[[2]uint64]string{}
+	for _, id := range rep.OldTree {
+		expected[[2]uint64{uint64(id.PID), id.Created}] = id.Role
+	}
+	expected[[2]uint64{uint64(rep.Crash.PID), rep.Crash.Created}] = rep.Crash.Role
+	for _, m := range rep.Managers {
+		expected[[2]uint64{uint64(m.PID), m.Created}] = m.Role
+	}
+	if len(rep.Old) != len(expected) {
+		return fmt.Errorf("%d old exits recorded, want %d", len(rep.Old), len(expected))
+	}
+	var crashExit uint64
+	for _, h := range rep.Old {
+		key := [2]uint64{uint64(h.PID), h.Created}
+		role, ok := expected[key]
+		if !ok || role != h.Role {
+			return fmt.Errorf("unexpected old process %s %d", h.Role, h.PID)
+		}
+		delete(expected, key)
+		if !h.Exited || h.ExitTime == 0 || h.ExitTime < h.Created {
+			return fmt.Errorf("old %s %d has no exit time", h.Role, h.PID)
+		}
+		if h.PID == rep.Crash.PID && h.Created == rep.Crash.Created {
+			if h != *rep.Crash {
+				return errors.New("the crash target's exit record is inconsistent")
+			}
+			crashExit = h.ExitTime
+		}
+	}
+	if rep.CrashAt == 0 || rep.CrashAt > crashExit {
+		return errors.New("crash time does not precede the crash target's exit")
+	}
+	for _, m := range rep.Managers {
+		if !slices.Contains(rep.Old, m) {
+			return errors.New("a held manager's exit record is inconsistent")
+		}
+	}
+	created := rep.NewTree[0].Created
+	if rep.ReplacementCreated != created || created <= rep.CrashAt {
+		return errors.New("replacement MAIN creation time is inconsistent")
+	}
+	if o := ClassifyOrdering(rep.Old, created); o.Verdict != OrderingOrdered {
+		return fmt.Errorf("ordering %s: %s", o.Verdict, strings.Join(o.NotBefore, ", "))
+	}
+	if len(rep.EntryObservation) != len(rep.OldTree) {
+		return errors.New("the replacement MAIN's entry observation is missing")
+	}
+	for _, p := range rep.EntryObservation {
+		if p.State != PreviousExited && p.State != PreviousGone && p.State != PreviousReused {
+			return fmt.Errorf("entry observation saw %s %s", p.Role, p.State)
+		}
+	}
+	return nil
 }
 
 // ObserveConfig is a validated observe command line.
@@ -106,11 +327,12 @@ type ObserveConfig struct {
 	Generation  int
 	Replacement int
 	CrashPID    uint32
-	CrashImage  string
 	HoldPIDs    []uint32
 	Timeout     time.Duration
 	Report      string
 	FinishFile  string
+	Admission   string
+	Binding     DaemonBinding
 }
 
 // RecordConfig is a validated record command line: it turns a finished
@@ -118,51 +340,52 @@ type ObserveConfig struct {
 type RecordConfig struct {
 	Report       string
 	Results      string
-	Case         string
-	Mode         string
-	Identity     string
-	Repetition   string
-	Source       string
-	TokenSource  string
+	Admission    string
+	Binding      DaemonBinding
 	DriverResult string
 	Detail       string
 }
 
-var imageName = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}\.exe$`)
-
-func (c ObserveConfig) validate() error {
-	if err := validateCaseDir(c.CaseDir); err != nil {
-		return err
-	}
-	if c.Generation < 1 || c.Replacement <= c.Generation || c.Replacement > MaxGeneration {
-		return errors.New("observe needs 1 <= generation < replacement")
-	}
-	if c.CrashPID == 0 || !imageName.MatchString(c.CrashImage) {
-		return errors.New("observe needs --crash-pid and an executable --crash-image name")
-	}
-	if c.Timeout < time.Second || c.Timeout > 10*time.Minute {
-		return errors.New("observe timeout must be between 1s and 10m")
-	}
-	if len(c.HoldPIDs) > 8 {
-		return errors.New("observe holds at most 8 extra processes")
-	}
-	for _, p := range []string{c.Report, c.FinishFile} {
+func validatePaths(paths ...string) error {
+	for _, p := range paths {
 		if !filepath.IsAbs(p) || filepath.Clean(p) != p {
-			return errors.New("observe report and finish paths must be clean absolute paths")
+			return errors.New("paths must be clean absolute paths")
 		}
 	}
 	return nil
 }
 
+func (c ObserveConfig) validate() error {
+	if err := validateCaseDir(c.CaseDir); err != nil {
+		return err
+	}
+	if c.Generation < 1 || c.Replacement != c.Generation+1 {
+		return errors.New("observe needs a generation and the next one as replacement")
+	}
+	if c.CrashPID == 0 {
+		return errors.New("observe needs --crash-pid")
+	}
+	if c.Timeout < time.Second || c.Timeout > 10*time.Minute {
+		return errors.New("observe timeout must be between 1s and 10m")
+	}
+	if err := validatePaths(c.Report, c.FinishFile, c.Admission); err != nil {
+		return err
+	}
+	if err := c.Binding.validateUnbound(); err != nil {
+		return err
+	}
+	if len(c.HoldPIDs) != c.Binding.heldManagers() {
+		return fmt.Errorf("%s %s holds %d user managers", c.Binding.Case, c.Binding.Identity, c.Binding.heldManagers())
+	}
+	return nil
+}
+
 func (c RecordConfig) validate() error {
-	if !filepath.IsAbs(c.Report) || !filepath.IsAbs(c.Results) {
-		return errors.New("record needs absolute --report and --results")
+	if err := validatePaths(c.Report, c.Results, c.Admission); err != nil {
+		return err
 	}
-	if !caseIDPattern.MatchString(c.Case) || !repetitionPattern.MatchString(c.Repetition) || !sourceCommit.MatchString(c.Source) {
-		return errors.New("record needs --case, --repetition and --source")
-	}
-	if c.TokenSource != TokenProcess && c.TokenSource != TokenS4U {
-		return fmt.Errorf("token source %q", c.TokenSource)
+	if err := c.Binding.validateUnbound(); err != nil {
+		return err
 	}
 	if c.DriverResult != ResultPass && c.DriverResult != ResultFail {
 		return fmt.Errorf("driver result %q", c.DriverResult)
@@ -173,17 +396,33 @@ func (c RecordConfig) validate() error {
 	return nil
 }
 
-// DaemonResult builds the result record of one installed-daemon execution.
-// It passes only when the matrix requires the execution, the observer
-// finished with every old process exited strictly before the replacement
-// MAIN was created and with confirmed cleanup, the replacement tree ran with
-// one token supporting the identity, and the driver's own checks passed.
-func DaemonResult(m *Matrix, c RecordConfig, rep ObserverReport) Result {
-	key := ExecutionKey(c.Case, c.Mode, c.Identity, "", c.Repetition, LaneDaemon)
+// bind completes a command-line binding from an admitted run.
+func (b DaemonBinding) bind(run AdmittedRun) DaemonBinding {
+	if run.Manifest != nil {
+		b.Source, b.Admission = run.Manifest.Source, run.Hash
+	}
+	return b
+}
+
+// validateUnbound validates a command-line binding before the admitted run
+// supplies its source and manifest hash.
+func (b DaemonBinding) validateUnbound() error {
+	if b.Source != "" || b.Admission != "" {
+		return errors.New("the source and manifest hash come from the admitted run")
+	}
+	b.Source, b.Admission = strings.Repeat("0", 40), strings.Repeat("0", 64)
+	return b.validate()
+}
+
+// DaemonResult builds the result record of one installed-daemon execution
+// from a validated report, the admitted run and the recording executable.
+func DaemonResult(m *Matrix, c RecordConfig, rep ObserverReport, run AdmittedRun, executable string) Result {
+	b := c.Binding.bind(run)
+	key := ExecutionKey(b.Case, b.Mode, b.Identity, "", b.Repetition, LaneDaemon)
 	r := Result{
-		Schema: ResultSchema, Key: key, Kind: KindPrimary, Case: c.Case, Mode: c.Mode, Identity: c.Identity,
-		Repetition: c.Repetition, Lane: LaneDaemon, Result: ResultFail, Source: c.Source, Matrix: MatrixHash(),
-		CleanupConfirmed: rep.Stage == StageFinished && rep.CleanupConfirmed,
+		Schema: ResultSchema, Key: key, Kind: KindPrimary, Case: b.Case, Mode: b.Mode, Identity: b.Identity,
+		Repetition: b.Repetition, Lane: LaneDaemon, Result: ResultFail, Source: b.Source, Admission: b.Admission,
+		Executable: executable, Matrix: MatrixHash(), Processors: goruntime.NumCPU(),
 	}
 	var notes []string
 	var exec *Execution
@@ -192,40 +431,31 @@ func DaemonResult(m *Matrix, c RecordConfig, rep ObserverReport) Result {
 			exec = &e
 		}
 	}
-	if exec == nil {
-		notes = append(notes, "not a required execution")
-	} else {
+	if exec != nil {
 		r.OwnerProof = exec.OwnerProof
 	}
-	if len(rep.New) > 0 {
-		first := rep.New[0]
-		r.Token = &TokenContext{SID: first.SID, Session: first.Session, Elevated: first.Elevated, Source: c.TokenSource}
-		for _, id := range rep.New[1:] {
-			if id.SID != first.SID || id.Session != first.Session || id.Elevated != first.Elevated {
-				notes = append(notes, "replacement tree mixes tokens")
-				r.Token = nil
-				break
-			}
+	err := ValidateDaemonReport(rep, b, run.Manifest)
+	if err == nil {
+		main := rep.NewTree[0]
+		source := TokenProcess
+		if b.Identity == IdentityHeadless {
+			source = TokenS4U
 		}
+		r.Token = &TokenContext{SID: main.SID, Session: main.Session, Elevated: main.Elevated, Source: source}
+		r.CleanupConfirmed = true
 	}
 	switch {
-	case rep.Schema != ObserverReportSchema:
-		notes = append(notes, "observer report schema")
-	case rep.Stage != StageFinished:
-		notes = append(notes, "observer stage "+rep.Stage+": "+rep.Failure)
-	case rep.Ordering == nil || rep.Ordering.Verdict != OrderingOrdered:
-		notes = append(notes, "old processes were not all gone before the replacement")
-	case !rep.CleanupConfirmed:
-		notes = append(notes, "cleanup not confirmed")
-	case IdentityOf(r.Token) != c.Identity:
-		notes = append(notes, "replacement token does not support "+c.Identity)
+	case exec == nil:
+		notes = append(notes, "not a required execution")
+	case err != nil:
+		notes = append(notes, "invalid proof: "+err.Error())
+	case !run.Manifest.Admits(executable):
+		notes = append(notes, "recorded by an executable outside the admitted run")
 	case c.DriverResult != ResultPass:
 		notes = append(notes, "driver checks failed")
-	case exec != nil:
+	default:
 		r.Result = ResultPass
-	}
-	if rep.Ordering != nil {
-		notes = append(notes, "ordering "+rep.Ordering.Verdict)
+		notes = append(notes, "every old process exited before the replacement MAIN was created")
 	}
 	if c.Detail != "" {
 		notes = append(notes, c.Detail)
@@ -239,11 +469,19 @@ func runRecord(c RecordConfig) error {
 	if err != nil {
 		return err
 	}
+	run, err := LoadAdmission(c.Admission)
+	if err != nil {
+		return err
+	}
+	exe, err := ExecutableSHA256()
+	if err != nil {
+		return err
+	}
 	var rep ObserverReport
 	if err := ReadJSON(c.Report, &rep); err != nil {
 		return err
 	}
-	r := DaemonResult(m, c, rep)
+	r := DaemonResult(m, c, rep, run, exe)
 	if err := WriteResult(c.Results, r); err != nil {
 		return err
 	}

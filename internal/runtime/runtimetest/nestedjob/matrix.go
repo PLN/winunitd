@@ -1,11 +1,9 @@
 package nestedjob
 
 import (
-	"bytes"
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -45,6 +43,9 @@ type CaseDef struct {
 	OwnerTest    string   `json:"ownerTest,omitempty"`
 	OwnerEnv     []string `json:"ownerEnv,omitempty"`
 	DaemonDriver string   `json:"daemonDriver,omitempty"`
+	// RequiredControls are separately keyed control executions that every
+	// passing execution of this case needs, such as an uncapped measurement.
+	RequiredControls []string `json:"requiredControls,omitempty"`
 }
 
 // Group expands its cases over modes, phases, identities and repetitions in
@@ -82,6 +83,8 @@ type Execution struct {
 	OwnerRun     string   `json:"ownerRun,omitempty"`
 	OwnerEnv     []string `json:"ownerEnv,omitempty"`
 	DaemonDriver string   `json:"daemonDriver,omitempty"`
+	// RequiredControls are the control names a passing record must link.
+	RequiredControls []string `json:"requiredControls,omitempty"`
 	// OwnerProof links an immutable-daemon execution to the native-owner
 	// execution that proves membership in the particular unit job.
 	OwnerProof string `json:"ownerProof,omitempty"`
@@ -116,6 +119,7 @@ var (
 	testName          = regexp.MustCompile(`^Test[A-Za-z0-9]+$`)
 	ownerEnvs         = regexp.MustCompile(`^WINUNITD_NATIVE_NESTED_[A-Z_]+=[A-Za-z0-9]+$`)
 	repetitionPattern = regexp.MustCompile(`^r[1-9]$`)
+	controlName       = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 )
 
 // DaemonDriverPath is the generic installed-daemon driver in the product tree.
@@ -124,14 +128,9 @@ const DaemonDriverPath = "tools/lab/assets/nested-job-checks.ps1"
 // DecodeMatrix strictly decodes and validates a case table, including that
 // its expansion has unique keys and resolvable owner proofs.
 func DecodeMatrix(data []byte) (*Matrix, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
 	var m Matrix
-	if err := dec.Decode(&m); err != nil {
-		return nil, err
-	}
-	if dec.More() {
-		return nil, errors.New("matrix has trailing data")
+	if err := decodeStrict(data, &m); err != nil {
+		return nil, fmt.Errorf("matrix: %w", err)
 	}
 	if m.Version != 2 {
 		return nil, fmt.Errorf("matrix version %d", m.Version)
@@ -205,6 +204,11 @@ func (c CaseDef) validate(id string) error {
 	}
 	if c.DaemonDriver != "" && c.DaemonDriver != DaemonDriverPath {
 		return fmt.Errorf("daemon driver %q", c.DaemonDriver)
+	}
+	for i, name := range c.RequiredControls {
+		if c.OwnerTest == "" || !controlName.MatchString(name) || slices.Contains(c.RequiredControls[:i], name) {
+			return fmt.Errorf("required control %q", name)
+		}
 	}
 	return nil
 }
@@ -296,6 +300,7 @@ func (m *Matrix) expand() ([]Execution, error) {
 								e.OwnerPackage = c.OwnerPackage
 								e.OwnerRun = OwnerRun(c.OwnerTest, mode, identity, phase)
 								e.OwnerEnv = slices.Clone(c.OwnerEnv)
+								e.RequiredControls = slices.Clone(c.RequiredControls)
 							} else {
 								e.DaemonDriver = c.DaemonDriver
 								e.OwnerProof = ExecutionKey(m.OwnerProofCase, mode, identity, "", "r1", LaneOwner)

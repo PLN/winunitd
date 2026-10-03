@@ -3,6 +3,7 @@ package nestedjob
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -127,14 +128,19 @@ func TestRecordCleanupNeedsEveryConfirmation(t *testing.T) {
 func TestRecordFinishWritesBoundRecords(t *testing.T) {
 	dir := absDir(t)
 	t.Setenv(EnvResults, dir)
-	t.Setenv(EnvSource, testSource)
+	t.Setenv(EnvAdmission, writeTestAdmission(t))
+	if !Qualifying() {
+		t.Fatal("a run with a results directory is not qualifying")
+	}
 	r, err := NewRecord("N09", ModeAssign, IdentitySystem, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.Token = &TokenContext{SID: SystemSID, Source: TokenProcess}
+	tok := &TokenContext{SID: SystemSID, Source: TokenProcess, Elevated: true}
+	r.Token = tok
+	r.Control("uncapped", ResultPass, "82% of 4 processors", tok)
+	r.ControlCleanup("uncapped", true)
 	r.Cleanup(true)
-	r.Control("uncapped", ResultPass, "82% of 4 processors")
 	r.Note("capped 24%")
 	if err := r.Finish(ResultPass); err != nil {
 		t.Fatal(err)
@@ -143,14 +149,91 @@ func TestRecordFinishWritesBoundRecords(t *testing.T) {
 	if err != nil || len(got) != 2 {
 		t.Fatalf("records %+v %v", got, err)
 	}
+	run := testRun(t)
+	for _, res := range got {
+		if res.Source != testSource || res.Admission != run.Hash || !run.Manifest.Admits(res.Executable) || res.Processors < 1 || !res.CleanupConfirmed {
+			t.Fatalf("record is not bound to the admitted run: %+v", res)
+		}
+	}
 	m, err := CaseMatrix()
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := Summarize(m, got, testSource, Selection{Cases: []string{"N09"}, Identities: []string{IdentitySystem}, Lanes: []string{LaneOwner}})
-	if s.Passed != 1 || s.Controls != 1 || len(s.Problems) != 0 || s.Selected != 2 {
+	sel := Selection{Cases: []string{"N09"}, Identities: []string{IdentitySystem}, Lanes: []string{LaneOwner}}
+	if s := Summarize(m, got, run, sel); s.Passed != 1 || s.Controls != 1 || len(s.Problems) != 0 || s.Selected != 2 {
 		t.Fatalf("summary %+v", s)
 	}
+
+	// A settings-only pass in a qualifying run is inconclusive, and a
+	// control whose cleanup was never confirmed cannot support a pass.
+	dir = absDir(t)
+	t.Setenv(EnvResults, dir)
+	r, _ = NewRecord("N09", ModeJobList, IdentitySystem, "")
+	r.Token = tok
+	r.Cleanup(true)
+	r.MarkInconclusive("not metered")
+	if err := r.Finish(ResultPass); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = NewRecord("N09", ModeAssign, IdentitySystem, "")
+	r.Token = tok
+	r.Control("uncapped", ResultPass, "82%", tok)
+	r.ControlCleanup("uncapped", true)
+	r.ControlCleanup("uncapped", false)
+	r.Cleanup(true)
+	if err := r.Finish(ResultPass); err != nil {
+		t.Fatal(err)
+	}
+	got, err = ReadResults(dir)
+	if err != nil || len(got) != 3 {
+		t.Fatalf("records %+v %v", got, err)
+	}
+	for _, res := range got {
+		switch res.Key {
+		case "N09/job-list/system/r1/native-owner":
+			if res.Result != ResultInconclusive || !strings.Contains(res.Detail, "not metered") {
+				t.Errorf("settings-only record %+v", res)
+			}
+		case "N09/assign/system/r1/native-owner#uncapped":
+			if res.CleanupConfirmed {
+				t.Errorf("control cleanup confirmed after a failed confirmation: %+v", res)
+			}
+		}
+	}
+	if s := Summarize(m, got, run, sel); s.Passed != 0 || s.Incomplete != 2 {
+		t.Fatalf("summary %+v", s)
+	}
+
+	// A control that never reported fails; a run without an admission
+	// manifest writes its evidence, cannot pass and reports the error.
+	dir = absDir(t)
+	t.Setenv(EnvResults, dir)
+	t.Setenv(EnvAdmission, "")
+	r, _ = NewRecord("N09", ModeAssign, IdentitySystem, "")
+	r.Token = tok
+	r.ControlCleanup("uncapped", true)
+	r.Cleanup(true)
+	if err := r.Finish(ResultPass); err == nil {
+		t.Fatal("a record without an admitted run finished cleanly")
+	}
+	got, err = ReadResults(dir)
+	if err != nil || len(got) != 2 {
+		t.Fatalf("records %+v %v", got, err)
+	}
+	for _, res := range got {
+		if res.Admission != "" || res.Result == ResultPass {
+			t.Errorf("unadmitted record %+v", res)
+		}
+	}
+	t.Setenv(EnvResults, "")
+	if Qualifying() {
+		t.Fatal("an ordinary run is qualifying")
+	}
+	r, _ = NewRecord("N09", ModeAssign, IdentitySystem, "")
+	if err := r.Finish(ResultPass); err != nil {
+		t.Fatalf("an ordinary run wrote a record: %v", err)
+	}
+
 	t.Setenv(EnvHeadlessSID, "S-1-5-21-1-2-3-1001")
 	if _, err := HeadlessSID(); err == nil {
 		t.Fatal("headless account accepted without the disposable acknowledgement")

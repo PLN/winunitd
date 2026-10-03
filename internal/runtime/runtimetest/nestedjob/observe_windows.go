@@ -14,36 +14,50 @@ import (
 )
 
 // runObserve is the installed-daemon observer. It writes its report at each
-// stage; a failed stage keeps every handle it held until it exits.
+// stage; a failed stage keeps every handle it held until it exits. The
+// finished report carries raw identities and kernel times only; the
+// recorder recomputes every verdict from them.
 func runObserve(c ObserveConfig) error {
 	obs := NewObserver(c.CaseDir)
 	defer obs.Close()
-	rep := ObserverReport{Schema: ObserverReportSchema, Generation: c.Generation, Replacement: c.Replacement}
+	rep := ObserverReport{Schema: ObserverReportSchema, Binding: c.Binding, Generation: c.Generation, Replacement: c.Replacement}
 	write := func() error { return WriteJSON(c.Report, rep) }
 	fail := func(err error) error {
 		rep.Stage, rep.Failure = StageFailed, err.Error()
 		return errors.Join(err, write())
 	}
+	run, err := LoadAdmission(c.Admission)
+	if err != nil {
+		return fail(err)
+	}
+	rep.Binding = c.Binding.bind(run)
+	if exe, err := ExecutableSHA256(); err != nil || !run.Manifest.Admits(exe) {
+		return fail(fmt.Errorf("the observer executable is not admitted: %v", err))
+	}
 	_, old, err := obs.ReadyWithin(c.Generation, c.Timeout)
 	if err != nil {
 		return fail(fmt.Errorf("generation %d: %w", c.Generation, err))
 	}
+	for _, h := range old {
+		rep.OldTree = append(rep.OldTree, h.ID)
+	}
+	var managers []*Held
 	for _, pid := range c.HoldPIDs {
-		h, err := holdPID(obs, pid, "manager", 0)
+		h, err := holdPID(obs, pid, CrashUserManager, 0)
 		if err != nil {
 			return fail(err)
 		}
-		old = append(old, h)
+		managers = append(managers, h)
 	}
-	crash, err := holdPID(obs, c.CrashPID, "crash-target", windows.PROCESS_TERMINATE)
+	crash, err := holdPID(obs, c.CrashPID, c.Binding.CrashRole, windows.PROCESS_TERMINATE)
 	if err != nil {
 		return fail(err)
 	}
-	if !strings.EqualFold(filepath.Base(crash.ID.Image), c.CrashImage) {
-		return fail(fmt.Errorf("crash target pid %d is not %s", c.CrashPID, c.CrashImage))
+	if !strings.EqualFold(filepath.Base(crash.ID.Image), DaemonImage) {
+		return fail(fmt.Errorf("crash target pid %d is not %s", c.CrashPID, DaemonImage))
 	}
-	old = append(old, crash)
-	rep.Old = heldExits(old)
+	all := append(append(append([]*Held(nil), old...), managers...), crash)
+	rep.Old = heldExits(all)
 	rep.Stage = StageObserved
 	if err := write(); err != nil {
 		return err
@@ -52,26 +66,33 @@ func runObserve(c ObserveConfig) error {
 	if err := Terminate(crash); err != nil {
 		return fail(fmt.Errorf("terminate crash target: %w", err))
 	}
-	ex := heldExits([]*Held{crash})[0]
-	rep.Crash = &ex
+	if err := WaitSignaled([]*Held{crash}, ObserveTimeout); err != nil {
+		return fail(fmt.Errorf("crash target: %w", err))
+	}
 	_, replacement, err := obs.ReadyWithin(c.Replacement, c.Timeout)
 	if err != nil {
-		rep.Old = heldExits(old)
+		rep.Old = heldExits(all)
 		return fail(fmt.Errorf("replacement generation %d: %w", c.Replacement, err))
 	}
 	r, err := obs.Report(c.Replacement)
 	if err != nil {
 		return fail(err)
 	}
-	start := r.Find(EventStart).Identity
-	rep.Old = heldExits(old)
-	ordering := ClassifyOrdering(rep.Old, start.Created)
+	for _, h := range replacement {
+		rep.NewTree = append(rep.NewTree, h.ID)
+	}
+	if start := r.Find(EventStart); start == nil || len(rep.NewTree) == 0 || !start.Identity.Same(rep.NewTree[0]) {
+		return fail(errors.New("replacement report does not start with its tree's MAIN"))
+	}
+	rep.ReplacementCreated = rep.NewTree[0].Created
+	rep.Old = heldExits(all)
+	ex := heldExits([]*Held{crash})[0]
+	rep.Crash = &ex
+	rep.Managers = heldExits(managers)
+	ordering := ClassifyOrdering(rep.Old, rep.ReplacementCreated)
 	rep.Ordering = &ordering
 	if prev := r.Find(EventPrevious); prev != nil {
 		rep.EntryObservation = prev.Previous
-	}
-	for _, h := range replacement {
-		rep.New = append(rep.New, h.ID)
 	}
 	rep.Stage = StageReplaced
 	if err := write(); err != nil {
@@ -88,7 +109,7 @@ func runObserve(c ObserveConfig) error {
 		}
 		time.Sleep(pollInterval)
 	}
-	if err := WaitSignaled(append(append([]*Held(nil), old...), replacement...), 15*time.Second); err != nil {
+	if err := WaitSignaled(append(append([]*Held(nil), all...), replacement...), 15*time.Second); err != nil {
 		return fail(fmt.Errorf("cleanup: %w", err))
 	}
 	rep.CleanupConfirmed = true
@@ -96,14 +117,11 @@ func runObserve(c ObserveConfig) error {
 	if err := write(); err != nil {
 		return err
 	}
-	if ordering.Verdict != OrderingOrdered {
-		return fmt.Errorf("ordering %s: %s", ordering.Verdict, strings.Join(ordering.NotBefore, ", "))
-	}
-	return nil
+	return ValidateDaemonReport(rep, rep.Binding, run.Manifest)
 }
 
-// holdPID holds a process named only by PID, recording the creation time
-// and image at the moment it is held.
+// holdPID holds a process named only by PID, recording the creation time,
+// image and account at the moment it is held.
 func holdPID(obs *Observer, pid uint32, role string, access uint32) (*Held, error) {
 	h, err := windows.OpenProcess(windows.SYNCHRONIZE|windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
 	if err != nil {
@@ -111,17 +129,23 @@ func holdPID(obs *Observer, pid uint32, role string, access uint32) (*Held, erro
 	}
 	created, cerr := CreationTime(h)
 	image, ierr := imagePath(h)
+	sid, serr := processSID(h)
 	_ = windows.CloseHandle(h)
-	if err := errors.Join(cerr, ierr); err != nil {
+	if err := errors.Join(cerr, ierr, serr); err != nil {
 		return nil, fmt.Errorf("identify %s pid %d: %w", role, pid, err)
 	}
-	return obs.Hold(Identity{Role: role, PID: pid, Created: created, Image: image}, access)
+	return obs.Hold(Identity{Role: role, PID: pid, Created: created, Image: image, SID: sid}, access)
 }
 
+// heldExits reports each held process and, once its handle is signaled,
+// its kernel exit time.
 func heldExits(held []*Held) []HeldExit {
 	out := make([]HeldExit, 0, len(held))
 	for _, h := range held {
-		e := HeldExit{Role: h.ID.Role, PID: h.ID.PID, Created: h.ID.Created, Image: filepath.Base(h.ID.Image)}
+		e := HeldExit{Role: h.ID.Role, PID: h.ID.PID, Created: h.ID.Created, SID: h.ID.SID}
+		if h.ID.Image != "" {
+			e.Image = filepath.Base(h.ID.Image)
+		}
 		if t, err := ExitTime(h.Handle); err == nil && t != 0 {
 			e.Exited, e.ExitTime = true, t
 		}

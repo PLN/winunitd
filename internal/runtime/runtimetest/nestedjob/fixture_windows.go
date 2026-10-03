@@ -346,7 +346,8 @@ func (m *mainRole) awaitTree() error {
 		if created.Role != role || !leaf.Identity.Same(created) || created.ParentPID != engine.Identity.PID || created.ParentCreated != engine.Identity.Created {
 			return m.fatal(role+"-status", errors.New("leaf status does not match ENGINE's creation record"))
 		}
-		h, err := openIdentity(leaf.Identity, windows.SYNCHRONIZE)
+		// VM_READ lets MAIN measure the leaf's committed private bytes.
+		h, err := openIdentity(leaf.Identity, windows.SYNCHRONIZE|windows.PROCESS_VM_READ)
 		if err != nil {
 			return m.fatal(role+"-open", err)
 		}
@@ -364,9 +365,8 @@ func (m *mainRole) awaitTree() error {
 		}
 		members[i].InInner = in
 		ok = ok && in == (i > 0)
-		if b, err := PrivateBytes(held[i]); err == nil {
-			members[i].PrivateBytes = b
-		}
+		members[i].PrivateBytes, err = PrivateBytes(held[i])
+		members[i].PrivateBytesError = failure("private-bytes", err)
 	}
 	inner, err := m.queryInner()
 	if err != nil {
@@ -701,9 +701,8 @@ func newWorker(caseDir string, generation int, role string, handle uint64, work 
 
 func (w *worker) writeStatus(children []Identity) error {
 	st := RoleStatus{Identity: w.self, Children: children, HandleProbe: w.handle}
-	if b, err := PrivateBytes(windows.CurrentProcess()); err == nil {
-		st.PrivateBytes = b
-	}
+	b, err := PrivateBytes(windows.CurrentProcess())
+	st.PrivateBytes, st.PrivateBytesError = b, failure("private-bytes", err)
 	return WriteJSON(filepath.Join(w.dir, StatusFile(w.self.Role)), st)
 }
 

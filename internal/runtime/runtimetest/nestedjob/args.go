@@ -17,8 +17,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -124,11 +122,12 @@ type MatrixConfig struct {
 	Hash   bool
 }
 
-// SummarizeConfig evaluates a result directory for one admitted source.
+// SummarizeConfig evaluates a result directory for one admitted run
+// manifest.
 type SummarizeConfig struct {
-	Results string
-	Source  string
-	Select  Selection
+	Results   string
+	Admission string
+	Select    Selection
 }
 
 // Invocation is one parsed fixture command line. Exactly one role field is set.
@@ -227,20 +226,21 @@ func Parse(args []string) (Invocation, error) {
 		}
 		return Invocation{Role: role, Stop: c}, nil
 	case "observe":
+		c := &ObserveConfig{}
 		gen := fs.Int("generation", 0, "")
-		replacement := fs.Int("replacement", 0, "")
 		crashPID := fs.Uint64("crash-pid", 0, "")
-		crashImage := fs.String("crash-image", "winunitd.exe", "")
 		var holds listFlag
 		fs.Var(&holds, "hold-pid", "")
-		timeout := fs.Duration("timeout", 3*time.Minute, "")
-		report := fs.String("report", "", "")
-		finish := fs.String("finish-file", "", "")
+		fs.DurationVar(&c.Timeout, "timeout", 3*time.Minute, "")
+		fs.StringVar(&c.Report, "report", "", "")
+		fs.StringVar(&c.FinishFile, "finish-file", "", "")
+		fs.StringVar(&c.Admission, "admission", "", "")
+		bindingFlags(fs, &c.Binding)
 		if err := parseFlags(fs, rest); err != nil {
 			return Invocation{}, err
 		}
-		c := &ObserveConfig{CaseDir: *caseDir, Generation: *gen, Replacement: *replacement, CrashImage: *crashImage,
-			Timeout: *timeout, Report: *report, FinishFile: *finish}
+		c.CaseDir, c.Generation, c.Replacement = *caseDir, *gen, *gen+1
+		c.Binding.CrashRole = ExpectedCrashRole(c.Binding.Case)
 		if *crashPID > 0 && *crashPID <= 1<<32-1 {
 			c.CrashPID = uint32(*crashPID)
 		}
@@ -259,20 +259,17 @@ func Parse(args []string) (Invocation, error) {
 		c := &RecordConfig{}
 		fs.StringVar(&c.Report, "report", "", "")
 		fs.StringVar(&c.Results, "results", "", "")
-		fs.StringVar(&c.Case, "case", "", "")
-		fs.StringVar(&c.Mode, "mode", "", "")
-		fs.StringVar(&c.Identity, "identity", "", "")
-		fs.StringVar(&c.Repetition, "repetition", "", "")
-		fs.StringVar(&c.Source, "source", "", "")
-		fs.StringVar(&c.TokenSource, "token-source", "", "")
+		fs.StringVar(&c.Admission, "admission", "", "")
 		fs.StringVar(&c.DriverResult, "driver-result", "", "")
 		fs.StringVar(&c.Detail, "detail", "", "")
+		bindingFlags(fs, &c.Binding)
 		if err := parseFlags(fs, rest); err != nil {
 			return Invocation{}, err
 		}
-		if *caseDir != "" || !slices.Contains(LaunchModes, c.Mode) || (c.Identity != IdentitySystem && c.Identity != IdentityHeadless) {
-			return Invocation{}, errors.New("record needs --mode and --identity and no case directory")
+		if *caseDir != "" {
+			return Invocation{}, errors.New("record takes no case directory")
 		}
+		c.Binding.CrashRole = ExpectedCrashRole(c.Binding.Case)
 		if err := c.validate(); err != nil {
 			return Invocation{}, err
 		}
@@ -285,7 +282,7 @@ func Parse(args []string) (Invocation, error) {
 		first := fs.Bool("first-increment", false, "")
 		hash := fs.Bool("hash", false, "")
 		results := fs.String("results", "", "")
-		source := fs.String("source", "", "")
+		admission := fs.String("admission", "", "")
 		if err := parseFlags(fs, rest); err != nil {
 			return Invocation{}, err
 		}
@@ -309,18 +306,18 @@ func Parse(args []string) (Invocation, error) {
 			}
 		}
 		if role == "matrix" {
-			if *results != "" || *source != "" {
-				return Invocation{}, errors.New("matrix takes no results or source")
+			if *results != "" || *admission != "" {
+				return Invocation{}, errors.New("matrix takes no results or admission")
 			}
 			if *hash && !sel.Empty() {
 				return Invocation{}, errors.New("the matrix hash covers the whole matrix")
 			}
 			return Invocation{Role: role, Matrix: &MatrixConfig{Select: sel, Hash: *hash}}, nil
 		}
-		if *hash || !filepath.IsAbs(*results) || !sourceCommit.MatchString(*source) {
-			return Invocation{}, errors.New("summarize needs --results ABSOLUTE-DIR and --source COMMIT")
+		if *hash || validatePaths(*results, *admission) != nil {
+			return Invocation{}, errors.New("summarize needs --results ABSOLUTE-DIR and --admission ABSOLUTE-FILE")
 		}
-		return Invocation{Role: role, Summarize: &SummarizeConfig{Results: *results, Source: *source, Select: sel}}, nil
+		return Invocation{Role: role, Summarize: &SummarizeConfig{Results: *results, Admission: *admission, Select: sel}}, nil
 	default:
 		return Invocation{}, fmt.Errorf("unknown role %q", role)
 	}
@@ -340,8 +337,16 @@ func (l *listFlag) Set(v string) error {
 	return nil
 }
 
-// sourceCommit is a full or abbreviated hexadecimal commit.
-var sourceCommit = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+// bindingFlags registers the scenario a daemon report is evidence of. The
+// crash role follows from the case; the source and manifest hash come from
+// the admitted run manifest, never from the command line.
+func bindingFlags(fs *flag.FlagSet, b *DaemonBinding) {
+	fs.StringVar(&b.Case, "case", "", "")
+	fs.StringVar(&b.Mode, "mode", "", "")
+	fs.StringVar(&b.Identity, "identity", "", "")
+	fs.StringVar(&b.Repetition, "repetition", "", "")
+	fs.StringVar(&b.ExpectSID, "expect-sid", "", "")
+}
 
 func parseFlags(fs *flag.FlagSet, args []string) error {
 	if err := fs.Parse(args); err != nil {

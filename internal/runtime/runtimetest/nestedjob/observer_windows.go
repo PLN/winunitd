@@ -62,8 +62,10 @@ func (o *Observer) waitReport(gen int, what string, done func(*Report) bool, tim
 			return nil, err
 		}
 		if err == nil {
-			if f := r.Fatal(); f != nil {
-				return r, fmt.Errorf("fixture %s: %s", f.Kind, f.Failure.Error())
+			if f := r.Fatal(); f != nil && f.Kind == EventUnqualified {
+				return r, fmt.Errorf("%w: %s", ErrUnqualified, SafeFailure(f.Failure))
+			} else if f != nil {
+				return r, fmt.Errorf("fixture %s: %s", f.Kind, SafeFailure(f.Failure))
 			}
 			if done(r) {
 				return r, nil
@@ -178,7 +180,7 @@ func (o *Observer) AwaitAck(dir, role string, seq int, timeout time.Duration) (A
 		err := ReadJSON(path, &ack)
 		if err == nil {
 			if !ack.OK || ack.Seq != seq {
-				return ack, fmt.Errorf("%s %s rejected: %s", role, ack.Verb, ack.Failure.Error())
+				return ack, fmt.Errorf("%s %s rejected: %s", role, ack.Verb, SafeFailure(ack.Failure))
 			}
 			return ack, nil
 		}
@@ -211,7 +213,7 @@ func (o *Observer) Work(gen int, role string) (WorkStatus, error) {
 func (o *Observer) StopHelpers(gen int) ([]StopHelperStatus, error) {
 	entries, err := os.ReadDir(o.genDir(gen))
 	if err != nil {
-		return nil, err
+		return nil, baseOnly(err)
 	}
 	var out []StopHelperStatus
 	for _, e := range entries {
@@ -277,23 +279,31 @@ func (o *Observer) Close() error {
 	return errors.Join(errs...)
 }
 
-// TerminateRunning terminates held processes that are still running. Tests
-// use it only to clean up after a failed assertion, such as an escaped probe.
+// TerminateRunning terminates held processes that are still running and
+// confirms, within a bound, that each one exited. Tests use it only to clean
+// up after a failed assertion, such as an escaped probe. An error means some
+// process's exit is unconfirmed; the caller must not report its cleanup as
+// confirmed. Close releases the handles either way.
 func (o *Observer) TerminateRunning() error {
 	var errs []error
+	var terminated []*Held
 	for _, h := range o.held {
 		done, err := h.Signaled()
-		if err != nil || done {
+		if err != nil {
+			errs = append(errs, fmt.Errorf("observe %s pid %d: %w", h.ID.Role, h.ID.PID, err))
 			continue
 		}
-		t, err := openIdentity(h.ID, windows.PROCESS_TERMINATE)
-		if err == nil {
-			err = windows.TerminateProcess(t, 1)
-			_ = windows.CloseHandle(t)
+		if done {
+			continue
 		}
-		if err != nil {
+		if err := Terminate(h); err != nil {
 			errs = append(errs, fmt.Errorf("terminate %s pid %d: %w", h.ID.Role, h.ID.PID, err))
+			continue
 		}
+		terminated = append(terminated, h)
+	}
+	if err := WaitSignaled(terminated, ObserveTimeout); err != nil {
+		errs = append(errs, fmt.Errorf("termination unconfirmed: %w", err))
 	}
 	return errors.Join(errs...)
 }

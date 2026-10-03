@@ -86,12 +86,17 @@ func summarize(c SummarizeConfig, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "nested-job:", err)
 		return SummaryFailed
 	}
+	run, err := LoadAdmission(c.Admission)
+	if err != nil {
+		fmt.Fprintln(stderr, "nested-job:", err)
+		return SummaryFailed
+	}
 	results, err := ReadResults(c.Results)
 	if err != nil {
 		fmt.Fprintln(stderr, "nested-job:", err)
 		return SummaryFailed
 	}
-	s := Summarize(m, results, c.Source, c.Select)
+	s := Summarize(m, results, run, c.Select)
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(s); err != nil {
