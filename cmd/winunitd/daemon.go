@@ -17,7 +17,6 @@ import (
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/servicing"
-	"github.com/PLN/winunitd/internal/version"
 	"github.com/PLN/winunitd/internal/winevt"
 )
 
@@ -83,7 +82,9 @@ func serveReady(ctx context.Context, baseDir string, stderr io.Writer, sessions 
 		Daemon:    job,
 		LingerDir: filepath.Join(baseDir, "linger"),
 		Logf:      logf,
-		// The broker launches no user managers, so no user units start either.
+		// The broker launches no user managers, so none of the user units
+		// it would host starts. A user manager started directly with
+		// --user-manager is outside the floor's scope.
 		AdmissionHold: hold,
 	})
 	if hold != "" {
@@ -162,11 +163,10 @@ func serveControlEndpoints(ctx context.Context, control, maintenance net.Listene
 	return errors.Join(first, <-results)
 }
 
-// runningBuild identifies this binary for the compatibility floor. The
-// capability feature list is not yet reported, so a floor that requires
-// features holds admission until the build can name them.
+// runningBuild identifies this binary for the compatibility floor, with the
+// same identity the floor verbs and the package helper use.
 func runningBuild() servicing.Build {
-	return servicing.CurrentBuild(version.Version, nil)
+	return servicing.Running()
 }
 
 // startAdmittedWork boots enabled units and starts user-manager

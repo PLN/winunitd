@@ -27,11 +27,21 @@ binary, the build the manager runs.
   check  Exit 0 when this build satisfies the floor or none is set, 1 when
          it is below the floor or the record cannot be trusted.
   set    Write a floor. Refused (exit 1) unless this build satisfies it.
-  clear  Remove the floor.
+         A floor that raises any requirement is written only while the
+         system manager is stopped: the winunitd service stopped with no
+         process, its endpoints unserved and no other winunitd.exe running.
+  clear  Remove the floor. Lowering or clearing applies at the next start.
+
+To raise the floor before admitting a workload that needs it:
+  1. winctl maintenance          quiesce system and user work
+  2. stop the winunitd service and wait for its process to exit
+  3. winunitd floor set ...       checks the stop before and after writing
+  4. start the service; winunitd floor check and winctl status must show
+     no admission hold
+  5. admit the workload
 
 A manager below the floor keeps its control endpoint but starts no units and
-launches no user managers until it restarts. A changed floor applies at the
-next manager start.
+launches no user managers until it restarts.
 `
 
 // featureList accepts repeated or comma-separated --require values.
@@ -48,7 +58,15 @@ func (f *featureList) Set(v string) error {
 	return nil
 }
 
-func runFloor(args []string, stdout, stderr io.Writer, build servicing.Build) int {
+// floorEnv is what the floor verbs evaluate: this binary's identity and the
+// check that the system manager and the managers it brokers are stopped.
+type floorEnv struct {
+	build   servicing.Build
+	stopped func() error
+}
+
+func runFloor(args []string, stdout, stderr io.Writer, env floorEnv) int {
+	build := env.build
 	if len(args) == 0 {
 		fmt.Fprint(stderr, floorUsage)
 		return 2
@@ -124,11 +142,30 @@ func runFloor(args []string, stdout, stderr io.Writer, build servicing.Build) in
 			fmt.Fprintf(stderr, "winunitd floor: refused: %s does not satisfy it: %s\n", describeBuild(build), strings.Join(v.Reasons, "; "))
 			return 1
 		}
+		// A running manager sampled the floor when it started and keeps
+		// admitting work under it, so a raise needs that manager stopped.
+		// An unusable current record counts as no floor: replacing it raises.
+		prev, _ := servicing.ReadFloor(path)
+		raise := !f.Within(prev)
+		if raise {
+			if err := env.stopped(); err != nil {
+				fmt.Fprintf(stderr, "winunitd floor: refused: raising the floor needs the system manager stopped: %v; run winctl maintenance, stop the winunitd service and every winunitd process, then retry\n", err)
+				return 1
+			}
+		}
 		if err := servicing.WriteFloor(path, f); err != nil {
 			fmt.Fprintf(stderr, "winunitd floor: %v\n", err)
 			return 1
 		}
-		fmt.Fprintln(stdout, "compatibility floor set; it applies at the next manager start")
+		if raise {
+			if err := env.stopped(); err != nil {
+				fmt.Fprintf(stderr, "winunitd floor: the floor was raised, but a manager started during the change (%v) and may admit work under the previous floor; restart it before admitting work that needs this floor\n", err)
+				return 1
+			}
+			fmt.Fprintln(stdout, "compatibility floor raised; start the service and confirm that winunitd floor check and winctl status show no admission hold before admitting work that needs it")
+			return 0
+		}
+		fmt.Fprintln(stdout, "compatibility floor written without raising it; it applies at the next manager start")
 		return 0
 	default: // clear
 		if err := servicing.RemoveFloor(path); err != nil {

@@ -93,7 +93,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if len(args) > 0 && args[0] == "floor" {
-		return runFloor(args[1:], stdout, stderr, runningBuild())
+		return runFloor(args[1:], stdout, stderr, floorEnv{build: runningBuild(), stopped: systemStopped})
 	}
 	for _, a := range args {
 		switch a {
