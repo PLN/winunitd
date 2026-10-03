@@ -1,0 +1,285 @@
+package servicing
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime/debug"
+	"slices"
+	"strings"
+	"testing"
+)
+
+func TestReleasePrecedence(t *testing.T) {
+	// Semantic-versioning 2.0 example order plus the product's own releases.
+	ordered := []string{
+		"0.1.0-alpha", "0.1.0", "0.2.0-beta", "0.2.1-beta", "0.2.1",
+		"1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta",
+		"1.0.0-beta.2", "1.0.0-beta.11", "1.0.0-rc.1", "1.0.0", "1.0.1", "1.10.0", "10.0.0",
+	}
+	for i := range ordered {
+		for j := range ordered {
+			a, err := ParseRelease(ordered[i])
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, err := ParseRelease(ordered[j])
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := 0
+			if i < j {
+				want = -1
+			} else if i > j {
+				want = 1
+			}
+			if got := a.Compare(b); got != want {
+				t.Errorf("compare %s %s = %d, want %d", ordered[i], ordered[j], got, want)
+			}
+		}
+	}
+	a, _ := ParseRelease("0.2.0+build.7")
+	b, _ := ParseRelease("0.2.0")
+	if a.Compare(b) != 0 {
+		t.Error("build metadata changed the order")
+	}
+}
+
+func TestParseReleaseRejectsMalformed(t *testing.T) {
+	for _, s := range []string{
+		"", "1", "1.0", "1.0.0.0", "01.0.0", "1.00.0", "v1.0.0", "1.0.0-", "1.0.0-alpha..1",
+		"1.0.0-01", "1.0.0-al pha", "1.0.0+", "1.0.0+a..b", "-1.0.0", "1.0.x", "1.0.0-ü",
+	} {
+		if _, err := ParseRelease(s); err == nil {
+			t.Errorf("%q accepted", s)
+		}
+	}
+}
+
+func TestDecodeFloor(t *testing.T) {
+	f, err := DecodeFloor([]byte(`{"schema":1,"minVersion":"0.2.0","requireFeatures":["restart-backoff","exec-stop"],"requireCleanBuild":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.MinVersion != "0.2.0" || len(f.RequireFeatures) != 2 || !f.RequireCleanBuild {
+		t.Fatalf("floor = %+v", f)
+	}
+	data, err := EncodeFloor(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := DecodeFloor(data)
+	if err != nil || !slices.Equal(again.RequireFeatures, []string{"exec-stop", "restart-backoff"}) {
+		t.Fatalf("encoded floor %s: %+v %v", data, again, err)
+	}
+	bad := map[string]string{
+		"empty":            `{}`,
+		"schema":           `{"schema":2,"minVersion":"0.2.0"}`,
+		"no requirement":   `{"schema":1}`,
+		"version":          `{"schema":1,"minVersion":"latest"}`,
+		"unknown field":    `{"schema":1,"minVersion":"0.2.0","maxVersion":"9.0.0"}`,
+		"feature name":     `{"schema":1,"requireFeatures":["Exec Stop"]}`,
+		"repeated feature": `{"schema":1,"requireFeatures":["exec-stop","exec-stop"]}`,
+		"trailing data":    `{"schema":1,"minVersion":"0.2.0"} {}`,
+		"not an object":    `["0.2.0"]`,
+		"oversize":         `{"schema":1,"minVersion":"0.2.0"}` + strings.Repeat(" ", MaxFloorBytes),
+	}
+	many := `{"schema":1,"requireFeatures":[`
+	for i := 0; i <= maxFloorFeatures; i++ {
+		if i > 0 {
+			many += ","
+		}
+		many += fmt.Sprintf(`"f%d"`, i)
+	}
+	bad["too many features"] = many + `]}`
+	for name, data := range bad {
+		if _, err := DecodeFloor([]byte(data)); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }
+
+func TestEvaluate(t *testing.T) {
+	clean := Build{Version: "0.2.0", Commit: "abc", Modified: boolPtr(false), Features: []string{"exec-stop", "job-limits"}}
+	cases := []struct {
+		name  string
+		floor *Floor
+		build Build
+		want  []string
+	}{
+		{"no floor", nil, Build{}, nil},
+		{"satisfied", &Floor{Schema: 1, MinVersion: "0.2.0", RequireFeatures: []string{"exec-stop"}, RequireCleanBuild: true}, clean, nil},
+		{"newer prerelease", &Floor{Schema: 1, MinVersion: "0.2.0-beta"}, Build{Version: "0.2.0-rc.1"}, nil},
+		{"older", &Floor{Schema: 1, MinVersion: "0.2.0"}, Build{Version: "0.1.0-alpha"}, []string{"version 0.1.0-alpha is below 0.2.0"}},
+		{"prerelease of floor", &Floor{Schema: 1, MinVersion: "0.2.0"}, Build{Version: "0.2.0-beta"}, []string{"version 0.2.0-beta is below 0.2.0"}},
+		{"unparsable build version", &Floor{Schema: 1, MinVersion: "0.2.0"}, Build{Version: "dev"}, []string{`build version "dev" is not a release version`}},
+		{"missing features", &Floor{Schema: 1, RequireFeatures: []string{"restart-backoff", "exec-stop", "linger-s4u"}}, clean, []string{"missing features linger-s4u, restart-backoff"}},
+		{"no feature list", &Floor{Schema: 1, RequireFeatures: []string{"exec-stop"}}, Build{Version: "0.2.0"}, []string{"build reports no features; requires exec-stop"}},
+		{"empty feature list", &Floor{Schema: 1, RequireFeatures: []string{"exec-stop"}}, Build{Version: "0.2.0", Features: []string{}}, []string{"missing features exec-stop"}},
+		{"no revision", &Floor{Schema: 1, RequireCleanBuild: true}, Build{Version: "0.2.0"}, []string{"build has no source revision"}},
+		{"unknown state", &Floor{Schema: 1, RequireCleanBuild: true}, Build{Version: "0.2.0", Commit: "abc"}, []string{"build source state is unknown"}},
+		{"modified", &Floor{Schema: 1, RequireCleanBuild: true}, Build{Version: "0.2.0", Commit: "abc", Modified: boolPtr(true)}, []string{"build is from a modified source tree"}},
+		{"all three", &Floor{Schema: 1, MinVersion: "1.0.0", RequireFeatures: []string{"exec-stop"}, RequireCleanBuild: true},
+			Build{Version: "0.2.0", Features: []string{}}, []string{"version 0.2.0 is below 1.0.0", "missing features exec-stop", "build has no source revision"}},
+	}
+	for _, c := range cases {
+		v := Evaluate(c.floor, c.build)
+		if v.Satisfied != (len(c.want) == 0) || !slices.Equal(v.Reasons, c.want) {
+			t.Errorf("%s: %+v, want %q", c.name, v, c.want)
+		}
+	}
+}
+
+func TestBuildFromInfo(t *testing.T) {
+	info := func(settings ...string) *debug.BuildInfo {
+		bi := &debug.BuildInfo{}
+		for i := 0; i+1 < len(settings); i += 2 {
+			bi.Settings = append(bi.Settings, debug.BuildSetting{Key: settings[i], Value: settings[i+1]})
+		}
+		return bi
+	}
+	b := buildFromInfo("0.2.0", info("vcs.revision", "abc", "vcs.modified", "false"), []string{"exec-stop"})
+	if b.Commit != "abc" || b.Modified == nil || *b.Modified || !slices.Equal(b.Features, []string{"exec-stop"}) {
+		t.Fatalf("clean build %+v", b)
+	}
+	if b := buildFromInfo("0.2.0", info("vcs.revision", "abc", "vcs.modified", "true"), nil); b.Modified == nil || !*b.Modified || b.Features != nil {
+		t.Fatalf("modified build %+v", b)
+	}
+	if b := buildFromInfo("0.2.0", info("vcs.modified", "false"), nil); b.Commit != "" || b.Modified != nil {
+		t.Fatalf("state without a revision is unknown: %+v", b)
+	}
+	if b := buildFromInfo("0.2.0", info("vcs.revision", "abc"), nil); b.Modified != nil {
+		t.Fatalf("missing modified flag is unknown: %+v", b)
+	}
+	if b := buildFromInfo("0.2.0", nil, nil); b.Version != "0.2.0" || b.Commit != "" {
+		t.Fatalf("no build info %+v", b)
+	}
+}
+
+func floorDir(t *testing.T) (string, string) {
+	t.Helper()
+	base := t.TempDir()
+	if err := os.Mkdir(filepath.Join(base, "daemon"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return base, FloorPath(base)
+}
+
+func TestFloorStore(t *testing.T) {
+	_, path := floorDir(t)
+	if f, err := ReadFloor(path); err != nil || f != nil {
+		t.Fatalf("absent record: %+v %v", f, err)
+	}
+	want := &Floor{Schema: 1, MinVersion: "0.2.0", RequireFeatures: []string{"restart-backoff", "exec-stop"}}
+	if err := WriteFloor(path, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadFloor(path)
+	if err != nil || got.MinVersion != "0.2.0" || !slices.Equal(got.RequireFeatures, []string{"exec-stop", "restart-backoff"}) {
+		t.Fatalf("round trip %+v %v", got, err)
+	}
+	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("record mode %v %v", fi.Mode(), err)
+	}
+	if err := WriteFloor(path, &Floor{Schema: 1, MinVersion: "0.3.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ReadFloor(path); err != nil || got.MinVersion != "0.3.0" || got.RequireFeatures != nil {
+		t.Fatalf("replacement %+v %v", got, err)
+	}
+	if err := WriteFloor(path, &Floor{Schema: 1}); err == nil {
+		t.Fatal("empty floor written")
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("temporary files left: %v %v", entries, err)
+	}
+	if err := RemoveFloor(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveFloor(path); err != nil {
+		t.Fatalf("second remove: %v", err)
+	}
+	if f, err := ReadFloor(path); err != nil || f != nil {
+		t.Fatalf("removed record: %+v %v", f, err)
+	}
+	// No daemon directory yet: no floor, but nothing can be written either.
+	missing := FloorPath(t.TempDir())
+	if f, err := ReadFloor(missing); err != nil || f != nil {
+		t.Fatalf("missing directory: %+v %v", f, err)
+	}
+	if err := WriteFloor(missing, want); err == nil {
+		t.Fatal("wrote into a missing directory")
+	}
+}
+
+func TestFloorStoreRejectsUntrustedRecords(t *testing.T) {
+	_, path := floorDir(t)
+	write := func(data string, mode os.FileMode) {
+		t.Helper()
+		_ = os.Remove(path)
+		if err := os.WriteFile(path, []byte(data), mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(`{"schema":1,"minVersion":"0.2.0"}`, 0o666)
+	if _, err := ReadFloor(path); err == nil {
+		t.Error("world-writable record trusted")
+	}
+	write(`{"schema":1,"minVersion":`, 0o600)
+	if _, err := ReadFloor(path); err == nil {
+		t.Error("truncated record accepted")
+	}
+	_ = os.Remove(path)
+	target := filepath.Join(t.TempDir(), "elsewhere.json")
+	if err := os.WriteFile(target, []byte(`{"schema":1,"minVersion":"0.0.1"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadFloor(path); err == nil {
+		t.Error("record followed a link")
+	}
+	_ = os.Remove(path)
+	if err := os.Chmod(filepath.Dir(path), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(path), 0o755) })
+	write(`{"schema":1,"minVersion":"0.2.0"}`, 0o600)
+	if _, err := ReadFloor(path); err == nil {
+		t.Error("record in a writable directory trusted")
+	}
+}
+
+func TestAdmissionHold(t *testing.T) {
+	_, path := floorDir(t)
+	build := Build{Version: "0.1.0-alpha", Commit: "abc", Modified: boolPtr(false)}
+	if hold := AdmissionHold(path, build); hold != "" {
+		t.Fatalf("no floor held admission: %s", hold)
+	}
+	if err := WriteFloor(path, &Floor{Schema: 1, MinVersion: "0.1.0-alpha", RequireCleanBuild: true}); err != nil {
+		t.Fatal(err)
+	}
+	if hold := AdmissionHold(path, build); hold != "" {
+		t.Fatalf("satisfied floor held admission: %s", hold)
+	}
+	if err := WriteFloor(path, &Floor{Schema: 1, MinVersion: "0.2.0", RequireFeatures: []string{"exec-stop"}}); err != nil {
+		t.Fatal(err)
+	}
+	hold := AdmissionHold(path, build)
+	if hold != "below compatibility floor: version 0.1.0-alpha is below 0.2.0; build reports no features; requires exec-stop" {
+		t.Fatalf("hold = %q", hold)
+	}
+	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if hold := AdmissionHold(path, build); !strings.HasPrefix(hold, "compatibility floor record is unusable: ") {
+		t.Fatalf("malformed record: %q", hold)
+	}
+}
