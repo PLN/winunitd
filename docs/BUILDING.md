@@ -37,8 +37,13 @@ Use `-version 0.2.0-beta` for a release candidate. The build records that versio
 in the manifest and links it into the daemon/CLI version output. The beta MSI
 entry point is `./packaging/beta/build.ps1 -PackageVersion 0.2.0`; it requires
 clean source unless `-AllowDirty` is explicitly supplied for development. It uses
-the already approved WiX 7.0.0/.NET 10.0.400 build tooling. Keep `.wixpdb`, SDK
-intermediates, and build logs private. Package qualification is still required;
+the already approved WiX 7.0.0/.NET 10.0.400 build tooling. Both package scripts
+build the servicing helper with the payload's release value and then run
+`tools/package-identity`, which reads the produced helper and payload binaries
+and refuses the package unless they share one source revision, unmodified state,
+release, toolchain and target and the payload matches its build manifest. The
+package manifest records that identity; with `-AllowDirty` it is marked
+`admissible: false`. Keep `.wixpdb`, SDK intermediates, and build logs private. Package qualification is still required;
 a successful MSI build alone is not a release.
 
 `dist/build-manifest.json` records the compiler, target, source revision, dirty state, module-file hashes, and each binary's SHA256/size. It contains no operator identity, hostname, absolute checkout path, or environment dump. Go's embedded module/build information provides dependency versions and sums (`go version -m`). A failed build leaves no successful manifest for that attempt. Dirty builds are allowed for development and visibly marked; they must not be promoted as release artifacts. Build from a clean checkout and do not modify sources during a qualification build.

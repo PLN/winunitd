@@ -59,9 +59,10 @@ func requireQuiesced(state string, callErr error) error {
 // floorPreflight refuses to install, repair or upgrade to a build below the
 // compatibility floor persisted under dataDir, or when that record cannot be
 // trusted. It runs before quiesce, stop or replacement, so a refusal leaves
-// the installed manager and its workloads untouched. The helper is built from
-// the same source in the same packaging run as the payload, so its own build
-// identity stands for the package's. Uninstall admits no work and proceeds.
+// the installed manager and its workloads untouched. The helper's own build
+// identity stands for the package's: packaging builds helper and payload from
+// one clean tree with one release value and refuses an admissible package
+// unless the produced binaries agree. Uninstall admits no work and proceeds.
 func floorPreflight(mode, dataDir string, build servicing.Build) error {
 	if mode == modeUninstall {
 		return nil

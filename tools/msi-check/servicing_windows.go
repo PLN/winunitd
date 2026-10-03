@@ -16,7 +16,6 @@ import (
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/servicing"
-	"github.com/PLN/winunitd/internal/version"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
@@ -97,9 +96,10 @@ func serviceTransaction(args []string) error {
 	if err := preflightProduct(installDir, dataDir, mode); err != nil {
 		return err
 	}
-	// The capability feature list is not yet reported, so a floor that
-	// requires features refuses this package until the build can name them.
-	if err := floorPreflight(mode, dataDir, servicing.CurrentBuild(version.Version, nil)); err != nil {
+	// The helper's identity stands for the payload's only because packaging
+	// builds both from one clean tree with one release value and verifies
+	// the produced binaries agree (tools/package-identity).
+	if err := floorPreflight(mode, dataDir, servicing.Running()); err != nil {
 		return err
 	}
 	return prepareService(statePath, token, installDir, dataDir, mode)
