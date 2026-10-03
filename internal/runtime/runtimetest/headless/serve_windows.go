@@ -57,6 +57,8 @@ func probeArgs(name, config, out, state string) ([]string, bool) {
 		return []string{"probe-efs", "--config", config, "--out", out}, true
 	case "pipe":
 		return []string{"probe-pipe", "--from-config", config, "--client", ClientInUnit, "--out", out}, true
+	case "unit-status":
+		return []string{"unit-status", "--config", config, "--out", out}, true
 	}
 	return nil, false
 }

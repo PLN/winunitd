@@ -23,7 +23,7 @@ const (
 )
 
 // Roles that run only on Windows, with the workload's token or SYSTEM's.
-var windowsRoles = []string{"serve", "fail", "probe-token", "probe-path", "probe-tcp", "probe-smb", "probe-efs", "pipe-serve", "probe-pipe", "observe", "probe-first-use", "probe-endpoint", "test-receipt", "probe-daemon-log", "inventory"}
+var windowsRoles = []string{"serve", "fail", "probe-token", "probe-path", "probe-tcp", "probe-smb", "probe-efs", "pipe-serve", "probe-pipe", "observe", "probe-first-use", "probe-endpoint", "test-receipt", "probe-daemon-log", "inventory", "unit-status", "boot-id"}
 
 // Main runs one fixture role and returns its exit code.
 func Main(args []string, stdout, stderr io.Writer) int {

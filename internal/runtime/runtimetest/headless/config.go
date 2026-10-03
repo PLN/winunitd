@@ -32,6 +32,10 @@ type ProbeConfig struct {
 	OwnDaemon    string `json:"ownDaemon,omitempty"`
 	PeerDaemon   string `json:"peerDaemon,omitempty"`
 	SystemDaemon string `json:"systemDaemon,omitempty"`
+	// Winctl and StatusUnit let the workload read a unit's status from its
+	// own manager, as the account, with no password logon.
+	Winctl     string `json:"winctl,omitempty"`
+	StatusUnit string `json:"statusUnit,omitempty"`
 }
 
 // SMBTarget is the protected share's nonce file and its server.
@@ -49,7 +53,7 @@ type EFSTarget struct {
 }
 
 func (c *ProbeConfig) validate() error {
-	for _, p := range []string{c.UnitFile, c.PeerRoot, c.Absent, c.Denied, c.OwnDaemon, c.PeerDaemon, c.SystemDaemon} {
+	for _, p := range []string{c.UnitFile, c.PeerRoot, c.Absent, c.Denied, c.OwnDaemon, c.PeerDaemon, c.SystemDaemon, c.Winctl} {
 		if p != "" && (!filepath.IsAbs(p) || filepath.Clean(p) != p) {
 			return errors.New("probe paths must be clean absolute paths")
 		}

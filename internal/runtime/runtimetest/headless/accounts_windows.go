@@ -4,9 +4,11 @@ package headless
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -372,6 +374,42 @@ func runTestReceipt(args []string) error {
 			return fmt.Errorf("subject: %w", err)
 		}
 		p.Subject = &s
+	}
+	return writeJSONFile(*out, p)
+}
+
+// runUnitStatus reads a unit's status from the account's own manager with
+// winctl --user snapshot. It runs inside the unit, as the account.
+func runUnitStatus(args []string) error {
+	fs := newFlags("unit-status")
+	config := fs.String("config", "", "")
+	out := fs.String("out", "", "")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	if err := errors.Join(absPath("config", *config), absPath("out", *out)); err != nil {
+		return err
+	}
+	cfg, err := LoadProbeConfig(*config)
+	if err != nil {
+		return err
+	}
+	if cfg.Winctl == "" || cfg.StatusUnit == "" {
+		return usage("the configuration names no winctl or unit")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+	data, err := exec.CommandContext(ctx, cfg.Winctl, "--user", "snapshot").Output()
+	if err != nil {
+		return fmt.Errorf("winctl snapshot: %w", err)
+	}
+	var snap protocol.SnapshotResult
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return fmt.Errorf("winctl snapshot: %w", err)
+	}
+	p, err := StatusFromSnapshot(&snap, cfg.StatusUnit, filetimeNow())
+	if err != nil {
+		return err
 	}
 	return writeJSONFile(*out, p)
 }

@@ -34,6 +34,15 @@ func runWindowsRole(role string, args []string, stdout io.Writer) error {
 		return runProbeDaemonLog(args)
 	case "inventory":
 		return runInventory(args)
+	case "unit-status":
+		return runUnitStatus(args)
+	case "boot-id":
+		b, err := bootIdentity()
+		if err != nil {
+			return err
+		}
+		_, err = io.WriteString(stdout, b.String()+"\n")
+		return err
 	case "probe-pipe":
 		rep, err = runProbePipe(args)
 	default:
