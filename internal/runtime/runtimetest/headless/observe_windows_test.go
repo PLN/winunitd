@@ -91,53 +91,6 @@ func copyFile(t *testing.T, from, to string) {
 	}
 }
 
-// jobAccounting is JOBOBJECT_BASIC_ACCOUNTING_INFORMATION.
-type jobAccounting struct {
-	TotalUserTime             int64
-	TotalKernelTime           int64
-	ThisPeriodTotalUserTime   int64
-	ThisPeriodTotalKernelTime int64
-	TotalPageFaultCount       uint32
-	TotalProcesses            uint32
-	ActiveProcesses           uint32
-	TotalTerminatedProcesses  uint32
-}
-
-// helperJob is a kill-on-close job holding the helper tree. Cleanup
-// terminates it, waits until no process remains in it and closes it, so
-// no helper outlives the test and no PID is reused for a kill.
-func helperJob(t *testing.T) windows.Handle {
-	t.Helper()
-	job, err := windows.CreateJobObject(nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
-	info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
-		_ = windows.CloseHandle(job)
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = windows.TerminateJobObject(job, 1)
-		deadline := time.Now().Add(15 * time.Second)
-		for {
-			var acct jobAccounting
-			err := windows.QueryInformationJobObject(job, windows.JobObjectBasicAccountingInformation, uintptr(unsafe.Pointer(&acct)), uint32(unsafe.Sizeof(acct)), nil)
-			if err == nil && acct.ActiveProcesses == 0 {
-				break
-			}
-			if time.Now().After(deadline) {
-				t.Error("helper processes did not exit")
-				break
-			}
-			time.Sleep(20 * time.Millisecond)
-		}
-		_ = windows.CloseHandle(job)
-	})
-	return job
-}
-
 // workloadRunning reports whether a workload copy started by the manager is
 // running.
 func workloadRunning(manager uint32) bool {
@@ -187,25 +140,29 @@ func newObserverRig(t *testing.T, release string) *observerRig {
 	if err := os.WriteFile(r.admission, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	job := helperJob(t)
+	// The helper tree runs in a kill-on-close job from its first
+	// instruction. One cleanup, registered before anything else can fail,
+	// terminates the tree, then reaps the exact manager, then confirms the
+	// job is empty and closes it, so no helper outlives the test and no PID
+	// is reused for a kill.
+	c, err := newCustody()
+	if err != nil {
+		t.Fatal(err)
+	}
 	start := filepath.Join(r.dir, "go")
 	r.manager = exec.Command(r.daemon)
 	r.manager.Env = append(os.Environ(), helperRole+"=manager", helperWork+"="+r.work, helperRelease+"="+release, helperGo+"="+start)
-	if err := r.manager.Start(); err != nil {
+	if err := c.start(r.manager); err != nil {
+		_ = c.end(15 * time.Second)
 		t.Fatal(err)
 	}
-	h, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(r.manager.Process.Pid))
-	if err != nil {
-		_ = r.manager.Process.Kill()
-		t.Fatal(err)
-	}
-	err = windows.AssignProcessToJobObject(job, h)
-	_ = windows.CloseHandle(h)
-	if err != nil {
-		_ = r.manager.Process.Kill()
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = r.manager.Wait() })
+	t.Cleanup(func() {
+		c.terminate()
+		_ = r.manager.Wait()
+		if err := c.end(15 * time.Second); err != nil {
+			t.Error(err)
+		}
+	})
 	if err := os.WriteFile(start, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}

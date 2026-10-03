@@ -24,6 +24,18 @@ var (
 	qualLsaFreeReturnBuffer    = qualSecur32.NewProc("LsaFreeReturnBuffer")
 )
 
+// qualReport has the fields and JSON names of the qualification
+// receipt's subject report: this test, this test process's incarnation and
+// the subject process's incarnation and token.
+type qualReport struct {
+	Test         string      `json:"test"`
+	OwnerPID     uint32      `json:"ownerPid"`
+	OwnerCreated uint64      `json:"ownerCreated"`
+	PID          uint32      `json:"pid"`
+	Created      uint64      `json:"created"`
+	Token        qualSubject `json:"token"`
+}
+
 // qualSubject has the fields and JSON names of the qualification
 // receipt's token facts.
 type qualSubject struct {
@@ -37,8 +49,8 @@ type qualSubject struct {
 	ElevationType    uint32 `json:"elevationType,omitempty"`
 }
 
-// reportQualSubject writes the launched subject's token when the runner set
-// qualSubjectEnv; otherwise it does nothing. Failures fail the test: a
+// reportQualSubject writes the launched subject's report when the runner
+// set qualSubjectEnv; otherwise it does nothing. Failures fail the test: a
 // requested report that is missing would leave the run unproven.
 func reportQualSubject(t *testing.T, process windows.Handle) {
 	t.Helper()
@@ -50,7 +62,16 @@ func reportQualSubject(t *testing.T, process windows.Handle) {
 	if err != nil {
 		t.Fatalf("qualification subject: %v", err)
 	}
-	data, err := json.Marshal(s)
+	r := qualReport{Test: t.Name(), OwnerPID: windows.GetCurrentProcessId(), Token: s}
+	if r.OwnerCreated, err = processCreated(windows.CurrentProcess()); err == nil {
+		if r.PID, err = windows.GetProcessId(process); err == nil {
+			r.Created, err = processCreated(process)
+		}
+	}
+	if err != nil {
+		t.Fatalf("qualification subject identity: %v", err)
+	}
+	data, err := json.Marshal(r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,4 +139,12 @@ func subjectFacts(process windows.Handle) (qualSubject, error) {
 	s.LogonType, s.AuthPackage = data.LogonType, data.AuthenticationPackage.String()
 	qualLsaFreeReturnBuffer.Call(uintptr(unsafe.Pointer(data)))
 	return s, nil
+}
+
+func processCreated(process windows.Handle) (uint64, error) {
+	var created, exited, kernel, user windows.Filetime
+	if err := windows.GetProcessTimes(process, &created, &exited, &kernel, &user); err != nil {
+		return 0, err
+	}
+	return uint64(created.HighDateTime)<<32 | uint64(created.LowDateTime), nil
 }

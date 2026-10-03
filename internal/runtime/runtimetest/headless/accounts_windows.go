@@ -3,6 +3,7 @@
 package headless
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,9 +11,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
+	"time"
 	"unsafe"
 
 	"github.com/PLN/winunitd/internal/protocol"
@@ -331,11 +334,13 @@ func runProbeEndpoint(args []string) error {
 	return writeJSONFile(*out, rep)
 }
 
-// runTestReceipt records a native test run for the summary: the test
-// binary's admitted name and hash, this runner process and its token, the
-// test actions from go test -json output and, when the test reported one,
-// the S4U subject's token. It runs in the runner's own context after the
-// test.
+// runTestReceipt runs one admitted native test binary and writes its
+// receipt. The binary runs as this recorder's child, in its context and in
+// a kill-on-close job, bounded in time and output, with its output turned
+// into events by test2json. The receipt keeps this recorder's and the test
+// process's incarnations and tokens, the test process's exit code, every
+// test and package action and, with --subject, the subject report the test
+// wrote during this run; an older report is removed first.
 func runTestReceipt(args []string) error {
 	fs := newFlags("test-receipt")
 	events := fs.String("events", "", "")
@@ -345,69 +350,158 @@ func runTestReceipt(args []string) error {
 	subject := fs.String("subject", "", "")
 	run := fs.String("run", "", "")
 	test2json := fs.String("test2json", "", "")
+	timeout := fs.Duration("timeout", 25*time.Minute, "")
 	out := fs.String("out", "", "")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
-	// With --run, the receipt runs the test itself through test2json in
-	// this process's context and keeps the events it prints.
-	if *run != "" {
-		if err := errors.Join(absPath("test2json", *test2json), absPath("binary", *binary), absPath("events", *events)); err != nil {
-			return err
-		}
-		pkg := strings.TrimSuffix(filepath.Base(*binary), ".test.exe")
-		cmd := exec.Command(*test2json, "-t", "-p", pkg, *binary, "-test.v=test2json", "-test.run", *run, "-test.count=1")
-		output, err := cmd.Output()
-		var exit *exec.ExitError
-		if err != nil && !errors.As(err, &exit) {
-			return fmt.Errorf("run the test: %w", err)
-		}
-		if err := os.WriteFile(*events, output, 0o600); err != nil {
-			return baseOnly(err)
-		}
-	}
-	if err := errors.Join(absPath("events", *events), absPath("binary", *binary), absPath("out", *out)); err != nil {
+	if err := errors.Join(absPath("test2json", *test2json), absPath("binary", *binary), absPath("events", *events), absPath("out", *out)); err != nil {
 		return err
 	}
-	if !artifactName.MatchString(*artifact) || !executionPattern.MatchString(*runner) {
-		return usage("--artifact must be an artifact name and --runner an ID")
+	if !artifactName.MatchString(*artifact) || !executionPattern.MatchString(*runner) || *run == "" || *timeout <= 0 || *timeout > 2*time.Hour {
+		return usage("--artifact must be an artifact name, --runner an ID, --run the tests and --timeout at most 2h")
 	}
-	f, err := os.Open(*events)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	p := TestRunProof{Artifact: *artifact}
-	if p.Events, err = ParseTestEvents(f); err != nil {
-		return err
-	}
-	if p.SHA256, err = FileSHA256(*binary); err != nil {
-		return err
-	}
-	self, err := selfClaim()
-	if err != nil {
-		return err
-	}
-	p.Runner = RunnerFacts{ID: *runner, PID: self.PID, Created: self.Created}
-	if p.Runner.Token, err = tokenFactsOf(windows.CurrentProcess()); err != nil {
-		return err
+	if _, err := regexp.Compile(*run); err != nil {
+		return usage("--run must be a test pattern")
 	}
 	if *subject != "" {
 		if err := absPath("subject", *subject); err != nil {
 			return err
 		}
-		data, err := readBounded(*subject)
-		if err != nil {
-			return err
+		if err := os.Remove(*subject); err != nil && !notFound(err) {
+			return baseOnly(err)
 		}
-		var s TokenFacts
-		if err := decodeStrict(data, &s); err != nil {
-			return fmt.Errorf("subject: %w", err)
-		}
-		p.Subject = &s
 	}
-	return writeJSONFile(*out, p)
+	self, err := selfClaim()
+	if err != nil {
+		return err
+	}
+	p := TestRunProof{Artifact: *artifact, Runner: RunnerFacts{ID: *runner, PID: self.PID, Created: self.Created}}
+	if p.Runner.Token, err = tokenFactsOf(windows.CurrentProcess()); err != nil {
+		return err
+	}
+	if p.SHA256, err = FileSHA256(*binary); err != nil {
+		return err
+	}
+	output, err := runNativeTest(&p, *binary, *test2json, *run, *subject, *timeout)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(*events, output, 0o600); err != nil {
+		return baseOnly(err)
+	}
+	if p.Events, err = ParseTestEvents(bytes.NewReader(output)); err != nil {
+		return err
+	}
+	if *subject != "" {
+		var s SubjectReport
+		data, err := readBounded(*subject)
+		if err == nil {
+			err = decodeStrict(data, &s)
+		}
+		if err != nil {
+			p.Native = append(p.Native, NativeError{Op: "subject", Win32: win32Code(err)})
+		} else {
+			p.Subject = &s
+		}
+	}
+	if err := writeJSONFile(*out, p); err != nil {
+		return err
+	}
+	switch {
+	case p.ExitCode != 0:
+		return fmt.Errorf("the test process exited with %d", p.ExitCode)
+	case len(p.Native) > 0:
+		return errors.New("the test wrote no subject report")
+	}
+	return nil
 }
+
+// runNativeTest runs the test binary under custody, piping its output
+// through test2json, and records the test process and its exit code. Any
+// process the run leaves behind is terminated before it returns.
+func runNativeTest(p *TestRunProof, binary, test2json, run, subject string, bound time.Duration) (output []byte, err error) {
+	c, err := newCustody()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, c.end(30*time.Second)) }()
+	r, w, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	defer w.Close()
+	conv := exec.Command(test2json, "-t", "-p", strings.TrimSuffix(filepath.Base(binary), ".test.exe"))
+	conv.Stdin = r
+	var buf boundedBuffer
+	conv.Stdout = &buf
+	test := exec.Command(binary, "-test.v=test2json", "-test.run", run, "-test.count=1")
+	test.Stdout, test.Stderr = w, w
+	test.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(strings.ToUpper(kv), qualSubjectEnv+"=") })
+	if subject != "" {
+		test.Env = append(test.Env, qualSubjectEnv+"="+subject)
+	}
+	if err := c.start(conv); err != nil {
+		return nil, fmt.Errorf("start test2json: %w", err)
+	}
+	convDone := make(chan error, 1)
+	go func() { convDone <- conv.Wait() }()
+	if err := c.start(test); err != nil {
+		c.terminate()
+		<-convDone
+		return nil, fmt.Errorf("start the test: %w", err)
+	}
+	// The children hold their ends of the pipe; the output ends when the
+	// test process and anything it handed the pipe to are gone.
+	_ = r.Close()
+	_ = w.Close()
+	timer := time.AfterFunc(bound, c.terminate)
+	defer timer.Stop()
+	p.Owner.PID = uint32(test.Process.Pid)
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, p.Owner.PID)
+	if err == nil {
+		p.Owner.Created, err = creationTime(h)
+		if err == nil {
+			p.Owner.Token, err = tokenFactsOf(h)
+		}
+		_ = windows.CloseHandle(h)
+	}
+	testErr := test.Wait()
+	if err != nil {
+		return nil, fmt.Errorf("identify the test process: %w", err)
+	}
+	var convErr error
+	select {
+	case convErr = <-convDone:
+	case <-time.After(30 * time.Second):
+		c.terminate()
+		<-convDone
+		convErr = errors.New("the test output did not end with the test process")
+	}
+	if !timer.Stop() {
+		return nil, errors.New("the test run exceeded its time bound")
+	}
+	var exit *exec.ExitError
+	switch {
+	case testErr == nil:
+	case errors.As(testErr, &exit):
+		p.ExitCode = exit.ExitCode()
+	default:
+		return nil, baseOnly(testErr)
+	}
+	switch {
+	case convErr != nil:
+		return nil, fmt.Errorf("test2json: %w", baseOnly(convErr))
+	case buf.truncated:
+		return nil, errors.New("the test output exceeded its bound")
+	}
+	return buf.Bytes(), nil
+}
+
+// qualSubjectEnv names the file a native test writes its subject report
+// to.
+const qualSubjectEnv = "WINUNITD_QUAL_SUBJECT_OUT"
 
 // runUnitStatus reads a unit's status from the account's own manager with
 // winctl --user snapshot. It runs inside the unit, as the account.

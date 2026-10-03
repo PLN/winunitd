@@ -729,7 +729,9 @@ try {
 			break
 		}
 		# Named native tests: SYSTEM runners for H20/H21, B's own session for
-		# the daemon-log regressions; test2json turns the output into events.
+		# the daemon-log regressions. test-receipt runs the test binary as
+		# its child in a kill-on-close job and records both processes, the
+		# exit code and the test2json events.
 		'^(H2[01]|G6/go-tests)' {
 			$tests = if ($Variant -eq 'go-tests') { @('TestDaemonPathSDDL', 'TestDaemonPathOwnerAllowed', 'TestDaemonLogNonAdminIdentity') } else {
 				@{ revocation = 'TestLingerRevocationOverlapsNativeHeadlessManagerCreation'; shutdown = 'TestShutdownOverlapsNativeHeadlessManagerCreation'
@@ -749,7 +751,7 @@ try {
 				Invoke-Wts 'logon' $role; $sessionOpen += $role
 				Invoke-InSession $role $Fixture $receiptArgs
 			} else {
-				$env:WINUNITD_QUAL_SUBJECT_OUT = if ($caseInfo.Mode -eq 's4u') { $subject } else { '' }
+				# test-receipt hands the test its subject report path itself.
 				$env:WINUNITD_NATIVE_OVERLAP_HEADLESS_SID = $sid
 				$env:WINUNITD_NATIVE_OVERLAP_FIXTURE = 'disposable'
 				$env:WINUNITD_NATIVE_SECURITY_OTHER_SID = $sidOf[$peerRole]
@@ -757,7 +759,7 @@ try {
 					if ($caseInfo.Mode -eq 's4u') { $receiptArgs += @('--subject', $subject) }
 					Invoke-Native -File $Fixture -Arguments $receiptArgs -TimeoutMs 1800000 | Out-Null
 				} finally {
-					foreach ($name in @('WINUNITD_QUAL_SUBJECT_OUT', 'WINUNITD_NATIVE_OVERLAP_HEADLESS_SID', 'WINUNITD_NATIVE_OVERLAP_FIXTURE', 'WINUNITD_NATIVE_SECURITY_OTHER_SID')) {
+					foreach ($name in @('WINUNITD_NATIVE_OVERLAP_HEADLESS_SID', 'WINUNITD_NATIVE_OVERLAP_FIXTURE', 'WINUNITD_NATIVE_SECURITY_OTHER_SID')) {
 						Remove-Item "Env:$name" -ErrorAction SilentlyContinue
 					}
 				}

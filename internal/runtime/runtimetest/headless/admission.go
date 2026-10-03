@@ -1,6 +1,7 @@
 package headless
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -8,7 +9,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 )
@@ -163,14 +163,11 @@ func FileSHA256(path string) (string, error) {
 func baseOnly(err error) error {
 	var pe *fs.PathError
 	var le *os.LinkError
-	var ee *exec.Error
 	switch {
 	case errors.As(err, &pe):
 		return &fs.PathError{Op: pe.Op, Path: filepath.Base(pe.Path), Err: pe.Err}
 	case errors.As(err, &le):
 		return &os.LinkError{Op: le.Op, Old: filepath.Base(le.Old), New: filepath.Base(le.New), Err: le.Err}
-	case errors.As(err, &ee):
-		return &exec.Error{Name: filepath.Base(ee.Name), Err: ee.Err}
 	}
 	return err
 }
@@ -182,4 +179,21 @@ func ExecutableSHA256() (string, error) {
 		return "", err
 	}
 	return FileSHA256(exe)
+}
+
+// boundedBuffer keeps at most MaxFileBytes and notes what it dropped.
+type boundedBuffer struct {
+	bytes.Buffer
+	truncated bool
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	if room := MaxFileBytes - b.Len(); len(p) > room {
+		b.truncated = true
+		if room > 0 {
+			b.Buffer.Write(p[:room])
+		}
+		return len(p), nil
+	}
+	return b.Buffer.Write(p)
 }

@@ -2,6 +2,7 @@ package headless
 
 import (
 	"encoding/json"
+	"hash/fnv"
 	"math"
 	"os"
 	"path/filepath"
@@ -457,6 +458,14 @@ const (
 	freshSHA  = "c0ffee0000000000000000000000000000000000000000000000000000000000"
 )
 
+// incarnationOf is a distinct process incarnation for a name.
+func incarnationOf(name string) (uint32, uint64) {
+	h := fnv.New32a()
+	h.Write([]byte(name))
+	n := h.Sum32()
+	return 2000 + n%60000, ft(-100) - uint64(n%100000)*1e4
+}
+
 // inventoryFor is the final inventory after every case: the baseline
 // receipt the first-use check hashed, nothing left besides the service's
 // process, and the baseline's machine state.
@@ -537,8 +546,20 @@ func evidenceFor(e Entry) Evidence {
 		ev.Observer, ev.Token = p.report, tokenProbeOf(p.probe)
 	}
 	if e.Proof == ProofNamedTest {
+		// One recorder per execution, or per repetition where a case
+		// declares runners, and its own test process for every record.
+		group := e.Key
+		if e.Repetition != "" {
+			group = e.Case + "/" + e.Repetition
+		}
+		token := TokenFacts{SID: SystemSID, AuthenticationID: "00000000:000003e7"}
+		if e.Mode == ModeWTS {
+			token = tokenFacts(e.Account, ModeWTS)
+		}
+		rpid, rcreated := incarnationOf("recorder " + group)
+		opid, ocreated := incarnationOf("test " + e.Key)
 		ev.TestRun = &TestRunProof{Artifact: e.Package + ".test.exe", SHA256: map[string]string{"runtime": testRuntimeSHA, "journal": testJournalSHA}[e.Package],
-			Runner: RunnerFacts{PID: 77, Created: ft(-10), Token: TokenFacts{SID: SystemSID, AuthenticationID: "00000000:000003e7"}}}
+			Runner: RunnerFacts{PID: rpid, Created: rcreated, Token: token}, Owner: RunnerFacts{PID: opid, Created: max(ocreated, rcreated+1), Token: token}}
 		tests := e.Tests
 		if len(tests) == 0 {
 			tests = []string{e.Test}
@@ -547,12 +568,11 @@ func evidenceFor(e Entry) Evidence {
 			ev.TestRun.Events = append(ev.TestRun.Events, TestEvent{Action: "run", Test: name}, TestEvent{Action: "run", Test: name + "/sub"},
 				TestEvent{Action: "pass", Test: name + "/sub"}, TestEvent{Action: "pass", Test: name})
 		}
-		switch e.Mode {
-		case ModeS4U:
-			subject := tokenFacts(e.Account, ModeS4U)
-			ev.TestRun.Subject = &subject
-		case ModeWTS:
-			ev.TestRun.Runner.Token = tokenFacts(e.Account, ModeWTS)
+		ev.TestRun.Events = append(ev.TestRun.Events, TestEvent{Action: "pass"})
+		if e.Mode == ModeS4U {
+			o := ev.TestRun.Owner
+			ev.TestRun.Subject = &SubjectReport{Test: tests[0] + "/sub", OwnerPID: o.PID, OwnerCreated: o.Created, PID: o.PID + 1, Created: o.Created + 1e7,
+				Token: tokenFacts(e.Account, ModeS4U)}
 		}
 	}
 	switch e.Case {

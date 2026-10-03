@@ -814,6 +814,41 @@ func (ev *evaluation) checkRunners() {
 			runners[runner] = fmt.Sprintf("r%d", rep)
 		}
 	}
+	// Labels aside, every native test run needs its own recorder and test
+	// process incarnations; only the tests of one repetition of a case with
+	// declared runners may share them.
+	type incarnation struct {
+		pid     uint32
+		created uint64
+	}
+	group := func(key string) string {
+		parts := strings.Split(key, "/")
+		if c, ok := ev.m.Cases[parts[0]]; ok && c.Runners > 0 && len(parts) == 3 {
+			return parts[0] + "/" + parts[2]
+		}
+		return key
+	}
+	keys := make([]string, 0, len(ev.records))
+	for k := range ev.records {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	used := map[incarnation]string{}
+	for _, k := range keys {
+		tr := ev.records[k].Evidence.TestRun
+		if tr == nil {
+			continue
+		}
+		g := group(k)
+		for _, f := range []RunnerFacts{tr.Runner, tr.Owner} {
+			inc := incarnation{f.PID, f.Created}
+			if prev, dup := used[inc]; dup && prev != g {
+				ev.problem("%s: a runner or test process of %s ran it again", k, prev)
+				ev.bad[primaryOf(k)] = true
+			}
+			used[inc] = g
+		}
+	}
 }
 
 // ResultFileName is a filesystem-safe name for a record key.

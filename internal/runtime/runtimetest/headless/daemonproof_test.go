@@ -24,3 +24,14 @@ func TestLogTail(t *testing.T) {
 		t.Fatalf("tail %+v %v", tail, err)
 	}
 }
+
+// The bounded test-output buffer keeps at most its bound and says so.
+func TestBoundedBuffer(t *testing.T) {
+	var b boundedBuffer
+	if n, err := b.Write(make([]byte, MaxFileBytes-1)); n != MaxFileBytes-1 || err != nil || b.truncated {
+		t.Fatal("a write within the bound")
+	}
+	if n, err := b.Write([]byte("abc")); n != 3 || err != nil || !b.truncated || b.Len() != MaxFileBytes {
+		t.Fatalf("a write past the bound: %d bytes kept, truncated %t", b.Len(), b.truncated)
+	}
+}

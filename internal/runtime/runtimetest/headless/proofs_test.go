@@ -1,6 +1,7 @@
 package headless
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -130,15 +131,72 @@ func TestSummarizeRequiresCaseProofs(t *testing.T) {
 			tr.Events = tr.Events[1:]
 		}},
 		{"runner not SYSTEM", "the runner is not SYSTEM in session zero", func(rs []Record) {
-			ev(t, rs, "H20/deadline/r5").TestRun.Runner.Token.SID = sidA
+			tr := ev(t, rs, "H20/deadline/r5").TestRun
+			tr.Runner.Token.SID, tr.Owner.Token.SID = sidA, sidA
 		}},
 		{"receipt of another runner", "the receipt names another runner", func(rs []Record) {
 			ev(t, rs, "H20/revocation/r2").TestRun.Runner.ID = "runner-r9"
 		}},
 		{"no S4U subject", "the test reported no S4U subject", func(rs []Record) { ev(t, rs, "H21/security-A").TestRun.Subject = nil }},
 		{"subject under a session token", "the test's subject is not the account's genuine S4U token", func(rs []Record) {
-			s := tokenFacts(AccountB, ModeWTS)
-			ev(t, rs, "H21/security-B").TestRun.Subject = &s
+			ev(t, rs, "H21/security-B").TestRun.Subject.Token = tokenFacts(AccountB, ModeWTS)
+		}},
+		{"subject without a logon session", "H20/shutdown/r4: the test's subject is not the account's genuine S4U token", func(rs []Record) {
+			ev(t, rs, "H20/shutdown/r4").TestRun.Subject.Token.AuthenticationID = ""
+		}},
+		{"subject of another test process", "H20/revocation/r1: the subject report is not this run's", func(rs []Record) {
+			ev(t, rs, "H20/revocation/r1").TestRun.Subject.OwnerPID++
+		}},
+		{"subject of another test", "H20/deadline/r2: the subject report is not this run's", func(rs []Record) {
+			ev(t, rs, "H20/deadline/r2").TestRun.Subject.Test = "TestShutdownOverlapsNativeHeadlessManagerCreation"
+		}},
+		{"stale subject from before the test process", "H21/security-A: the subject report is not this run's", func(rs []Record) {
+			tr := ev(t, rs, "H21/security-A").TestRun
+			tr.Subject.Created = tr.Owner.Created - 1
+		}},
+		{"subject with no identity", "H20/revocation/r3: the subject report is not this run's", func(rs []Record) {
+			tr := ev(t, rs, "H20/revocation/r3").TestRun
+			tr.Subject.PID, tr.Subject.Created = 0, 0
+		}},
+		{"package failed after the named test passed", "H20/shutdown/r1: the test package did not finish with a pass", func(rs []Record) {
+			tr := ev(t, rs, "H20/shutdown/r1").TestRun
+			tr.Events[len(tr.Events)-1].Action = "fail"
+		}},
+		{"package result missing", "H21/security-B: the test package did not finish with a pass", func(rs []Record) {
+			tr := ev(t, rs, "H21/security-B").TestRun
+			tr.Events = tr.Events[:len(tr.Events)-1]
+		}},
+		{"package fail before its pass", "G6/go-tests: the test package did not finish with a pass", func(rs []Record) {
+			tr := ev(t, rs, "G6/go-tests").TestRun
+			tr.Events = append(tr.Events[:len(tr.Events)-1], TestEvent{Action: "fail"}, TestEvent{Action: "pass"})
+		}},
+		{"test process exited nonzero", "H20/deadline/r3: the test process did not exit successfully", func(rs []Record) {
+			ev(t, rs, "H20/deadline/r3").TestRun.ExitCode = 1
+		}},
+		{"test process in another context", "H21/sensitivity-A: the test process ran in another context than its recorder", func(rs []Record) {
+			ev(t, rs, "H21/sensitivity-A").TestRun.Owner.Token.AuthenticationID = "00000000:00099999"
+		}},
+		{"session test run by a SYSTEM recorder", "G6/go-tests: the test process ran in another context than its recorder", func(rs []Record) {
+			ev(t, rs, "G6/go-tests").TestRun.Runner.Token = TokenFacts{SID: SystemSID, AuthenticationID: "00000000:000003e7"}
+		}},
+		{"no test process", "H20/shutdown/r5: the receipt names no test process launched by its recorder", func(rs []Record) {
+			ev(t, rs, "H20/shutdown/r5").TestRun.Owner.PID = 0
+		}},
+		{"reused test process", "H20/revocation/r4: a runner or test process of H20/r3 ran it again", func(rs []Record) {
+			ev(t, rs, "H20/revocation/r4").TestRun.Owner = ev(t, rs, "H20/revocation/r3").TestRun.Owner
+		}},
+		{"one recorder for every repetition", "a runner or test process of H20/r1 ran it again", func(rs []Record) {
+			first := ev(t, rs, "H20/revocation/r1").TestRun.Runner
+			for _, v := range []string{"revocation", "shutdown", "deadline"} {
+				for rep := 2; rep <= 5; rep++ {
+					r := ev(t, rs, fmt.Sprintf("H20/%s/r%d", v, rep)).TestRun
+					r.Runner.PID, r.Runner.Created = first.PID, first.Created
+				}
+			}
+		}},
+		{"recorder of another case reused", "a runner or test process of H21/security-A ran it again", func(rs []Record) {
+			ev(t, rs, "H21/security-B").TestRun.Runner = ev(t, rs, "H21/security-A").TestRun.Runner
+			ev(t, rs, "H21/security-B").TestRun.Runner.ID = "runner-security-B"
 		}},
 		// Status snapshots.
 		{"not unlimited", "G5/A: unlimited below its minimum", func(rs []Record) { ev(t, rs, "G5/A").Status.Budget.Burst = 5 }},
@@ -281,7 +339,7 @@ func TestParseTestEvents(t *testing.T) {
 {"Action":"pass","Package":"p","Elapsed":2}
 `
 	events, err := ParseTestEvents(strings.NewReader(out))
-	want := []TestEvent{{"run", "TestA"}, {"run", "TestA/sub"}, {"skip", "TestA/sub"}, {"pass", "TestA"}}
+	want := []TestEvent{{"run", "TestA"}, {"run", "TestA/sub"}, {"skip", "TestA/sub"}, {"pass", "TestA"}, {"pass", ""}}
 	if err != nil || !slices.Equal(events, want) {
 		t.Fatalf("events %v %v", events, err)
 	}
@@ -397,7 +455,9 @@ func TestSummarizeRequiresDiagnosticsProofs(t *testing.T) {
 		}},
 		// Named tests in the account's own session.
 		{"go tests run by SYSTEM", "G6/go-tests: the runner is not the account's own wts token", func(rs []Record) {
-			ev(t, rs, "G6/go-tests").TestRun.Runner.Token = TokenFacts{SID: SystemSID}
+			tr := ev(t, rs, "G6/go-tests").TestRun
+			tr.Runner.Token = TokenFacts{SID: SystemSID, AuthenticationID: "00000000:000003e7"}
+			tr.Owner.Token = tr.Runner.Token
 		}},
 		{"one go test missing", "G6/go-tests: the named test did not run once and pass", func(rs []Record) {
 			tr := ev(t, rs, "G6/go-tests").TestRun
@@ -405,7 +465,7 @@ func TestSummarizeRequiresDiagnosticsProofs(t *testing.T) {
 		}},
 		{"identity test skipped", "G6/go-tests: the test or a subtest was skipped", func(rs []Record) {
 			tr := ev(t, rs, "G6/go-tests").TestRun
-			tr.Events[len(tr.Events)-1].Action = "skip"
+			tr.Events[len(tr.Events)-2].Action = "skip"
 		}},
 		// Independent permissions.
 		{"linger lost on admission change", "H06/A: lingerKept below its minimum", func(rs []Record) {

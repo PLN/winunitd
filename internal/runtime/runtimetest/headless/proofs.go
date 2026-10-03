@@ -105,32 +105,52 @@ type TestEvent struct {
 	Test   string `json:"test"`
 }
 
-// RunnerFacts is the process that ran a native test binary.
+// RunnerFacts is a process of a native test run and its token: the
+// recorder that launched the test binary, or the test binary's own process,
+// the owner of the tests it runs.
 type RunnerFacts struct {
-	ID      string     `json:"id"`
+	ID      string     `json:"id,omitempty"`
 	PID     uint32     `json:"pid"`
 	Created uint64     `json:"created"`
 	Token   TokenFacts `json:"token"`
 }
 
+// SubjectReport is what a native test writes about the S4U subject it
+// launched: the test's name, its own process incarnation and the subject
+// process's incarnation and token.
+type SubjectReport struct {
+	Test         string     `json:"test"`
+	OwnerPID     uint32     `json:"ownerPid"`
+	OwnerCreated uint64     `json:"ownerCreated"`
+	PID          uint32     `json:"pid"`
+	Created      uint64     `json:"created"`
+	Token        TokenFacts `json:"token"`
+}
+
 // TestRunProof is the receipt of one native test run: the admitted test
-// binary, the runner and its token, every test action, and, for a test that
-// launches the account's S4U subject, that subject's token as the test
-// observed it.
+// binary, the recorder that ran it and the test process itself with their
+// tokens, the test process's exit code, every test and package action, and,
+// for a test that launches the account's S4U subject, that subject as the
+// test observed it.
 type TestRunProof struct {
-	Artifact string        `json:"artifact"`
-	SHA256   string        `json:"sha256"`
-	Runner   RunnerFacts   `json:"runner"`
-	Events   []TestEvent   `json:"events"`
-	Subject  *TokenFacts   `json:"subject,omitempty"`
-	Native   []NativeError `json:"native,omitempty"`
+	Artifact string         `json:"artifact"`
+	SHA256   string         `json:"sha256"`
+	Runner   RunnerFacts    `json:"runner"`
+	Owner    RunnerFacts    `json:"owner"`
+	ExitCode int            `json:"exitCode"`
+	Events   []TestEvent    `json:"events"`
+	Subject  *SubjectReport `json:"subject,omitempty"`
+	Native   []NativeError  `json:"native,omitempty"`
 }
 
 // CheckTestRun validates a receipt for one entry: the admitted binary of
-// the entry's package, the record's runner under SYSTEM in session zero,
-// exactly one run of the named test that passed with nothing skipped or
-// failed, no other test, and, for an S4U entry, a genuine S4U subject of
-// the account.
+// the entry's package; the record's recorder and the test process it
+// launched, in one context (SYSTEM in session zero, or the account's own
+// session token for a session lane); exactly one run of each named test
+// that passed with nothing skipped or failed and no other test; a package
+// that finished with a pass and a test process that exited 0; and, for an
+// S4U entry, a genuine S4U subject of the account that this test, in this
+// test process, launched.
 func CheckTestRun(p *TestRunProof, e Entry, runnerID, sid string, run AdmittedRun) []string {
 	if p == nil {
 		return []string{"no test receipt"}
@@ -143,16 +163,25 @@ func CheckTestRun(p *TestRunProof, e Entry, runnerID, sid string, run AdmittedRu
 	if p.Runner.ID != runnerID || p.Runner.PID == 0 || p.Runner.Created == 0 {
 		problems = append(problems, "the receipt names another runner")
 	}
-	// S4U and SYSTEM tests run in a SYSTEM runner; a session lane runs in
-	// the account's own interactive token, so a test that needs a
+	o := p.Owner
+	if o.PID == 0 || o.Created == 0 || o.Created < p.Runner.Created || o.PID == p.Runner.PID {
+		problems = append(problems, "the receipt names no test process launched by its recorder")
+	}
+	// The test process runs in its recorder's context.
+	if o.Token.SID != p.Runner.Token.SID || o.Token.Session != p.Runner.Token.Session || o.Token.AuthenticationID == "" ||
+		o.Token.AuthenticationID != p.Runner.Token.AuthenticationID {
+		problems = append(problems, "the test process ran in another context than its recorder")
+	}
+	// S4U and SYSTEM tests run in a SYSTEM test process; a session lane runs
+	// in the account's own interactive token, so a test that needs a
 	// non-SYSTEM identity cannot pass by skipping.
 	switch e.Mode {
 	case ModeWTS, ModeFilteredAdmin:
-		if p.Runner.Token.SID != sid || ClassifyToken(p.Runner.Token) != tokenClass(e.Mode) {
+		if o.Token.SID != sid || ClassifyToken(o.Token) != tokenClass(e.Mode) {
 			problems = append(problems, "the runner is not the account's own "+e.Mode+" token")
 		}
 	default:
-		if p.Runner.Token.SID != SystemSID || p.Runner.Token.Session != 0 {
+		if o.Token.SID != SystemSID || o.Token.Session != 0 {
 			problems = append(problems, "the runner is not SYSTEM in session zero")
 		}
 	}
@@ -161,7 +190,12 @@ func CheckTestRun(p *TestRunProof, e Entry, runnerID, sid string, run AdmittedRu
 		tests = []string{e.Test}
 	}
 	runs, passed := map[string]int{}, map[string]bool{}
+	var pkg []string
 	for _, ev := range p.Events {
+		if ev.Test == "" {
+			pkg = append(pkg, ev.Action)
+			continue
+		}
 		top, _, _ := strings.Cut(ev.Test, "/")
 		if !slices.Contains(tests, top) {
 			problems = append(problems, "the receipt covers another test")
@@ -186,11 +220,23 @@ func CheckTestRun(p *TestRunProof, e Entry, runnerID, sid string, run AdmittedRu
 			break
 		}
 	}
+	// The package's own result is its one terminal action, the last event.
+	if len(pkg) != 1 || pkg[0] != "pass" || len(p.Events) == 0 || p.Events[len(p.Events)-1].Test != "" {
+		problems = append(problems, "the test package did not finish with a pass")
+	}
+	if p.ExitCode != 0 {
+		problems = append(problems, "the test process did not exit successfully")
+	}
 	if e.Mode == ModeS4U {
+		s := p.Subject
 		switch {
-		case p.Subject == nil:
+		case s == nil:
 			problems = append(problems, "the test reported no S4U subject")
-		case p.Subject.SID != sid || ClassifyToken(*p.Subject) != SourceS4U:
+		case !slices.Contains(tests, strings.SplitN(s.Test, "/", 2)[0]) || s.OwnerPID != o.PID || s.OwnerCreated != o.Created ||
+			s.PID == 0 || s.Created <= o.Created:
+			problems = append(problems, "the subject report is not this run's")
+		case s.Token.SID != sid || ClassifyToken(s.Token) != SourceS4U || s.Token.AuthenticationID == "" ||
+			s.Token.AuthenticationID == o.Token.AuthenticationID:
 			problems = append(problems, "the test's subject is not the account's genuine S4U token")
 		}
 	}
@@ -207,7 +253,8 @@ type goTestEvent struct {
 }
 
 // ParseTestEvents reads go test -json output and keeps every run, pass,
-// fail and skip of a test. A line that is not a JSON object fails.
+// fail and skip of a test and the package's own pass, fail or skip, which
+// has no test name. A line that is not a JSON object fails.
 func ParseTestEvents(r io.Reader) ([]TestEvent, error) {
 	var out []TestEvent
 	sc := bufio.NewScanner(io.LimitReader(r, MaxFileBytes))
@@ -223,7 +270,7 @@ func ParseTestEvents(r io.Reader) ([]TestEvent, error) {
 		}
 		switch ev.Action {
 		case "run", "pass", "fail", "skip":
-			if ev.Test != "" {
+			if ev.Action != "run" || ev.Test != "" {
 				out = append(out, TestEvent(ev))
 			}
 		}
