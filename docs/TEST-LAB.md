@@ -614,7 +614,15 @@ the case, variant, repetition or control, the stage, the run-wide sequence
 (it prints the next one) and an execution ID; it checks the installed
 `winunitd.exe` and `winctl.exe`, the fixture and any test binaries against
 the admitted run manifest before anything runs, undoes what it changed in a
-`finally`, and never reboots, stores a password or publishes evidence.
+`finally`, including every pipe server it started, and never reboots,
+stores a password or publishes evidence. JSON that native code reads is
+written as UTF-8 without a byte-order mark. Every record must be admitted by
+`record` and its record file written; otherwise the execution fails, exits
+nonzero and reports no next sequence. Interactive records name the
+account's session as the observer or the test receipt saw it. An H20
+repetition runs as one execution, `-Variant group -Repetition rN`: one
+recorder runs the three held-launch tests, each in its own test process,
+and the driver records each under the repetition's runner label.
 `-ListPrerequisites` prints, without touching the machine, the account, mode,
 stages and lab prerequisites of a case and which are missing. H01/H02 and
 H03 have a `prepare` stage before the controller reboots and a `collect`

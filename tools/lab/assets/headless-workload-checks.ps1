@@ -353,6 +353,24 @@ function Stop-Children([int]$GraceMs = 5000) {
 	return , @($problems)
 }
 
+# One H20 repetition through its recorder: a single test-receipt run of the
+# three tests, then one record per test from its own receipt, under the
+# repetition's runner label and the test's own execution ID.
+function Invoke-NativeTestGroup($Group, [string]$Dir, [string]$Sid, [string]$ExecutionId, [string]$Test2Json, [string]$TestBinary,
+	[scriptblock]$Recorder) {
+	$arguments = @('test-receipt', '--test2json', $Test2Json, '--artifact', (Split-Path -Leaf $TestBinary), '--binary', $TestBinary,
+		'--runner', $Group.Runner, '--out-dir', $Dir, '--subjects')
+	foreach ($test in $Group.Tests) { $arguments += @('--each', $test) }
+	& $Recorder $arguments
+	$out = @()
+	for ($i = 0; $i -lt $Group.Keys.Count; $i++) {
+		$receipt = Get-Content -LiteralPath (Join-Path $Dir "$($Group.Tests[$i]).json") -Raw | ConvertFrom-Json
+		$out += [ordered]@{ Key = $Group.Keys[$i]; Kind = 'primary'; Token = (Get-RecordToken 's4u' $Sid); Evidence = [ordered]@{ testRun = $receipt }
+			Controls = @(); Observer = ''; Runner = $Group.Runner; ExecutionId = "$ExecutionId-$($Group.Variants[$i])" }
+	}
+	return , @($out)
+}
+
 # Records: one observation per record, written as JSON native code reads,
 # recorded by Record, confirmed by the new record file the recorder
 # writes. Returns the next run-wide sequence and every record failure; a
@@ -928,17 +946,11 @@ try {
 		# three held-launch tests under one recorder, each in its own test
 		# process with its own receipt and subject report.
 		'^H20/group/run/$' {
-			$group = Get-NativeTestGroup $Repetition
 			$dir = Join-Path $caseDir 'receipts'
 			New-Item -ItemType Directory -Path $dir | Out-Null
-			$receiptArgs = @('test-receipt', '--test2json', $Test2Json, '--artifact', (Split-Path -Leaf $TestBinary), '--binary', $TestBinary,
-				'--runner', $group.Runner, '--out-dir', $dir, '--subjects')
-			foreach ($test in $group.Tests) { $receiptArgs += @('--each', $test) }
-			Invoke-NativeTestRecorder $receiptArgs 5400000
-			for ($i = 0; $i -lt $group.Keys.Count; $i++) {
-				$receipt = Get-Content -LiteralPath (Join-Path $dir "$($group.Tests[$i]).json") -Raw | ConvertFrom-Json
-				Add-Record $group.Keys[$i] 'primary' (Get-RecordToken 's4u' $sid) ([ordered]@{ testRun = $receipt }) @() '' $group.Runner "$ExecutionId-$($group.Variants[$i])"
-			}
+			$group = Invoke-NativeTestGroup (Get-NativeTestGroup $Repetition) $dir $sid $ExecutionId $Test2Json $TestBinary {
+				param([string[]]$Arguments) Invoke-NativeTestRecorder $Arguments 5400000 }
+			foreach ($r in $group) { $records.Add($r) }
 			break
 		}
 		'^H20/' { throw 'H20 runs a repetition''s three tests under one recorder: use -Variant group' }

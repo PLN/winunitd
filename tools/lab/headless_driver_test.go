@@ -537,7 +537,45 @@ try { Get-NativeTestGroup 'r9' | Out-Null } catch { $bad = $_.Exception.Message 
 		t.Fatal("no grouped H20 procedure, or the single-variant form is not refused")
 	}
 	branch = branch[start:end]
-	if strings.Count(branch, "Invoke-NativeTestRecorder") != 1 || !strings.Contains(branch, "'--each', $test") || !strings.Contains(branch, "$group.Runner") {
+	if strings.Count(branch, "Invoke-NativeTestGroup") != 1 || strings.Count(branch, "Invoke-NativeTestRecorder") != 1 {
 		t.Error("the H20 repetition is not one recorder running every test")
+	}
+	// The driver's grouping path with the recorder mocked: one recorder
+	// call names every test, and each record carries its own receipt, the
+	// repetition's runner label and its own execution ID.
+	dir := t.TempDir()
+	var run struct {
+		Calls   int
+		Args    []string
+		Records []struct {
+			Key, Runner, ExecutionId string
+			Token                    struct{ Session int }
+			Evidence                 struct{ TestRun struct{ Artifact string } }
+		}
+	}
+	runHeadless(t, fmt.Sprintf(`
+$calls = 0
+$seen = @()
+$records = Invoke-NativeTestGroup (Get-NativeTestGroup 'r4') %s 'S-1-5-21-1-2-3-1001' 'x-h20-r4' 'C:	ools	est2json.exe' 'C:	ools
+untime.test.exe' {
+	param([string[]]$Arguments)
+	$script:calls++
+	$script:seen = $Arguments
+	$dir = $Arguments[[array]::IndexOf($Arguments, '--out-dir') + 1]
+	for ($i = 0; $i -lt $Arguments.Count; $i++) {
+		if ($Arguments[$i] -eq '--each') { Write-JsonFile (Join-Path $dir "$($Arguments[$i + 1]).json") @{ artifact = $Arguments[$i + 1] } }
+	}
+}
+@{ calls = $calls; args = $seen; records = $records } | ConvertTo-Json -Depth 6`, psQuote(dir)), &run)
+	if run.Calls != 1 || !strings.Contains(strings.Join(run.Args, " "), "--runner runner-r4") || !strings.Contains(strings.Join(run.Args, " "), "--subjects") ||
+		strings.Count(strings.Join(run.Args, " "), "--each") != 3 || len(run.Records) != 3 {
+		t.Fatalf("grouping run %+v", run)
+	}
+	for i, r := range run.Records {
+		want := strings.Replace(got.Keys[i], "/r3", "/r4", 1)
+		if r.Key != want || r.Runner != "runner-r4" || r.ExecutionId != "x-h20-r4-"+strings.Split(want, "/")[1] ||
+			r.Evidence.TestRun.Artifact != got.Tests[i] || r.Token.Session != 0 {
+			t.Errorf("record %d %+v", i, r)
+		}
 	}
 }
