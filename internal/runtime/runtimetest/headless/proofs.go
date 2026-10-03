@@ -311,7 +311,7 @@ func CheckSubject(rep *ObserverReport, tp *TokenProbe, account, mode string) []s
 		tp.Source != t.Source || tp.LogonType != t.LogonType {
 		return []string{"the token probe disagrees with the held process's token"}
 	}
-	if want := map[string]string{ModeS4U: SourceS4U, ModeWTS: SourceWTS}[mode]; ClassifyToken(t) != want {
+	if want := tokenClass(mode); ClassifyToken(t) != want {
 		return []string{"the probing process did not run under the account's " + mode + " token"}
 	}
 	return nil

@@ -533,6 +533,9 @@ func tokenFactsOf(h windows.Handle) (TokenFacts, error) {
 		return f, err
 	}
 	f.Elevated = tok.IsElevated()
+	if err := windows.GetTokenInformation(tok, windows.TokenElevationType, (*byte)(unsafe.Pointer(&f.ElevationType)), 4, &n); err != nil {
+		return f, err
+	}
 	var stats tokenStatistics
 	if err := windows.GetTokenInformation(tok, windows.TokenStatistics, (*byte)(unsafe.Pointer(&stats)), uint32(unsafe.Sizeof(stats)), &n); err != nil {
 		return f, err

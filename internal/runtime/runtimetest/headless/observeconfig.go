@@ -99,8 +99,8 @@ func parseObserve(args []string) (ObserveConfig, error) {
 	c.Accounts = map[string]string{}
 	for _, a := range accounts {
 		role, sid, ok := strings.Cut(a, "=")
-		if !ok || role != AccountA && role != AccountB || !sidPattern.MatchString(sid) || sid == SystemSID || c.Accounts[role] != "" {
-			errs = append(errs, usage("--account %q must be A=SID or B=SID, once each", a))
+		if !ok || role != AccountA && role != AccountB && role != AccountAdmin || !sidPattern.MatchString(sid) || sid == SystemSID || c.Accounts[role] != "" {
+			errs = append(errs, usage("--account must be A=SID, B=SID or admin=SID, once each"))
 			continue
 		}
 		for _, other := range c.Accounts {

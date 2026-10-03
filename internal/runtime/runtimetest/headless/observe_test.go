@@ -48,6 +48,29 @@ func TestClassifyToken(t *testing.T) {
 	if ClassifyToken(elevated) != "" {
 		t.Error("an elevated session token classified")
 	}
+	filtered := wts
+	filtered.ElevationType = tokenElevationTypeLimit
+	if ClassifyToken(filtered) != ClassFilteredAdmin {
+		t.Error("an administrator's filtered session token not classified")
+	}
+	full := wts
+	full.ElevationType = 2
+	if ClassifyToken(full) != "" {
+		t.Error("a fully elevated type classified as a standard session token")
+	}
+	if tokenClass(ModeFilteredAdmin) != ClassFilteredAdmin || tokenClass(ModeS4U) != SourceS4U || tokenClass(ModeWTS) != SourceWTS {
+		t.Error("mode classes")
+	}
+}
+
+// The native runtime tests write their S4U subject with exactly these
+// fields; the receipt decodes them strictly.
+func TestSubjectReportDecodes(t *testing.T) {
+	report := `{"sid":"S-1-5-21-1-2-3-1001","session":0,"elevated":false,"source":"winunitd","logonType":3,"authPackage":"Kerberos","authenticationId":"00000000:00010000","elevationType":1}`
+	var f TokenFacts
+	if err := decodeStrict([]byte(report), &f); err != nil || ClassifyToken(f) != SourceS4U {
+		t.Fatalf("subject report %+v %v", f, err)
+	}
 }
 
 func validReport() *ObserverReport {
@@ -76,6 +99,7 @@ func TestObserverReportValidate(t *testing.T) {
 		"SYSTEM account":        func(r *ObserverReport) { r.Accounts[AccountA] = SystemSID },
 		"shared SID":            func(r *ObserverReport) { r.Accounts[AccountB] = r.Accounts[AccountA] },
 		"unknown account role":  func(r *ObserverReport) { r.Accounts["C"] = "S-1-5-21-1-2-3-1009" },
+		"SYSTEM as admin":       func(r *ObserverReport) { r.Accounts[AccountAdmin] = SystemSID },
 		"duplicate generation":  func(r *ObserverReport) { r.Generations = append(r.Generations, r.Generations[0]) },
 		"no PID":                func(r *ObserverReport) { r.Generations[0].PID = 0 },
 		"seen before created":   func(r *ObserverReport) { r.Generations[3].Seen = r.Generations[3].Created - 1 },

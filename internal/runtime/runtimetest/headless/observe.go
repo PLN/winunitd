@@ -193,6 +193,8 @@ type TokenFacts struct {
 	LogonType        uint32 `json:"logonType,omitempty"`
 	AuthPackage      string `json:"authPackage,omitempty"`
 	AuthenticationID string `json:"authenticationId"`
+	// ElevationType is TOKEN_ELEVATION_TYPE: 1 default, 2 full, 3 limited.
+	ElevationType uint32 `json:"elevationType,omitempty"`
 }
 
 // Unidentified is a process of a watched image the observer could not hold
@@ -217,19 +219,32 @@ func FiletimeTime(ft uint64) time.Time {
 	return time.Unix(0, (int64(ft)-epochDelta)*100).UTC()
 }
 
+// ClassFilteredAdmin is the token class of an administrator's filtered
+// interactive token.
+const ClassFilteredAdmin = "filtered-admin"
+
 // ClassifyToken names the token source a held process ran under: the
-// product's genuine S4U token in session zero, an interactive session token,
-// or SYSTEM's process token. Anything else is "".
+// product's genuine S4U token in session zero, a standard interactive
+// session token, an administrator's filtered interactive token, or SYSTEM's
+// process token. Anything else is "".
 func ClassifyToken(t TokenFacts) string {
+	interactive := t.LogonType == logonInteractive || t.LogonType == logonRemoteInteractive || t.LogonType == logonCachedInteractive
 	switch {
 	case t.SID == SystemSID:
 		return SourceProcess
 	case t.Session == 0 && t.Source == productTokenSource && !t.Elevated && (t.LogonType == logonNetwork || t.LogonType == logonBatch):
 		return SourceS4U
-	case t.Session != 0 && !t.Elevated && (t.LogonType == logonInteractive || t.LogonType == logonRemoteInteractive || t.LogonType == logonCachedInteractive):
+	case t.Session != 0 && !t.Elevated && interactive && t.ElevationType == tokenElevationTypeLimit:
+		return ClassFilteredAdmin
+	case t.Session != 0 && !t.Elevated && interactive && t.ElevationType != 2:
 		return SourceWTS
 	}
 	return ""
+}
+
+// tokenClass is the class a mode's processes must have.
+func tokenClass(mode string) string {
+	return map[string]string{ModeS4U: SourceS4U, ModeWTS: SourceWTS, ModeFilteredAdmin: ClassFilteredAdmin}[mode]
 }
 
 // Validate checks a report's shape and internal consistency.
@@ -254,7 +269,7 @@ func (r *ObserverReport) Validate() error {
 	}
 	sids := map[string]string{}
 	for role, sid := range r.Accounts {
-		if role != AccountA && role != AccountB || !sidPattern.MatchString(sid) || sid == SystemSID {
+		if role != AccountA && role != AccountB && role != AccountAdmin || !sidPattern.MatchString(sid) || sid == SystemSID {
 			return fmt.Errorf("observed account %s", role)
 		}
 		if other, dup := sids[sid]; dup {
@@ -395,7 +410,7 @@ func DeriveLifecycle(r *ObserverReport, spec ObserveSpec, account, sid, mode str
 	if len(r.Unidentified) > 0 {
 		problems = append(problems, fmt.Sprintf("%d processes of a watched image were not identified", len(r.Unidentified)))
 	}
-	want := map[string]string{ModeS4U: SourceS4U, ModeWTS: SourceWTS}[mode]
+	want := tokenClass(mode)
 	of := func(role, acct string) []Generation {
 		var out []Generation
 		for _, g := range r.Generations {
