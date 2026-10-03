@@ -289,20 +289,40 @@ inferred from these.
 ancestor-path cases that remain open in R4. It excludes the shapes already
 qualified: the data root and its immediate children at install and repair,
 caller mutation inside the protected trees, the delegated known-folder
-junction and the daemon-log chain. Each case names the privileged consumer,
-the shape and depth, the actor, a safe sibling control and the target that
-must stay unchanged. Its expected outcome rests on a cited product rule:
+junction and the daemon-log chain. It lists the residual shapes it defers,
+including profile-root ancestors, unsafe or custom parents and reparse
+races. Each case names the privileged consumer, the shape and depth, the
+actor and its logon mode, the outside parent of an ancestor case, a safe
+sibling control and the target that must stay unchanged. Each step names who
+performs it: the actor, a SYSTEM consumer, or the delegated admission probe
+impersonating the account or its peer. A consumer step that must avoid the
+target, and a consumer control, name the consumer's own result, such as
+admitted or not admitted. The expected outcome rests on a cited product rule:
 `protected` (the caller's attempt is denied), `refuse` (the consumer refuses
 with its exact diagnostic) or `no-follow` (the consumer works and never
 reaches the target). Where the product is silent, the case is
-`decision-needed` with its policy question, and it cannot pass until the
-maintainer decides. Standard and UAC-filtered callers come in pairs. The
-evaluator recomputes a verdict from one native observation: the actor's own
-token, the identity of each object before and after the steps and after
-restoration, and each step's result. A SYSTEM or elevated substitute, a
-changed target or link, a broken control, a missing restoration or a
-consumer that showed the target's canary fails the case. The ledger and
-evaluator are fixture preparation, not qualification evidence.
+`decision-needed`. It states its policy question and the reviewer's
+recommended answer, and it cannot pass until the maintainer decides.
+Standard and UAC-filtered callers come in pairs.
+
+The evaluator recomputes a verdict from one native observation of that
+ledger. The observation names the digest of the policy it was evaluated
+against and an envelope: the admitted source and manifest, the run and
+execution, the SYSTEM observer and its ordered stage marks. It binds the
+actor to the run's account for its class with the genuine token of its mode,
+and binds each step's performer to its context. Every object must be read at
+every stage with its kind, file ID, owner, DACL and content witness. A link
+must be absent before the fixture made it and after restoration, have the
+shape's exact reparse tag, and resolve to the watched target. The target, leaf
+and parent must be unchanged by the steps and restored, and an ancestor case
+measures the actor's effective rights, so a right to remove the leaf fails.
+Step results must be coherent: a success carries no error, and a failure names
+its domain, its code, or the product's diagnostic, which is compared with the
+ledger's. They must also carry the consumer's own result and state whether the
+target was exposed; any exposure fails. The ledger is read as strict JSON,
+refusing duplicate keys and trailing data. The ledger and evaluator are
+fixture preparation, not qualification evidence; the native producers are a
+later package.
 
 The [live-manager qualification](R4-EVIDENCE.md#live-manager-cross-user-rejection-and-production-client-server-owner-validation)
 adds genuine interactive callers, independent endpoint/server identity checks,

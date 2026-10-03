@@ -137,8 +137,42 @@ func TestLedgerRefusesInvalidCases(t *testing.T) {
 			p.Source = "docs/USER-ADMISSION.md"
 			l.Policies["delegation-probe"] = p
 		},
-		"nothing marked as qualified": func(l *Ledger) { l.Qualified = nil },
-		"schema":                      func(l *Ledger) { l.Schema = 2 },
+		"nothing marked as qualified":  func(l *Ledger) { l.Qualified = nil },
+		"nothing marked as deferred":   func(l *Ledger) { l.Deferred = nil },
+		"interactive caller as s4u":    func(l *Ledger) { find(l, "data-child-rename-standard").Mode = "s4u" },
+		"account context without mode": func(l *Ledger) { find(l, "user-units-nested-junction").Mode = "" },
+		"fixture state with a mode":    func(l *Ledger) { find(l, "journal-file-link-append").Mode = "wts" },
+		"admission probe as SYSTEM": func(l *Ledger) {
+			find(l, "user-units-file-symlink").Steps[0].Context = ContextSystem
+		},
+		"system consumer impersonating": func(l *Ledger) {
+			find(l, "units-nested-junction-reload").Steps[0].Context = ContextUserImpersonated
+		},
+		"caller's operation as a consumer step": func(l *Ledger) {
+			c := find(l, "data-child-rename-standard")
+			c.Steps = append(c.Steps, Step{Name: "rename-enabled", By: "consumer", Context: ContextSystem, Expect: ExpectDenied})
+		},
+		"no-follow without the consumer's result": func(l *Ledger) { find(l, "user-units-nested-junction").Steps[0].Witness = "" },
+		"no-follow with a positive result":        func(l *Ledger) { find(l, "user-units-nested-junction").Steps[0].Witness = "admitted" },
+		"consumer control without its result":     func(l *Ledger) { find(l, "units-nested-junction-reload").Steps[1].Witness = "" },
+		"peer impersonated outside admission": func(l *Ledger) {
+			find(l, "units-nested-junction-reload").Steps[1].Context = ContextPeerImpersonated
+		},
+		"actor control in a fixture state": func(l *Ledger) {
+			c := find(l, "journal-file-link-append")
+			c.Steps[1].Context, c.Steps[1].Witness = ContextActor, ""
+		},
+		"unknown context": func(l *Ledger) { find(l, "data-child-rename-standard").Steps[0].Context = "anyone" },
+		"unknown witness": func(l *Ledger) { find(l, "user-units-nested-junction").Steps[0].Witness = "maybe" },
+		"link shape without its link": func(l *Ledger) {
+			find(l, "user-units-file-symlink").Roles = []string{RoleTarget, RoleSibling}
+		},
+		"ancestor case without its parent": func(l *Ledger) { find(l, "data-root-ancestor-rename-standard").Ancestor = "" },
+		"ancestor case without the parent's role": func(l *Ledger) {
+			find(l, "install-root-ancestor-rename-filtered").Roles = []string{RoleLeaf, RoleTarget, RoleSibling}
+		},
+		"recommendation on a decided case": func(l *Ledger) { find(l, "user-units-file-symlink").Recommendation = "Decide." },
+		"schema":                           func(l *Ledger) { l.Schema = 2 },
 	} {
 		data, err := json.Marshal(base)
 		if err != nil {
@@ -159,6 +193,23 @@ func TestLedgerRefusesInvalidCases(t *testing.T) {
 	}
 	if _, err := Decode([]byte(`{"schema":1,"unexpected":true}`)); err == nil {
 		t.Error("an unknown field accepted")
+	}
+	// Strict JSON: nothing after the ledger and no repeated key, at any
+	// depth.
+	for name, data := range map[string][]byte{
+		"trailing bracket": append(append([]byte{}, ledgerJSON...), ']'),
+		"trailing brace":   append(append([]byte{}, ledgerJSON...), '}'),
+		"second document":  append(append([]byte{}, ledgerJSON...), ledgerJSON...),
+		"repeated schema":  []byte(strings.Replace(string(ledgerJSON), `"schema": 1,`, `"schema": 99, "schema": 1,`, 1)),
+		"repeated case field": []byte(strings.Replace(string(ledgerJSON), `"id": "enabled-target-junction-install",`,
+			`"id": "enabled-target-junction-install", "id": "enabled-target-junction-install",`, 1)),
+	} {
+		if string(data) == string(ledgerJSON) {
+			t.Fatalf("%s: no change", name)
+		}
+		if _, err := Decode(data); err == nil {
+			t.Errorf("%s accepted", name)
+		}
 	}
 }
 
