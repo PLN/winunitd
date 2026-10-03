@@ -10,10 +10,14 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/PLN/winunitd/internal/journal"
 	"github.com/PLN/winunitd/internal/manager"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/servicing"
+	"github.com/PLN/winunitd/internal/version"
 	"github.com/PLN/winunitd/internal/winevt"
 )
 
@@ -46,7 +50,10 @@ func serveReady(ctx context.Context, baseDir string, stderr io.Writer, sessions 
 		return err
 	}
 
-	m, err := manager.New(manager.Config{BaseDir: baseDir, Daemon: job, DaemonEventEmit: winevt.Emit})
+	// The floor is evaluated before any admission: a held manager keeps its
+	// endpoints for diagnosis and repair but starts no work this lifetime.
+	hold := startupHold(baseDir, runningBuild())
+	m, err := manager.New(manager.Config{BaseDir: baseDir, Daemon: job, DaemonEventEmit: winevt.Emit, AdmissionHold: hold})
 	if err != nil {
 		closeErr := job.Close()
 		if closeErr == nil {
@@ -76,7 +83,14 @@ func serveReady(ctx context.Context, baseDir string, stderr io.Writer, sessions 
 		Daemon:    job,
 		LingerDir: filepath.Join(baseDir, "linger"),
 		Logf:      logf,
+		// The broker launches no user managers, so no user units start either.
+		AdmissionHold: hold,
 	})
+	if hold != "" {
+		logf("admission held: %s", hold)
+		summary, _, _ := strings.Cut(hold, ":")
+		m.RecordDaemonEvent(journal.DaemonEvent{Code: journal.DaemonEventAdmissionHeld, Reason: summary})
+	}
 	defer func() { cancel(); serveErr = errors.Join(serveErr, finish(m, job, host, stderr)) }()
 
 	rel, loadErr := m.Reload()
@@ -130,12 +144,14 @@ func serveReady(ctx context.Context, baseDir string, stderr io.Writer, sessions 
 	}()
 	// Control and SCM readiness precede workload activation. A waiting notify
 	// unit must not hide status/stop, and invalid configuration remains repairable.
-	if loadErr == nil {
+	if loadErr == nil && hold == "" {
 		if _, err := m.Boot(ctx); err != nil {
 			logf("start %s: %v", manager.DefaultTarget, err)
 		}
 	}
-	startUserReconciliation(ctx, host)
+	if hold == "" {
+		startUserReconciliation(ctx, host)
+	}
 	return <-serverErr
 }
 
@@ -151,6 +167,19 @@ func serveControlEndpoints(ctx context.Context, control, maintenance net.Listene
 	first := <-results
 	cancel()
 	return errors.Join(first, <-results)
+}
+
+// runningBuild identifies this binary for the compatibility floor. The
+// capability feature list is not yet reported, so a floor that requires
+// features holds admission until the build can name them.
+func runningBuild() servicing.Build {
+	return servicing.CurrentBuild(version.Version, nil)
+}
+
+// startupHold is why a system manager starting from baseDir must hold
+// admission, or "" when it may admit work.
+func startupHold(baseDir string, build servicing.Build) string {
+	return servicing.AdmissionHold(servicing.FloorPath(baseDir), build)
 }
 
 // The main serve path must reach finish even when initial token/account I/O is
