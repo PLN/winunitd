@@ -313,3 +313,383 @@ process/thread start and stop events to corroborate each held interval. ETW does
 not identify `ResumeThread`; the suspend-count assertion provides that boundary.
 Qualification of an immutable daemon binary requires separate observations;
 the instrumented test binary alone does not establish that evidence.
+
+## Headless background workloads
+
+Issue #266 qualifies a long-running background workload under explicit
+local-account S4U linger, with no interactive logon. The test-only harness in
+`internal/runtime/runtimetest/headless`, built standalone as
+`tests/native/headless-workload`, is not a release payload and adds no product
+IPC method.
+
+The case matrix (`headless/matrix.json`) has three ledgers on one admitted
+artifact: the six approved #254 recovery groups (23 records), B01-B04 for two
+accounts (8 records that refer to the matching #254 records) and H01-H22 (55
+records). The 86 records are logical claims, not runs: 15 are references that
+cite other records and carry no execution (B01-B04, H10, H11 and the headless
+#253 lanes), and H01 with H02, H03's two accounts and H09's two accounts each
+share one execution. That leaves 68 primary executions, plus 14 separately
+keyed controls, each its own record and its own run. `headless-workload
+matrix [--ledger L] [--case C] [--account A] [--phase N]` prints the expected
+records; `--counts` and `--hash` print the totals and the matrix hash.
+
+Every executed record and control declares the proof it must carry. A record
+without that proof, or whose proof does not hold, stays incomplete whatever
+its result says:
+
+- `observer`: lifecycle values derived from the SYSTEM observer's report;
+- `probe`: the workload's probe results, with the probing process's own token,
+  from a process the observer held as part of the account's unit;
+- `first-use`: SYSTEM's check, on the sealed baseline and immediately before
+  the cold boot, that the account has no profile registration, profile
+  directory, loaded hive or logon session, recorded on its own boot and bound
+  to the very next boot, which the cold-boot observer saw. It also records
+  the name and hash of the baseline receipt taken before provisioning;
+- `named-test`: a receipt of a native test run (`test-receipt --run`). The
+  recorder runs the admitted test binary itself, as its child in a
+  kill-on-close job, bounded in time and output, through `test2json`. The
+  receipt holds the binary's name and hash; the recorder's and the test
+  process's incarnations and tokens, which must be one context (SYSTEM in
+  session zero, or for a session lane the account's own interactive token, so
+  a test that needs a non-SYSTEM identity cannot pass by skipping); the test
+  process's exit code, which must be 0; and every test and package action.
+  Exactly one run of each named test must pass with no subtest skipped or
+  failed, and the package's one terminal action, the last event, must be a
+  pass. For an S4U case the receipt also holds the subject report: the held
+  native-launch and headless security tests write the test's name, their own
+  process incarnation and the subject process's incarnation and genuine S4U
+  token to the file the recorder names in `WINUNITD_QUAL_SUBJECT_OUT`, after
+  removing any older report. Every run needs its own recorder and test
+  process incarnations; only the tests of one H20 repetition may share them;
+- `receipt`, `principal`, `password` and `endpoint`: the echo peer's own
+  record of the nonce; the SMB server's attribution of an access; the same
+  account's password-bearing probe of the same file; SYSTEM's identification
+  of the live servers behind the pipes the account was denied;
+- `daemon-log`: a manager's diagnostics from `probe-daemon-log` before and
+  after a declared intervention, held to one check, with the data root they
+  were read under and how many of the account's managers were running.
+  Rotation (H12 and the standard and filtered-administrator session lanes):
+  the log padded past 256 KiB while no manager of the account ran becomes
+  the archive unchanged when the manager starts again; a fresh current log
+  carries a new open record no later than the final read and within the
+  observation; sizes and hashes are coherent; the directory, log and archive
+  keep the protected DACL of the manager's account, SYSTEM and
+  Administrators only; and the observer held a manager of the account, under
+  the lane's token class, started after the padding and before that open
+  record and still running. The root must be the data root under the profile
+  the observer measured. Repair: a legacy directory the account owned,
+  inheriting and writable by ordinary users, is protected by the manager's
+  first start with no manual grant. Protection: the system manager's
+  diagnostics under the system data root keep the SYSTEM and Administrators
+  DACL;
+- `session-probe`: probe results from the account's own interactive token
+  outside any unit, such as the peer-denial lane: the account reads its own
+  daemon log and is denied the peer's and the system manager's daemon
+  directories and logs with ACCESS_DENIED;
+- `inventory`: SYSTEM's final inventory (`inventory --baseline`) against its
+  baseline receipt (`inventory --receipt`), taken on the sealed baseline
+  before provisioning and hashed by the first-use check. The inventory
+  follows every observation and embeds the receipt with the hash of the
+  bytes it read. Both declare their scope, which must cover the run's
+  accounts, every admitted image and each resource. Nothing of those images
+  remains running besides the process the service control manager names as
+  the installed, running winunitd service, and no fixture pipe remains.
+  Every account's profile hive is unloaded and its qualification state root
+  (probe configurations and outputs) removed. The fixture's scheduled tasks,
+  firewall rules and Default profile template files must be absent both at
+  the sealed baseline and at the end, so a retained object is never taken
+  for a restored one by its name. The machine state must equal the
+  baseline's: the service's start type, binary path and recovery actions;
+  the system data root's, linger directory's and interactive admission
+  policy's security and content; the accounts' linger grants; and the
+  system audit policy and each account's effective logon auditing. Firewall
+  and task queries fail on any error instead of reading as empty. Peer and
+  network-route restoration belongs to the lab controller's own record;
+- `pending`: a proof with no producer or validator; such a record never
+  passes, and neither does a reference that cites it. No case of the
+  current matrix is pending.
+
+Records are written by `headless-workload record --observation FILE
+[--observer FILE] --results DIR --admission FILE`. The record binds the
+driver's observation to the admitted run manifest (a full clean source commit
+and the SHA-256 of every admitted executable, by name), the recording
+executable and the matrix; the recorder and the observer must be the
+manifest's `headless-workload.exe`, not merely some admitted program. Each
+record carries its token context, an execution ID, a run-wide sequence, a
+boot ID, the number of password-bearing logons since that boot, confirmed
+cleanup, its linked controls and its proof.
+
+Lifecycle evidence comes only from `headless-workload observe`, run as SYSTEM.
+It launches nothing. It scans every 50 ms by default, at most 125 ms, and
+holds every process of the installed daemon and workload images: the winunitd
+service process as the broker, the daemon image under a watched account as
+that account's manager, the workload image started by one of its held
+managers as a workload, and anything else of the workload image under the
+account as a child. For each it records the PID, parent, kernel creation and
+exit times, exit code, and the token's account, session, elevation, source
+and logon type, all read from its own handle. A process of a watched image
+that it cannot open is recorded as unidentified. Its plan names the role and
+account to crash and how long each generation may live before it terminates
+exactly that process; it timestamps marks the driver creates in a marks
+directory, creates a declared release file after a number of failed workload
+generations, and stops at a stop file or its duration. It records its own
+process and token; only an observer that ran as SYSTEM in session zero
+yields qualification evidence. Before it starts it admits the daemon and
+workload images it watches against their named manifest entries. About once
+a second it samples the interactive sessions that have a user and the
+watched accounts' password-bearing logon sessions (interactive, network
+cleartext, remote interactive and cached interactive), and records how the
+sampling went: a failed query makes the report incomplete instead of
+reading as absence. Sampling must cover the observation: the first sample,
+with the initial session state, within one interval of the first scan, the
+last within one interval of the final scan. At the end it takes a last
+sample and reads each watched account's profile registration, profile path,
+directory creation time and loaded hive and the workload's own progress
+record; then a final scan, which terminates and releases nothing, ends the
+observation at its boundary. A held process whose kernel exit time follows
+that boundary was running at it. It reads the system audit policy and each
+watched account's effective logon auditing (system and per-user policy
+combined) when it starts and again after the final scan. It then makes an
+attributable marker logon, a service logon of the local service account,
+and waits up to two minutes for that logon's audit event to appear in the
+Security log, a positive control that the read sees new events. Only then
+does it read the logon history since the boot: the oldest event the log
+holds, whether it was cleared, changes to the Logon and Audit Policy Change
+subcategories and per-user policy changes for the watched accounts since the
+boot, and the watched accounts' logons. A marker that does not appear leaves
+the history unobserved. The marker is not a delivery barrier: events from
+different writers can reach the log out of order, so a logon dated before the
+marker could still arrive after the read. The history therefore shows which
+password-bearing logons were seen, not that no other happened. Batch logons are counted from
+that history, which names the logon process, so the product's own S4U logons
+are not counted. Its report also
+records the boot (kernel boot time and boot counter), the longest interval
+between two scans and the crash class of its plan. An observation must not carry lifecycle values itself; `record
+--observer` validates the report, requires the admitted observer and the
+record's boot, and embeds it, and a passing lifecycle record needs one.
+
+`headless-workload summarize --results DIR --admission FILE` exits 0 only when
+every record of the matrix passed with its proof and confirmed cleanup and
+nothing is wrong. Its `limits` list what the evidence does not establish,
+such as the logon history's coverage; a complete summary carries them too. It recomputes every judgement from raw evidence instead of
+trusting a record's claim:
+
+- failed launches (crashed or nonzero exit), durations, capped retries
+  within the declared scheduler tolerance of the cap, short delays after the
+  cap, the longest life of a crashed generation, recovery after the injected
+  failures stop, a recovery actually waiting when a cancellation began,
+  confirmed stable runtime, the reset after it and the delays growing again,
+  relaunches in a closed cancellation window (a launch at either end counts),
+  for a cancelled recovery delays that grew from short gaps to the cap with
+  no gap beyond the tolerance and a retry still pending, and for a broker
+  stop the broker stopping and a new one starting inside that window,
+  failures and starts in one ten-second window, from the observed
+  generations' kernel times; a generation that lived no longer than two scan
+  intervals, a scan gap over 250 ms or an unidentified process leaves the
+  record unproven, because a process shorter than the scan interval can run
+  unseen;
+- that every process of the declared roles alive when the observer crashed
+  its target exited strictly before the first replacement was created; that
+  the account's kept processes and the peer account's manager and workload
+  stayed the same processes; that revoked accounts drained and their profile
+  hive unloaded;
+- the cold boot: an S4U manager and the workload it started, both created on
+  that boot and still running, the workload's own progress record naming that
+  incarnation and its logon, a profile created on that boot for the first-use
+  account and an existing one for the other, and no interactive session;
+- a same-account interactive logon and logoff observed while the headless
+  manager and workload stayed the same processes;
+- the independent-permission sequence, from the marks admission-revoked,
+  admission-restored, linger-disabled and logoff: the headless manager and a
+  workload it started, both running when only interactive admission was
+  revoked, still run when linger is disabled; the account's session, which
+  logged on after admission was restored, is present at the linger change,
+  and a session manager started in it still runs at logoff; a sample after
+  the logoff shows the session gone; afterwards every process of the
+  account drains and nothing returns for the observation window;
+- unlimited unit recovery from a status snapshot (no start limit, the restart
+  attempt count), read during the observation or within five minutes after
+  it and naming the running workload the observer held as its main process,
+  against a finite control that stopped at its start limit with no more
+  launches than its burst;
+- that every generation used ran under the account's genuine session-zero S4U
+  token (the product's token source, a network or batch logon) or, for
+  interactive rows, an interactive session token, and that every probe's own
+  token report agrees with the observer's held process;
+- TCP, SMB and EFS characterizations, from the probe results and controls;
+- the qualification-pipe decisions, recomputed from the SYSTEM server's own
+  observations, and the path sub-results, by their native codes;
+- each record's token against its account and mode: genuine session-zero S4U
+  standard tokens for the two accounts, a nonzero session for interactive
+  rows, SYSTEM for SYSTEM rows, an administrator's filtered token (limited
+  elevation type) for the filtered-administrator rows, one SID per account
+  and distinct accounts;
+- phase order; the first phase on one fresh boot and the first two phases with
+  no password-bearing logon observed since their boot, counted from the
+  observer's samples and the Security log's history. The history must reach
+  back past the boot uncleared, under a system policy that audited successful
+  logons and audit policy changes and an effective policy that audited each
+  watched account's successful logons at both ends, with no system or per-user
+  policy change logged since the boot, and be read after the observer's own
+  marker logon appeared. The matrix scopes these phases' logon history as
+  `observed`, and every summary lists its coverage as unknown under `limits`.
+  Complete event delivery is not established, so a password-bearing logon the
+  log delivered late would go unseen; the phases show that none was seen, not
+  that none happened. A `proven` scope is refused until a reviewed delivery
+  contract exists. Bare S4U network and EFS probes precede every credential
+  control; the first-use check immediately before the first-use cold boot;
+  shared executions only where declared and with one observer report; five
+  distinct test runners for the held native-launch repetitions, by label and
+  by recorder and test process incarnation.
+
+A selection is partial and exits 3 even when everything selected passed; it
+reports only the problems of what it selected.
+
+The workload's `serve` role keeps a flushed progress record in a state root it
+derives from its own token and answers enumerated commands (health, a named
+probe, exit) on a pipe that only SYSTEM and its own account may open. Probes
+run as bounded child processes inside the unit's job, with targets read from a
+configuration file in that state root, never from the command; once that
+configuration names a loopback address, the next flush opens the loopback
+echo listener, so a configuration staged after the workload started needs no
+restart. `fail --code 7
+--until FILE [--hold D]` lives for D and exits with code 7 until FILE exists,
+then serves; lifecycle units use a hold well above the scan interval so the
+observer holds every failing run. Probes record
+exact native results: `probe-token` (SID, logon ID, session, integrity,
+elevation, groups, privileges, logon type and package where LSA allows, and the
+known folders from the token), `probe-path`, `probe-tcp`, `probe-smb` and
+`probe-efs`.
+
+`pipe-serve` is the SYSTEM qualification pipe; it refuses to serve unless it
+runs as SYSTEM in session zero and records its own process identity. For each
+caller it takes the PID from Windows, opens and holds that process and records
+its creation time and account, sends a ready line, reads one bounded request
+(an empty object or a claim of the caller's own incarnation), and only then
+impersonates the caller at Identification level on a dedicated thread and
+reverts, because a pipe server can impersonate only the context of a message
+it has read. A missing, oversized or malformed request is refused, never
+treated as a request without a claim. It decides: accepted only for the
+allowed account, on a live held process whose tokens agree and whose claim,
+if sent, is the held one. A caller that exits within a one-second settle
+window after its claim is rejected. Its report keeps every connection's raw
+observation; the summary recomputes each decision from it and matches each
+client's own incarnation to its entry: the in-unit client must be a process
+of the account's unit as the observer held it, the outside-unit client must
+not, the wrong account must be denied by decision through an ACL that admitted
+it and at the default ACL, and an exited caller and a stale claim must be
+refused for those reasons. Any process of the account is accepted; the pipe
+establishes the account and a held caller incarnation, not a unit, definition
+or launch, and it is not a WinUnit endpoint.
+
+`probe-endpoint`, run as SYSTEM before and after the account's denial checks,
+identifies the process serving each pipe: the fixture's SYSTEM pipe, the peer
+account's workload pipe and the broker's control and maintenance pipes. The
+denials count only against the same genuine live server before and after.
+`probe-first-use` is the first-use check above.
+
+The characterizations are deliberately narrow. TCP counts only with the nonce
+echoed and recorded by the peer, and qualifies that isolated route only. SMB
+access under bare S4U, with no supplied credentials, counts as refused only
+when the share is reachable and the same account's password-bearing logon
+succeeds on the operation that failed, at the same place (reading the same
+nonce file, or writing beside it: a write both are denied is a share
+permission, not a credential refusal), and as succeeded only when the server
+attributes
+that access, on that file and within the probe's time, to the account's SID;
+guest, anonymous and machine access, an unreachable share or a name, path or
+transport error is inconclusive. EFS counts as refused only when the volume
+supports encryption, the fixture is encrypted, an unencrypted sibling with the
+same ACL is readable and the same account's password logon decrypts the same
+file to the expected plaintext. Transport success does not supply
+outbound Windows credentials or decryption keys.
+
+`provision-linger` writes an explicit grant through the product's linger
+store, with no credential URI, and refuses while the winunitd service runs: a
+running broker would launch the account at once and could create its profile
+before the cold boot. `provision-unit` validates a unit with the product
+parser and `Manager.Enable` on a scratch base and copies exactly the unit file
+and its enable links into a target base, such as a Default-profile template or
+an existing profile. `pad-log` appends only spaces and a newline to a stopped
+log until it exceeds the rotation size, bounded, with its security unchanged;
+it is a declared fixture intervention, not daemon output.
+
+`tools/lab/assets/headless-workload-checks.ps1` runs one execution as SYSTEM
+on a disposable machine (`-DisposableLab`) and records its records. It takes
+the case, variant, repetition or control, the stage, the run-wide sequence
+(it prints the next one) and an execution ID; it checks the installed
+`winunitd.exe` and `winctl.exe`, the fixture and any test binaries against
+the admitted run manifest before anything runs, undoes what it changed in a
+`finally`, including every pipe server it started, and never reboots,
+stores a password or publishes evidence. JSON that native code reads is
+written as UTF-8 without a byte-order mark. Every record must be admitted by
+`record` and its record file written; otherwise the execution fails, exits
+nonzero and reports no next sequence. Interactive records name the
+account's session as the observer or the test receipt saw it. An H20
+repetition runs as one execution, `-Variant group -Repetition rN`: one
+recorder runs the three held-launch tests, each in its own test process,
+and the driver records each under the repetition's runner label.
+`-ListPrerequisites` prints, without touching the machine, the account, mode,
+stages and lab prerequisites of a case and which are missing. H01/H02 and
+H03 have a `prepare` stage before the controller reboots and a `collect`
+stage after it; H01/H02 also have a `baseline` stage, run once on the sealed
+baseline before the lab provisions anything, which writes the baseline
+receipt and keeps the interactive admission policy beside it. H22 restores
+the linger grants, the fixture's scheduled tasks, the admission policy and
+the Default profile template before its inventory. The first two phases need no password runner, interactive
+session or WTS logon; H15's clients are all S4U processes (the probing unit,
+the account's other unit and the peer's workload).
+
+What the lab provides for this driver:
+
+- Accounts: two disposable local standard accounts A and B, A never used
+  before H01 and B with an existing, unloaded profile; for the
+  filtered-administrator lane, an administrator account with UAC filtering.
+  `-BaseA`, `-BaseB` and `-AdminBase` are their `%LOCALAPPDATA%\winunitd`.
+  The nested-job lane uses other accounts or precedes a verified restore of
+  the pre-profile baseline; the #254 groups run on A and B after H01/H02.
+- Grants and units, staged with `provision-linger` and `provision-unit` while
+  the broker is stopped: linger for A and B; `background.service` running
+  `serve` in the Default profile template and in B's profile;
+  `failing.service` running a byte-equal copy of the fixture at
+  `headless-fail\headless-workload.exe` beside it with `fail --code 7 --until
+  <that directory>\release-<A|B> --hold 500ms` (Restart=always,
+  RestartSec=100ms, RestartBackoff=exponential, RestartMaxDelaySec=1s,
+  StartLimitBurst=0); `finite.service` running a copy at
+  `headless-finite\headless-workload.exe` that always fails (Restart=always,
+  RestartSec=100ms, StartLimitBurst=5, StartLimitIntervalSec=60s); and `pipe-client.service`, not enabled, running `probe-pipe
+  --from-config <state root>\config.json --client outside-unit --out <state
+  root>\probes\outside-unit.json`.
+- Commands, each waiting for its work and exiting 0 only on success:
+  `-WtsClient logon|logoff <account>` (a genuine automated interactive logon
+  and logoff), `-PasswordRunner <account> <exe> <args>` (a password-bearing
+  logon of that account) and `-SessionRunner <account> <exe> <args>` (inside
+  that account's live session). Credentials stay with the lab.
+- The isolated peer: `echo-serve` at `-PeerEcho` and its receipt file for
+  each H17 run; the SMB share with the nonce file (`-SmbServer`, `-SmbPath`,
+  `-SmbSha256`) and the server's authentication and file-share audit
+  joined into an attribution file (class, SID, target, time) for each H18
+  run (`-PeerAudit`); B's encrypted EFS fixture and its plain sibling.
+- On the guest: success auditing of the Logon and Audit Policy Change
+  subcategories, set before the qualification's first boot and unchanged
+  through it, with no per-user audit policy that excludes a qualification
+  account; logon success auditing for the local service account, whose
+  service logon is the observer's marker; and a Security log large enough
+  and never cleared during the qualification, so the logon history reaches
+  back past each boot. Otherwise the no-password phases have no observed
+  history and stay incomplete.
+- The run manifest admits `winunitd.exe`, `winctl.exe`,
+  `headless-workload.exe`, `runtime.test.exe`, `journal.test.exe` and
+  `test2json.exe` of the one integration artifact; `-Baseline` names the
+  sealed baseline and `-BaselineReceipt` is the private path of its receipt,
+  which the `baseline` stage writes once.
+- Scheduled tasks and firewall rules the lab adds for the fixture are named
+  `winunitd-qual*`; the lab removes its firewall rules before H22, whose
+  inventory must find the baseline's.
+
+Case configurations, probe outputs, observer and server reports and records
+contain account SIDs, profile paths and peer addresses. They are private
+qualification evidence and must not be published as CI artifacts or attached
+to issues or pull requests. Command and test diagnostics name files but not
+their directories and report roles and numeric codes rather than identities.
+No native result is recorded here until those runs pass.
