@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -73,6 +74,33 @@ func TestFloorVerbs(t *testing.T) {
 	}
 	if code, _, _ := runFloorArgs(older, "check", "--base-dir", base); code != 0 {
 		t.Fatal("cleared floor still holds")
+	}
+}
+
+// The service and the floor verbs evaluate the identity the system endpoint
+// reports: a floor of every feature it lists can be set and holds nothing,
+// and one beyond them is refused.
+func TestFloorUsesTheSystemEndpointIdentity(t *testing.T) {
+	build := runningBuild()
+	reply := (&manager.Control{Units: &manager.Manager{}, Users: &manager.UserHost{}}).Capabilities()
+	if build.Version != reply.Version || build.Commit != reply.Commit || !slices.Equal(build.Features, reply.Features) ||
+		(build.Modified == nil) != (reply.Modified == nil) || (build.Modified != nil && *build.Modified != *reply.Modified) {
+		t.Fatalf("floor identity %+v, system endpoint %+v", build, reply)
+	}
+	base := floorBase(t)
+	require := strings.Join(reply.Features, ",")
+	if code, out, errOut := runFloorArgs(build, "set", "--base-dir", base, "--require", require); code != 0 || !strings.Contains(out, "floor raised") {
+		t.Fatalf("set --require %s: %d %q %q", require, code, out, errOut)
+	}
+	if hold := startupHold(base, build); hold != "" {
+		t.Fatalf("supported feature floor held admission: %s", hold)
+	}
+	code, _, errOut := runFloorArgs(build, "set", "--base-dir", base, "--require", require+",no-such-contract")
+	if code != 1 || !strings.Contains(errOut, "missing features no-such-contract") {
+		t.Fatalf("set beyond this build: %d %q", code, errOut)
+	}
+	if f, err := servicing.ReadFloor(servicing.FloorPath(base)); err != nil || !slices.Equal(f.RequireFeatures, reply.Features) {
+		t.Fatalf("refused set changed the floor: %+v %v", f, err)
 	}
 }
 

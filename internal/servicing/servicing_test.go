@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/PLN/winunitd/internal/capability"
+	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/servicing/servicingtest"
+	"github.com/PLN/winunitd/internal/version"
 )
 
 func TestReleasePrecedence(t *testing.T) {
@@ -155,29 +157,20 @@ func TestEvaluate(t *testing.T) {
 	}
 }
 
-func TestBuildFromInfo(t *testing.T) {
-	info := func(settings ...string) *debug.BuildInfo {
-		bi := &debug.BuildInfo{}
-		for i := 0; i+1 < len(settings); i += 2 {
-			bi.Settings = append(bi.Settings, debug.BuildSetting{Key: settings[i], Value: settings[i+1]})
-		}
-		return bi
-	}
-	b := buildFromInfo("0.2.0", info("vcs.revision", "abc", "vcs.modified", "false"), []string{"exec-stop"})
-	if b.Commit != "abc" || b.Modified == nil || *b.Modified || !slices.Equal(b.Features, []string{"exec-stop"}) {
+func TestBuildFrom(t *testing.T) {
+	clean := false
+	features := []string{"exec-stop"}
+	b := BuildFrom(version.BuildInfo{Version: "0.2.0", Commit: "abc", Modified: &clean, Go: "go1.25"}, features)
+	if b.Version != "0.2.0" || b.Commit != "abc" || b.Modified == nil || *b.Modified || !slices.Equal(b.Features, features) {
 		t.Fatalf("clean build %+v", b)
 	}
-	if b := buildFromInfo("0.2.0", info("vcs.revision", "abc", "vcs.modified", "true"), nil); b.Modified == nil || !*b.Modified || b.Features != nil {
-		t.Fatalf("modified build %+v", b)
+	// The build owns its copies.
+	clean, features[0] = true, "changed"
+	if *b.Modified || b.Features[0] != "exec-stop" {
+		t.Fatalf("build shares its inputs: %+v", b)
 	}
-	if b := buildFromInfo("0.2.0", info("vcs.modified", "false"), nil); b.Commit != "" || b.Modified != nil {
-		t.Fatalf("state without a revision is unknown: %+v", b)
-	}
-	if b := buildFromInfo("0.2.0", info("vcs.revision", "abc"), nil); b.Modified != nil {
-		t.Fatalf("missing modified flag is unknown: %+v", b)
-	}
-	if b := buildFromInfo("0.2.0", nil, nil); b.Version != "0.2.0" || b.Commit != "" {
-		t.Fatalf("no build info %+v", b)
+	if b := BuildFrom(version.BuildInfo{Version: "0.2.0"}, nil); b.Commit != "" || b.Modified != nil || b.Features != nil {
+		t.Fatalf("unknown identity %+v", b)
 	}
 }
 
@@ -250,15 +243,34 @@ func TestFloorStoreSafeAbsence(t *testing.T) {
 	}
 }
 
-func TestRunningBuildReportsNoFeaturesYet(t *testing.T) {
+// Running is the identity the system endpoint's capability query reports, so
+// a floor is satisfied by exactly the features that endpoint lists.
+func TestRunningBuildReportsSystemFeatures(t *testing.T) {
 	b := Running()
-	if b.Features != nil || b.Version == "" {
-		t.Fatalf("running build %+v", b)
+	info := version.Build()
+	if b.Version != info.Version || b.Commit != info.Commit || !slices.Equal(b.Features, capability.SystemFeatures()) ||
+		(b.Modified == nil) != (info.Modified == nil) || (b.Modified != nil && *b.Modified != *info.Modified) {
+		t.Fatalf("running build %+v, identity %+v", b, info)
 	}
-	// Until the capability features are wired, a feature floor holds this
-	// build: the gate stays closed rather than guessing.
-	if v := Evaluate(&Floor{Schema: 1, RequireFeatures: []string{"exec-stop"}}, b); v.Satisfied || v.Reasons[0] != "build reports no features; requires exec-stop" {
-		t.Fatalf("feature floor %+v", v)
+	if !slices.Contains(b.Features, protocol.FeatureRestartBackoff) {
+		t.Fatalf("running build features %v", b.Features)
+	}
+	if v := Evaluate(&Floor{Schema: 1, RequireFeatures: b.Features}, b); !v.Satisfied {
+		t.Fatalf("floor of every system feature %+v", v)
+	}
+	if v := Evaluate(&Floor{Schema: 1, RequireFeatures: []string{"no-such-contract", protocol.FeatureRestartBackoff}}, b); v.Satisfied ||
+		!slices.Equal(v.Reasons, []string{"missing features no-such-contract"}) {
+		t.Fatalf("floor with an unknown feature %+v", v)
+	}
+	// A native contract this platform does not enforce holds it like any
+	// other missing feature.
+	for _, name := range []string{protocol.FeatureExecStop, protocol.FeatureJobLimits, protocol.FeatureLingerS4U} {
+		if slices.Contains(b.Features, name) {
+			continue
+		}
+		if v := Evaluate(&Floor{Schema: 1, RequireFeatures: []string{name}}, b); v.Satisfied || !slices.Equal(v.Reasons, []string{"missing features " + name}) {
+			t.Fatalf("floor requiring %s: %+v", name, v)
+		}
 	}
 }
 

@@ -228,7 +228,7 @@ winunitd floor clear
 | Field | Requirement |
 | --- | --- |
 | `minVersion` | The release is not lower, by semantic-version precedence (`0.1.0-alpha` is lower than `0.1.0`) |
-| `requireFeatures` | The build lists every named capability feature |
+| `requireFeatures` | The build's system endpoint lists every named capability feature |
 | `requireCleanBuild` | The build has a known source revision from an unmodified tree; unknown state does not count as clean |
 
 The record is one JSON object with `schema` 1 and these fields. Each key
@@ -329,12 +329,13 @@ without changing anything. `show`, `check`, the package helper and a starting
 manager read the record without waiting; it is replaced in one step, so they
 see either the old or the new record.
 
-Builds do not report capability features yet. Until they do, a floor that
-requires a feature holds every build and refuses every package, and
-`floor set --require` is refused. A build older than the first release with
-the floor cannot enforce it. The package already refuses to install a lower
-version while the product is installed; uninstalling and then installing
-such a build, or replacing files by hand, is outside supported servicing.
+A build's features are those its system endpoint reports to `winctl
+capabilities`; on Windows these are `exec-stop`, `job-limits`, `linger-s4u`
+and `restart-backoff`. `floor set` refuses a name this build does not list. A
+build older than the first release with the floor cannot enforce it. The
+package already refuses to install a lower version while the product is
+installed; uninstalling and then installing such a build, or replacing files
+by hand, is outside supported servicing.
 This behavior has not yet been qualified on Windows.
 
 ## Servicing without a hosted controller

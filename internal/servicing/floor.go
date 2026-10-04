@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"io"
 	"regexp"
-	"runtime/debug"
 	"slices"
 	"strings"
 
+	"github.com/PLN/winunitd/internal/capability"
 	"github.com/PLN/winunitd/internal/version"
 )
 
@@ -203,43 +203,21 @@ type Build struct {
 	Features []string
 }
 
-// runningFeatures is the capability feature list of this build. It stays
-// nil until the capability query provides the system endpoint's features;
-// until then a floor that requires features holds admission and refuses
-// packages, and floor set refuses it.
-var runningFeatures []string
-
 // Running identifies this binary for the compatibility floor. The system
 // manager, the offline floor verbs and the package helper all use it, so
-// they evaluate one identity: the release linked into the binary, the
-// version-control state the toolchain embedded and the capability features.
+// they evaluate one identity, the one the system endpoint's capability query
+// reports: the build identity from the version package and the system
+// endpoint's features.
 func Running() Build {
-	return CurrentBuild(version.Version, runningFeatures)
+	return BuildFrom(version.Build(), capability.SystemFeatures())
 }
 
-// CurrentBuild describes the running binary from its release string and the
-// version-control data the Go toolchain embedded.
-func CurrentBuild(release string, features []string) Build {
-	bi, _ := debug.ReadBuildInfo()
-	return buildFromInfo(release, bi, features)
-}
-
-func buildFromInfo(release string, bi *debug.BuildInfo, features []string) Build {
-	b := Build{Version: release, Features: slices.Clone(features)}
-	if bi == nil {
-		return b
-	}
-	var modified string
-	for _, s := range bi.Settings {
-		switch s.Key {
-		case "vcs.revision":
-			b.Commit = s.Value
-		case "vcs.modified":
-			modified = s.Value
-		}
-	}
-	if b.Commit != "" && (modified == "true" || modified == "false") {
-		m := modified == "true"
+// BuildFrom describes a binary from its build identity and the features it
+// enforces.
+func BuildFrom(info version.BuildInfo, features []string) Build {
+	b := Build{Version: info.Version, Commit: info.Commit, Features: slices.Clone(features)}
+	if info.Modified != nil {
+		m := *info.Modified
 		b.Modified = &m
 	}
 	return b
