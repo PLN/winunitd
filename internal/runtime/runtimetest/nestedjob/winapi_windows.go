@@ -179,9 +179,13 @@ func selfIdentity(role string, generation int) (Identity, error) {
 	if err := windows.ProcessIdToSessionId(pid, &session); err != nil {
 		return Identity{}, fmt.Errorf("own session: %w", err)
 	}
+	elevated, err := tokenElevated(tok)
+	if err != nil {
+		return Identity{}, fmt.Errorf("own token: %w", err)
+	}
 	return Identity{
 		Role: role, PID: pid, Created: created, Image: image, ImageSHA256: sum,
-		SID: user.User.Sid.String(), Session: session, Elevated: tok.IsElevated(),
+		SID: user.User.Sid.String(), Session: session, Elevated: elevated,
 		Invocation: os.Getenv(envInvocationID), Generation: generation,
 	}, nil
 }
@@ -390,7 +394,30 @@ func CurrentTokenContext() (*TokenContext, error) {
 	if err := windows.ProcessIdToSessionId(windows.GetCurrentProcessId(), &session); err != nil {
 		return nil, err
 	}
-	return &TokenContext{SID: user.User.Sid.String(), Session: session, Elevated: tok.IsElevated(), Source: TokenProcess}, nil
+	elevated, err := tokenElevated(tok)
+	if err != nil {
+		return nil, err
+	}
+	return &TokenContext{SID: user.User.Sid.String(), Session: session, Elevated: elevated, Source: TokenProcess}, nil
+}
+
+// tokenElevated reads TokenElevation. Token.IsElevated reports a failed or
+// short read as not elevated; here it is an error, never a fact.
+func tokenElevated(tok windows.Token) (bool, error) {
+	return readElevation(func(buf *byte, size uint32, n *uint32) error {
+		return windows.GetTokenInformation(tok, windows.TokenElevation, buf, size, n)
+	})
+}
+
+func readElevation(query func(buf *byte, size uint32, n *uint32) error) (bool, error) {
+	var elevation, n uint32
+	if err := query((*byte)(unsafe.Pointer(&elevation)), uint32(unsafe.Sizeof(elevation)), &n); err != nil {
+		return false, fmt.Errorf("token elevation: %w", err)
+	}
+	if n != uint32(unsafe.Sizeof(elevation)) {
+		return false, fmt.Errorf("token elevation: %d bytes", n)
+	}
+	return elevation != 0, nil
 }
 
 // ExitTime is a held process's exit FILETIME, or zero while it runs.
