@@ -527,7 +527,14 @@ func TestWaitCancelDoesNotCloseWaitedHandle(t *testing.T) {
 }
 
 func TestStopClosesJobAdmissionBeforeExitCapture(t *testing.T) {
-	p := startHelper(t, "sleep", unit.TypeSimple, 0).(*winProc)
+	// Close admission only after the helper has started: Start returns at
+	// ResumeThread, and a process the helper's own start-up creates in the
+	// job would be refused (#284). The property under test is that a running
+	// member survives closed admission until termination.
+	p := startHelper(t, "hello", unit.TypeSimple, 0).(*winProc)
+	if got := readLine(t, p.Stdout(), 5*time.Second); got != "hello-stdout" {
+		t.Fatalf("helper start-up line = %q", got)
+	}
 	j := p.job
 	j.stopMu.Lock()
 	j.mu.Lock()
@@ -538,7 +545,9 @@ func TestStopClosesJobAdmissionBeforeExitCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !p.Alive() {
-		t.Fatal("closing admission terminated the existing process")
+		var code uint32
+		err := windows.GetExitCodeProcess(p.process, &code)
+		t.Fatalf("closing admission terminated the existing process: exit code %#x (%v)", code, err)
 	}
 	other := startHelper(t, "sleep", unit.TypeSimple, 0).(*winProc)
 	if err := j.Assign(other.process); err == nil {
