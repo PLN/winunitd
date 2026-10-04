@@ -37,8 +37,19 @@ Use `-version 0.2.0-beta` for a release candidate. The build records that versio
 in the manifest and links it into the daemon/CLI version output. The beta MSI
 entry point is `./packaging/beta/build.ps1 -PackageVersion 0.2.0`; it requires
 clean source unless `-AllowDirty` is explicitly supplied for development. It uses
-the already approved WiX 7.0.0/.NET 10.0.400 build tooling. Keep `.wixpdb`, SDK
-intermediates, and build logs private. Package qualification is still required;
+the already approved WiX 7.0.0/.NET 10.0.400 build tooling. Both package scripts
+build the servicing helper with the payload's release value and then run
+`tools/package-identity`. It refuses the package unless the build manifest lists
+exactly the files the installer packages from the payload directory
+(`winunitd.exe`, `winctl.exe`, `winunit-notify.exe` and
+`THIRD-PARTY-NOTICES.txt`), each once under its own name; each of those files
+matches its listed hash; and the three executables and the helper, read from the
+produced files, share one source revision, unmodified state, release, toolchain
+and target, with the daemon, CLI and helper linking that release. The token
+library the script builds afterwards is recorded in the package manifest by hash
+only. The check reads the payload directory before WiX packages it; it does not
+inspect the built MSI. The package manifest records that identity; with
+`-AllowDirty` it is marked `admissible: false`. Keep `.wixpdb`, SDK intermediates, and build logs private. Package qualification is still required;
 a successful MSI build alone is not a release.
 
 `dist/build-manifest.json` records the compiler, target, source revision, dirty state, module-file hashes, and each binary's SHA256/size. It contains no operator identity, hostname, absolute checkout path, or environment dump. Go's embedded module/build information provides dependency versions and sums (`go version -m`). The builder reads each binary's embedded build information and fails unless its `vcs.revision` equals the manifest commit; the manager reports that revision and `vcs.modified` through `winctl capabilities`. A development build from a changed tree keeps the commit and reports `modified: true`; only a clean build with a matching manifest identifies a release artifact. A failed build leaves no successful manifest for that attempt. Dirty builds are allowed for development and visibly marked; they must not be promoted as release artifacts. Build from a clean checkout and do not modify sources during a qualification build.

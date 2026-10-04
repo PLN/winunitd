@@ -44,8 +44,9 @@ Basic Windows Installer UI is `/qb`. Do not force a reboot.
 | 0 | Success |
 | 3010 | Success; a reboot is required. The package does not start one |
 | 1602 | The operator canceled |
-| 1603 | Fatal error, including a downgrade or the beta-package launch condition |
-| 1618 | Another installation is already running |
+| 1603 | Fatal error, including a downgrade, the beta-package launch condition, or a preflight conflict such as the compatibility floor; the MSI log names the cause |
+| 1618 | Another installation is already running; retry later |
+| 1638 | Another version of this product is already installed; repair or upgrade it instead of installing beside it |
 
 A newer product package produces the message "A newer package is installed."
 The unsigned beta uses a different UpgradeCode. If that beta is present, this
@@ -196,12 +197,191 @@ rejects the transaction when any of the following is true:
 | `--base-dir` is not `%ProgramData%\winunitd` | Conflict. A custom base directory is not adopted or relocated |
 | A machine scheduled task or machine Run value launches `winunitd.exe` | Conflict on install, repair, and upgrade. Uninstall still removes this package. Per-user discovery stays with the explicit migration step |
 | `%ProgramData%\winunitd` or `units`, `enabled`, `journal`, `runtime`, `linger`, or `daemon` is a reparse point, is not owned by SYSTEM or Administrators, or grants write access to another principal | Conflict. The helper does not follow the link and does not try to repair the target ACL |
+| A [compatibility floor](#compatibility-floor) is set and this package's build is below it, or the floor record cannot be trusted | Conflict on install, repair, and upgrade, with `preflight conflict: compatibility floor:` and the reason. Uninstall still proceeds |
 
 The MSI log contains `preflight conflict:` and the reason. Fix the
 condition, or use the explicit migration path, and run the install again.
 Repair does not reapply ACLs on the mutable directories, so a safe
 existing ACL is left as it is. New directories inherit the data-root ACL,
 which grants control to SYSTEM and Administrators only.
+
+## Compatibility floor
+
+A compatibility floor is the minimum build that may admit hosted work on the
+machine. A consumer sets it when it admits workloads that need a release or
+a feature, so that repair, upgrade, rollback, or recovery cannot bring back a
+build those workloads cannot use. It is not raised automatically by an
+upgrade; rolling back to an earlier package that still meets the floor stays
+possible.
+
+The floor is the file `%ProgramData%\winunitd\daemon\compat-floor.json`. It
+survives repair, upgrade, and uninstall with the rest of the data tree. Set
+and inspect it with the installed daemon binary, as an administrator:
+
+```text
+winunitd floor set --min-version 0.2.0 --require-clean
+winunitd floor show
+winunitd floor check
+winunitd floor clear
+```
+
+| Field | Requirement |
+| --- | --- |
+| `minVersion` | The release is not lower, by semantic-version precedence (`0.1.0-alpha` is lower than `0.1.0`) |
+| `requireFeatures` | The build lists every named capability feature |
+| `requireCleanBuild` | The build has a known source revision from an unmodified tree; unknown state does not count as clean |
+
+The record is one JSON object with `schema` 1 and these fields. Each key
+appears at most once, spelled exactly; no key may be null (omit an optional
+field instead); nothing may follow the object. A record that breaks any of
+this, names an unknown field, or sets no requirement is unusable, never a
+weaker floor.
+
+The floor states compatibility; it does not identify a build. Two clean
+builds of different source revisions with the same release and features meet
+the same floor, and the floor does not order them. Exact artifact identity is
+a separate check: the installed files' hashes and the running daemon's
+reported revision against the package manifest.
+
+### Protection
+
+Before it reads, writes, or removes the record, and before it treats a
+missing record as "no floor", WinUnit opens and checks each directory on the
+path on its open handle and keeps them open for the operation:
+
+| Level | Requirement |
+| --- | --- |
+| `%ProgramData%` | Not a reparse point; owned by SYSTEM, Administrators, or TrustedInstaller; no other principal may delete, rename, or re-permission its entries. Creating new entries, which ProgramData allows its users, is accepted |
+| `%ProgramData%\winunitd` and `daemon` | When present: not reparse points; owned by SYSTEM, Administrators, or TrustedInstaller; no other principal may write, delete, or re-permission them or anything in them, including through inherit-only grants |
+| `compat-floor.json` | A regular file, not a reparse point, with the same owner and write rule |
+| `compat-floor.lock` | The lock that serializes floor changes, with the same rules as the record. It is created with the first change and never removed |
+
+These are the rules as the system manager and the package helper apply
+them; both run as SYSTEM. A check run by another account, such as
+`winunitd floor show` or `floor check` from an administrator's console,
+also trusts that account itself as an owner or writer, so it can accept a
+directory or record that the system manager rejects. After changing the
+floor or these permissions, the running manager's `AdmissionHold` in
+`winctl status` is authoritative, not a check run from a console.
+
+A missing `winunitd` or `daemon` directory under a safe `%ProgramData%` is a
+first install: there is no floor, and `floor set` refuses until the product
+is installed. Anything else that fails these checks makes the record
+unusable: the manager holds admission and the package refuses to install,
+repair, or upgrade. The manager does not repair the permissions first. The
+directories above `%ProgramData%` are not checked here.
+
+### Enforcement
+
+`set` refuses a floor that this binary does not meet. `check` exits 0 when
+the binary meets the floor or none is set, and 1 when it is below the floor
+or the record is unusable. Usage errors exit 2.
+
+The floor is enforced in two places. Before it stops the running manager,
+the package helper refuses to install, repair, or upgrade to a build below
+the floor (exit 1603, `preflight conflict: compatibility floor:`), so the
+installed manager and its workloads are left as they were. When the system
+manager starts, including after a failed upgrade rolls back, after a reboot,
+and after SCM restarts it, it compares its own build with the floor before it
+starts anything. A build below the floor, or an unusable floor record, holds
+admission for the life of that process: the control and maintenance
+endpoints stay available, but no unit starts (boot, explicit, timer, watch,
+or recovery) and the broker launches no user manager, lingering or
+interactive, so none of their units start. `winctl status` shows
+`AdmissionHold` (`admissionHold` in status and snapshot JSON) and the daemon
+log records `daemon.admission-held`. The Windows Application log has no event
+for the hold yet. Only a manager restart after restoring a compatible build,
+or after changing the floor, reopens admission.
+
+The floor governs the SCM-managed system manager and the user managers it
+brokers. A user manager started directly with `winunitd --user-manager` is
+outside its scope, as is any other process that runs WinUnit binaries.
+
+A running manager keeps the admission decision it made at start-up, so a
+floor change does not reach it. Raising the floor therefore needs the system
+manager stopped. To raise it before admitting a workload that depends on it:
+
+1. Run `winctl maintenance --timeout 180s` to quiesce system and user work.
+2. Stop the `winunitd` service and wait until its process has exited.
+3. Run `winunitd floor set ...`. A floor that raises any requirement is
+   written only when the service is stopped with no process, nothing serves
+   the system control or maintenance endpoint, and no other `winunitd.exe`
+   process runs. That includes a user manager started directly with
+   `winunitd --user-manager`: the floor does not govern it, but while it
+   runs a raise is refused. Stop it yourself; `floor set` stops nothing. The
+   check is repeated after the write; if a manager started meanwhile, the
+   command exits 1 and that manager must be restarted.
+4. Start the service. `winunitd floor check` must exit 0 and `winctl status`
+   must show no `AdmissionHold`: the manager that loaded is compatible. The
+   status is authoritative; `floor check` evaluates the binary it runs from
+   with the trust of the account that runs it.
+5. Admit the workload.
+
+Lowering the floor (a floor that requires nothing the current one did not)
+and `clear` do not need the manager stopped. They apply at the next manager
+start; a held manager stays held until it restarts.
+
+`set` and `clear` are serialized across processes. Each holds the floor's
+lock from reading the current record, through deciding whether the new floor
+raises it and the stop checks of a raise, until it has written or removed the
+record. Another `set` or `clear` waits up to 30 seconds and then exits 1
+without changing anything. `show`, `check`, the package helper and a starting
+manager read the record without waiting; it is replaced in one step, so they
+see either the old or the new record.
+
+Builds do not report capability features yet. Until they do, a floor that
+requires a feature holds every build and refuses every package, and
+`floor set --require` is refused. A build older than the first release with
+the floor cannot enforce it. The package already refuses to install a lower
+version while the product is installed; uninstalling and then installing
+such a build, or replacing files by hand, is outside supported servicing.
+This behavior has not yet been qualified on Windows.
+
+## Servicing without a hosted controller
+
+Servicing needs only local administrator rights and assets kept on the
+machine or a protected share: the current and previous product MSIs with
+their package manifests, outside the product directories. A hosted
+controller is not involved.
+
+1. Record `winctl status`, `winctl snapshot` (JSON), and
+   `winunitd floor show`.
+2. Run the repair, upgrade, or rollback package with `/qn /norestart
+   /L*v <log>`. The package quiesces and stops the manager before it changes
+   files and never forces a reboot.
+3. Check the exit code. 3010 means success with a reboot still required;
+   schedule it. For 1603, find the cause in the log. A failed upgrade rolls
+   back to the previous package, service configuration, and running state.
+4. Confirm that the service runs, that `winctl status` shows no
+   `AdmissionHold`, that `winunitd floor check` exits 0, and that the
+   installed files' hashes match the package manifest.
+5. Confirm the units you depend on.
+
+| Operation | Command |
+| --- | --- |
+| Repair the installed package | `msiexec /fa <package.msi> /qn /norestart /L*v <log>`, or `msiexec /i <package.msi> REINSTALL=ALL REINSTALLMODE=amus /qn /norestart /L*v <log>` to rewrite every file regardless of version |
+| Upgrade to a published release | `msiexec /i <newer package.msi> /qn /norestart /L*v <log>` |
+| Replace with an unpublished build of the same release | `msiexec /i <other package.msi> REINSTALL=ALL REINSTALLMODE=vamus /qn /norestart /L*v <log>`: recaches that package and rewrites every file. Not qualified; development and test only |
+
+Every published package has its own higher three-field installer version,
+so Windows Installer orders published releases. Two builds that share an
+installer version cannot be ordered by it: the default reinstall mode can
+keep files of the same version. Use `REINSTALLMODE=vamus` to recache the
+package and force the replacement (its `a` rewrites every file regardless of
+version), and only a check of the installed hashes and the running daemon's
+revision afterward shows that it did. Packages built from a modified tree are marked
+`admissible: false` in their package manifest and are for development only.
+
+Global maintenance stops all system and user work and closes admission until
+the manager restarts. The restarted manager starts enabled units. The
+managers of lingering users and of users who are logged on start again with
+their enabled user units; other users' managers start at their next logon.
+Units that were started manually and are not enabled are not restored; start
+them again if they are still needed. Journal and daemon-log records keep the
+invocation and operation IDs they were written with, but the operation
+history of the previous manager process is gone: `winctl operation` reports
+its operation IDs as not found. A held manager starts nothing until admission
+reopens.
 
 ## Not in this package
 

@@ -274,6 +274,11 @@ type MachineStatus struct {
 	UserRecovery   []UserRecoveryStatus `json:"userRecovery,omitempty"`
 	UserInstances  []UserManagerStatus  `json:"userInstances,omitempty"`
 	Maintenance    *MaintenanceResult   `json:"maintenance,omitempty"`
+	// AdmissionHold is why this manager accepts no starts and launches no
+	// user managers, for example a build below the compatibility floor.
+	// Empty means admission is not held for that reason. It clears only when
+	// the manager process restarts.
+	AdmissionHold string `json:"admissionHold,omitempty"`
 }
 
 // UserManagerStatus is a copied user-host decision, not a fresh kernel query.

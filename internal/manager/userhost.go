@@ -36,6 +36,10 @@ type UserHostConfig struct {
 	LingerToken    runtime.LingerTokenFunc
 	Logf           func(string, ...any)
 	Now            func() time.Time
+	// AdmissionHold, when non-empty, stops every user-manager launch:
+	// session admission, reconciliation and linger starts. Policy changes,
+	// revocation and cleanup remain available. See manager Config.
+	AdmissionHold string
 }
 
 // UserHost is SID-keyed (one manager per user), not session-keyed.

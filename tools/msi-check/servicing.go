@@ -8,6 +8,7 @@ import (
 
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/servicing"
 )
 
 // msiServiceControlWait is the stock Windows Installer wait documented for
@@ -51,6 +52,23 @@ func requireQuiesced(state string, callErr error) error {
 	}
 	if state != "quiesced" {
 		return fmt.Errorf("abort replacement: maintenance did not quiesce: %s", state)
+	}
+	return nil
+}
+
+// floorPreflight refuses to install, repair or upgrade to a build below the
+// compatibility floor persisted under dataDir, or when that record cannot be
+// trusted. It runs before quiesce, stop or replacement, so a refusal leaves
+// the installed manager and its workloads untouched. The helper's own build
+// identity stands for the package's: packaging builds helper and payload from
+// one clean tree with one release value and refuses an admissible package
+// unless the produced binaries agree. Uninstall admits no work and proceeds.
+func floorPreflight(mode, dataDir string, build servicing.Build) error {
+	if mode == modeUninstall {
+		return nil
+	}
+	if hold := servicing.AdmissionHold(servicing.FloorPath(dataDir), build); hold != "" {
+		return fmt.Errorf("preflight conflict: compatibility floor: %s", hold)
 	}
 	return nil
 }
