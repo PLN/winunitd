@@ -15,10 +15,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PLN/winunitd/internal/capability"
 	"github.com/PLN/winunitd/internal/manager"
 	"github.com/PLN/winunitd/internal/runtime/runtimetest"
 	"github.com/PLN/winunitd/internal/servicing"
 	"github.com/PLN/winunitd/internal/servicing/servicingtest"
+	"github.com/PLN/winunitd/internal/version"
 )
 
 func floorBase(t *testing.T) string {
@@ -150,6 +152,43 @@ func TestStartupHoldFollowsTheFloor(t *testing.T) {
 	}
 	if hold := startupHold(base, build); !strings.HasPrefix(hold, "below compatibility floor: ") {
 		t.Fatalf("hold = %q", hold)
+	}
+}
+
+// A clean-build floor holds a modified build and a build without known
+// source state, built from injected build information the way the daemon
+// builds its own identity, and such a build cannot write that floor.
+func TestCleanBuildFloorHoldsModifiedAndUnknownBuilds(t *testing.T) {
+	base := floorBase(t)
+	clean, modified := false, true
+	features := capability.SystemFeatures()
+	cleanBuild := servicing.BuildFrom(version.BuildInfo{Version: "0.1.0-alpha", Commit: "abc", Modified: &clean}, features)
+	if code, out, errOut := runFloorArgs(cleanBuild, "set", "--base-dir", base, "--require-clean"); code != 0 || !strings.Contains(out, "floor raised") {
+		t.Fatalf("clean build set --require-clean: %d %q %q", code, out, errOut)
+	}
+	if hold := startupHold(base, cleanBuild); hold != "" {
+		t.Fatalf("clean build held: %q", hold)
+	}
+	for _, c := range []struct {
+		name string
+		info version.BuildInfo
+		want string
+	}{
+		{"modified", version.BuildInfo{Version: "0.1.0-alpha", Commit: "abc", Modified: &modified}, "build is from a modified source tree"},
+		{"no revision", version.BuildInfo{Version: "0.1.0-alpha"}, "build has no source revision"},
+		{"unknown state", version.BuildInfo{Version: "0.1.0-alpha", Commit: "abc"}, "build source state is unknown"},
+	} {
+		b := servicing.BuildFrom(c.info, features)
+		if hold := startupHold(base, b); hold != "below compatibility floor: "+c.want {
+			t.Errorf("%s: hold %q", c.name, hold)
+		}
+		if code, out, _ := runFloorArgs(b, "check", "--base-dir", base); code != 1 || !strings.Contains(out, c.want) {
+			t.Errorf("%s: check %d %q", c.name, code, out)
+		}
+		other := floorBase(t)
+		if code, _, errOut := runFloorArgs(b, "set", "--base-dir", other, "--require-clean"); code != 1 || !strings.Contains(errOut, c.want) {
+			t.Errorf("%s: set --require-clean %d %q", c.name, code, errOut)
+		}
 	}
 }
 
