@@ -174,34 +174,73 @@ func TestClientRejectsMismatchedServerOwner(t *testing.T) {
 		t.Fatalf("reject error = %v, want squat / identity mismatch", err)
 	}
 
-	acceptErr := make(chan error, 1)
+	// Keep accepting: an instance must be waiting for the refused dial to
+	// connect at all, and the ordinary dial below needs the next one.
+	conns := make(chan net.Conn, 4)
 	go func() {
-		c, err := lis.Accept()
-		if err != nil {
-			acceptErr <- err
-			return
+		defer close(conns)
+		for {
+			c, err := lis.Accept()
+			if err != nil {
+				return
+			}
+			conns <- c
 		}
-		_ = c.Close()
-		acceptErr <- nil
 	}()
+	t.Cleanup(func() {
+		_ = lis.Close()
+		for c := range conns {
+			_ = c.Close()
+		}
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	closed, err := dialVerified(ctx, name, func(c net.Conn) error {
+	refused, err := dialVerified(ctx, name, func(c net.Conn) error {
 		return verifyUserServerOwner(c, "S-1-5-21-1-2-3-1001")
 	})
-	if err == nil {
-		_ = closed.Close()
-		t.Fatal("dialVerified must not return a connection on owner mismatch")
-	}
-	if closed != nil {
-		_ = closed.Close()
+	if refused != nil {
+		_ = refused.Close()
 		t.Fatal("mismatch must close the connection; no RPC path")
 	}
-	select {
-	case <-acceptErr:
-	case <-time.After(5 * time.Second):
-		t.Fatal("accept timed out after mismatch dial")
+	// The refusal must come from the owner check on a connected pipe, not
+	// from a failed dial.
+	if err == nil || (!strings.Contains(err.Error(), "possible squat") && !strings.Contains(err.Error(), "user-manager identity")) {
+		t.Fatalf("dialVerified error = %v, want the owner-mismatch refusal", err)
+	}
+
+	// go-winio discards a client that closes before the server's
+	// ConnectNamedPipe (ERROR_NO_DATA), so the refused connection may never
+	// be accepted (#283). The listener must still serve an ordinary client,
+	// and an accepted refused connection must carry no bytes.
+	next, err := DialPipe(ctx, name)
+	if err != nil {
+		t.Fatalf("dial after the refused dial: %v", err)
+	}
+	defer next.Close()
+	if _, err := next.Write([]byte{'x'}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case c, ok := <-conns:
+			if !ok {
+				t.Fatal("listener stopped accepting after the refused dial")
+			}
+			_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+			buf := make([]byte, 1)
+			n, _ := c.Read(buf)
+			_ = c.Close()
+			if n == 1 && buf[0] == 'x' {
+				return
+			}
+			if n != 0 {
+				t.Fatalf("refused connection carried data %q", buf[:n])
+			}
+		case <-deadline:
+			t.Fatal("listener did not accept an ordinary client after the refused dial")
+		}
 	}
 }
 
