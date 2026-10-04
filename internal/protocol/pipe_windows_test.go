@@ -218,29 +218,8 @@ func TestClientRejectsMismatchedServerOwner(t *testing.T) {
 		t.Fatalf("dial after the refused dial: %v", err)
 	}
 	defer next.Close()
-	if _, err := next.Write([]byte{'x'}); err != nil {
+	if err := awaitOrdinaryAfterRefusal(conns, next, 5*time.Second); err != nil {
 		t.Fatal(err)
-	}
-	deadline := time.After(5 * time.Second)
-	for {
-		select {
-		case c, ok := <-conns:
-			if !ok {
-				t.Fatal("listener stopped accepting after the refused dial")
-			}
-			_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
-			buf := make([]byte, 1)
-			n, _ := c.Read(buf)
-			_ = c.Close()
-			if n == 1 && buf[0] == 'x' {
-				return
-			}
-			if n != 0 {
-				t.Fatalf("refused connection carried data %q", buf[:n])
-			}
-		case <-deadline:
-			t.Fatal("listener did not accept an ordinary client after the refused dial")
-		}
 	}
 }
 
