@@ -32,7 +32,8 @@ History is private to each manager instance. Pending records are retained until
 completion; the most recent 256 completed records are retained in completion
 order. Errors in history are capped at 4,096 UTF-8 bytes with an explicit
 truncation flag. A status ID can refer to an evicted record. Restarting the
-manager loses history and creates a different ID namespace. There is no disk
+manager, including for repair, upgrade or rollback, loses history and creates
+a different ID namespace; an earlier ID then reports not found. There is no disk
 archive, global history shared between user/system managers, or automatic
 recovery-operation history yet.
 
@@ -175,6 +176,13 @@ state, a short reason, restart attempt, and start-limit burst/remaining.
 Unknown keys are ignored. A field that contains an environment assignment, a
 credential or store URI, a parser location, or a newline is omitted. Reasons
 longer than 160 bytes are omitted. Each encoded record is at most 1024 bytes.
+
+The reason of `daemon.open` identifies the build, for example
+`version 0.1.0-alpha commit <revision>`, with ` modified` appended for a build
+from a changed tree. Every manager start, including the first start after an
+install, repair, upgrade or rollback, therefore records which build ran. The
+existing reason field keeps the record readable by older and newer managers.
+The Application event for `daemon.open` does not include it.
 
 Enqueue holds no file I/O. The queue admits 32 records or 16 KiB, whichever
 comes first, and further records increment `daemonLogDroppedRecords` and
