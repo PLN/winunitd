@@ -163,14 +163,50 @@ Without `ExecStop`, stop terminates the owned process job immediately. A configu
 stop command runs once after successful startup, including explicit stop,
 restart, shutdown and natural exit. Failed startup does not run it. The helper
 uses the invocation's captured environment, directory and job limits under the
-same manager identity. `MAINPID` contains the workload PID while known alive;
-it is otherwise absent. No shell, argument substitution or automatic signal is
+same manager identity. No shell, argument substitution or automatic signal is
 implied. Use a script that synchronously requests and waits for termination.
 
-The helper owns a separate job and writes to the unit journal with the original
-invocation ID suffixed `-stop`. At most 32 helper attempts may remain owned.
-The cooperative phase reserves one fifth of the remaining stop budget for forced
-cleanup, with a one-second floor and a half-budget ceiling. Expiry or helper
+The helper environment is a stable interface:
+
+- `WINUNIT_INVOCATION_ID` is the stopped invocation's ID followed by exactly
+  one `-stop`. Removing that final suffix once gives the invocation the helper
+  must stop, which status reports as `InvocationID`. The helper's journal lines
+  carry the same suffixed ID.
+- `MAINPID` is the main process ID only when that process was known alive as
+  the helper started. It is absent after a natural exit, and it is an
+  observation at launch, not a liveness guarantee: identify the target by its
+  invocation, not by the PID alone.
+- Values of either name from `Environment=` or the manager's own environment
+  are replaced or removed, whatever their case.
+
+The helper runs at most once per invocation, including after a natural exit,
+so it must succeed harmlessly when the main process is already gone or its
+invocation is no longer the unit's current one. For example:
+
+```ini
+[Service]
+ExecStart=C:\Apps\worker.exe
+WorkingDirectory=C:\Apps
+ExecStop=C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+ExecStopArg=-NoProfile
+ExecStopArg=-File
+ExecStopArg=C:\Apps\stop-worker.ps1
+TimeoutStopSec=30s
+```
+
+```powershell
+# stop-worker.ps1: ask the worker of this invocation to stop, then wait.
+$invocation = $env:WINUNIT_INVOCATION_ID -replace '-stop$', ''
+if (-not $env:MAINPID) { exit 0 }   # the main process has already exited
+# ... send a stop request that names $invocation and wait for the exit ...
+```
+
+The helper owns a separate job and writes to the unit journal. At most 32
+helper attempts may remain owned. The cooperative phase gets the remaining stop
+budget minus a forced-cleanup reserve of `min(total/2, max(1s, total/5))`,
+where `total` is the remaining budget: 10 seconds reserve 2 seconds, 5
+seconds and 2 seconds reserve 1 second, and 500 milliseconds reserve 250
+milliseconds. Expiry or helper
 failure proceeds to forced workload cleanup and reports failure. Late helper
 creation and unfinished helper output remain owned; replacement is refused until
 cleanup is confirmed. A stop retry joins cleanup without rerunning the command.
@@ -383,6 +419,11 @@ readiness directives above or Type=notify when dependent activation must wait.
 are rejected. Do not copy a Linux systemd unit without checking this reference.
 
 Use `winctl verify` before deployment and `daemon-reload` after changing files.
+Warnings about ignored or defaulted settings do not fail verification; read
+them when every written setting must take effect. `winctl capabilities`
+reports the format versions, directives and features of the installed
+manager; see
+[build identity and capabilities](RUNTIME-REFERENCE.md#build-identity-and-capabilities).
 Reload accepts the whole configuration/graph or retains the previous revision.
 It does not restart live processes; restart explicitly to apply changed launch
 settings. Removed live units remain available for status/log/stop. Operation IDs

@@ -68,8 +68,9 @@ See [qualification details](docs/BETA-QUALIFICATION.md).
 
 The main limits are:
 
-- Stop terminates the owned process job. Graceful application stop hooks are not
-  implemented.
+- In this beta, stop terminates the owned process job; graceful application stop
+  hooks are not implemented. Source after `0.2.1-beta` adds one cooperative
+  `ExecStop` command ([unit reference](docs/UNIT-REFERENCE.md#core-directives)).
 - User managers and linger, notify/watchdogs, timers, resource limits, native
   event triggers, and SCM/task proxies are experimental. Interactive user
   admission is disabled by default.

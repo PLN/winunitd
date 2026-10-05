@@ -130,13 +130,21 @@ func TestExecStopRetainsUnfinishedOutputUntilRetry(t *testing.T) {
 	}
 }
 
+// misleadingEnvironment configures values that the helper contract overrides.
+const misleadingEnvironment = "Environment=MAINPID=4242\nEnvironment=winunit_invocation_id=configured\n"
+
 func TestExecStopUsesCapturedDefinitionAndDoesNotRepeat(t *testing.T) {
 	l := &cooperativeLauncher{mode: "cooperate"}
-	m := managerWith(t, l, map[string]string{"work.service": cooperativeService})
+	body := cooperativeService + misleadingEnvironment
+	m := managerWith(t, l, map[string]string{"work.service": body})
 	if _, err := m.Start(context.Background(), "work"); err != nil {
 		t.Fatal(err)
 	}
-	writeUnit(t, m.cfg.UnitsDir(), "work.service", strings.ReplaceAll(strings.ReplaceAll(cooperativeService, "stop.exe", "stop-new.exe"), "CONFIG=captured", "CONFIG=new"))
+	mainID := mustInvocationID(t, m, "work")
+	if got := envValues(l.specs()[0].Env, "WINUNIT_INVOCATION_ID"); len(got) != 1 || got[0] != mainID {
+		t.Fatalf("main invocation environment = %v, status %s", got, mainID)
+	}
+	writeUnit(t, m.cfg.UnitsDir(), "work.service", strings.ReplaceAll(strings.ReplaceAll(body, "stop.exe", "stop-new.exe"), "CONFIG=captured", "CONFIG=new"))
 	if _, err := m.Reload(); err != nil {
 		t.Fatal(err)
 	}
@@ -146,8 +154,18 @@ func TestExecStopUsesCapturedDefinitionAndDoesNotRepeat(t *testing.T) {
 	l.guard.Lock()
 	spec, helper := l.helperSpec, l.helper
 	l.guard.Unlock()
-	if spec.Argv[0] != `C:\Tools\stop.exe` || spec.Dir != `C:\Tools` || !containsEnv(spec.Env, "CONFIG=captured") || !containsEnv(spec.Env, "MAINPID=1") {
+	if spec.Argv[0] != `C:\Tools\stop.exe` || spec.Dir != `C:\Tools` || !containsEnv(spec.Env, "CONFIG=captured") {
 		t.Fatalf("helper lost captured context: %+v", spec)
+	}
+	// Contract: the helper's WINUNIT_INVOCATION_ID is the captured main
+	// invocation plus one final "-stop"; MAINPID is the live main process.
+	// Both replace configured or inherited values, whatever their case.
+	helperID := envValues(spec.Env, "WINUNIT_INVOCATION_ID")
+	if len(helperID) != 1 || helperID[0] != mainID+"-stop" || strings.TrimSuffix(helperID[0], "-stop") != mainID {
+		t.Fatalf("helper invocation environment = %v, main %s", helperID, mainID)
+	}
+	if pid := envValues(spec.Env, "MAINPID"); len(pid) != 1 || pid[0] != "1" {
+		t.Fatalf("helper MAINPID = %v", pid)
 	}
 	if helper == nil || helper.Alive() {
 		t.Fatal("helper survived successful stop")
@@ -164,11 +182,24 @@ func TestExecStopUsesCapturedDefinitionAndDoesNotRepeat(t *testing.T) {
 	}
 	found := false
 	for _, entry := range entries {
-		found = found || entry.Message == "stop helper output" && strings.HasSuffix(entry.InvocationID, "-stop")
+		found = found || entry.Message == "stop helper output" && entry.InvocationID == mainID+"-stop"
 	}
 	if !found {
 		t.Fatal("stop helper output missing from unit journal")
 	}
+}
+
+// envValues returns every value of name, matching names case-insensitively as
+// Windows does.
+func envValues(env []string, name string) []string {
+	var out []string
+	for _, entry := range env {
+		key, value, _ := strings.Cut(entry, "=")
+		if strings.EqualFold(key, name) {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func containsEnv(env []string, want string) bool {
@@ -187,18 +218,32 @@ func TestExecStopRestartRunsOnceForEachReplacedInvocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
+		replaced := mustInvocationID(t, m, "work")
 		if _, err := m.Restart(context.Background(), "work"); err != nil {
 			t.Fatal(err)
 		}
-		if got := len(l.specs()); got != 3+2*i {
+		specs := l.specs()
+		if got := len(specs); got != 3+2*i {
 			t.Fatalf("restart omitted or repeated helper: %d launches", got)
 		}
+		current := mustInvocationID(t, m, "work")
+		if helper := envValues(specs[len(specs)-2].Env, "WINUNIT_INVOCATION_ID"); current == replaced || len(helper) != 1 || helper[0] != replaced+"-stop" {
+			t.Fatalf("helper for replaced %s named %v; replacement %s", replaced, helper, current)
+		}
+		if main := envValues(specs[len(specs)-1].Env, "WINUNIT_INVOCATION_ID"); len(main) != 1 || main[0] != current {
+			t.Fatalf("replacement main environment = %v, status %s", main, current)
+		}
 	}
+	last := mustInvocationID(t, m, "work")
 	if _, err := m.Stop("work"); err != nil {
 		t.Fatal(err)
 	}
-	if len(l.specs()) != 6 {
+	specs := l.specs()
+	if len(specs) != 6 {
 		t.Fatal("replacement invocation did not receive its own stop helper")
+	}
+	if helper := envValues(specs[5].Env, "WINUNIT_INVOCATION_ID"); len(helper) != 1 || helper[0] != last+"-stop" {
+		t.Fatalf("final helper named %v, want %s-stop", helper, last)
 	}
 }
 
@@ -368,7 +413,7 @@ func TestExecStopNaturalExitAndOneshotSemantics(t *testing.T) {
 	for _, kind := range []string{"simple", "oneshot", "retained"} {
 		t.Run(kind, func(t *testing.T) {
 			l := &cooperativeLauncher{mode: "cooperate"}
-			body := cooperativeService
+			body := cooperativeService + misleadingEnvironment
 			if kind != "simple" {
 				body += "Type=oneshot\n"
 			}
@@ -379,6 +424,7 @@ func TestExecStopNaturalExitAndOneshotSemantics(t *testing.T) {
 			if _, err := m.Start(context.Background(), "work"); err != nil {
 				t.Fatal(err)
 			}
+			mainID := mustInvocationID(t, m, "work")
 			if kind == "simple" {
 				l.guard.Lock()
 				p := l.main
@@ -399,6 +445,15 @@ func TestExecStopNaturalExitAndOneshotSemantics(t *testing.T) {
 			}
 			waitState(t, m, "work.service", want)
 			waitCond(t, func() bool { return len(l.specs()) == 2 })
+			// The main process had exited when the helper started: no MAINPID,
+			// not even the configured one, and the exited invocation's ID.
+			helper := l.specs()[1].Env
+			if pid := envValues(helper, "MAINPID"); len(pid) != 0 {
+				t.Fatalf("helper after natural exit got MAINPID %v", pid)
+			}
+			if id := envValues(helper, "WINUNIT_INVOCATION_ID"); len(id) != 1 || id[0] != mainID+"-stop" {
+				t.Fatalf("helper after natural exit named %v, want %s-stop", id, mainID)
+			}
 			if _, err := m.Stop("work"); err != nil {
 				t.Fatal(err)
 			}
@@ -425,6 +480,25 @@ func TestExecStopIsSkippedAfterFailedStart(t *testing.T) {
 	}
 }
 
+// The forced-cleanup reserve is min(total/2, max(1s, total/5)) of the
+// remaining stop budget, not always one fifth.
+func TestStopForceReserveFormula(t *testing.T) {
+	for _, tc := range []struct{ total, reserve time.Duration }{
+		{0, 0},
+		{200 * time.Millisecond, 100 * time.Millisecond},
+		{500 * time.Millisecond, 250 * time.Millisecond},
+		{2 * time.Second, time.Second},
+		{3 * time.Second, time.Second},
+		{5 * time.Second, time.Second},
+		{10 * time.Second, 2 * time.Second},
+		{90 * time.Second, 18 * time.Second},
+	} {
+		if got := stopForceReserve(tc.total); got != tc.reserve {
+			t.Errorf("reserve(%v) = %v, want %v", tc.total, got, tc.reserve)
+		}
+	}
+}
+
 func TestStopBudgetReservesParentDeadline(t *testing.T) {
 	m, clock := managerWithFake(t, &fakeLauncher{}, map[string]string{})
 	ctx := m.withClockBudget(context.Background(), 2*time.Second)
@@ -432,5 +506,16 @@ func TestStopBudgetReservesParentDeadline(t *testing.T) {
 	remaining := m.remainingStopBudget(ctx, 5*time.Second)
 	if remaining != 500*time.Millisecond || stopForceReserve(remaining) != 250*time.Millisecond {
 		t.Fatal("cooperative budget ignored accepted operation deadline")
+	}
+	// A partly consumed long operation budget: the unit's own limit binds
+	// first, and the reserve follows the remaining total.
+	ctx = m.withClockBudget(context.Background(), 10*time.Second)
+	clock.Advance(4 * time.Second)
+	if remaining := m.remainingStopBudget(ctx, 5*time.Second); remaining != 5*time.Second || stopForceReserve(remaining) != time.Second {
+		t.Fatalf("unit limit within a consumed budget: %v", remaining)
+	}
+	clock.Advance(3 * time.Second)
+	if remaining := m.remainingStopBudget(ctx, 5*time.Second); remaining != 3*time.Second || stopForceReserve(remaining) != time.Second {
+		t.Fatalf("consumed budget below the unit limit: %v", remaining)
 	}
 }

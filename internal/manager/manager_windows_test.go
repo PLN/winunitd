@@ -23,6 +23,7 @@ import (
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/runtime/runtimetest"
+	"github.com/PLN/winunitd/internal/runtime/runtimetest/nestedjob"
 	"github.com/PLN/winunitd/internal/unit"
 	"golang.org/x/sys/windows"
 )
@@ -212,8 +213,23 @@ func TestMain(m *testing.M) {
 	case "scm-proxy":
 		runManagerSCMProxyTestService()
 		os.Exit(0)
+	case "nested-job":
+		args, _ := nestedjob.HelperArgs(os.Args)
+		os.Exit(nestedjob.Main([]string{nestedjob.HelperSelector}, args, os.Stdout, os.Stderr))
+	case "nested-owner-crash":
+		if err := runNestedOwner(os.Args[len(os.Args)-1]); err != nil {
+			fmt.Fprintln(os.Stderr, "nested-owner:", err)
+		}
+		os.Exit(1)
+	case "nested-manager-owner":
+		os.Exit(nestedManagerAgentMain(os.Args))
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	if err := closeNestedBroker(); err != nil {
+		fmt.Fprintln(os.Stderr, "nested broker root cleanup:", err)
+		code = 1
+	}
+	os.Exit(code)
 }
 
 // Keep a timer pending: a bare select {} makes non-race helper binaries
