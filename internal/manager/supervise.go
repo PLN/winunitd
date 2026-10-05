@@ -291,7 +291,8 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		}
 	}
 
-	if when, accepted := m.acceptProcessActivation(ctx, effect, proc); accepted {
+	when, accepted := m.acceptProcessActivation(ctx, effect, proc)
+	if accepted {
 		if m.engine != nil {
 			m.engine.UnitActive(name, when)
 		}
@@ -301,6 +302,12 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 	}
 
 	go m.watch(name, proc)
+	if !accepted && svc.WaitsForReadiness() {
+		// Readiness arrived after an accepted stop, cancellation or shutdown
+		// refused the activation. The stop owns the unit; this start did not
+		// complete and must not report success.
+		return fmt.Errorf("start superseded after readiness")
+	}
 	return nil
 }
 
