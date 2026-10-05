@@ -114,6 +114,31 @@ configuration and the previous running or stopped state.
 
 Restarting the manager after a successful upgrade starts enabled units.
 Units that were started manually and are not enabled are not restored.
+Known limit: operation history does not survive servicing. The restarted
+manager has new invocations and an empty operation history, so an operation ID
+from before servicing reports not found, never another record. Identities
+survive only in the durable records: journal lines and daemon-log records keep
+the invocation and operation IDs they were written with.
+
+Every product package of one release has the same installer version and the
+same file versions, so Windows Installer cannot order two builds of that
+release. `MajorUpgrade` refuses only a lower installer version. Repair and
+reinstall follow `REINSTALLMODE`, which defaults to `omus`: `o` replaces a file
+only when it is missing or older, so equal-version executables of another build
+can stay in place. The qualified reinstall is `REINSTALL=ALL
+REINSTALLMODE=amus` with the installed package (`a` replaces every file).
+Moving to a different build of the same release by reinstalling another
+package, which also needs `v` to re-cache that package, is not yet qualified.
+A failed upgrade rolls back to the previous files.
+
+After install, repair, upgrade or rollback, run `winctl capabilities` on the
+system endpoint. Require the release `version`, a present `commit` equal to the
+build manifest of the package you meant to install, and `modified: false`; hash
+the installed files against that manifest to confirm the exact artifact. Add
+`--require` for the features that the installed units depend on. A manager
+that answers `method-not-found` predates the query and is below any capability
+floor. See
+[build identity and capabilities](RUNTIME-REFERENCE.md#build-identity-and-capabilities).
 
 On a disposable machine, `WINUNITD_TEST_FAIL=1` fails the transaction after
 the replacement service has started. That property is a qualification hook.

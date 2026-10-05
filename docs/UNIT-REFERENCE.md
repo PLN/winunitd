@@ -419,6 +419,11 @@ readiness directives above or Type=notify when dependent activation must wait.
 are rejected. Do not copy a Linux systemd unit without checking this reference.
 
 Use `winctl verify` before deployment and `daemon-reload` after changing files.
+Warnings about ignored or defaulted settings do not fail verification; read
+them when every written setting must take effect. `winctl capabilities`
+reports the format versions, directives and features of the installed
+manager; see
+[build identity and capabilities](RUNTIME-REFERENCE.md#build-identity-and-capabilities).
 Reload accepts the whole configuration/graph or retains the previous revision.
 It does not restart live processes; restart explicitly to apply changed launch
 settings. Removed live units remain available for status/log/stop. Operation IDs
