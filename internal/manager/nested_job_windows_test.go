@@ -589,15 +589,26 @@ func TestWindowsNestedJobOwnerCrash(t *testing.T) {
 			obs := nestedjob.NewObserver(cfg.CaseDir)
 			drained := false
 			t.Cleanup(func() {
-				if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-					t.Errorf("kill owner: %v", err)
-				}
+				// The scenario terminates the owner itself, and the waiter then
+				// reaps it. On Windows a successful Wait releases the process,
+				// after which Kill returns EINVAL rather than ErrProcessDone, so
+				// the owner is killed only while it is unjoined, and a kill error
+				// counts only if the owner's exit is then not confirmed.
 				joined := false
 				select {
 				case <-waited:
 					joined = true
-				case <-time.After(nestedAgentTimeout):
-					t.Error("owner process exit unconfirmed after kill")
+				default:
+					killErr := cmd.Process.Kill()
+					select {
+					case <-waited:
+						joined = true
+					case <-time.After(nestedAgentTimeout):
+						t.Error("owner process exit unconfirmed after kill")
+					}
+					if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) && !joined {
+						t.Errorf("kill owner: %v", killErr)
+					}
 				}
 				escaped := obs.TerminateRunning()
 				if escaped != nil {
@@ -719,7 +730,18 @@ func runNestedOwner(base string) error {
 // The uncapped-commit control first shows that the same bounded workload
 // commits its full 3 x 96 MiB without the limit. A measurement that could
 // not be made is recorded, never read as zero bytes.
+//
+// N08 runs only in the native qualification lane: its fixed budget
+// (MemoryMax=256M, a baseline under 128 MiB) is sized for uninstrumented
+// fixture processes, and this package's fixture is the test binary itself.
+// Elsewhere it skips with the reason; a skip is never a pass.
 func TestWindowsNestedJobMemoryMax(t *testing.T) {
+	if !nestedjob.Qualifying() {
+		t.Skip("N08 runs only in the native qualification lane (" + nestedjob.EnvResults + " set): a generic run is not N08 evidence")
+	}
+	if raceDetectorEnabled {
+		t.Skip("N08 needs a test binary built without -race: each race-instrumented fixture process commits enough on its own that the 256M unit job cannot start the tree")
+	}
 	roles := []string{nestedjob.RoleEngine, nestedjob.RoleG1, nestedjob.RoleG2}
 	eachManagerLane(t, "N08", nestedManagerIdentities, func(t *testing.T, mode, identity string, rec *nestedjob.Record) {
 		commit := func(cfg *nestedjob.MainConfig) { cfg.Work = nestedjob.WorkCommit }
