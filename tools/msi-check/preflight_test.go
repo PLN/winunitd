@@ -2,11 +2,13 @@ package main
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf16"
 )
 
 func TestPreflightMode(t *testing.T) {
@@ -204,6 +206,190 @@ func TestTaskScanDoesNotFollowReparse(t *testing.T) {
 	}
 	if got := countRunLaunchers([]string{`C:\Tools\winctl.exe`, `C:\Tools\winunitd.exe --base-dir C:\Data`}); got != 1 {
 		t.Fatalf("run launchers=%d", got)
+	}
+}
+
+// taskDefinition is a complete synthetic Task Scheduler definition with one
+// Exec action. encoding is the XML declaration value and must match the
+// bytes the caller emits. The description carries a character outside the
+// Basic Multilingual Plane so UTF-16 encodings contain a surrogate pair.
+func taskDefinition(encoding, command, arguments string) string {
+	return `<?xml version="1.0" encoding="` + encoding + `"?>
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Author>EXAMPLE\alice</Author>
+    <Description>Fixture task ` + "\U0001F4E6" + `</Description>
+    <URI>\Fixture</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>S-1-5-18</UserId>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <Enabled>true</Enabled>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>` + command + `</Command>
+      <Arguments>` + arguments + `</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+`
+}
+
+// encodeUTF16 writes text as UTF-16 in the given byte order, optionally
+// with a byte order mark, as Task Scheduler stores registered definitions.
+func encodeUTF16(text string, order binary.AppendByteOrder, bom bool) []byte {
+	var out []byte
+	if bom {
+		out = order.AppendUint16(out, 0xfeff)
+	}
+	for _, u := range utf16.Encode([]rune(text)) {
+		out = order.AppendUint16(out, u)
+	}
+	return out
+}
+
+func scanOneTask(t *testing.T, data []byte) (int, error) {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Fixture"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return countTaskLaunchers(root)
+}
+
+// A registered task definition is UTF-16LE with a byte order mark. The
+// launcher check must see the same direct reference in every supported
+// encoding, not only in ASCII bytes.
+func TestTaskScanDecodesTaskDefinitions(t *testing.T) {
+	direct := func(encoding string) string {
+		return taskDefinition(encoding, `C:\Program Files\WinUnitD\bin\WINUNITD.Exe`, `--base-dir "C:\Data"`)
+	}
+	safe := func(encoding string) string { return taskDefinition(encoding, `C:\Tools\winctl.exe`, `--user status`) }
+	// Documented boundary: the scan matches an explicit winunitd.exe
+	// reference in the definition text only. It does not open a script
+	// or follow a wrapper, so this task counts zero even if its script
+	// starts a manager. Explicit migration owns per-user and indirect
+	// launcher discovery; this case does not qualify that behavior.
+	wrapper := taskDefinition("UTF-16", `C:\Windows\System32\wscript.exe`, `//B //Nologo "C:\Pilot\run-manager.vbs"`)
+	for _, tt := range []struct {
+		name string
+		data []byte
+		want int
+	}{
+		{"utf-8 direct mixed case", []byte(direct("UTF-8")), 1},
+		{"utf-8 with bom direct", append([]byte{0xef, 0xbb, 0xbf}, direct("UTF-8")...), 1},
+		{"utf-16le with bom direct", encodeUTF16(direct("UTF-16"), binary.LittleEndian, true), 1},
+		{"utf-16be with bom direct", encodeUTF16(direct("UTF-16"), binary.BigEndian, true), 1},
+		{"utf-16le without bom direct", encodeUTF16(direct("UTF-16LE"), binary.LittleEndian, false), 1},
+		{"utf-16be without bom direct", encodeUTF16(direct("UTF-16BE"), binary.BigEndian, false), 1},
+		{"utf-16le with bom safe", encodeUTF16(safe("UTF-16"), binary.LittleEndian, true), 0},
+		{"utf-8 safe", []byte(safe("UTF-8")), 0},
+		{"utf-16le with bom wrapper only", encodeUTF16(wrapper, binary.LittleEndian, true), 0},
+		{"empty definition", nil, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			n, err := scanOneTask(t, tt.data)
+			if err != nil || n != tt.want {
+				t.Fatalf("launchers=%d err=%v, want %d", n, err, tt.want)
+			}
+		})
+	}
+}
+
+// Malformed or unsupported encodings must refuse, never report zero
+// launchers, and never be matched after dropping NUL bytes.
+func TestTaskScanRefusesMalformedEncodings(t *testing.T) {
+	direct := taskDefinition("UTF-16", `C:\Tools\winunitd.exe`, ``)
+	le := encodeUTF16(direct, binary.LittleEndian, true)
+	unpairedHigh := binary.LittleEndian.AppendUint16(append([]byte{}, le...), 0xd83d)
+	unpairedHighMid := append(binary.LittleEndian.AppendUint16([]byte{0xff, 0xfe}, 0xd83d), encodeUTF16("<x/>", binary.LittleEndian, false)...)
+	loneLow := append(binary.LittleEndian.AppendUint16([]byte{0xff, 0xfe}, 0xdc00), encodeUTF16("<x/>", binary.LittleEndian, false)...)
+	withNUL := binary.LittleEndian.AppendUint16(append([]byte{}, le...), 0)
+	for _, tt := range []struct {
+		name string
+		data []byte
+	}{
+		{"utf-16le odd length", le[:len(le)-1]},
+		{"utf-16be odd length", func() []byte { b := encodeUTF16(direct, binary.BigEndian, true); return b[:len(b)-1] }()},
+		{"utf-16le truncated surrogate at end", unpairedHigh},
+		{"utf-16le unpaired high surrogate", unpairedHighMid},
+		{"utf-16le lone low surrogate", loneLow},
+		{"utf-16le nul character", withNUL},
+		{"invalid utf-8", []byte("<Task><Command>C:\\Tools\\winunitd.exe\xc3\x28</Command></Task>")},
+		{"utf-8 with nul byte", []byte("<Task><Command>C:\\Tools\\winunitd.exe\x00</Command></Task>")},
+		{"non-ascii first byte then nul", []byte{0xc3, 0x00, '<', 0x00}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			n, err := scanOneTask(t, tt.data)
+			if err == nil || err.Error() != "preflight conflict: could not inspect machine launchers" || n != 0 {
+				t.Fatalf("launchers=%d err=%v, want refusal", n, err)
+			}
+		})
+	}
+}
+
+// A mixed store counts each direct definition once, across encodings and
+// nested task folders, and ignores safe and wrapper-only definitions.
+func TestTaskScanMixedStore(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "Vendor", "Sub")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string][]byte{
+		filepath.Join(root, "DirectUTF16"):    encodeUTF16(taskDefinition("UTF-16", `C:\Tools\winunitd.exe`, ``), binary.LittleEndian, true),
+		filepath.Join(nested, "DirectUTF8"):   []byte(taskDefinition("UTF-8", `C:\Tools\WinUnitd.EXE`, ``)),
+		filepath.Join(root, "Safe"):           encodeUTF16(taskDefinition("UTF-16", `C:\Tools\winctl.exe`, ``), binary.LittleEndian, true),
+		filepath.Join(root, "Vendor", "Wrap"): encodeUTF16(taskDefinition("UTF-16", `wscript.exe`, `run.vbs`), binary.LittleEndian, true),
+	}
+	for path, data := range files {
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := countTaskLaunchers(root)
+	if err != nil || n != 2 {
+		t.Fatalf("launchers=%d err=%v, want 2", n, err)
+	}
+}
+
+// A launcher found in a UTF-16 definition blocks install, repair and
+// upgrade with the exact migration conflict; uninstall stays exempt.
+func TestDecodedTaskLauncherClassification(t *testing.T) {
+	n, err := scanOneTask(t, encodeUTF16(taskDefinition("UTF-16", `C:\Tools\winunitd.exe`, ``), binary.LittleEndian, true))
+	if err != nil || n != 1 {
+		t.Fatalf("launchers=%d err=%v", n, err)
+	}
+	install := `C:\Program Files\winunitd`
+	data := `C:\ProgramData\winunitd`
+	owned := serviceFacts{Exists: true, DecomposeOK: true, Binary: filepath.Join(install, "bin", "winunitd.exe"), BaseDir: data, LocalSystem: true}
+	const want = "preflight conflict: incompatible pilot launches winunitd; explicit migration is required"
+	for _, tt := range []struct {
+		mode    string
+		service serviceFacts
+	}{
+		{modeInstall, serviceFacts{}},
+		{modeRepair, owned},
+		{modeUpgrade, owned},
+	} {
+		err := evaluatePreflight(tt.mode, nil, tt.service, install, data, n)
+		if err == nil || err.Error() != want {
+			t.Fatalf("%s: %v", tt.mode, err)
+		}
+	}
+	if err := evaluatePreflight(modeUninstall, nil, owned, install, data, n); err != nil {
+		t.Fatalf("uninstall blocked by pilot: %v", err)
 	}
 }
 

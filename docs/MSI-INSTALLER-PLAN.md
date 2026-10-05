@@ -101,7 +101,7 @@ The fixture exercises export, disable, stop, copy, journal archive, conflict fai
 5. Install/start the MSI-owned system service; verify that it launches the user's manager with the correct profile, environment, and network credentials, then check all three Hermes components.
 6. Only mark migration successful after control ownership and application health checks pass. On failure, stop the new ownership path and restore the former tasks/configuration; retain backups.
 
-An unrelated pre-existing SCM service named `winunitd`, unmanaged binary path, or incompatible pilot is a preflight conflict, not permission to overwrite it. The R6.5 command reports machine-wide MSI preflight rejects separately from per-user moves and refuses the handoff while a conflict remains. It does not adopt a custom `--base-dir`. Linger remains explicit opt-in and needs LocalSystem qualification; the command does not collect account secrets.
+An unrelated pre-existing SCM service named `winunitd`, unmanaged binary path, or incompatible pilot is a preflight conflict, not permission to overwrite it. The pilot conflict covers an explicit `winunitd.exe` reference in a registered task definition (UTF-8 or UTF-16) or a 64-bit machine `Run`/`RunOnce` value. Script or wrapper indirection and per-user launchers are not resolved by the MSI; the migration step discovers, disables, and verifies them. The R6.5 command reports machine-wide MSI preflight rejects separately from per-user moves and refuses the handoff while a conflict remains. It does not adopt a custom `--base-dir`. Linger remains explicit opt-in and needs LocalSystem qualification; the command does not collect account secrets.
 
 ## Implementation sequence
 
