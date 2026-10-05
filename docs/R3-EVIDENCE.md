@@ -166,6 +166,13 @@ unfinished output retention, parent-budget reservation, the 32-helper admission
 limit, and Close joining accepted work. Focused cases passed twenty race-test
 repetitions; the full uncached Windows race suite and vet passed.
 
+Later portable regressions in the same file assert the documented helper
+environment exactly: `WINUNIT_INVOCATION_ID` equals the status invocation plus
+`-stop` across reload and each restart, configured `MAINPID` and
+`WINUNIT_INVOCATION_ID` values are replaced, `MAINPID` is absent after a natural
+exit, and the forced-cleanup reserve has the documented values. They add no
+native evidence; running them natively on a selected release remains pending.
+
 This closes the single-command R3.3b slice. It does not close the remaining unit
 format, dependency, health or multi-session qualification gates, nor qualify MSI
 servicing or the real application soak. Multiple stop commands, automatic
