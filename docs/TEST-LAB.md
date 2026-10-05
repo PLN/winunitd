@@ -354,7 +354,7 @@ N10 `uncapped` (a metered uncapped CPU run), and N16 `seam-failure` and
 [--case N]` prints executions with their `-test.run` selectors; `--hash`
 prints the matrix hash.
 
-Native-owner tests run in the ordinary Windows test lane:
+Native-owner tests run in the ordinary Windows test lane, except N08 (below):
 `TestNativeNestedJob*` in `internal/runtime` and `TestWindowsNestedJob*` in
 `internal/manager`, with subtests for mode, identity and launch phase. A
 SYSTEM subtest run by another account is a regression run, not SYSTEM
@@ -375,8 +375,8 @@ membership and replacement-launch questions about its one nested unit. An
 inspection that could not observe the unit or its job fails; it is never
 read as an empty state or as zero memory.
 
-The only documented missing prerequisite is the JOB_LIST attribute on a
-Windows release older than Windows 10 or Server 2016: the fixture reports
+The only documented missing Windows prerequisite is the JOB_LIST attribute
+on a Windows release older than Windows 10 or Server 2016: the fixture reports
 it as unqualified and the job-list subtests skip with that reason. On newer
 releases any attribute error is a real failure. The breakaway cases judge
 every probe by its numeric result: N11 accepts only `ERROR_ACCESS_DENIED` or
@@ -391,7 +391,14 @@ accepts the cooperative phase (TimeoutStopSec less the manager's force
 reserve) up to TimeoutStopSec plus a 3-second allowance; the hung helper
 must already have exited when the manager releases its slot. N08 records
 every role's baseline, commitment and native error, and is inconclusive
-when a measurement or the refused commitment is missing. The CPU quota cases
+when a measurement or the refused commitment is missing. N08 runs only in a
+native qualification run (`WINUNITD_NATIVE_NESTED_RESULTS` and the
+admission inputs below set) with a test binary built without `-race`: its
+fixed 128 MiB baseline and 256M job budget do not account for
+race-instrumentation overhead, and the `internal/manager` fixture is the
+test binary itself. Ordinary and race runs skip it with that reason. They
+give no N08 pass, and N08 stays unqualified until such a run; it is not
+part of the first increment. The CPU quota cases
 check native settings by default; `WINUNITD_NATIVE_NESTED_METER=1` adds a
 30-second measurement and the uncapped control. In a qualification run a
 settings-only result is inconclusive.

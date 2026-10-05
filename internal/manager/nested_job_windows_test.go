@@ -731,16 +731,17 @@ func runNestedOwner(base string) error {
 // commits its full 3 x 96 MiB without the limit. A measurement that could
 // not be made is recorded, never read as zero bytes.
 //
-// N08 runs only in the native qualification lane: its fixed budget
-// (MemoryMax=256M, a baseline under 128 MiB) is sized for uninstrumented
-// fixture processes, and this package's fixture is the test binary itself.
+// N08 runs only in the native qualification lane, with a test binary built
+// without -race: its fixed budget (MemoryMax=256M, a baseline under 128 MiB)
+// does not account for race-instrumentation overhead, and this package's
+// fixture is the test binary itself.
 // Elsewhere it skips with the reason; a skip is never a pass.
 func TestWindowsNestedJobMemoryMax(t *testing.T) {
 	if !nestedjob.Qualifying() {
 		t.Skip("N08 runs only in the native qualification lane (" + nestedjob.EnvResults + " set): a generic run is not N08 evidence")
 	}
 	if raceDetectorEnabled {
-		t.Skip("N08 needs a test binary built without -race: each race-instrumented fixture process commits enough on its own that the 256M unit job cannot start the tree")
+		t.Skip("N08 requires a test binary built without -race: its fixed 128 MiB baseline and 256M job budget do not account for race-instrumentation overhead")
 	}
 	roles := []string{nestedjob.RoleEngine, nestedjob.RoleG1, nestedjob.RoleG2}
 	eachManagerLane(t, "N08", nestedManagerIdentities, func(t *testing.T, mode, identity string, rec *nestedjob.Record) {
