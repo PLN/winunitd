@@ -807,11 +807,12 @@ What the lab provides for this driver:
   `serve` in the Default profile template and in B's profile;
   `failing.service` running a byte-equal copy of the fixture at
   `headless-fail\headless-workload.exe` beside it with `fail --code 7 --until
-  <that directory>\release-<A|B> --hold 500ms` (Restart=always,
-  RestartSec=100ms, RestartBackoff=exponential, RestartMaxDelaySec=1s,
-  StartLimitBurst=0); `finite.service` running a copy at
-  `headless-finite\headless-workload.exe` that always fails (Restart=always,
-  RestartSec=100ms, StartLimitBurst=5, StartLimitIntervalSec=60s); and `pipe-client.service`, not enabled, running `probe-pipe
+  <that directory>\release-<A|B> --hold 500ms` (`[Unit]` FormatVersion=2 and
+  StartLimitBurst=0; `[Service]` Restart=always, RestartSec=100ms,
+  RestartBackoff=exponential and RestartMaxDelaySec=1s, which need format 2);
+  `finite.service` running a copy at `headless-finite\headless-workload.exe`
+  that always fails (`[Unit]` StartLimitBurst=5 and StartLimitIntervalSec=60s;
+  `[Service]` Restart=always and RestartSec=100ms); and `pipe-client.service`, not enabled, running `probe-pipe
   --from-config <state root>\config.json --client outside-unit --out <state
   root>\probes\outside-unit.json`.
 - Commands, each waiting for its work and exiting 0 only on success:
