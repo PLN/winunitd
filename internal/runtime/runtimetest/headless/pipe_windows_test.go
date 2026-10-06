@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -97,7 +98,10 @@ func TestQualificationPipeRefusesAnExitedCaller(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(exe)
-	cmd.Env = append(os.Environ(), helperRole+"=pipe-exit", helperPipe+"="+name)
+	// A -race build sleeps a second before it exits (atexit_sleep_ms), as long as
+	// the server's settle window; this caller must exit at once.
+	cmd.Env = append(os.Environ(), "GORACE="+strings.TrimSpace(os.Getenv("GORACE")+" atexit_sleep_ms=0"),
+		helperRole+"=pipe-exit", helperPipe+"="+name)
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("exiting client: %v", err)
 	}
@@ -137,6 +141,15 @@ func TestProbeOwnToken(t *testing.T) {
 	if p.SID != selfSID(t) || p.AuthenticationID == "" || p.Integrity == "" || len(p.Groups) == 0 || len(p.Privileges) == 0 {
 		t.Fatalf("token probe: SID matches %t, logon %t, integrity %t, %d groups, %d privileges", p.SID == selfSID(t),
 			p.AuthenticationID != "", p.Integrity != "", len(p.Groups), len(p.Privileges))
+	}
+	want := "medium"
+	if p.SID == SystemSID {
+		want = "system"
+	} else if windows.GetCurrentProcessToken().IsElevated() {
+		want = "high"
+	}
+	if p.Integrity != want {
+		t.Fatalf("integrity %s, want %s", p.Integrity, want)
 	}
 	if _, ok := p.KnownFolders["localAppData"]; !ok {
 		t.Fatalf("no LocalAppData: errors %v", p.KnownFolderErrors)

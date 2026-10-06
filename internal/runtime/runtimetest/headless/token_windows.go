@@ -5,6 +5,7 @@ package headless
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"unsafe"
 
@@ -124,8 +125,13 @@ func integrity(tok windows.Token) (string, error) {
 		return "", fmt.Errorf("token integrity: %w", err)
 	}
 	label := (*windows.Tokenmandatorylabel)(unsafe.Pointer(&buf[0]))
-	sid := label.Label.Sid
-	rid := sid.SubAuthority(uint32(sid.SubAuthorityCount()) - 1)
+	// The label is S-1-16-<RID>. Its string form avoids SID.SubAuthority, whose API
+	// returns a pointer into this Go buffer that -race's checkptr refuses.
+	s := label.Label.Sid.String()
+	rid, err := strconv.ParseUint(strings.TrimPrefix(s, "S-1-16-"), 10, 32)
+	if !strings.HasPrefix(s, "S-1-16-") || err != nil {
+		return "", fmt.Errorf("token integrity label %q", s)
+	}
 	switch {
 	case rid >= 0x4000:
 		return "system", nil

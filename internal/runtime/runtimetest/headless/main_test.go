@@ -236,7 +236,8 @@ func TestPadLog(t *testing.T) {
 	if !strings.HasPrefix(string(data), `{"code":"daemon.open"}`+"\n") || strings.TrimRight(string(data[23:]), " \n") != "" || data[len(data)-1] != '\n' {
 		t.Fatal("padding wrote something other than spaces and a newline")
 	}
-	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+	// Windows reports no permission bits; PadLog itself refuses a changed security descriptor.
+	if fi, _ := os.Stat(path); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Fatalf("mode %v", fi.Mode())
 	}
 	if size, err := PadLog(path, 262145, 300000); err != nil || size != 262145 {
@@ -266,10 +267,16 @@ func TestProbeConfig(t *testing.T) {
 		}
 		return path
 	}
-	good := ProbeConfig{UnitFile: "/u/units/background.service", PeerRoot: "/peer", Absent: "/absent", Denied: "/denied",
+	// Paths absolute on the running platform.
+	root := string(filepath.Separator)
+	if runtime.GOOS == "windows" {
+		root = `C:\`
+	}
+	abs := func(elem ...string) string { return filepath.Join(append([]string{root}, elem...)...) }
+	good := ProbeConfig{UnitFile: abs("u", "units", "background.service"), PeerRoot: abs("peer"), Absent: abs("absent"), Denied: abs("denied"),
 		Loopback: "127.0.0.1:7401", Peer: "192.0.2.10:7401", Pipe: `\\.\pipe\winunitd-qual\h15`,
 		SMB:       &SMBTarget{Server: "peer", Path: `\\peer\share\nonce.txt`, ExpectSHA256: testContent},
-		EFS:       &EFSTarget{Path: "/b/secret.txt", Plain: "/b/plain.txt", ExpectSHA256: testContent},
+		EFS:       &EFSTarget{Path: abs("b", "secret.txt"), Plain: abs("b", "plain.txt"), ExpectSHA256: testContent},
 		DenyPipes: map[string]string{ClientControlPipe: `\\.\pipe\winunitd\control`, ClientSystemOnly: `\\.\pipe\winunitd-qual\system-only`}}
 	if _, err := LoadProbeConfig(write(good)); err != nil {
 		t.Fatal(err)
@@ -283,7 +290,7 @@ func TestProbeConfig(t *testing.T) {
 			c.SMB = &SMBTarget{Server: "peer", Path: `\\other\share\x`, ExpectSHA256: testContent}
 		},
 		"smb no hash":                  func(c *ProbeConfig) { c.SMB = &SMBTarget{Server: "peer", Path: `\\peer\share\x`} },
-		"efs relative":                 func(c *ProbeConfig) { c.EFS = &EFSTarget{Path: "x", Plain: "/p", ExpectSHA256: testContent} },
+		"efs relative":                 func(c *ProbeConfig) { c.EFS = &EFSTarget{Path: "x", Plain: abs("p"), ExpectSHA256: testContent} },
 		"denial for an unknown client": func(c *ProbeConfig) { c.DenyPipes = map[string]string{"in-unit": `\\.\pipe\x`} },
 		"denial of a file":             func(c *ProbeConfig) { c.DenyPipes = map[string]string{ClientControlPipe: `C:\x`} },
 	} {
