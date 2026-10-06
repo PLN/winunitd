@@ -92,14 +92,17 @@ func subjectFacts(process windows.Handle) (qualSubject, error) {
 		return s, err
 	}
 	s.SID = user.User.Sid.String()
-	s.Elevated = tok.IsElevated()
+	var elevated uint32
+	for _, q := range []struct {
+		class uint32
+		value *uint32
+	}{{windows.TokenElevation, &elevated}, {windows.TokenSessionId, &s.Session}, {windows.TokenElevationType, &s.ElevationType}} {
+		if err := tokenUint32(tok, q.class, q.value); err != nil {
+			return s, err
+		}
+	}
+	s.Elevated = elevated != 0
 	var n uint32
-	if err := windows.GetTokenInformation(tok, windows.TokenSessionId, (*byte)(unsafe.Pointer(&s.Session)), 4, &n); err != nil {
-		return s, err
-	}
-	if err := windows.GetTokenInformation(tok, windows.TokenElevationType, (*byte)(unsafe.Pointer(&s.ElevationType)), 4, &n); err != nil {
-		return s, err
-	}
 	var source struct {
 		Name [8]byte
 		ID   windows.LUID
@@ -139,6 +142,32 @@ func subjectFacts(process windows.Handle) (qualSubject, error) {
 	s.LogonType, s.AuthPackage = data.LogonType, data.AuthenticationPackage.String()
 	qualLsaFreeReturnBuffer.Call(uintptr(unsafe.Pointer(data)))
 	return s, nil
+}
+
+// tokenUint32 reads one 32-bit token fact. A failed query, or one that
+// returns another length, is an error, so an unread fact such as the
+// elevation is never reported as false.
+func tokenUint32(tok windows.Token, class uint32, value *uint32) error {
+	var n uint32
+	if err := windows.GetTokenInformation(tok, class, (*byte)(unsafe.Pointer(value)), 4, &n); err != nil {
+		return fmt.Errorf("token information class %d: %w", class, err)
+	}
+	if n != 4 {
+		return fmt.Errorf("token information class %d: %d bytes", class, n)
+	}
+	return nil
+}
+
+// A failed token query is an error of the subject report, not an
+// unelevated token.
+func TestQualSubjectQueryFailureIsAnError(t *testing.T) {
+	var elevated uint32
+	if err := tokenUint32(windows.Token(0), windows.TokenElevation, &elevated); err == nil {
+		t.Fatal("an elevation query on no token succeeded")
+	}
+	if _, err := subjectFacts(windows.Handle(0)); err == nil {
+		t.Fatal("the facts of no process were reported")
+	}
 }
 
 func processCreated(process windows.Handle) (uint64, error) {
