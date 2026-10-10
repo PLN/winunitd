@@ -26,6 +26,10 @@ const (
 	DaemonEventOpen              = "daemon.open"
 	DaemonEventClose             = "daemon.close"
 	DaemonEventStartupFailed     = "daemon.startup-failed"
+	// DaemonEventAdmissionHeld records that this manager start admits no
+	// work, for example below the compatibility floor. The reason is the
+	// short summary; status admissionHold carries the details.
+	DaemonEventAdmissionHeld = "daemon.admission-held"
 
 	maxDaemonQueueRecords = 32
 	maxDaemonQueueBytes   = 16 << 10
@@ -601,7 +605,7 @@ func encodeDaemonEvent(ev DaemonEvent) ([]byte, DaemonEventView, bool) {
 
 func knownDaemonCode(code string) bool {
 	switch code {
-	case DaemonEventLifecycleRejected, DaemonEventStartLimit, DaemonEventOpen, DaemonEventClose, DaemonEventStartupFailed:
+	case DaemonEventLifecycleRejected, DaemonEventStartLimit, DaemonEventOpen, DaemonEventClose, DaemonEventStartupFailed, DaemonEventAdmissionHeld:
 		return true
 	default:
 		return false

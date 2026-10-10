@@ -829,6 +829,9 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 				fmt.Fprintf(c.stdout, "  MaintenanceError: %s\n", m.Maintenance.Error)
 			}
 		}
+		if m.AdmissionHold != "" {
+			fmt.Fprintf(c.stdout, "  AdmissionHold: %s\n", m.AdmissionHold)
+		}
 		if m.ConfigRevision != "" {
 			fmt.Fprintf(c.stdout, "ConfigRevision=%s\n", m.ConfigRevision)
 		}
