@@ -259,6 +259,72 @@ validation, pipe squatting, privileged filesystem paths, or every possible
 native handle type. Record those checks separately. Guest drivers own account,
 logon, payload ACL and restoration evidence; test output omits fixture SIDs.
 
+Non-file handle classes have their own tests, so a native run of them does not
+repeat the file, environment, stdio and pipe-denial cases above. The classes
+are events, sections, mutexes, semaphores and jobs. Each sentinel is a named
+object whose name carries a fresh nonce; a section also holds a second nonce
+in its contents. The child first duplicates the
+handle at each number into one it holds, so every query concerns one object,
+and reports a number that names no handle as absent. It reads the object type
+first and the name, and for a section the contents through a read-only view,
+only for the expected type; that the type query returns promptly is observed
+behavior the native run must confirm. The parent counts a sentinel as
+inherited only when type, full name and contents all match its own reading.
+Any failed query makes the observation unknown, and an unknown observation
+fails the test rather than counting as absence. With
+`WINUNITD_QUAL_SUBJECT_OUT` set, the isolation tests check the child's own
+token (the product's S4U logon in session zero, or an interactive logon in
+the selected session) and write it, with the SYSTEM test process as its
+owner, in the qualification receipt's subject format.
+`TestNativeObjectProbeDetectsSelectiveInheritance` is the positive control:
+two inheritable sentinels of each kind, only the first of each in the
+explicit inherit list, so the child must find exactly the first of every
+kind. It runs under any token. `TestNativeInteractiveUserManagerObjectIsolation` and
+`TestNativeHeadlessUserManagerObjectIsolation` use the same WTS, filtered WTS
+and S4U fixtures and gating as the security cases above. The production launch
+must expose no sentinel, and the child must report the expected identity,
+session and non-elevation. Processes, threads, tokens, pipes, sockets and
+registry keys remain separate classes and are not inferred from these.
+
+`tests/security/pathcases` holds the case ledger for nested-descendant and
+ancestor-path cases that remain open in R4. It excludes the shapes already
+qualified: the data root and its immediate children at install and repair,
+caller mutation inside the protected trees, the delegated known-folder
+junction and the daemon-log chain. It lists the residual shapes it defers,
+including profile-root ancestors, unsafe or custom parents and reparse
+races. Each case names the privileged consumer, the shape and depth, the
+actor and its logon mode, the outside parent of an ancestor case, a safe
+sibling control and the target that must stay unchanged. Each step names who
+performs it: the actor, a SYSTEM consumer, or the delegated admission probe
+impersonating the account or its peer. A consumer step that must avoid the
+target, and a consumer control, name the consumer's own result, such as
+admitted or not admitted. The expected outcome rests on a cited product rule:
+`protected` (the caller's attempt is denied), `refuse` (the consumer refuses
+with its exact diagnostic) or `no-follow` (the consumer works and never
+reaches the target). Where the product is silent, the case is
+`decision-needed`. It states its policy question and the reviewer's
+recommended answer, and it cannot pass until the maintainer decides.
+Standard and UAC-filtered callers come in pairs.
+
+The evaluator recomputes a verdict from one native observation of that
+ledger. The observation names the digest of the policy it was evaluated
+against and an envelope: the admitted source and manifest, the run and
+execution, the SYSTEM observer and its ordered stage marks. It binds the
+actor to the run's account for its class with the genuine token of its mode,
+and binds each step's performer to its context. Every object must be read at
+every stage with its kind, file ID, owner, DACL and content witness. A link
+must be absent before the fixture made it and after restoration, have the
+shape's exact reparse tag, and resolve to the watched target. The target, leaf
+and parent must be unchanged by the steps and restored, and an ancestor case
+measures the actor's effective rights, so a right to remove the leaf fails.
+Step results must be coherent: a success carries no error, and a failure names
+its domain, its code, or the product's diagnostic, which is compared with the
+ledger's. They must also carry the consumer's own result and state whether the
+target was exposed; any exposure fails. The ledger is read as strict JSON,
+refusing duplicate keys and trailing data. The ledger and evaluator are
+fixture preparation, not qualification evidence; the native producers are a
+later package.
+
 The [live-manager qualification](R4-EVIDENCE.md#live-manager-cross-user-rejection-and-production-client-server-owner-validation)
 adds genuine interactive callers, independent endpoint/server identity checks,
 own-manager positive controls and peer/system access-denied observations. A
