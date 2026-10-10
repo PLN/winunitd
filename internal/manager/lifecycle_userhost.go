@@ -95,6 +95,9 @@ func (h *UserHost) acceptUserLaunch(sid, mode string, session uint32, wanted fun
 	if h.closed || !wanted() {
 		return nil, fmt.Errorf("user manager launch is no longer requested")
 	}
+	if h.cfg.AdmissionHold != "" {
+		return nil, fmt.Errorf("user-manager admission is held: %s", h.cfg.AdmissionHold)
+	}
 	if h.bySID[sid] == nil && len(h.bySID) >= maxTrackedUserManagers {
 		return nil, fmt.Errorf("tracked user manager limit %d: %w", maxTrackedUserManagers, protocol.ErrBusy())
 	}

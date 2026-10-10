@@ -571,7 +571,7 @@ func (m *Manager) overlayDaemonLog(ms *protocol.MachineStatus) {
 }
 
 func (m *Manager) machineLocked() *protocol.MachineStatus {
-	ms := &protocol.MachineStatus{State: "running", ConfigRevision: m.configRevision, NativeProbes: len(m.nativeProbes)}
+	ms := &protocol.MachineStatus{State: "running", ConfigRevision: m.configRevision, NativeProbes: len(m.nativeProbes), AdmissionHold: m.cfg.AdmissionHold}
 	for name, rt := range m.units {
 		ms.UnitsLoaded++
 		if rt != nil && rt.unit != nil && rt.unit.Kind == unit.KindTimer {
@@ -714,6 +714,10 @@ func (m *Manager) startOperation(ctx context.Context, name string, origin activa
 	if m.closed {
 		m.mu.Unlock()
 		return nil, protocol.ErrFailed("manager is shutting down or closed")
+	}
+	if m.cfg.AdmissionHold != "" {
+		m.mu.Unlock()
+		return nil, protocol.ErrFailed("admission is held: " + m.cfg.AdmissionHold)
 	}
 	if origin != nil && !origin.validLocked(m) {
 		m.mu.Unlock()

@@ -1,0 +1,320 @@
+//go:build windows
+
+package servicing
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"time"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+)
+
+// ACE types beyond the two x/sys names. A callback ACE carries the same
+// header, mask and SID as its plain form, followed by a condition.
+const (
+	accessAllowedCallbackACE = 0x9
+	accessDeniedCallbackACE  = 0xA
+)
+
+const (
+	fileDeleteChild = 0x0040
+	// writeRights would let a principal change, delete or re-permission a
+	// protected directory, its entries or the record.
+	writeRights = windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA | windows.FILE_WRITE_EA | windows.FILE_WRITE_ATTRIBUTES |
+		fileDeleteChild | windows.DELETE | windows.WRITE_DAC | windows.WRITE_OWNER | windows.GENERIC_WRITE | windows.GENERIC_ALL
+	// replaceRights would let a principal delete or rename an entry of the
+	// containing directory, or take control of it. Creating new entries
+	// there, which ProgramData allows its users, is not among them.
+	replaceRights = fileDeleteChild | windows.DELETE | windows.WRITE_DAC | windows.WRITE_OWNER | windows.GENERIC_ALL
+)
+
+// principals is the calling process's account and whether its token is
+// elevated. The manager and the package helper run as SYSTEM.
+func principals() (*windows.SID, bool, error) {
+	tok := windows.GetCurrentProcessToken()
+	user, err := tok.GetTokenUser()
+	if err != nil {
+		return nil, false, fmt.Errorf("floor caller identity: %w", err)
+	}
+	return user.User.Sid, tok.IsElevated(), nil
+}
+
+func trustedSID(sid, self *windows.SID) bool {
+	if sid == nil {
+		return false
+	}
+	var me string
+	if self != nil {
+		me = self.String()
+	}
+	return trustedPrincipal(sid.String(), me)
+}
+
+// heldDirs keeps the checked chain open. The handles deny delete sharing, so
+// no level can be renamed or replaced while an operation uses it.
+type heldDirs []windows.Handle
+
+func (h heldDirs) Close() error {
+	var errs []error
+	for _, handle := range h {
+		errs = append(errs, windows.CloseHandle(handle))
+	}
+	return errors.Join(errs...)
+}
+
+func openFloorDirs(path string) (io.Closer, bool, error) {
+	self, _, err := principals()
+	if err != nil {
+		return nil, false, err
+	}
+	container, root, daemon := floorChain(path)
+	var held heldDirs
+	fail := func(err error) (io.Closer, bool, error) {
+		_ = held.Close()
+		return nil, false, err
+	}
+	h, err := openDir(container)
+	if err != nil {
+		return fail(fmt.Errorf("floor data root's containing directory: %w", err))
+	}
+	held = append(held, h)
+	if err := checkDir(h, "data root's containing directory", replaceRights, false, self); err != nil {
+		return fail(err)
+	}
+	for _, level := range []struct{ path, name string }{{root, "data root"}, {daemon, "daemon directory"}} {
+		h, err := openDir(level.path)
+		if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
+			return held, false, nil
+		}
+		if err != nil {
+			return fail(fmt.Errorf("floor %s: %w", level.name, err))
+		}
+		held = append(held, h)
+		if err := checkDir(h, level.name, writeRights, true, self); err != nil {
+			return fail(err)
+		}
+	}
+	return held, true, nil
+}
+
+// openDir opens a directory itself, never a reparse target, for its
+// attributes and security only, sharing read and write but not delete.
+func openDir(path string) (windows.Handle, error) {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return 0, err
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		h, err := windows.CreateFile(p, windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+			nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+		if err == nil {
+			return h, nil
+		}
+		if !errors.Is(err, windows.ERROR_SHARING_VIOLATION) || time.Now().After(deadline) {
+			return 0, err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// checkDir checks one level on its handle: a directory, not a reparse point,
+// a trusted owner and no forbidden right for anyone else. Inherit-only
+// grants count where they shape the record and its siblings.
+func checkDir(h windows.Handle, name string, forbidden uint32, inheritOnly bool, self *windows.SID) error {
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
+		return err
+	}
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		return fmt.Errorf("floor %s is a reparse point", name)
+	}
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 {
+		return fmt.Errorf("floor %s is not a directory", name)
+	}
+	return checkSecurity(h, "floor "+name, forbidden, inheritOnly, self)
+}
+
+func checkSecurity(h windows.Handle, name string, forbidden uint32, inheritOnly bool, self *windows.SID) error {
+	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return err
+	}
+	owner, _, err := sd.Owner()
+	if err != nil || !trustedSID(owner, self) {
+		return fmt.Errorf("%s must be owned by SYSTEM, Administrators, TrustedInstaller or the checking account", name)
+	}
+	acl, _, err := sd.DACL()
+	if err != nil || acl == nil {
+		return fmt.Errorf("%s requires a restrictive DACL", name)
+	}
+	for i := uint32(0); i < uint32(acl.AceCount); i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(acl, i, &ace); err != nil {
+			return err
+		}
+		switch ace.Header.AceType {
+		case windows.ACCESS_DENIED_ACE_TYPE, accessDeniedCallbackACE:
+			continue
+		case windows.ACCESS_ALLOWED_ACE_TYPE, accessAllowedCallbackACE:
+		default:
+			return fmt.Errorf("%s has an unsupported ACL", name)
+		}
+		if !inheritOnly && ace.Header.AceFlags&windows.INHERIT_ONLY_ACE != 0 {
+			continue
+		}
+		if uint32(ace.Mask)&forbidden != 0 && !trustedSID((*windows.SID)(unsafe.Pointer(&ace.SidStart)), self) {
+			return fmt.Errorf("%s permits writes by a principal other than SYSTEM, Administrators, TrustedInstaller or the checking account", name)
+		}
+	}
+	return nil
+}
+
+// openProtected opens the record itself, never a reparse target, and checks
+// its owner and DACL on the open handle.
+func openProtected(path string) (*os.File, error) {
+	self, _, err := principals()
+	if err != nil {
+		return nil, err
+	}
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	h, err := windows.CreateFile(p, windows.GENERIC_READ|windows.READ_CONTROL, windows.FILE_SHARE_READ, nil,
+		windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	if err := protectedHandle(h, "floor record", self); err != nil {
+		_ = windows.CloseHandle(h)
+		return nil, err
+	}
+	return os.NewFile(uintptr(h), path), nil
+}
+
+func protectedHandle(h windows.Handle, name string, self *windows.SID) error {
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
+		return err
+	}
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		return fmt.Errorf("%s is a reparse point", name)
+	}
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		return fmt.Errorf("%s is not a regular file", name)
+	}
+	return checkSecurity(h, name, writeRights, true, self)
+}
+
+// floorSDDL grants full control to SYSTEM and Administrators only, without
+// inheritance; the owner is the writer's default owner, Administrators for
+// an elevated administrator. A non-elevated writer, which can only be a test
+// in its own directory, also keeps access for itself.
+func floorSDDL() (string, error) {
+	self, elevated, err := principals()
+	if err != nil {
+		return "", err
+	}
+	const machine = "D:P(A;;FA;;;SY)(A;;FA;;;BA)"
+	if elevated || self.IsWellKnown(windows.WinLocalSystemSid) {
+		return machine, nil
+	}
+	return machine + "(A;;FA;;;" + self.String() + ")", nil
+}
+
+func protectedAttributes() (*windows.SecurityAttributes, error) {
+	sddl, err := floorSDDL()
+	if err != nil {
+		return nil, err
+	}
+	sd, err := windows.SecurityDescriptorFromString(sddl)
+	if err != nil {
+		return nil, err
+	}
+	return &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}, nil
+}
+
+func createProtected(path string) (*os.File, error) {
+	sa, err := protectedAttributes()
+	if err != nil {
+		return nil, err
+	}
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	h, err := windows.CreateFile(p, windows.GENERIC_WRITE, 0, sa, windows.CREATE_NEW,
+		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "create", Path: path, Err: err}
+	}
+	return os.NewFile(uintptr(h), path), nil
+}
+
+// fileLock is an exclusive byte-range lock on the open lock file. The handle
+// shares no delete, so the file cannot be removed or renamed while held.
+type fileLock windows.Handle
+
+func (l fileLock) Close() error {
+	h := windows.Handle(l)
+	return errors.Join(windows.UnlockFileEx(h, 0, 1, 0, &windows.Overlapped{}), windows.CloseHandle(h))
+}
+
+// lockFloor opens or creates the lock file itself, never a reparse target,
+// with the record's protection, checks its owner and DACL on the handle and
+// takes an exclusive lock on its first byte. A process that exits releases
+// its lock.
+func lockFloor(path string, wait time.Duration) (io.Closer, error) {
+	self, _, err := principals()
+	if err != nil {
+		return nil, err
+	}
+	sa, err := protectedAttributes()
+	if err != nil {
+		return nil, err
+	}
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(wait)
+	var h windows.Handle
+	for {
+		h, err = windows.CreateFile(p, windows.GENERIC_READ|windows.GENERIC_WRITE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, sa,
+			windows.OPEN_ALWAYS, windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
+			return nil, fmt.Errorf("floor lock: %w", err)
+		}
+		if !time.Now().Before(deadline) {
+			return nil, ErrFloorBusy
+		}
+		time.Sleep(lockPoll)
+	}
+	if err := protectedHandle(h, "floor lock", self); err != nil {
+		_ = windows.CloseHandle(h)
+		return nil, err
+	}
+	for {
+		err := windows.LockFileEx(h, windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &windows.Overlapped{})
+		if err == nil {
+			return fileLock(h), nil
+		}
+		if !errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
+			_ = windows.CloseHandle(h)
+			return nil, fmt.Errorf("floor lock: %w", err)
+		}
+		if !time.Now().Before(deadline) {
+			_ = windows.CloseHandle(h)
+			return nil, ErrFloorBusy
+		}
+		time.Sleep(lockPoll)
+	}
+}
