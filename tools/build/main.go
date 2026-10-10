@@ -103,18 +103,23 @@ func run() error {
 	}
 	m := manifest{Schema: 2, Version: *releaseVersion, ThirdPartyHash: thirdPartyHash, Commit: commit, Dirty: status != "", Go: want,
 		GOOS: *goos, GOARCH: *arch, GoModHash: modHash, GoSumHash: sumHash}
-	for _, name := range []string{"winunitd", "winctl", "winunit-notify"} {
+	names := []string{"winunitd", "winctl", "winunit-notify"}
+	args := []string{"build", "-trimpath", "-buildvcs=true", "-ldflags", "-X github.com/PLN/winunitd/internal/version.Version=" + *releaseVersion, "-o", *out}
+	for _, name := range names {
+		args = append(args, "./cmd/"+name)
+	}
+	cmd := exec.Command(goexe, args...)
+	cmd.Env = buildEnv(os.Environ(), *goos, *arch)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("executables: %w", err)
+	}
+	for _, name := range names {
 		file := name
 		if *goos == "windows" {
 			file += ".exe"
 		}
 		path := filepath.Join(*out, file)
-		cmd := exec.Command(goexe, "build", "-trimpath", "-buildvcs=true", "-ldflags", "-X github.com/PLN/winunitd/internal/version.Version="+*releaseVersion, "-o", path, "./cmd/"+name)
-		cmd.Env = buildEnv(os.Environ(), *goos, *arch)
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("%s: %w", name, err)
-		}
 		if err := checkEmbeddedRevision(path, commit); err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
