@@ -42,7 +42,7 @@ confirmed profile unload. The real application pilot was unchanged.
 This qualifies startup/recovery policy and the listed servicing paths. It does
 not complete R6. R6.3 data retention is recorded separately. R6.4 platform
 acceptance, R6.5 migration tooling, and overall R6 remain open. R7 handoff
-and its seven-day soak have not started.
+and its soak have not started.
 
 ## Maintenance and rollback
 

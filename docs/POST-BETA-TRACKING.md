@@ -89,7 +89,7 @@ the [maintenance contract](OPERATIONS.md#global-maintenance). The complete
 [coordinator audit and qualification](R2-EVIDENCE.md#consolidated-coordinator-acceptance)
 now finish the technical scope of #96/#97 and the R2 dependency of the delivered
 R3 conformance work. Broader session/security, operational stress, MSI servicing
-and signing retain their separate gates. The live pilot handoff and seven-day
+and signing retain their separate gates. The live pilot handoff and
 soak have not begun;
 successful beta installation and selected runtime tests do not close them.
 

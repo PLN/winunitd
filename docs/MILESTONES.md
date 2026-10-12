@@ -3,7 +3,7 @@
 **Delivery status:** [B1-B4 public beta gates](BETA-RELEASE.md) completed with
 `0.2.1-beta` on September 6, 2026. Prioritize supported-path defects and adopter
 feedback while continuing the R0-R8 design and qualification work. Exhaustive
-Windows qualification and the seven-day soak remain separate acceptance
+Windows qualification and the R7 pilot soak remain separate acceptance
 requirements; beta publication does not close them.
 
 Status updated September 23, 2026. Implements [ROADMAP.md](../ROADMAP.md) and [Design v2](../DESIGN.md).
@@ -132,7 +132,7 @@ On October 12, 2026 the maintainer decided that the dev-machine pilot proceeds o
 - [ ] **R7.1 Preflight:** inventory actual tasks/processes, exported configuration, owner identity, health endpoints, authentication, ports, and rollback assets. Keep host-specific values outside source control.
 - [ ] **R7.2 Handoff:** stop/disable competing launchers, migrate configuration explicitly, install the MSI service, and verify one owner for each gateway/dashboard/web interface process tree.
 - [ ] **R7.3 Exercise:** test real reboot, logon/logoff, user-manager and workload crashes, component readiness, logs, graceful/forced stop, repair, upgrade, and return to the previous ownership path.
-- [ ] **R7.4 Soak:** observe at least seven consecutive days of normal use after the last lifecycle-affecting fix, including the transitions above. Record unexpected restarts, duplicate processes, missing logs, and resource trends. Investigate anomalies and repeat affected checks; restart the soak after a lifecycle fix.
+- [ ] **R7.4 Soak:** observe 24 hours of normal use after the last lifecycle-affecting fix, checking health, ownership, restarts, and memory every hour. Record unexpected restarts, duplicate processes, and missing logs. Investigate anomalies and repeat affected checks; restart the soak after a lifecycle fix. Long-term memory growth and log accumulation are observed during the wider rollout to more machines, not in this soak.
 
 Exit gate: all three components meet their health/authentication checks under MSI/SCM ownership; recovery and rollback were actually exercised; no unexplained ownership loss, duplicates, or unbounded resource growth during the recorded soak. An ordinary application/upstream outage is classified separately from supervisor failure. Restore the previous pilot if the handoff fails.
 
