@@ -1,9 +1,9 @@
 name: CI
 
 on:
-  # Routine private development runs on trusted local CI. Keep this full
-  # hosted check available for deliberate release verification without
-  # spending the account's included minutes on each push or PR update.
+  pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -35,7 +35,7 @@ jobs:
         run: go vet ./...
 
       - name: Staticcheck
-        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
 
       - name: Test
         env:
@@ -95,7 +95,7 @@ jobs:
           cache: false
 
       - name: Staticcheck
-        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
 
       - name: Test
         run: go test -race ./... -timeout 180s

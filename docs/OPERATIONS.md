@@ -170,7 +170,7 @@ directory is mode 0700 and the file is mode 0600.
 
 Records are one JSON object per line, version 1, with a closed set of event
 codes (`lifecycle.rejected`, `lifecycle.start-limit`, `daemon.open`,
-`daemon.close`, `daemon.startup-failed`). Persisted fields are only the allowlist: code, timestamp,
+`daemon.close`, `daemon.startup-failed`, `daemon.admission-held`). Persisted fields are only the allowlist: code, timestamp,
 unit, invocation, operation, configuration revision, load, active, and health
 state, a short reason, restart attempt, and start-limit burst/remaining.
 Unknown keys are ignored. A field that contains an environment assignment, a
@@ -520,6 +520,24 @@ remains a release gate.
 Maintenance uses its own protected endpoint and bounded connection/handler
 capacity. Ordinary control-pipe saturation cannot consume those slots; saturation
 or failure of the maintenance endpoint itself can still reject a new request.
+
+### Admission hold
+
+A system manager whose build is below the
+[compatibility floor](INSTALLATION.md#compatibility-floor), or that cannot
+trust the floor record, starts with admission held for its whole lifetime.
+Machine status and snapshot report the reason as `admissionHold`, and the
+daemon log records `daemon.admission-held` with a short summary; the Windows
+Application log has no event for it yet. Start, restart, boot, timer, watch,
+and recovery activations fail with `admission is held:` and the reason. The
+broker launches no user managers, and `enable-linger` is refused rather than
+recorded for later. Status, stop, disable, `disable-linger`, reload, verify,
+and maintenance stay available. Restart the manager after restoring a compatible
+build or changing the floor. The hold covers the system manager and the user
+managers it brokers; a user manager started directly with
+`winunitd --user-manager` is outside the floor's scope. A floor raise is
+written only while the system manager is stopped; see
+[enforcement](INSTALLATION.md#enforcement).
 
 ## Headless user managers
 

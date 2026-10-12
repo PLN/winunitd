@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"slices"
 
+	"github.com/PLN/winunitd/internal/capability"
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/unit"
 	"github.com/PLN/winunitd/internal/version"
@@ -26,8 +27,7 @@ func (m *Manager) Capabilities() *protocol.CapabilitiesResult {
 		scope = "user"
 	}
 	p := platformCapabilities()
-	features := append([]string{protocol.FeatureRestartBackoff}, p.workloadFeatures...)
-	slices.Sort(features)
+	features := capability.WorkloadFeatures()
 	methods := slices.DeleteFunc(slices.Clone(protocol.Methods), func(name string) bool {
 		return slices.Contains(controlMethods, name)
 	})
@@ -60,8 +60,7 @@ func (c *Control) Capabilities() *protocol.CapabilitiesResult {
 	out.Protocol.Methods = slices.Clone(protocol.Methods)
 	if c.Users != nil {
 		p := platformCapabilities()
-		out.Features = append(out.Features, p.systemFeatures...)
-		slices.Sort(out.Features)
+		out.Features = capability.SystemFeatures()
 		out.UserManagerModes = nonNil(p.userModes)
 		out.ExperimentalUserManagerModes = nonNil(p.experimentalUserModes)
 	}
@@ -102,10 +101,9 @@ var jobLimitDirectives = []string{
 
 // platformCapability is the part of the report that depends on the native
 // runtime. Non-Windows builds use stub launchers and report none of it.
+// Feature names live in the capability package.
 type platformCapability struct {
-	workloadFeatures      []string
 	jobLimits             []string
-	systemFeatures        []string
 	userModes             []string
 	experimentalUserModes []string
 }

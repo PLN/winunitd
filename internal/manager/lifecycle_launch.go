@@ -37,6 +37,14 @@ func (m *Manager) acceptLaunch(ctx context.Context, name string, autoRestart boo
 		}
 		return nil, fmt.Errorf("manager is shutting down or closed")
 	}
+	// Start admission already refuses a held manager; no launch path may
+	// bypass it, including recovery of work accepted before the hold.
+	if m.cfg.AdmissionHold != "" {
+		if autoRestart {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("admission is held: %s", m.cfg.AdmissionHold)
+	}
 	rt := m.units[name]
 	if rt == nil {
 		if autoRestart {

@@ -24,6 +24,7 @@ Usage:
   winunitd --user-manager SID [--base-dir DIR]
   winunitd install [--base-dir DIR]
   winunitd uninstall
+  winunitd floor show|check|set|clear [--base-dir DIR]   (see winunitd floor --help)
 
 Runs as the Windows Service "winunitd" (DisplayName: WinUnit Manager) when
 started by SCM: LocalSystem, Automatic, restart on failure.
@@ -90,6 +91,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return 0
+	}
+	if len(args) > 0 && args[0] == "floor" {
+		return runFloor(args[1:], stdout, stderr, floorEnv{build: runningBuild(), stopped: systemStopped})
 	}
 	for _, a := range args {
 		switch a {

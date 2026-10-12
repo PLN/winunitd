@@ -8,7 +8,8 @@
 		An embedded helper quiesces, then stops for 180 seconds, before
 		StopServices and file replacement. That same deferred action first
 		rejects conflicting service registrations, custom base directories,
-		machine-wide pilot launchers, and unsafe data directories. It does
+		machine-wide pilot launchers, unsafe data directories, and a build
+		below the persisted compatibility floor. It does
 		not follow a reparse point or rewrite units, enable links, journals,
 		timer state, or linger records. PrepareService copies that helper's
 		standard error into the MSI log. Major upgrade removal is after
