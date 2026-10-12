@@ -1,11 +1,16 @@
 package main
 
 import (
+	"bytes"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // Mutable data directories under the machine data root. They are permanent
@@ -292,23 +297,111 @@ func classifyPilot(mode string, launchers int) error {
 	return fmt.Errorf("preflight conflict: incompatible pilot launches winunitd; explicit migration is required")
 }
 
-func mentionsWinunitdExe(data []byte) bool {
-	return strings.Contains(strings.ToLower(string(data)), "winunitd.exe")
+// mentionsWinunitdExe reports an explicit, case-insensitive winunitd.exe
+// reference in already decoded text.
+func mentionsWinunitdExe(text string) bool {
+	return strings.Contains(strings.ToLower(text), "winunitd.exe")
 }
 
+// errTaskEncoding marks a task definition whose bytes are not a supported,
+// well-formed text encoding. The scan fails closed on it.
+var errTaskEncoding = errors.New("unsupported or malformed task definition encoding")
+
+// decodeTaskDefinition returns the text of one task-definition file so the
+// launcher match sees characters, not encoded bytes. Task Scheduler writes
+// registered definitions as UTF-16LE with a byte order mark.
+//
+// Accepted encodings:
+//   - UTF-8, with or without a byte order mark
+//   - UTF-16LE or UTF-16BE with a byte order mark
+//   - UTF-16LE or UTF-16BE without a byte order mark, recognized by this
+//     scanner's own two-byte heuristic, inspired by XML encoding
+//     autodetection but deliberately broader than the XML 1.0 Appendix F
+//     signatures: a nonzero ASCII byte then NUL is UTF-16LE; NUL then a
+//     nonzero ASCII byte is UTF-16BE. Full UTF-16 validation follows. A
+//     task definition is XML and starts with "<" or white space, and XML
+//     cannot contain U+0000, so valid UTF-8 XML never starts with either
+//     pattern.
+//
+// This is encoding validation for a substring scan, not an XML parser: the
+// encoding declaration, XML syntax and character references are not
+// checked.
+//
+// Anything else is refused rather than guessed: invalid UTF-8, an odd
+// UTF-16 byte length, an unpaired surrogate, or a U+0000 character. NUL
+// bytes are never stripped to force a match.
+func decodeTaskDefinition(data []byte) (string, error) {
+	switch {
+	case bytes.HasPrefix(data, []byte{0xef, 0xbb, 0xbf}):
+		return decodeUTF8Task(data[3:])
+	case bytes.HasPrefix(data, []byte{0xff, 0xfe}):
+		return decodeUTF16Task(data[2:], binary.LittleEndian)
+	case bytes.HasPrefix(data, []byte{0xfe, 0xff}):
+		return decodeUTF16Task(data[2:], binary.BigEndian)
+	case len(data) >= 2 && data[0] != 0 && data[0] < 0x80 && data[1] == 0:
+		return decodeUTF16Task(data, binary.LittleEndian)
+	case len(data) >= 2 && data[0] == 0 && data[1] != 0 && data[1] < 0x80:
+		return decodeUTF16Task(data, binary.BigEndian)
+	}
+	return decodeUTF8Task(data)
+}
+
+func decodeUTF8Task(data []byte) (string, error) {
+	if !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 {
+		return "", errTaskEncoding
+	}
+	return string(data), nil
+}
+
+func decodeUTF16Task(data []byte, order binary.ByteOrder) (string, error) {
+	if len(data)%2 != 0 {
+		return "", errTaskEncoding
+	}
+	units := make([]uint16, len(data)/2)
+	for i := range units {
+		units[i] = order.Uint16(data[2*i:])
+	}
+	// utf16.Decode substitutes U+FFFD for invalid sequences, so check
+	// pairing first and refuse instead of accepting a lossy decode.
+	for i := 0; i < len(units); i++ {
+		u := units[i]
+		switch {
+		case u == 0:
+			return "", errTaskEncoding
+		case u >= 0xd800 && u < 0xdc00:
+			if i+1 >= len(units) || units[i+1] < 0xdc00 || units[i+1] > 0xdfff {
+				return "", errTaskEncoding
+			}
+			i++
+		case u >= 0xdc00 && u <= 0xdfff:
+			return "", errTaskEncoding
+		}
+	}
+	return string(utf16.Decode(units)), nil
+}
+
+// countRunLaunchers counts machine Run/RunOnce values that name
+// winunitd.exe. Registry APIs return decoded strings, so these values are
+// matched directly and do not go through the task-file decoder.
 func countRunLaunchers(values []string) int {
 	n := 0
 	for _, value := range values {
-		if mentionsWinunitdExe([]byte(value)) {
+		if mentionsWinunitdExe(value) {
 			n++
 		}
 	}
 	return n
 }
 
-// countTaskLaunchers counts machine scheduled-task definitions whose
-// command mentions winunitd.exe. Reparse points are rejected and not
-// opened. The walk is bounded and fails closed when the bound is hit.
+// countTaskLaunchers counts registered scheduled-task definitions whose
+// decoded text contains an explicit winunitd.exe reference anywhere,
+// including actions, arguments and descriptions. Every definition in the
+// store is scanned; there is no principal, trigger or enabled-state filter.
+// Script or wrapper indirection is not resolved: a task that runs, for
+// example, wscript.exe with a script is not opened further. Per-user and
+// indirect launchers belong to explicit migration. Reparse points are
+// rejected and not opened. The walk is bounded, and it fails closed when a
+// bound is hit or a definition cannot be read or decoded.
 func countTaskLaunchers(root string) (int, error) {
 	info, err := os.Lstat(root)
 	if err != nil {
@@ -362,7 +455,11 @@ func countTaskLaunchers(root string) (int, error) {
 			if err != nil {
 				return fmt.Errorf("preflight conflict: could not inspect machine launchers")
 			}
-			if mentionsWinunitdExe(data) {
+			text, err := decodeTaskDefinition(data)
+			if err != nil {
+				return fmt.Errorf("preflight conflict: could not inspect machine launchers")
+			}
+			if mentionsWinunitdExe(text) {
 				count++
 			}
 		}
