@@ -119,7 +119,7 @@ go run ./tools/build -out dist
 Build an MSI from clean source with
 `./packaging/beta/build.ps1 -PackageVersion 0.2.1`.
 [BUILDING.md](docs/BUILDING.md) covers the pinned toolchain, manifests, CI, and
-dependency maintenance. Unstamped development binaries retain the `0.1.0-alpha`
+dependency maintenance. Unstamped development binaries retain the `0.1.1-alpha`
 fallback label; the manifest records their exact source revision.
 
 The [roadmap](ROADMAP.md), [design](DESIGN.md), and

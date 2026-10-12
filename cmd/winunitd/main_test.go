@@ -60,8 +60,8 @@ func TestRunVersion(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("%s stdout=%q want %q", flag, out.String(), want)
 		}
-		if version.Version != "0.1.0-alpha" {
-			t.Fatalf("version.Version = %q, want 0.1.0-alpha", version.Version)
+		if version.Version != "0.1.1-alpha" {
+			t.Fatalf("version.Version = %q, want 0.1.1-alpha", version.Version)
 		}
 	}
 }

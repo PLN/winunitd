@@ -22,7 +22,7 @@
 		undo the new package's start.
 	-->
 	<Package Name="WinUnit Manager" Manufacturer="PLN" Version="$(PackageVersion)"
-		ProductCode="78C43374-5AB7-4E81-B9CF-09E8ACD01133"
+		ProductCode="536EFA93-783D-436E-92BF-598D1938BF2C"
 		UpgradeCode="A512B91F-1883-40FD-8EDB-5B8C5708DEEA"
 		Scope="perMachine" Language="1033" InstallerVersion="500">
 		<MajorUpgrade DowngradeErrorMessage="A newer package is installed." Schedule="afterInstallExecute" />
