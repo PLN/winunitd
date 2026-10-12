@@ -883,11 +883,14 @@ func testManager(t *testing.T, files map[string]string) *Manager {
 }
 
 func stopAll(m *Manager) {
+	// Cleanup must also finish when a failed test stops advancing its clock.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 	m.mu.Lock()
 	names := append([]string(nil), m.names()...)
 	m.mu.Unlock()
 	for _, name := range names {
-		_, _ = m.Stop(name)
+		_, _ = m.StopContext(ctx, name)
 	}
 	m.Close()
 }

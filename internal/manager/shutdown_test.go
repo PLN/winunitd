@@ -437,11 +437,13 @@ TimeoutStopSec=30s
 	}
 	assertStopTimeout(t, m, "foo.service", 30*time.Second)
 	launch.dieLast(1)
+	// Let the exit watcher cancel its stop timer so WaitingAt below
+	// can only observe the second Start's journal timeout.
 	waitCond(t, func() bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		rt := m.units["foo.service"]
-		return rt != nil && (rt.proc == nil || !rt.proc.Alive())
+		return rt != nil && rt.proc == nil && !fk.WaitingAt(30*time.Second)
 	})
 
 	startErr := make(chan error, 1)
