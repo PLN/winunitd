@@ -178,7 +178,7 @@ credential or store URI, a parser location, or a newline is omitted. Reasons
 longer than 160 bytes are omitted. Each encoded record is at most 1024 bytes.
 
 The reason of `daemon.open` identifies the build, for example
-`version 0.1.0-alpha commit <revision>`, with ` modified` appended for a build
+`version 0.1.1-alpha commit <revision>`, with ` modified` appended for a build
 from a changed tree. Every manager start, including the first start after an
 install, repair, upgrade or rollback, therefore records which build ran. The
 existing reason field keeps the record readable by older and newer managers.
