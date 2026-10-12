@@ -55,6 +55,9 @@ func (h *UserHost) acceptUserWorkClassLocked(class userWorkClass) (*userNativeWo
 	if h.closed {
 		return nil, fmt.Errorf("user host is shutting down or closed")
 	}
+	if h.cfg.AdmissionHold != "" && (class == userWorkAdmission || class == userWorkReconcile || class == userWorkLingerScan) {
+		return nil, fmt.Errorf("user-manager admission is held: %s", h.cfg.AdmissionHold)
+	}
 	limit := 1
 	if class == userWorkAdmission {
 		limit = maxNativeUserWork

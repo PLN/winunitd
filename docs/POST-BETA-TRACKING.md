@@ -166,9 +166,7 @@ upstream merge/release notification; replacement requires equivalent close-race
 coverage and dependency/source-hash review. A clean vulnerability scan alone does
 not audit a local module replacement.
 
-Keep hosted CI on deliberate dispatch for now: the recorded workflow cost is
-roughly 9-10 runner-minutes per full run, so nightly runs would add about 270-300
-minutes per month. Require a successful exact-head dispatch before merging code;
-record its run ID in the PR and handoff. Reconsider scheduled CI if the cost
-budget changes or unverified merges recur. This is a reviewed cost decision,
-not a claim that pushing automatically tests main.
+October 12, 2026: hosted CI runs on every pull request and push to `main`.
+Standard hosted runners are free for this public repository, so the earlier
+dispatch-only cost limit no longer applies. Merge code only after the workflow
+passes on a head that contains current `main`.

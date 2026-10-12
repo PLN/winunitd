@@ -7,10 +7,23 @@ try {
 	if ((git status --porcelain) -and !$AllowDirty) { throw 'Clean source required; use AllowDirty only for development' }
 	$packageManifest = "dist/beta/$PackageVersion/package-manifest.json"
 	if (Test-Path -LiteralPath $packageManifest) { Remove-Item -LiteralPath $packageManifest }
-	go run ./tools/build -out dist/beta/payload -version "$PackageVersion-beta"
+	$release = "$PackageVersion-beta"
+	go run ./tools/build -out dist/beta/payload -version $release
 	if ($LASTEXITCODE) { throw 'Payload build failed' }
-	go build -trimpath -o dist/beta/payload/msi-check.exe ./tools/msi-check
-	if ($LASTEXITCODE) { throw 'Preflight build failed' }
+	# Built like the payload; the produced binaries must agree (see packaging/wix/build.ps1).
+	$priorCgo = $env:CGO_ENABLED
+	$env:CGO_ENABLED = '0'
+	try {
+		go build -trimpath -buildvcs=true -ldflags "-X github.com/PLN/winunitd/internal/version.Version=$release" -o dist/beta/payload/msi-check.exe ./tools/msi-check
+		if ($LASTEXITCODE) { throw 'Preflight build failed' }
+	} finally {
+		if ($null -eq $priorCgo) { Remove-Item Env:CGO_ENABLED } else { $env:CGO_ENABLED = $priorCgo }
+	}
+	$identityArgs = @('-manifest', 'dist/beta/payload/build-manifest.json', '-release', $release, '-helper', 'dist/beta/payload/msi-check.exe')
+	if ($AllowDirty) { $identityArgs += '-development' }
+	$identity = go run ./tools/package-identity @identityArgs
+	if ($LASTEXITCODE) { throw 'Helper and payload are not one build' }
+	$identity = $identity | ConvertFrom-Json
 	$compiler = (Get-Command gcc -ErrorAction Stop).Source
 	$compilerVersion = & $compiler -dumpfullversion
 	if ($LASTEXITCODE) { throw 'C compiler version probe failed' }
@@ -24,6 +37,6 @@ try {
 	} finally { Pop-Location }
 	$file = Get-Item "dist/beta/$PackageVersion/winunitd-$PackageVersion-x64-beta.msi"
 	$payload = Get-Content dist/beta/payload/build-manifest.json -Raw | ConvertFrom-Json
-	[ordered]@{schema=1; commit=(git rev-parse HEAD); dirty=[bool](git status --porcelain); version=$PackageVersion; signed=$false; wix='7.0.0'; dotnet='10.0.400'; token_compiler="gcc $compilerVersion"; token_helper_sha256=(Get-FileHash dist/beta/payload/msi-token.dll).Hash.ToLowerInvariant(); name=$file.Name; size=$file.Length; sha256=(Get-FileHash $file.FullName).Hash.ToLowerInvariant(); helper_sha256=(Get-FileHash dist/beta/payload/msi-check.exe).Hash.ToLowerInvariant(); payload=$payload} |
+	[ordered]@{schema=1; commit=(git rev-parse HEAD); dirty=[bool](git status --porcelain); version=$PackageVersion; signed=$false; wix='7.0.0'; dotnet='10.0.400'; token_compiler="gcc $compilerVersion"; token_helper_sha256=(Get-FileHash dist/beta/payload/msi-token.dll).Hash.ToLowerInvariant(); name=$file.Name; size=$file.Length; sha256=(Get-FileHash $file.FullName).Hash.ToLowerInvariant(); helper_sha256=(Get-FileHash dist/beta/payload/msi-check.exe).Hash.ToLowerInvariant(); admissible=$identity.admissible; identity=$identity; payload=$payload} |
 		ConvertTo-Json -Depth 6 | Set-Content $packageManifest -Encoding UTF8
 } finally { Pop-Location }

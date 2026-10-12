@@ -2,14 +2,14 @@
 
 ## Pinned toolchain
 
-Build with Go **1.27.1**, recorded in `.go-version` and the `toolchain` directive. The module's Go **1.26.0** directive is its dependency/language minimum, not the compiler selected for qualification. The `golang.org/x/sys v0.48.0` dependency requires that minimum. CI reads `.go-version`, disables automatic toolchain switching after setup, and uses full commit pins for checkout, setup-go, and artifact upload.
+Build with Go **1.27.2**, recorded in `.go-version` and the `toolchain` directive. The module's Go **1.26.0** directive is its dependency/language minimum, not the compiler selected for qualification. The `golang.org/x/sys v0.48.0` dependency requires that minimum. CI reads `.go-version`, disables automatic toolchain switching after setup, and uses full commit pins for checkout, setup-go, and artifact upload.
 
 From the repository root:
 
 ```powershell
-$env:GOTOOLCHAIN = 'go1.27.1'
+$env:GOTOOLCHAIN = 'go1.27.2'
 go vet ./...
-go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
 go test -race -parallel 1 ./... -timeout 180s
 go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 go run ./tools/build
@@ -24,7 +24,7 @@ verifies the absolute child compiler with toolchain switching disabled. Inherite
 GOROOT values cannot redirect child builds. Compiler-selection regressions reject
 wrong versions, relative roots and unavailable tools.
 
-CI runs Staticcheck 2026.2.1 (`v0.8.1`) on both Windows and Linux, including tests.
+CI runs Staticcheck 2026.2.2 (`v0.8.2`) on both Windows and Linux, including tests.
 `staticcheck.conf` preserves default checks except ST1011 (systemd directive
 spelling) and ST1005 (native API capitalization). Shared command files exempt
 SA4023 because non-Windows API stubs always fail; their Windows callers must still
@@ -37,11 +37,22 @@ Use `-version 0.2.0-beta` for a release candidate. The build records that versio
 in the manifest and links it into the daemon/CLI version output. The beta MSI
 entry point is `./packaging/beta/build.ps1 -PackageVersion 0.2.0`; it requires
 clean source unless `-AllowDirty` is explicitly supplied for development. It uses
-the already approved WiX 7.0.0/.NET 10.0.400 build tooling. Keep `.wixpdb`, SDK
-intermediates, and build logs private. Package qualification is still required;
+the already approved WiX 7.0.0/.NET 10.0.400 build tooling. Both package scripts
+build the servicing helper with the payload's release value and then run
+`tools/package-identity`. It refuses the package unless the build manifest lists
+exactly the files the installer packages from the payload directory
+(`winunitd.exe`, `winctl.exe`, `winunit-notify.exe` and
+`THIRD-PARTY-NOTICES.txt`), each once under its own name; each of those files
+matches its listed hash; and the three executables and the helper, read from the
+produced files, share one source revision, unmodified state, release, toolchain
+and target, with the daemon, CLI and helper linking that release. The token
+library the script builds afterwards is recorded in the package manifest by hash
+only. The check reads the payload directory before WiX packages it; it does not
+inspect the built MSI. The package manifest records that identity; with
+`-AllowDirty` it is marked `admissible: false`. Keep `.wixpdb`, SDK intermediates, and build logs private. Package qualification is still required;
 a successful MSI build alone is not a release.
 
-`dist/build-manifest.json` records the compiler, target, source revision, dirty state, module-file hashes, and each binary's SHA256/size. It contains no operator identity, hostname, absolute checkout path, or environment dump. Go's embedded module/build information provides dependency versions and sums (`go version -m`). A failed build leaves no successful manifest for that attempt. Dirty builds are allowed for development and visibly marked; they must not be promoted as release artifacts. Build from a clean checkout and do not modify sources during a qualification build.
+`dist/build-manifest.json` records the compiler, target, source revision, dirty state, module-file hashes, and each binary's SHA256/size. It contains no operator identity, hostname, absolute checkout path, or environment dump. Go's embedded module/build information provides dependency versions and sums (`go version -m`). The builder reads each binary's embedded build information and fails unless its `vcs.revision` equals the manifest commit; the manager reports that revision and `vcs.modified` through `winctl capabilities`. A development build from a changed tree keeps the commit and reports `modified: true`; only a clean build with a matching manifest identifies a release artifact. A failed build leaves no successful manifest for that attempt. Dirty builds are allowed for development and visibly marked; they must not be promoted as release artifacts. Build from a clean checkout and do not modify sources during a qualification build.
 
 The product MSI entry point is `./packaging/wix/build.ps1`. It builds the
 `0.1.0-alpha` payload, stamps PE version metadata from that release identity,
@@ -60,21 +71,18 @@ manifest records its compiler version and SHA256 separately from the Go payload.
 
 CI retains native Windows artifacts and the Linux-to-Windows build manifest for 14 days. These are unsigned CI artifacts, not installation releases or provenance attestations. Compare artifact hashes with the manifest before deploying to a test guest. Pinning the Go compiler and actions does not freeze hosted runner images or the race-test C compiler; record the actual platform when interpreting results.
 
-## Private development CI budget
+## CI
 
-GitHub's full workflow is now manual (`workflow_dispatch`); pushes, PR updates,
-and the weekly schedule do not automatically spend hosted-runner minutes.
-Use trusted local Gitea dispatch for reviewed full commit IDs and Proxmox guests
-for installation acceptance. Keep deployment configuration and credentials in
-the private operator workspace. Local CI must run the same vet, race, nested
-pipe regression, staticcheck, maintenance, vulnerability, and build checks; do not equate a
-skipped GitHub run with a passing check. Do not admit unreviewed public PR code
-to the trusted local runners. GitHub source/release hosting remains independent
-of where builds run. Manual hosted verification is reserved for release candidates.
+GitHub's full workflow runs on every pull request and every push to `main`, and
+can also be dispatched manually. Standard hosted runners are free for public
+repositories. Merge code only after the workflow passes on a head that contains
+current `main`, so the tested tree is the merged tree. Use disposable guests for
+installation acceptance when a change touches installer or servicing behavior.
+Do not equate a skipped run with a passing check.
 
 ## Maintenance policy
 
-- Run `govulncheck` on Windows and Linux for each admitted CI revision and during weekly dependency review. GitHub hosted verification is manual while routine work uses local CI. Pin the scanner version in the workflow; use the current vulnerability database so newly published advisories are detected.
+- Run `govulncheck` on Windows and Linux for each admitted CI revision and during weekly dependency review. Pin the scanner version in the workflow; use the current vulnerability database so newly published advisories are detected.
 - Treat reachable vulnerability findings as a failed check. Review package/module-only findings too; do not silently suppress them or describe a reachability result as proof that all dependencies are vulnerability-free.
 - Review supported Go patch releases promptly, updating `.go-version` and `go.mod` together. Security updates take priority over routine feature work. Re-run vet, race tests, scanner, builds, and relevant Windows qualification when the compiler or dependencies change.
 - Dependabot proposes weekly Go-module and action updates. Review their source/release notes and compatibility; do not automatically merge them. Keep actions pinned to full commits, with readable version comments.

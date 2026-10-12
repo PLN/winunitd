@@ -32,7 +32,8 @@ History is private to each manager instance. Pending records are retained until
 completion; the most recent 256 completed records are retained in completion
 order. Errors in history are capped at 4,096 UTF-8 bytes with an explicit
 truncation flag. A status ID can refer to an evicted record. Restarting the
-manager loses history and creates a different ID namespace. There is no disk
+manager, including for repair, upgrade or rollback, loses history and creates
+a different ID namespace; an earlier ID then reports not found. There is no disk
 archive, global history shared between user/system managers, or automatic
 recovery-operation history yet.
 
@@ -169,12 +170,19 @@ directory is mode 0700 and the file is mode 0600.
 
 Records are one JSON object per line, version 1, with a closed set of event
 codes (`lifecycle.rejected`, `lifecycle.start-limit`, `daemon.open`,
-`daemon.close`, `daemon.startup-failed`). Persisted fields are only the allowlist: code, timestamp,
+`daemon.close`, `daemon.startup-failed`, `daemon.admission-held`). Persisted fields are only the allowlist: code, timestamp,
 unit, invocation, operation, configuration revision, load, active, and health
 state, a short reason, restart attempt, and start-limit burst/remaining.
 Unknown keys are ignored. A field that contains an environment assignment, a
 credential or store URI, a parser location, or a newline is omitted. Reasons
 longer than 160 bytes are omitted. Each encoded record is at most 1024 bytes.
+
+The reason of `daemon.open` identifies the build, for example
+`version 0.1.0-alpha commit <revision>`, with ` modified` appended for a build
+from a changed tree. Every manager start, including the first start after an
+install, repair, upgrade or rollback, therefore records which build ran. The
+existing reason field keeps the record readable by older and newer managers.
+The Application event for `daemon.open` does not include it.
 
 Enqueue holds no file I/O. The queue admits 32 records or 16 KiB, whichever
 comes first, and further records increment `daemonLogDroppedRecords` and
@@ -512,6 +520,24 @@ remains a release gate.
 Maintenance uses its own protected endpoint and bounded connection/handler
 capacity. Ordinary control-pipe saturation cannot consume those slots; saturation
 or failure of the maintenance endpoint itself can still reject a new request.
+
+### Admission hold
+
+A system manager whose build is below the
+[compatibility floor](INSTALLATION.md#compatibility-floor), or that cannot
+trust the floor record, starts with admission held for its whole lifetime.
+Machine status and snapshot report the reason as `admissionHold`, and the
+daemon log records `daemon.admission-held` with a short summary; the Windows
+Application log has no event for it yet. Start, restart, boot, timer, watch,
+and recovery activations fail with `admission is held:` and the reason. The
+broker launches no user managers, and `enable-linger` is refused rather than
+recorded for later. Status, stop, disable, `disable-linger`, reload, verify,
+and maintenance stay available. Restart the manager after restoring a compatible
+build or changing the floor. The hold covers the system manager and the user
+managers it brokers; a user manager started directly with
+`winunitd --user-manager` is outside the floor's scope. A floor raise is
+written only while the system manager is stopped; see
+[enforcement](INSTALLATION.md#enforcement).
 
 ## Headless user managers
 

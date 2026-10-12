@@ -380,13 +380,10 @@ func (p *parser) applyUnit(e iniEntry) {
 			p.errorf(e.line, "FormatVersion may be specified only once")
 		}
 		p.formatLine = e.line
-		switch e.value {
-		case "1":
-			p.unit.FormatVersion = 1
-		case "2":
-			p.unit.FormatVersion = 2
-		default:
-			p.errorf(e.line, "unsupported FormatVersion %q (supported: 1, 2)", e.value)
+		if v, ok := formatVersion(e.value); ok {
+			p.unit.FormatVersion = v
+		} else {
+			p.errorf(e.line, "unsupported FormatVersion %q (supported: %s)", e.value, formatVersionList())
 		}
 	case "Description":
 		p.unit.Description = e.value

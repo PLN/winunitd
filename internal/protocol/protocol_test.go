@@ -17,7 +17,7 @@ func TestMethodsCoverCLIVerbs(t *testing.T) {
 		"start", "stop", "restart", "status", "snapshot", "enable", "disable",
 		"list-units", "list-timers", "logs", "daemon-reload", "verify",
 		"enable-linger", "disable-linger",
-		"operation", "cancel-operation", "maintenance",
+		"operation", "cancel-operation", "maintenance", "capabilities",
 	}
 	if len(Methods) != len(want) {
 		t.Fatalf("Methods = %v, want %v", Methods, want)
@@ -213,6 +213,10 @@ func TestAllMethodsRoundTrip(t *testing.T) {
 				return nil, err
 			}
 			return MaintenanceResult{State: "quiesced"}, nil
+		case MethodCapabilities:
+			r := validCapabilities()
+			r.Version, r.Features = "1.2.3", []string{FeatureExecStop}
+			return r, nil
 		default:
 			return nil, ErrMethodNotFound(method)
 		}
@@ -275,6 +279,9 @@ func TestAllMethodsRoundTrip(t *testing.T) {
 	}
 	if result, err := client.Maintenance(ctx, MaintenanceParams{TimeoutMS: 100}); err != nil || result.State != "quiesced" {
 		t.Fatalf("maintenance round trip: %+v %v", result, err)
+	}
+	if result, err := client.Capabilities(ctx); err != nil || result.Version != "1.2.3" || len(result.Features) != 1 || result.Features[0] != FeatureExecStop {
+		t.Fatalf("capabilities round trip: %+v %v", result, err)
 	}
 	for _, name := range Methods {
 		if seen[name] != 1 {

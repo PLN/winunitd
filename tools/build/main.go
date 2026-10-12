@@ -3,6 +3,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"debug/buildinfo"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"runtime/debug"
 	"strings"
 
 	"github.com/PLN/winunitd/internal/version"
@@ -113,6 +115,9 @@ func run() error {
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
+		if err := checkEmbeddedRevision(path, commit); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
 		if *goos == "windows" {
 			if err := winres.Stamp(path, executableInfo(name, *releaseVersion)); err != nil {
 				return fmt.Errorf("%s version resource: %w", name, err)
@@ -143,6 +148,29 @@ func run() error {
 	}
 	fmt.Printf("Built %d artifacts for %s/%s with %s (dirty=%t)\n", len(m.Artifacts), m.GOOS, m.GOARCH, m.Go, m.Dirty)
 	return nil
+}
+
+// checkEmbeddedRevision requires the VCS revision that the Go toolchain
+// embedded in a binary to equal the manifest commit. The running daemon
+// reports that revision through the capability query.
+func checkEmbeddedRevision(path, commit string) error {
+	bi, err := buildinfo.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read build info: %w", err)
+	}
+	return matchRevision(bi, commit)
+}
+
+func matchRevision(bi *debug.BuildInfo, commit string) error {
+	for _, s := range bi.Settings {
+		if s.Key == "vcs.revision" {
+			if s.Value != commit {
+				return fmt.Errorf("embedded revision %q does not match commit %q", s.Value, commit)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("binary has no embedded VCS revision")
 }
 
 func executableInfo(name, release string) winres.Info {
