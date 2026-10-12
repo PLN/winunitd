@@ -15,6 +15,7 @@ import (
 
 	"github.com/PLN/winunitd/internal/protocol"
 	"github.com/PLN/winunitd/internal/runtime"
+	"github.com/PLN/winunitd/internal/servicing"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
@@ -93,6 +94,12 @@ func serviceTransaction(args []string) error {
 	// service registration changes. CreateFolders and StartServices are
 	// later in the MSI sequence.
 	if err := preflightProduct(installDir, dataDir, mode); err != nil {
+		return err
+	}
+	// The helper's identity stands for the payload's only because packaging
+	// builds both from one clean tree with one release value and verifies
+	// the produced binaries agree (tools/package-identity).
+	if err := floorPreflight(mode, dataDir, servicing.Running()); err != nil {
 		return err
 	}
 	return prepareService(statePath, token, installDir, dataDir, mode)

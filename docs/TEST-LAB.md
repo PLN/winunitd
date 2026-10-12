@@ -313,3 +313,157 @@ process/thread start and stop events to corroborate each held interval. ETW does
 not identify `ResumeThread`; the suspend-count assertion provides that boundary.
 Qualification of an immutable daemon binary requires separate observations;
 the instrumented test binary alone does not establish that evidence.
+
+## Workload-created nested jobs
+
+Issue #265 asks whether a unit main may create its own kill-on-close job for an
+engine and grandchildren inside the WinUnit unit job. The test-only fixture in
+`internal/runtime/runtimetest/nestedjob` creates that shape: MAIN stays in the
+unit job only, and ENGINE, G1 and G2 are in both jobs. MAIN creates the inner
+job unnamed, with kill-on-close only and a noninheritable handle that the
+normal cases never export. Only N15, the sensitivity control, deliberately
+passes one inheritable duplicate to ENGINE through an explicit handle list,
+to show that the inheritance probe and the last-handle lifetime would detect
+an exported handle. `--launch-mode assign` assigns a suspended ENGINE before
+resuming it; `--launch-mode job-list` creates ENGINE with
+`PROC_THREAD_ATTRIBUTE_JOB_LIST`. There is no fallback between them. The
+runtime and manager test binaries run it through `-winunitd-helper=nested-job`;
+`tests/native/nested-job` builds the same code as a standalone executable for
+installed-daemon cases. Neither is a release payload, and neither depends on
+other qualification helpers.
+
+Each execution uses a fresh case directory. MAIN writes a bounded, sequenced
+report and a generation manifest of process identities (PID plus creation
+time). Observers hold process handles, never job handles, and treat only a
+signaled held handle as exit; ExecStop helpers are held by the test's
+launcher from their creation. Commands are a closed set of verbs in atomic
+files. Evidence files are decoded strictly: one JSON value, no unknown
+fields and nothing after it. A report whose writer has exited must be
+complete, without a truncation marker or a partial last line.
+
+The case matrix (`nestedjob/matrix.json`) is the only source of the required
+set: 68 primary executions, 58 in the native-owner lane and 10 in the
+installed-daemon lane, each with one key such as
+`N14/assign/headless/pre-assign/r1/native-owner`. Some cases also require
+separately keyed controls, counted outside the 68: N08 `uncapped-commit`
+(the same workload commits its full 3 x 96 MiB without MemoryMax), N09 and
+N10 `uncapped` (a metered uncapped CPU run), and N16 `seam-failure` and
+`seam-live-process` (the two cleanup-seam variants). The first increment
+(N01, N02, N11, N14, N15) is 20 executions: 11 SYSTEM and 9 headless.
+`nested-job-fixture matrix [--first-increment] [--lane L] [--identity I]
+[--case N]` prints executions with their `-test.run` selectors; `--hash`
+prints the matrix hash.
+
+Native-owner tests run in the ordinary Windows test lane, except N08 (below):
+`TestNativeNestedJob*` in `internal/runtime` and `TestWindowsNestedJob*` in
+`internal/manager`, with subtests for mode, identity and launch phase. A
+SYSTEM subtest run by another account is a regression run, not SYSTEM
+evidence. Headless subtests skip unless a SYSTEM runner in session zero sets
+`WINUNITD_NATIVE_NESTED_HEADLESS_SID` to a dedicated, logged-off local standard
+account and `WINUNITD_NATIVE_NESTED_FIXTURE=disposable`; the test binary must
+be readable by that account. A configured headless lane that is not run by
+SYSTEM in session zero, or names an unusable account, fails rather than
+skips: that is a configuration error, not a missing prerequisite. A
+headless runner joins a broker job for the rest of its life, so run headless
+selectors in their own test process. The runtime tests then launch an owner
+agent in a genuine S4U process through the production headless path; it owns
+the unit job and answers membership queries, while the SYSTEM test observes.
+The manager tests do the same with an isolated Manager: the agent follows the
+user-manager entry pattern (its own daemon job, user scope, an isolated base
+directory), serves no control endpoint, and answers start, stop, inspect,
+membership and replacement-launch questions about its one nested unit. An
+inspection that could not observe the unit or its job fails; it is never
+read as an empty state or as zero memory.
+
+The only documented missing Windows prerequisite is the JOB_LIST attribute
+on a Windows release older than Windows 10 or Server 2016: the fixture reports
+it as unqualified and the job-list subtests skip with that reason. On newer
+releases any attribute error is a real failure. The breakaway cases judge
+every probe by its numeric result: N11 accepts only `ERROR_ACCESS_DENIED` or
+a probe that stayed in the unit job; N12 must create probes that leave only
+the inner job, and records a denial as inconclusive for that positive
+control; N13 must create probes outside the inner job and inside the unit
+job. Any other creation error fails. The inheritance probe accepts only
+`ERROR_INVALID_HANDLE` as "no job handle here".
+
+N04 times the stop from the request to `Stop`'s return where it ran, and
+accepts the cooperative phase (TimeoutStopSec less the manager's force
+reserve) up to TimeoutStopSec plus a 3-second allowance; the hung helper
+must already have exited when the manager releases its slot. N08 records
+every role's baseline, commitment and native error, and is inconclusive
+when a measurement or the refused commitment is missing. N08 runs only in a
+native qualification run (`WINUNITD_NATIVE_NESTED_RESULTS` and the
+admission inputs below set) with a test binary built without `-race`: its
+fixed 128 MiB baseline and 256M job budget do not account for
+race-instrumentation overhead, and the `internal/manager` fixture is the
+test binary itself. Ordinary and race runs skip it with that reason. They
+give no N08 pass, and N08 stays unqualified until such a run; it is not
+part of the first increment. The CPU quota cases
+check native settings by default; `WINUNITD_NATIVE_NESTED_METER=1` adds a
+30-second measurement and the uncapped control. In a qualification run a
+settings-only result is inconclusive.
+
+For qualification, set `WINUNITD_NATIVE_NESTED_RESULTS` (a directory),
+`WINUNITD_NATIVE_NESTED_ADMISSION` (the admitted run manifest),
+`WINUNITD_NATIVE_NESTED_REPETITION` (r1 to r3) and optionally
+`WINUNITD_NATIVE_NESTED_CASE_ROOT` to keep case directories. The admitted run
+manifest is the controller's reviewed list for one run: schema 1, the full
+clean source commit, and the SHA-256 of every executable the run may use
+(`winunitd.exe`, `winctl.exe`, `nested-job.exe` and the test binaries), taken
+from the build manifests of that clean build (see BUILDING.md). Each
+scenario writes one result record bound to that manifest's hash and source,
+the hash of the executable that wrote it, the matrix, the processor count,
+its token context and whether its cleanup was confirmed. A run without the
+manifest, or from an executable it does not list, records its evidence as
+inconclusive and reports the error.
+
+`tools/lab/assets/nested-job-checks.ps1` runs one installed-daemon execution
+of N06 or N07. Before anything is installed or crashed it requires the
+installed daemon and CLI and the fixture to match the admitted manifest. It
+renders an enabled unit, lets the fixture's observer crash the exact user
+manager or broker, checks the recovered daemon and records the result. The
+observer refuses to crash anything unless the running generation's own
+report shows the bound launch mode. It reports raw identities: both
+generations' MAIN, ENGINE, G1 and G2 with parent links, account, session and
+image hash, the crash target and any held user manager with their accounts,
+kernel exit and creation times, and both generations' complete MAIN reports,
+read after their writers exited. The record step recomputes every check from
+them: each report is complete and READY in the bound mode with its launch
+sequence and inner job, and names exactly the held tree; the replacement's
+entry check covers each old process exactly once without an error; every
+workload image is the admitted `nested-job.exe`, which must also be the
+recorder. It binds the result to the case, mode, repetition, expected account
+and admitted run, and links it to the N01 native-owner proof, which must have
+run under the same account. Its account, directories and paths are
+parameters; a SYSTEM case needs none of the headless ones. Every change the
+driver makes runs inside its try block and teardown undoes exactly what was
+done; a process it kills after a deadline counts as stopped only once its exit
+is confirmed, and an unconfirmed exit fails the case and leaves its evidence.
+
+For headless installed-daemon cases an administrator cannot reach the
+account's manager pipe, so the driver installs the unit itself. It writes
+the unit file and the enable link (`enabled\default.target\<unit>`, the
+file `winctl enable` writes) into the account's manager directory, then runs
+`winctl disable-linger` and `winctl enable-linger` for the account so the
+broker starts a fresh S4U manager that boots the enabled unit. Teardown
+removes both files and repeats the pair, leaving linger enabled. Every unit of
+that account restarts twice per execution, so the account must be dedicated
+to these cases and must already linger. The lab owner decides whether this
+fits its account conventions.
+
+Case directories, observer reports, agent files and the driver's transcript
+contain machine paths, account names and SIDs. They are private
+qualification evidence and must not be published as CI artifacts or attached
+to issues or pull requests. New test failure messages name roles, states and
+numeric errors, and the fixture's file errors, including a missing admission
+manifest, name only the file. The driver's result detail replaces its own
+path and account parameters with placeholders on a best-effort basis; it is
+not a publication sanitizer. A public summary is written separately from an
+allowlist of fields.
+
+`nested-job-fixture summarize --results DIR --admission FILE` exits 0 only
+when every required execution and its required controls passed for that
+admitted run, with matching matrix, token context, owner proof and confirmed
+cleanup. A selection (`--first-increment`, `--identity`, `--lane`, `--case`)
+is partial: it lists the omitted keys and exits 3 even when everything
+selected passed. No native result is recorded here until those runs pass.

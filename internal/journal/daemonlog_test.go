@@ -201,3 +201,22 @@ func TestRecordDiagnosticOmitsEnvironmentAndParserDumps(t *testing.T) {
 		t.Fatalf("safe diagnostic changed: %+v", entries[2])
 	}
 }
+
+func TestDaemonLogPersistsAdmissionHeld(t *testing.T) {
+	root := t.TempDir()
+	log, err := OpenDaemonLog(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log.Record(DaemonEvent{Code: DaemonEventAdmissionHeld, Reason: "below compatibility floor"})
+	if err := log.CloseContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(log.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"daemon.admission-held"`) || !strings.Contains(string(body), "below compatibility floor") {
+		t.Fatalf("admission hold not persisted: %s", body)
+	}
+}

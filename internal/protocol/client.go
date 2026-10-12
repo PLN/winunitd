@@ -31,6 +31,27 @@ func (c *Client) Maintenance(ctx context.Context, params MaintenanceParams) (*Ma
 	return &out, nil
 }
 
+// Capabilities queries the manager build. An older manager answers
+// CodeMethodNotFound and reports no capability. An absent, null or invalid
+// reply is an error, never an empty capability set.
+func (c *Client) Capabilities(ctx context.Context) (*CapabilitiesResult, error) {
+	var raw json.RawMessage
+	if err := c.Call(ctx, MethodCapabilities, struct{}{}, &raw); err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, fmt.Errorf("invalid capability reply: no result")
+	}
+	var out CapabilitiesResult
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("invalid capability reply: %w", err)
+	}
+	if err := out.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid capability reply: %w", err)
+	}
+	return &out, nil
+}
+
 func (c *Client) Operation(ctx context.Context, id string) (*OperationResult, error) {
 	var out OperationResult
 	if err := c.Call(ctx, MethodOperation, OperationParams{ID: id}, &out); err != nil {
@@ -79,6 +100,15 @@ func (c *Client) Call(ctx context.Context, method string, params, out any) error
 	var resp Response
 	if err := decodeMessage(c.br, &resp); err != nil {
 		return fmt.Errorf("read response: %w", err)
+	}
+	// Accept neither the error nor the result of a foreign or unversioned
+	// envelope. A peer error is reported as text, never as a typed *Error.
+	if resp.Protocol != Name || resp.Version != Version {
+		detail := ""
+		if resp.Error != nil {
+			detail = "; peer reported: " + resp.Error.Error()
+		}
+		return fmt.Errorf("response uses protocol %q version %d, want %q version %d%s", resp.Protocol, resp.Version, Name, Version, detail)
 	}
 	if resp.ID != id {
 		return fmt.Errorf("response id %d does not match request %d", resp.ID, id)

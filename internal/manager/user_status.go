@@ -9,17 +9,24 @@ import (
 	"github.com/PLN/winunitd/internal/runtime"
 )
 
+// User-manager token modes reported by status and capabilities.
+const (
+	userModeInteractive      = "interactive"
+	userModeHeadlessS4U      = "headless-s4u"
+	userModeHeadlessStoreURI = "headless-store-uri"
+)
+
 func userLaunchMode(token *runtime.UserToken) (string, uint32) {
 	if token == nil {
 		return "", 0
 	}
 	switch token.Source {
 	case runtime.LingerTokenPathS4U:
-		return "headless-s4u", 0
+		return userModeHeadlessS4U, 0
 	case runtime.LingerTokenPathStoreURI:
-		return "headless-store-uri", 0
+		return userModeHeadlessStoreURI, 0
 	case "":
-		return "interactive", token.SessionID
+		return userModeInteractive, token.SessionID
 	default:
 		return "unknown", token.SessionID
 	}

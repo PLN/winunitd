@@ -1647,3 +1647,20 @@ func TestPrintUserManagerLaunchMode(t *testing.T) {
 		}
 	}
 }
+
+func TestPrintStatusAdmissionHold(t *testing.T) {
+	var out bytes.Buffer
+	c := &cli{stdout: &out}
+	hold := "below compatibility floor: version 0.1.0-alpha is below 0.2.0"
+	if code := c.printStatus(&protocol.StatusResult{Machine: &protocol.MachineStatus{State: "running", AdmissionHold: hold}}); code != 0 {
+		t.Fatalf("machine exit %d", code)
+	}
+	if !strings.Contains(out.String(), "  AdmissionHold: "+hold+"\n") {
+		t.Fatalf("hold not printed: %s", out.String())
+	}
+	out.Reset()
+	c.printStatus(&protocol.StatusResult{Machine: &protocol.MachineStatus{State: "running"}})
+	if strings.Contains(out.String(), "AdmissionHold") {
+		t.Fatalf("unheld status printed a hold: %s", out.String())
+	}
+}

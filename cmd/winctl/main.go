@@ -45,6 +45,9 @@ Commands:
                       Quiesce system and user workloads until manager restart
                       (Administrators, reserved maintenance pipe; default/max 180s)
   verify <path|unit>  Verify a unit file path (no daemon) or a loaded unit
+  capabilities [--require NAME]
+                      Print the manager version, source commit and enforced
+                      features as JSON; --require fails unless listed
   migrate --file PATH [--output NEWPATH]
                       Preview format-2 conversion; optionally create a new file
   enable-linger <user>
@@ -201,6 +204,8 @@ func (c *cli) run(args []string) int {
 			fmt.Fprint(c.stdout, migrateUsage)
 		case "status":
 			fmt.Fprint(c.stdout, statusUsage)
+		case "capabilities":
+			fmt.Fprint(c.stdout, capabilitiesUsage)
 		default:
 			fmt.Fprint(c.stdout, usage)
 		}
@@ -212,6 +217,8 @@ func (c *cli) run(args []string) int {
 		return c.migrate(rest)
 	case "verify":
 		return c.verify(rest)
+	case "capabilities":
+		return c.capabilities(rest)
 	case "start":
 		return c.unitCmd(rest, protocol.MethodStart, c.printUnitResult)
 	case "stop":
@@ -821,6 +828,9 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 			if m.Maintenance.Error != "" {
 				fmt.Fprintf(c.stdout, "  MaintenanceError: %s\n", m.Maintenance.Error)
 			}
+		}
+		if m.AdmissionHold != "" {
+			fmt.Fprintf(c.stdout, "  AdmissionHold: %s\n", m.AdmissionHold)
 		}
 		if m.ConfigRevision != "" {
 			fmt.Fprintf(c.stdout, "ConfigRevision=%s\n", m.ConfigRevision)

@@ -36,7 +36,7 @@ func managerWithClock(t *testing.T, launch runtime.Launcher, clk timers.Clock, f
 	for name, body := range files {
 		writeUnit(t, units, name, body)
 	}
-	m, err := New(Config{BaseDir: dir, Launch: launch, Clock: clk})
+	m, err := New(Config{BaseDir: dir, Launch: launch, Clock: clk, NotifyListen: testNotifyListen(t)})
 	if err != nil {
 		t.Fatal(err)
 	}

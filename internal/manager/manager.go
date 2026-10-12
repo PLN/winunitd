@@ -21,6 +21,7 @@ import (
 	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/timers"
 	"github.com/PLN/winunitd/internal/unit"
+	"github.com/PLN/winunitd/internal/version"
 )
 
 // Manager holds loaded units and serves the control protocol.
@@ -176,7 +177,7 @@ func New(cfg Config) (*Manager, error) {
 		m.pathExists = pathwatch.Exists
 	}
 	m.engine = timers.NewEngine(clk, store, m.onTimerElapsed)
-	dlog.Record(journal.DaemonEvent{Code: journal.DaemonEventOpen})
+	dlog.Record(journal.DaemonEvent{Code: journal.DaemonEventOpen, Reason: buildReason(version.Build())})
 	return m, nil
 }
 
@@ -414,6 +415,12 @@ func (m *Manager) Handle(ctx context.Context, method string, params json.RawMess
 			return nil, err
 		}
 		return m.Verify(p.Unit)
+	case protocol.MethodCapabilities:
+		var p struct{}
+		if err := protocol.DecodeParams(params, &p); err != nil {
+			return nil, err
+		}
+		return m.Capabilities(), nil
 	default:
 		return nil, protocol.ErrMethodNotFound(method)
 	}
@@ -564,7 +571,7 @@ func (m *Manager) overlayDaemonLog(ms *protocol.MachineStatus) {
 }
 
 func (m *Manager) machineLocked() *protocol.MachineStatus {
-	ms := &protocol.MachineStatus{State: "running", ConfigRevision: m.configRevision, NativeProbes: len(m.nativeProbes)}
+	ms := &protocol.MachineStatus{State: "running", ConfigRevision: m.configRevision, NativeProbes: len(m.nativeProbes), AdmissionHold: m.cfg.AdmissionHold}
 	for name, rt := range m.units {
 		ms.UnitsLoaded++
 		if rt != nil && rt.unit != nil && rt.unit.Kind == unit.KindTimer {
@@ -707,6 +714,10 @@ func (m *Manager) startOperation(ctx context.Context, name string, origin activa
 	if m.closed {
 		m.mu.Unlock()
 		return nil, protocol.ErrFailed("manager is shutting down or closed")
+	}
+	if m.cfg.AdmissionHold != "" {
+		m.mu.Unlock()
+		return nil, protocol.ErrFailed("admission is held: " + m.cfg.AdmissionHold)
 	}
 	if origin != nil && !origin.validLocked(m) {
 		m.mu.Unlock()

@@ -73,6 +73,13 @@ type Config struct {
 	// NotifySID is the unit-process user SID for the notify pipe DACL.
 	// Empty uses the current process user on Windows.
 	NotifySID string
+	// AdmissionHold, when non-empty, keeps start admission closed for the
+	// life of this manager and is reported as machine status admissionHold.
+	// No explicit, boot, timer, watch or recovery start is accepted; stop,
+	// status, reload and verify remain available. The daemon sets it when the
+	// running build is below the persisted compatibility floor (#262). Only
+	// a manager restart reopens admission, as after global maintenance.
+	AdmissionHold string
 	// UserScope is true for a per-user manager (winunitd --user-manager).
 	// It loads graphical-session.target and starts/stops it from session
 	// tracking. The system manager stays false (identity vs session stay

@@ -70,7 +70,9 @@ func TestEmitStartupFailureDropsSecrets(t *testing.T) {
 	if gotID != IDStartupFailed || gotInsert != "" {
 		t.Fatalf("emitted id=%d insert=%q", gotID, gotInsert)
 	}
-	Emit(journal.DaemonEventView{Code: journal.DaemonEventOpen})
+	// The build identity on daemon.open stays in the daemon log; the event
+	// text does not change.
+	Emit(journal.DaemonEventView{Code: journal.DaemonEventOpen, Reason: "version 1.2.3 commit 0123456789abcdef"})
 	if gotID != IDOpen || gotInsert != "" {
 		t.Fatalf("open emit id=%d insert=%q", gotID, gotInsert)
 	}
