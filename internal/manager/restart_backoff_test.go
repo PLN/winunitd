@@ -87,6 +87,42 @@ func TestRestartBackoffPublicLifecycle(t *testing.T) {
 	}
 }
 
+// StartLimitBurst=0 removes the start limit: a unit that keeps failing keeps
+// recovering with its capped exponential delay, far beyond the default
+// five starts per ten seconds.
+func TestRestartBackoffUnlimitedBurstKeepsRetrying(t *testing.T) {
+	body := strings.Replace(strings.Replace(backoffUnit, "RestartSec=1s", "RestartSec=100ms", 1), "RestartMaxDelaySec=3s", "RestartMaxDelaySec=400ms", 1)
+	m, clock := managerWithFake(t, &fakeLauncher{}, map[string]string{"work.service": body})
+	if _, err := m.Start(context.Background(), "work"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 20; i++ {
+		delay := min(100*time.Millisecond<<i, 400*time.Millisecond)
+		m.mu.Lock()
+		rt := m.units["work.service"]
+		old := rt.proc.(*fakeProc)
+		m.mu.Unlock()
+		old.die(7)
+		waitCond(t, func() bool {
+			m.mu.Lock()
+			accepted := rt.sub == core.SubAutoRestart && rt.restartAttempt == uint32(i+1) && rt.restartDelay == delay
+			m.mu.Unlock()
+			return accepted && clock.WaitingAt(delay)
+		})
+		clock.Advance(delay)
+		waitCond(t, func() bool {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			return rt.proc != nil && rt.proc != old && rt.state == core.Active
+		})
+	}
+	st, err := m.Status("work")
+	if err != nil || st.Unit.ActiveState != "active" || st.Unit.Reason == "start-limit" || st.Unit.RestartAttempt != 20 ||
+		st.Unit.RestartBudget == nil || st.Unit.RestartBudget.Burst != 0 || st.Unit.RestartBudget.Remaining != nil {
+		t.Fatalf("unlimited recovery stopped: %+v %v", st.Unit, err)
+	}
+}
+
 func TestRestartBackoffStopAndRemovalCancelAcceptedWait(t *testing.T) {
 	for _, remove := range []bool{false, true} {
 		t.Run(map[bool]string{false: "stop", true: "remove"}[remove], func(t *testing.T) {

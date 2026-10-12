@@ -34,14 +34,17 @@ func (h *UserHost) recordLingerTokenFailure(sid string, revision uint64, err err
 	if previous != nil && (previous.proc != nil || previous.err == "") {
 		return
 	}
-	delay := userRecoveryDelay(previous, now)
+	delay := userRecoveryDelay(previous)
 	inst := h.newUserInstanceLocked(sid, "", 0, delay, now)
 	inst.err = message
 	h.bySID[sid] = inst
 }
 
-func userRecoveryDelay(previous *userInstance, now time.Time) time.Duration {
-	if previous == nil || (!previous.startedAt.IsZero() && now.Sub(previous.startedAt) >= userRecoveryStableTime) {
+// userRecoveryDelay resets after confirmed stable running time: from launch
+// to the last liveness check that saw the same process. Waiting after an exit,
+// and the unobserved time before it, never count (#254).
+func userRecoveryDelay(previous *userInstance) time.Duration {
+	if previous == nil || (!previous.startedAt.IsZero() && previous.aliveAt.Sub(previous.startedAt) >= userRecoveryStableTime) {
 		return userRecoveryMinDelay
 	}
 	delay := previous.restartDelay * 2
