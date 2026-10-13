@@ -1,6 +1,6 @@
 # Post-beta tracking
 
-Status refreshed September 23, 2026. The public 0.2.1-beta delivery gates B1-B4 are complete.
+Status refreshed October 14, 2026. The public 0.2.1-beta delivery gates B1-B4 are complete.
 Prioritize adopter feedback and reproducible defects in the supported core, then
 continue the architecture and qualification backlog. Preserve documented beta
 syntax. Status follows the linked qualification evidence; no new release is
@@ -9,7 +9,7 @@ implied by this tracking update.
 ## Milestones
 
 GitHub milestones mirror [repository acceptance gates](MILESTONES.md). R2, R3, and R5
-technical acceptance is complete. For 0.1-alpha only, overall R6 is checked under the [#251](https://github.com/PLN/winunitd/issues/251) deferral policy with documented limitations (deferred-media and deferred-older-msi). R0, R1, and R4 remain in progress and R7-R8 remain
+technical acceptance is complete. For 0.1-alpha only, overall R6 is checked under the [#251](https://github.com/PLN/winunitd/issues/251) deferral policy with documented limitations (deferred-media and deferred-older-msi). R0, R1, and R4 remain in progress. R7 is accepted for the dev-machine pilot on 0.1-alpha ([evidence](R7-EVIDENCE.md)); R8 remains
 planned. R4 acceptance (R4.1, R4.4, and R4.5) remains an unmet prerequisite for the fully qualified release. This alpha check does not itself authorize the R7 handoff.
 The packaging spike is already delivered.
 R5.1 timer persistence and R5.2 delivery policy are technically complete;

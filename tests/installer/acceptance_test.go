@@ -386,8 +386,13 @@ func TestAcceptanceAlphaGates(t *testing.T) {
 	if !strings.Contains(evidence, "4223ac9-r65-migrate") || !strings.Contains(evidence, "## Verified") {
 		t.Fatal("verified native fixture evidence 4223ac9-r65-migrate is missing")
 	}
-	if strings.Contains(milestones, "R7 has started") || !strings.Contains(milestones, "R7 has not started") {
-		t.Fatal("R7 has not started")
+	for _, id := range []string{"R7.1", "R7.2", "R7.3", "R7.4"} {
+		if !taskChecked(milestones, id) {
+			t.Fatalf("%s is accepted for the dev-machine pilot", id)
+		}
+	}
+	if strings.Contains(milestones, "R7 has not started") {
+		t.Fatal("R7 status is stale")
 	}
 	if strings.Contains(milestones, "R6.1, R6.4, and R6.5 stay open") {
 		t.Fatal("R6 status still says R6.1 and R6.4 are open")
@@ -503,6 +508,7 @@ func TestAcceptanceHarnessHasNoLabInventory(t *testing.T) {
 		"tests/installer/acceptance.ps1",
 		"tests/installer/acceptance-matrix.json",
 		"docs/R6-EVIDENCE.md",
+		"docs/R7-EVIDENCE.md",
 		"docs/MILESTONES.md",
 	} {
 		text := readRepo(t, root, rel)
