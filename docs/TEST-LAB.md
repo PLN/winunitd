@@ -316,7 +316,7 @@ the instrumented test binary alone does not establish that evidence.
 
 ## Workload-created nested jobs
 
-Issue #265 asks whether a unit main may create its own kill-on-close job for an
+[Issue #4](https://github.com/PLN/winunitd/issues/4) asks whether a unit main may create its own kill-on-close job for an
 engine and grandchildren inside the WinUnit unit job. The test-only fixture in
 `internal/runtime/runtimetest/nestedjob` creates that shape: MAIN stays in the
 unit job only, and ENGINE, G1 and G2 are in both jobs. MAIN creates the inner

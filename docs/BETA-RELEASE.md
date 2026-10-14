@@ -74,6 +74,12 @@ Rewriting references alone does not purge server-side objects;
 The approved route retains the existing repository, issues, and PR history and
 publishes the verified beta release there. No repository replacement is needed.
 
+The R8.1 review before 0.3.0 found that a closed pull request still referenced
+an unmerged commit with identifying information. On October 14, 2026 the
+maintainer replaced the repository instead: the new repository holds the same
+`main` history, tags, and beta release files, and neither that commit nor the
+residual blob above is reachable from it.
+
 ## Release blockers and follow-up
 
 Block on reproducible ownership loss, unsafe installation/replacement, unusable

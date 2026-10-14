@@ -15,7 +15,7 @@ with `packaging/wix/build.ps1`. Both commits passed hosted CI.
 | Package | Source | Installer version |
 | --- | --- | --- |
 | 0.1.0-alpha | `4ea24bc` | 0.1.0 |
-| 0.1.1-alpha | `b139851` ([#289](https://github.com/PLN/winunitd/pull/289)) | 0.1.1, new ProductCode |
+| 0.1.1-alpha | `b139851` (#289) | 0.1.1, new ProductCode |
 
 ### R7.1 Preflight
 
@@ -51,7 +51,7 @@ through the dashboard. Hermes was down for a few minutes during the handoff.
 | 4 | Reboot | The service started automatically in session 0; nothing ran user-side before logon; the user manager and all three components started at logon |
 | 5 | Kill each component | Gateway, dashboard and WebUI each healthy again in 6.9, 6.3 and 9.4 s under the same manager; the old trees were gone; no duplicate listeners |
 | 6 | Kill the user manager | All its workload processes ended with it; a new manager had Hermes healthy 5.6 s later |
-| 7 | Kill the user manager three times quickly | Relaunched after 3.2, 9.5 and 9.6 s without a premature backoff reset ([#254](https://github.com/PLN/winunitd/issues/254), [#271](https://github.com/PLN/winunitd/pull/271)); healthy 4.6 s after the last |
+| 7 | Kill the user manager three times quickly | Relaunched after 3.2, 9.5 and 9.6 s without a premature backoff reset (#254, #271); healthy 4.6 s after the last |
 | 8 | `winctl --user stop` and `start hermes.target` | Stop returned at once with every workload process gone and the ports closed; start was healthy in 5.5 s |
 | 9 | Forced stop | The Hermes units define no `ExecStop`, so stop terminates the job, as row 8 shows |
 | 10 | `msiexec /fa` repair | Exit 0; the service restarted and Hermes was healthy 4.2 s later; units, enablement and admission unchanged |

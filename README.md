@@ -113,3 +113,9 @@ The [roadmap](ROADMAP.md), [design](DESIGN.md), and
 [milestones](docs/MILESTONES.md) describe future work. Proposed design semantics
 are not the current unit-file contract. The [architecture review](docs/DESIGN-REVIEW.md)
 and the [0.3.0 release notes](docs/RELEASE-NOTES-0.3.0.md) provide further background.
+
+This GitHub repository was recreated on October 14, 2026. The Git history, tags,
+and releases carried over unchanged. Issue and pull request numbers up to #300
+in older commit messages and documents refer to the original repository, whose
+discussions are no longer public. Its open issues and draft pull request
+continue here as #1 to #9.

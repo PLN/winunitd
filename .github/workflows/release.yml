@@ -80,9 +80,11 @@ jobs:
           $v = '${{ steps.version.outputs.release }}'
           $out = New-Item -ItemType Directory -Force -Path dist/release
           Copy-Item "dist/wix/$v/winunitd-$v-x64.msi", "dist/wix/$v/package-manifest.json" $out
-          Get-ChildItem -LiteralPath $out -File | Sort-Object Name | ForEach-Object {
+          $sums = Get-ChildItem -LiteralPath $out -File | Sort-Object Name | ForEach-Object {
             '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
-          } | Set-Content -LiteralPath (Join-Path $out 'SHA256SUMS') -Encoding ascii
+          }
+          # LF line endings, so sha256sum -c accepts the file.
+          [IO.File]::WriteAllText((Join-Path $out.FullName 'SHA256SUMS'), ($sums -join "`n") + "`n", [Text.Encoding]::ASCII)
           Get-Content -LiteralPath (Join-Path $out 'SHA256SUMS')
 
       - name: Attest build provenance

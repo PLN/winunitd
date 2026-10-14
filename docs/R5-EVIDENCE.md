@@ -3,9 +3,9 @@
 ## Combined operational stress acceptance
 
 R5.5 technical acceptance is complete as of September 14, 2026.
-[PR #218](https://github.com/PLN/winunitd/pull/218), source
+PR #218, source
 `3605c2c7978c4b10076558a76e5453fd051e60bc`, passed
-[exact-source Windows/Linux CI](https://github.com/PLN/winunitd/actions/runs/34813927032).
+exact-source Windows/Linux CI.
 Merge `136909debd9b9aa3d79b07fe18ab3d42b1225cbd` has the identical tested tree.
 R5.4 diagnostics, rendered Application events, and overall R5 are accepted in
 [diagnostics and event resources](#diagnostics-and-event-resources).
@@ -81,8 +81,8 @@ stream identity from severity:
 
 | Source / change | Exact-source CI | Native cases per identity | Repetitions | SYSTEM / headless standard-user time | Equal-tree merge |
 | --- | --- | --- | --- | --- | --- |
-| `a38c88f269ea3a5903a737ad79f3e448195e170c`, [PR #215](https://github.com/PLN/winunitd/pull/215), historical disk retention | [34776212301](https://github.com/PLN/winunitd/actions/runs/34776212301) | 52 | 3 | 59.156s / 61.255s | `a4bc1433fe5f5233cc812fb850f847e07955eb9c` |
-| `a576ef265a376a8a4a8b3b67782c5389333ab58e`, [PR #216](https://github.com/PLN/winunitd/pull/216), stream/severity separation | [34776680148](https://github.com/PLN/winunitd/actions/runs/34776680148) | 59 | 3 | 56.811s / 54.691s | `84740a71d254bbc5155211ca3fda3531b86b150a` |
+| `a38c88f269ea3a5903a737ad79f3e448195e170c`, PR #215, historical disk retention | 34776212301 | 52 | 3 | 59.156s / 61.255s | `a4bc1433fe5f5233cc812fb850f847e07955eb9c` |
+| `a576ef265a376a8a4a8b3b67782c5389333ab58e`, PR #216, stream/severity separation | 34776680148 | 59 | 3 | 56.811s / 54.691s | `84740a71d254bbc5155211ca3fda3531b86b150a` |
 
 Both disposable Windows 11 Enterprise LTSC build 26100 matrices ran with one
 logical CPU, `GOMAXPROCS=1` and test parallelism one, with no skips. The final
@@ -131,20 +131,20 @@ establishes coalescing, interrupted activation retry and its duplicate possibili
 
 Two defects found during this qualification are fixed:
 
-- [PR #209](https://github.com/PLN/winunitd/pull/209) keeps mixed timer clock
+- PR #209 keeps mixed timer clock
   domains independent. A forward wall jump previously fired an unelapsed
   boot/startup deadline, or recorded the wrong scheduled source. Four early-fire
   and two source-stamp regression cases reproduce on the previous implementation.
   Wall-clock delivery now leaves a later relative deadline unconsumed.
-- [PR #210](https://github.com/PLN/winunitd/pull/210) selects the first civil-time
+- PR #210 selects the first civil-time
   occurrence using the actual timezone offset change. A one-hour assumption
   previously selected the second occurrence during Lord Howe's 30-minute fold;
   the permanent engine regression reproduces that error.
 
 | Source | Exact-source CI | Native cases per identity | Repetitions | SYSTEM / headless standard-user time | Equal-tree merge |
 | --- | --- | --- | --- | --- | --- |
-| `6311cb1429bc3d02f990820fbd8cfb4eb2a3167b` | [34770433652](https://github.com/PLN/winunitd/actions/runs/34770433652) | 68 | 3 | 10.468s / 8.362s | `ea2a9da7457e8db80228bf614d495ec1ba2bf2d4` |
-| `15942407303668886da884582131fb7bcabe546a` | [34771224682](https://github.com/PLN/winunitd/actions/runs/34771224682) | 90 | 3 | 13.305s / 10.006s | `469ab7075cf32f6f2dc83b1a93dc44c9fed7d15d` |
+| `6311cb1429bc3d02f990820fbd8cfb4eb2a3167b` | 34770433652 | 68 | 3 | 10.468s / 8.362s | `ea2a9da7457e8db80228bf614d495ec1ba2bf2d4` |
+| `15942407303668886da884582131fb7bcabe546a` | 34771224682 | 90 | 3 | 13.305s / 10.006s | `469ab7075cf32f6f2dc83b1a93dc44c9fed7d15d` |
 
 The final disposable Windows 11 Enterprise LTSC build 26100 matrix contains
 56 manager, four journal, 26 timer and four notification tests, including the
@@ -183,7 +183,7 @@ full race suite and twenty new regression repetitions. No timeout was relaxed.
 ## Journal rotation failure and retry
 
 PR #192 source `7c114fb04d653dc5ae8bc254dc71359a136ebd48` passed
-[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34761951461).
+exact-source CI.
 The previous implementation silently succeeded when a middle archive was locked
 on Windows. Rotation now checks every file operation and retains the failed step
 until repair, preventing repeated retries from evicting additional generations.
@@ -217,7 +217,7 @@ now accepted above. Durable daemon diagnostics and overall R5 are accepted in
 ## Timer state replacement and interrupted activation
 
 PR #185 source `1d6719dc856499b8280d4570248ba634ecea6056` passed
-[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34759062624).
+exact-source CI.
 Merge `b4a09bb0b4ac8fb71dfbdd0afb332474b1f270b5` has the same tested tree.
 The [storage contract](OPERATIONS.md#timer-storage-work) combines checked bounded
 reads, versioned state, pending/result activation records and dispatch suspension
@@ -268,9 +268,9 @@ R5.4 technical acceptance is complete as of September 22, 2026. R5.1–R5.5 are
 checked, so overall R5 is complete.
 
 R5.4a runtime diagnostics merged at `a48e6e9dbde9d7f093f37b6b9c0e4336bc03d5e8`
-([#236](https://github.com/PLN/winunitd/pull/236)). That tree matches the
+(#236). That tree matches the
 qualified source `480470064b085591b2cd57ab1bf4c3c51f021149`, which passed
-[exact-source Windows/Linux CI](https://github.com/PLN/winunitd/actions/runs/35763808946).
+exact-source Windows/Linux CI.
 Status and snapshot copy the restart budget. Timer storage and schedule state
 stay on unit status and list-timers. The daemon log under the data root queues
 allowlisted event codes, rejects a symlink or reparse point, and refuses a
@@ -278,7 +278,7 @@ resolved path outside that root. Drop and write-error counters appear on
 machine status. Native SYSTEM and headless-user qualification of that tree
 passed. Raw logs stay private.
 
-The daemon-log ACL fix for [#253](https://github.com/PLN/winunitd/issues/253)
+The daemon-log ACL fix for #253
 changes the DACL after #236 because user managers
 could not open their diagnostics; this behavior was not present in that
 previously qualified tree. On Windows the directory, current log and rotated
@@ -293,8 +293,8 @@ Administrators, including a foreign owner that granted WRITE_DAC.
 Native qualification `qualification-344bf2d-daemonlog-acl` passed on source
 `344bf2d2e970a347b71f03c0da0ab456324f9f85`, clean tree
 `629a6bd7d9b39d2d3c478aec38fe9994293e8c36`, for
-[PR #255](https://github.com/PLN/winunitd/pull/255) and issue #253.
-[Exact-source CI run 35987962097](https://github.com/PLN/winunitd/actions/runs/35987962097)
+PR #255 and issue #253.
+Exact-source CI run 35987962097
 passed; Windows artifact `10803655676` and cross-manifest `10802544533` were
 verified with matching native/cross manifests. Five lanes passed: unchanged
 SYSTEM protection; standard WTS and genuine filtered-administrator startup,
@@ -309,15 +309,15 @@ inheritance positive controls and the privileged symlink regression recorded
 the clean exact-source checkout with Go 1.27.1; source binding is established
 by the guarded build evidence, not an embedded VCS revision. The 65-second
 stability checks are bounded observations, not a soak or resolution of
-[#254](https://github.com/PLN/winunitd/issues/254). Separate live endpoint-open
+#254. Separate live endpoint-open
 and server-owner cases (A/B) were not run; remaining release gates stay open.
 Raw fixture evidence remains private.
 
 R5.4b event resources and the product MSI merged at
 `59ec4d802f0346647eb39d45539fb84aa9cb5368`
-([#238](https://github.com/PLN/winunitd/pull/238)). That tree matches the
+(#238). That tree matches the
 qualified source `a3b5bb25388c49f46509af624a7e8cb778ecddb6`, which passed
-[exact-source Windows/Linux CI](https://github.com/PLN/winunitd/actions/runs/35776115569).
+exact-source Windows/Linux CI.
 The product MSI registers the Application source `winunitd` and embeds a
 message table in `winunitd.exe`. Startup failures use the daemon log code
 `daemon.startup-failed` and the same redaction rules. Environment assignments,

@@ -17,8 +17,8 @@ CI identity, raw results and explicit fixture cleanup are retained privately.
 
 | Change | Exact source and CI | Cases per identity; SYSTEM/user seconds | Equal-tree merge |
 | --- | --- | --- | --- |
-| PR #206: journal/timer storage error observation | `c4f6341b55176940358736b462d624db0acc1828`, [CI](https://github.com/PLN/winunitd/actions/runs/34768748133) | 57; 8.680/6.613 | `ca3c3576edd49fc00d6892a6bcb5c7b83e2a6b26` |
-| PR #207: notification admission and consolidated matrix | `4855ce8c90fc2676f608ef778371592fd6a117e5`, [CI](https://github.com/PLN/winunitd/actions/runs/34769236108) | 61; 9.660/6.944 | `741575d2a02029ef7cd93bf91d04b54d1cd09fdc` |
+| PR #206: journal/timer storage error observation | `c4f6341b55176940358736b462d624db0acc1828`, CI | 57; 8.680/6.613 | `ca3c3576edd49fc00d6892a6bcb5c7b83e2a6b26` |
+| PR #207: notification admission and consolidated matrix | `4855ce8c90fc2676f608ef778371592fd6a117e5`, CI | 61; 9.660/6.944 | `741575d2a02029ef7cd93bf91d04b54d1cd09fdc` |
 
 The final matrix selects 50 manager, four journal, three timer and four
 notification cases. It combines public control/lifecycle paths with delayed
@@ -75,8 +75,8 @@ Binary/source hashes, raw logs and cleanup observations are retained privately.
 
 | Change | Tested source and CI | Cases per identity; SYSTEM/user seconds | Equal-tree merge |
 | --- | --- | --- | --- |
-| PR #202: bounded transition diagnostics | `2d0f6f3dc45eff130fc23415d35c5d51d933b7e3`, [CI](https://github.com/PLN/winunitd/actions/runs/34765837025) | 6; 5.603/2.527 | `de0c901c97f00228dab60efa17abd59b38620530` |
-| PR #203: adapter error observations | `dd515c8bf09dbb8ca7a0682132920c520fa0a583`, [CI](https://github.com/PLN/winunitd/actions/runs/34766883282) | 10; 2.569/1.121 | `726c3a7444c6d2abbdb93c2cf8d342d3b6471233` |
+| PR #202: bounded transition diagnostics | `2d0f6f3dc45eff130fc23415d35c5d51d933b7e3`, CI | 6; 5.603/2.527 | `de0c901c97f00228dab60efa17abd59b38620530` |
+| PR #203: adapter error observations | `dd515c8bf09dbb8ca7a0682132920c520fa0a583`, CI | 10; 2.569/1.121 | `726c3a7444c6d2abbdb93c2cf8d342d3b6471233` |
 
 Illegal transitions previously called the console logger while holding the
 lifecycle mutex. Rejected transitions now preserve the accepted state and enqueue
@@ -107,7 +107,7 @@ The full lifecycle writer, worker-class and invariant audits remain R2 gates.
 ## Canceled recovery worker acceptance
 
 PR #204 source `6591e9ac16f49a8c1a96bd68a19c5c433db4564a` passed
-[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34767502672) and
+exact-source CI and
 eight cases ten times per SYSTEM/headless standard-user identity on isolated LTSC
 build 26100, in 9.957/9.123 seconds. No cases skipped; process/linger/profile cleanup
 passed. Merge `8a39dff81c4f5637208101ada5d9edab0b75e97c` has the tested tree.
@@ -135,10 +135,10 @@ observations are retained privately.
 
 | Change | Tested source and CI | Cases per identity; SYSTEM/user seconds | Equal-tree merge |
 | --- | --- | --- | --- |
-| PR #197: reserved linger revocation | `86bd7e27cffe7e7cd8b53e5effff137dfdd10502`, [CI](https://github.com/PLN/winunitd/actions/runs/34763167061) | 6; 2.067/0.866 | `bc7391e17e1c2638143495f44b69d24d2592c794` |
-| PR #198: user-policy decision handlers | `2e746a8d792954b54e9109e3701ea8e1581ed6bb`, [CI](https://github.com/PLN/winunitd/actions/runs/34764252879) | 14; 11.501/10.707 | `beb131d5c1bf31d291d2b696bed3fc1e6963ff89` |
-| PR #199: retired-SID queue bounds | `b8fe16d43ce45331194c3e588beec827d2d04c1c`, [CI](https://github.com/PLN/winunitd/actions/runs/34765087985) | 8; 1.816/0.753 | `b99f91db9bd9487d34fc3048247ac4a47b59d254` |
-| PR #200: reload watch-cleanup coalescing | `452afd26427e0dd9a22b658aabe86c87ffb96de7`, [CI](https://github.com/PLN/winunitd/actions/runs/34765143769) | 8; 2.100/0.827 | `936957ac0280e2435524a04d5c70a174dce9a55c` |
+| PR #197: reserved linger revocation | `86bd7e27cffe7e7cd8b53e5effff137dfdd10502`, CI | 6; 2.067/0.866 | `bc7391e17e1c2638143495f44b69d24d2592c794` |
+| PR #198: user-policy decision handlers | `2e746a8d792954b54e9109e3701ea8e1581ed6bb`, CI | 14; 11.501/10.707 | `beb131d5c1bf31d291d2b696bed3fc1e6963ff89` |
+| PR #199: retired-SID queue bounds | `b8fe16d43ce45331194c3e588beec827d2d04c1c`, CI | 8; 1.816/0.753 | `b99f91db9bd9487d34fc3048247ac4a47b59d254` |
+| PR #200: reload watch-cleanup coalescing | `452afd26427e0dd9a22b658aabe86c87ffb96de7`, CI | 8; 2.100/0.827 | `936957ac0280e2435524a04d5c70a174dce9a55c` |
 
 Four blocked ordinary token queries could previously prevent disable-linger.
 Revocation now has one independent, tracked native slot, and a second request
@@ -179,7 +179,7 @@ retained; [constrained-worker qualification](TEST-HARDENING.md) remains separate
 
 Snapshot requests formerly consumed ordinary handler capacity. PR #194 source
 `c1c00b0abc843ab56ff4b5a7139411431ed6fb9e` moved them to the reserved diagnostic
-class and passed [exact-source CI](https://github.com/PLN/winunitd/actions/runs/34762361940).
+class and passed exact-source CI.
 Five control/ownership cases passed ten repetitions each as SYSTEM and a headless
 standard user on disposable LTSC build 26100, in 1.483 and 0.455 seconds, without
 skips. These use real transport with deliberately delayed adapters; the separate
@@ -196,7 +196,7 @@ Merge `587b71074490aea365d239ceaf8ec7cad50d1d45` has the tested tree.
 
 PR #195 source `90a2689b15a71aba1d9168213cd46204cd333e18` adds the real-process
 hard-connection-cap case and passed
-[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34762692644).
+exact-source CI.
 All 128 ordinary connections retain idle decoders. The next connection closes
 without authorization or a timeout; the independently bounded maintenance endpoint
 then quiesces an actual Windows workload and confirms no remaining process,
@@ -215,7 +215,7 @@ native-work priority, writer audit and coordinator-wide acceptance remain open.
 ## System user-host snapshot qualification
 
 PR #188 source `724cab62f3e339e2db604579821fa7c8a3ffc7a3` passed
-[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34760653961).
+exact-source CI.
 Disposable LTSC build 26100 qualification installed the immutable CI payload
 under the existing SYSTEM service and captured 65 system snapshots during real
 headless S4U admission, two user-manager crashes, recovery and disable-linger.
@@ -446,7 +446,7 @@ bounds. This is not closure of R2.3 or the coordinator milestone.
 ## Offline LTSC daemon qualification
 
 The clean `984fbc95e2d2b2f6ea6aceed572947d0071136eb` Windows artifacts from
-[CI run 34039331915](https://github.com/PLN/winunitd/actions/runs/34039331915)
+CI run 34039331915
 passed SYSTEM qualification on a disposable Windows 11 Enterprise LTSC Evaluation
 baseline copy, build 26100.9168, with four vCPUs and 8 GiB RAM. Native Windows
 and Linux cross-build manifests match exactly; all four artifact hashes were
@@ -743,7 +743,7 @@ separate work.
 
 ## Accepted operation lifetimes
 
-September 7, 2026; [R2.4 issue #98](https://github.com/PLN/winunitd/issues/98).
+September 7, 2026; R2.4 issue #98.
 Accepted start/stop/restart transactions now own their contexts and aggregate
 cancellation budgets. Caller or serving-context cancellation ends the response
 wait without canceling accepted work. Shutdown/close cancels launches and restarts;
@@ -781,7 +781,7 @@ their existing cleanup owner; this is not a hard real-time termination guarantee
 
 ## Transaction outcomes without lifecycle replay
 
-September 7, 2026; [issue #96](https://github.com/PLN/winunitd/issues/96).
+September 7, 2026; issue #96.
 The graph executor reports never-launched failures synchronously through an
 optional rejection observer. The manager checks the accepted record, generation,
 stop epoch and origin, then publishes one member outcome. Adapter completions
@@ -1403,7 +1403,7 @@ or fresh native liveness evidence; the complete R2/R4 matrices remain open.
 ## September 12 coordinator native qualification
 
 Exact source `99e89680c78b98891519c62a1a7081d1f2cf3bdb` passed
-[hosted CI](https://github.com/PLN/winunitd/actions/runs/34720088259) and a real
+hosted CI and a real
 SCM/SYSTEM and headless standard-user qualification on the retained LTSC guest.
 A pending calendar activation survived broker termination with the same activation
 ID and completed after SCM recovery in 2.652 seconds. A second restart did not
@@ -1474,7 +1474,7 @@ envelope encoding still occurs normally. Complete R2 acceptance remains open.
 ## September 13 snapshot failure diagnostics
 
 PR #178 source `a95cdc3371ead08198f758e371fa0f25865f7022` passed
-[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34755168192)
+exact-source CI
 and merged with the same tree. The immutable unit snapshot now includes the
 accepted error and reason from the same invocation/configuration identity as
 its lifecycle state. Pending cleanup remains distinct from terminal failure;

@@ -9,8 +9,8 @@ implied by this tracking update.
 ## Milestones
 
 GitHub milestones mirror [repository acceptance gates](MILESTONES.md). R2, R3, and R5
-technical acceptance is complete. For 0.1-alpha only, overall R6 is checked under the [#251](https://github.com/PLN/winunitd/issues/251) deferral policy with documented limitations (deferred-media and deferred-older-msi). R0, R1, and R4 remain in progress. R7 is accepted for the dev-machine pilot on 0.1-alpha ([evidence](R7-EVIDENCE.md)); R8 remains
-planned. R4 was accepted on October 14, 2026 with Microsoft Entra (cloud) accounts excluded from supported claims. This alpha check does not itself authorize the R7 handoff.
+technical acceptance is complete. For 0.1-alpha only, overall R6 is checked under the #251 deferral policy with documented limitations (deferred-media and deferred-older-msi). R0 and R1 remain in progress. R7 is accepted for the dev-machine pilot on 0.1-alpha ([evidence](R7-EVIDENCE.md)); R8 is in progress,
+with 0.3.0 published unsigned on October 14, 2026. R4 was accepted on October 14, 2026 with Microsoft Entra (cloud) accounts excluded from supported claims. This alpha check does not itself authorize the R7 handoff.
 The packaging spike is already delivered.
 R5.1 timer persistence and R5.2 delivery policy are technically complete;
 [timer evidence](R5-EVIDENCE.md#timer-delivery-acceptance) records the final
@@ -21,8 +21,8 @@ stream/severity qualification. R5.5 [combined operational stress](R5-EVIDENCE.md
 is technically complete, including real volume exhaustion and bounded recovery
 under both native identities. R5.4 diagnostics and rendered Application events
 are accepted in [diagnostics evidence](R5-EVIDENCE.md#diagnostics-and-event-resources)
-at `a48e6e9` ([#236](https://github.com/PLN/winunitd/pull/236)) and `59ec4d8`
-([#238](https://github.com/PLN/winunitd/pull/238)); qualification id
+at `a48e6e9` (#236) and `59ec4d8`
+(#238); qualification id
 `a3b5bb2-a5-msi` (raw evidence is private). Overall R5 is complete. Product MSI
 source is authored. For 0.1-alpha, overall R6 is checked with documented limitations deferred-media and deferred-older-msi. A3 and R4.4 stay open.
 R4.3 SCM readiness and combined maintenance are technically complete; the
@@ -65,20 +65,20 @@ remain in MILESTONES.md. There are no promised due dates.
 
 ## Focused follow-up
 
-[Test hardening #40](https://github.com/PLN/winunitd/issues/40) belongs to R0.
+Test hardening #40 belongs to R0.
 The [test audit](TEST-HARDENING.md) records coverage and evidence boundaries.
 Its completion does not qualify experimental timers/resource controls for beta.
 The following issues make the next work visible without replacing the full gates.
 
 | Gate | Work |
 | --- | --- |
-| R0 | [R0.4: Complete repeatable Windows qualification harness](https://github.com/PLN/winunitd/issues/93) |
-| R1 | [R1.1-R1.3: Finish ownership and cleanup qualification evidence](https://github.com/PLN/winunitd/issues/94) |
-| R1 | [R1.4: Qualify journal fairness under aggregate overload](https://github.com/PLN/winunitd/issues/95) |
-| R2 | [R2.1-R2.2: Migrate lifecycle decisions to one coordinator](https://github.com/PLN/winunitd/issues/96) |
-| R2 | [R2.3: Bound admission and reserve lifecycle completion capacity](https://github.com/PLN/winunitd/issues/97) |
-| R2 | [R2.4: Give accepted operations internal deadlines and cancellation ownership](https://github.com/PLN/winunitd/issues/98) |
-| R5 | [R5.1: Make persistent timer state atomic and failures observable](https://github.com/PLN/winunitd/issues/99) |
+| R0 | [R0.4: Complete repeatable Windows qualification harness](https://github.com/PLN/winunitd/issues/1) |
+| R1 | R1.1-R1.3: Finish ownership and cleanup qualification evidence |
+| R1 | R1.4: Qualify journal fairness under aggregate overload |
+| R2 | R2.1-R2.2: Migrate lifecycle decisions to one coordinator |
+| R2 | R2.3: Bound admission and reserve lifecycle completion capacity |
+| R2 | R2.4: Give accepted operations internal deadlines and cancellation ownership |
+| R5 | R5.1: Make persistent timer state atomic and failures observable |
 
 The R2.4 operation-lifetime slice is implemented; see [behavior and limits](OPERATIONS.md).
 Repeatable oneshots are merged (below). As of September 13, tracked ExecStop,
@@ -129,8 +129,8 @@ No installed-base compatibility layer, format switch or converter is required
 for this change. `RemainAfterExit=yes` explicitly requests retained-active behavior.
 
 Repeatable oneshots and unit-hosted maintenance merged in
-[PR #116](https://github.com/PLN/winunitd/pull/116) after
-[exact-head Windows/Linux CI](https://github.com/PLN/winunitd/actions/runs/34680935557)
+PR #116 after
+exact-head Windows/Linux CI
 passed at `c1a87e3`. This does not close R2/R3 or qualify SCM pilot migration.
 External updater ownership, durable request/result
 handling and removal of legacy task dependencies are covered by the separate maintenance

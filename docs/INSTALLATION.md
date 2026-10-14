@@ -446,7 +446,7 @@ Core) and deferred-older-msi (`downgrade`, `n1-upgrade`, and
 `4223ac9-r65-migrate` is verified on tip
 `f4e6c477ada211cf5df736a16ea7685a612412a4`. `-execute-msi` stays
 unqualified. For 0.1-alpha only, overall R6 is checked under the
-[#251](https://github.com/PLN/winunitd/issues/251) deferral policy. The documented
+#251 deferral policy. The documented
 limitations are deferred-media and deferred-older-msi. R4 was accepted on
 October 14, 2026 with Microsoft Entra (cloud) accounts excluded from supported
 claims. This alpha check does not itself authorize the R7 handoff.

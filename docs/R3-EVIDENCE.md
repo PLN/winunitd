@@ -10,7 +10,7 @@ operational stress, installer and pilot gates remain separate in
 ## Native proxy ownership diagnostics
 
 PR #190 source `71c27e917ba949a2279e1719b53049e7934841e8` passed
-[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34761515360).
+exact-source CI.
 Disposable LTSC build 26100 SYSTEM qualification passed three repetitions each
 of the native SCM/task disappearance fixture and public retarget/type-change
 regressions. Eighteen real native start/external-stop/dependent-cleanup cycles
@@ -36,7 +36,7 @@ R2 acceptance and preservation of the combined conformance invariants.
 ## Dependency and native trigger conformance
 
 PR #187 source `a2ed9b4883d20ea72f5912c14810f29c70599d12` passed
-[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34760487473)
+exact-source CI
 and the consolidated disposable LTSC build 26100 matrix. All 27 SYSTEM cases
 and 17 headless standard-user cases passed three repetitions without skips,
 in 57.437 and 22.218 seconds respectively. Merge
@@ -86,7 +86,7 @@ Ten local Windows race repetitions query actual process Job Object weights
 The native filesystem regression verifies initial OR activation, a later rising
 edge, and retention of the armed policy after reloading an AND replacement.
 At source `ad5f17fbac322e19b5c2923c263c77c54d54e885`,
-[exact-source hosted CI](https://github.com/PLN/winunitd/actions/runs/34753463620)
+exact-source hosted CI
 passed. Disposable Windows LTSC build 26100 qualification passed both native
 test groups twenty times as SYSTEM and twenty times as a headless standard user,
 with no skips. All fixture processes exited; disabling linger released the user
@@ -111,7 +111,7 @@ of service-registration access. Subsequent disposable LTSC SYSTEM qualification
 passed all six cases at `14cfc987a7c3d79b85607be94906068129f4cb8f`: three SCM
 and three scheduled-task cycles, including real dependent process cleanup, in
 0.998-1.012 seconds per cycle. No cases were skipped; no fixture services, tasks
-or processes remained. [Exact-source CI](https://github.com/PLN/winunitd/actions/runs/34750966320)
+or processes remained. Exact-source CI
 passed, and PR #170 merged the same tested tree. An initial task registration
 fixture failed due to XML encoding; the corrected UTF-16 fixture and both raw
 attempts are retained privately. This does not close missing-target/paused-state
@@ -134,7 +134,7 @@ optimization. This does not change the earlier native dependency evidence scope.
 September 12, 2026: PR #147 implements one `ExecStop` command with independent
 helper ownership, captured invocation context and a forced-cleanup reserve.
 The qualified source is `b8f356ed72efb65ed9a4b80b300ab7c782563c22`;
-[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34718242627) passed
+exact-source CI passed
 Windows/Linux tests, vulnerability checks and the Windows cross-build. Merge
 `9553fc444db849f0a6641fae0c0fed5a7ea4185e` has the same tested tree.
 
@@ -202,7 +202,7 @@ remain separate. This does not close the full R3.2/R3 milestone.
 The immutable Windows artifact at `e0a9ab78466096ea50f96365697201856e3676dd`
 subsequently passed ten native dependency cases on the disposable Enterprise LTSC
 baseline, split equally between genuine SYSTEM and a headless standard user.
-[Exact-source CI](https://github.com/PLN/winunitd/actions/runs/34725134485)
+Exact-source CI
 passed before qualification and PR #157 merged the identical runtime tree.
 Peer exit stopped the bound dependent while the peer recovered and a Requires-only
 dependent stayed active. Reload preserved the running invocation's old binding;
@@ -222,7 +222,7 @@ open; these results do not qualify MSI servicing or R7.
 ## Capped restart backoff qualification
 
 PR #181 source `6f75e0d4078f0fa9468f0e904fc1538928cda8a7` passed
-[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34757140475)
+exact-source CI
 and merged with an identical tree. Format-2 exponential backoff has a required
 finite cap, retains invocation policy through reload, resets on a real explicit
 launch and keeps timer/watch start limits intact. Duplicate generation recovery
@@ -243,7 +243,7 @@ subsequently qualified it alongside the new startup and liveness policies.
 ## Startup readiness and health acceptance
 
 PR #182 source `16b781f2481b20c996bb161326e83d17a5cb0f28` passed
-[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34758052219)
+exact-source CI
 and twenty native health-sequence repetitions per SYSTEM/headless-user identity.
 Grace, per-probe deadlines and consecutive-failure thresholds preserve a live
 process across transient failures. Successful probes reset the count; threshold
@@ -258,7 +258,7 @@ Endpoint responses do not establish listener ownership, authentication or versio
 The [configuration contract](UNIT-REFERENCE.md#startup-readiness-probes) records
 the defaults, supported combinations and limits.
 
-[Exact-source CI](https://github.com/PLN/winunitd/actions/runs/34758620683)
+Exact-source CI
 passed. The combined matrix below passed on Windows 11 Enterprise LTSC build
 26100 as genuine SYSTEM and as a headless nonadministrator user. Every row ran
 ten times per identity; no selected test skipped.
