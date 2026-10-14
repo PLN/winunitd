@@ -5,10 +5,8 @@ package runtime
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	goruntime "runtime"
-	"strings"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -34,17 +32,6 @@ func validateHeadlessLaunch(tok windows.Token, spec UserManagerSpec) error {
 	}
 	if identity.User.Sid.String() != spec.SID {
 		return errors.New("headless token SID mismatch")
-	}
-	_, domain, _, err := identity.User.Sid.LookupAccount("")
-	if err != nil {
-		return err
-	}
-	host, err := os.Hostname()
-	if err != nil {
-		return err
-	}
-	if !strings.EqualFold(domain, host) {
-		return errors.New("managed profile loading currently requires a local machine account")
 	}
 	job := spec.Daemon
 	job.mu.Lock()
