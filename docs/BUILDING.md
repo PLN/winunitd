@@ -71,8 +71,13 @@ the MSI and its package manifest, and creates a draft release. The maintainer
 verifies the draft and publishes it. Verify a download with:
 
 ```text
-gh attestation verify winunitd-<version>-x64.msi --repo PLN/winunitd
+gh attestation verify winunitd-<version>-x64.msi --repo PLN/winunitd \
+  --signer-workflow PLN/winunitd/.github/workflows/release.yml \
+  --source-ref refs/tags/v<version>
 ```
+
+`packaging/wix/global.json` pins the .NET SDK to 10.0.400 without roll-forward,
+so a workstation needs that SDK installed.
 
 The beta MSI additionally builds a small native transaction-identity DLL using
 MinGW GCC 16.1.0, alongside the existing WiX 7/.NET 10.0.400 packaging toolchain.

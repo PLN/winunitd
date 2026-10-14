@@ -11,7 +11,9 @@ it. Check the download instead:
 # Compare with SHA256SUMS from this release.
 Get-FileHash .\winunitd-0.3.0-x64.msi -Algorithm SHA256
 # Confirm that this repository's release workflow built it from the v0.3.0 tag.
-gh attestation verify .\winunitd-0.3.0-x64.msi --repo PLN/winunitd
+gh attestation verify .\winunitd-0.3.0-x64.msi --repo PLN/winunitd `
+  --signer-workflow PLN/winunitd/.github/workflows/release.yml `
+  --source-ref refs/tags/v0.3.0
 ```
 
 ## Install
@@ -71,11 +73,13 @@ install 0.3.0. Units, enablement and logs carry over; enabled units start again
   ([headless user managers](OPERATIONS.md#headless-user-managers)).
 - Experimental: the `headless-store-uri` linger mode,
   `RequiresInteractiveSession`, and persistent timers (`Persistent=`).
-- Upgrades from the 0.1.x pilot builds were exercised. Downgrades are refused.
+- Downgrades are refused.
 
 ## Qualification
 
-Each area was tested on disposable Windows guests and in a pilot that ran a
-real workload under the installed service, including a 24-hour soak. The
+Each area was tested on disposable Windows guests. A pilot also ran a real
+workload under the installed service, including a 24-hour soak and an upgrade
+between two pilot builds. Before publication, this MSI was installed clean and
+as an upgrade from the 0.1.1 pilot build on a disposable guest. The
 [milestones](MILESTONES.md) and the evidence documents they link record what
 was tested and what was not.
