@@ -228,8 +228,9 @@ therefore checks `units`, `enabled`, `journal`, `runtime`, `linger` and
 `daemon` again each time it starts, with the same rules, on an open handle
 that does not follow a link. An unsafe directory holds admission with
 `unsafe data directory:` and the reason, like an unusable
-[compatibility floor](#compatibility-floor); the manager keeps its
-endpoints and does not repair the directory.
+[compatibility floor](#compatibility-floor), and the manager does not
+repair it. If `journal` or `runtime` is a file rather than a directory,
+the manager does not start at all.
 
 ## Compatibility floor
 
