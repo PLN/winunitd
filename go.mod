@@ -6,7 +6,7 @@ toolchain go1.27.2
 
 require (
 	github.com/Microsoft/go-winio v0.6.2
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 )
 
 replace github.com/Microsoft/go-winio => ./third_party/go-winio
