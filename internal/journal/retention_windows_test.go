@@ -16,7 +16,9 @@ import (
 	"github.com/PLN/winunitd/internal/journal"
 )
 
-const retentionChildBudget = 45 * time.Second
+// Hosted runners under -race have needed more than 45 seconds for the three
+// cycles; runRetentionChild still caps the wait at the package deadline.
+const retentionChildBudget = 2 * time.Minute
 
 // Run separately so unrelated parallel tests cannot obscure native handle
 // growth. The same entry point can be qualified as SYSTEM or a standard user.
