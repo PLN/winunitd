@@ -8,96 +8,80 @@ It borrows unit files and familiar commands from systemd, using Windows services
 Job Objects, and named pipes underneath. It is not a systemd compatibility layer.
 See the [unit reference](docs/UNIT-REFERENCE.md) for the supported syntax.
 
-**[Download 0.2.1-beta](https://github.com/PLN/winunitd/releases/tag/v0.2.1-beta)**
-for Windows 11 Enterprise/LTSC x64. Qualified on Enterprise LTSC build 26100.9168.
-The MSI is unsigned. No Go or .NET runtime is needed on the destination.
+**[Download 0.3.0](https://github.com/PLN/winunitd/releases/tag/v0.3.0)**
+for Windows 11 Enterprise and Enterprise LTSC x64. No Go or .NET runtime is needed
+on the destination. The MSI is not code-signed yet; check it against the release's
+`SHA256SUMS` and its build attestation as the
+[release notes](docs/RELEASE-NOTES-0.3.0.md) describe.
 
 ## Install and try it
 
 Run the MSI from an elevated PowerShell terminal in your download directory:
 
 ```powershell
-msiexec.exe /i .\winunitd-0.2.1-x64-beta.msi /qb
+msiexec.exe /i .\winunitd-0.3.0-x64.msi /qb
 ```
 
-Wait for installation to finish. It starts the LocalSystem `winunitd` service and
-installs the commands under `C:\Program Files\winunitd`. PATH is not changed.
-System units run with SYSTEM privileges; keep their files administrator-controlled.
-No example workload is enabled automatically.
+It starts the LocalSystem `winunitd` service, installs the commands under
+`C:\Program Files\winunitd\bin` and adds that folder to PATH. Open a new elevated
+terminal so that `winctl` is found. System units run with SYSTEM privileges; keep
+their files administrator-controlled. No example workload is enabled.
 
 Try the included worker, which prints a line every five seconds:
 
 ```powershell
-$install = Join-Path $env:ProgramFiles 'winunitd'
-$ctl = Join-Path $install 'winctl.exe'
+$examples = Join-Path $env:ProgramFiles 'winunitd\doc\examples'
 $units = Join-Path $env:ProgramData 'winunitd\units'
 
-& $ctl verify --file "$install\examples\worker.service" "$install\examples\worker.target"
-Copy-Item "$install\examples\worker.service", "$install\examples\worker.target" $units
-& $ctl daemon-reload
-& $ctl start worker.target
-& $ctl status worker.service
-& $ctl logs worker.service
+winctl verify --file "$examples\worker.service" "$examples\worker.target"
+Copy-Item "$examples\worker.service", "$examples\worker.target" $units
+winctl daemon-reload
+winctl start worker.target
+winctl status worker.service
+winctl logs worker.service
 ```
 
 The example assumes Windows is installed at `C:\Windows`. Allow a few seconds
 for the worker's first output. To restart the group or stop it:
 
 ```powershell
-& $ctl restart worker.target
-& $ctl stop worker.target
+winctl restart worker.target
+winctl stop worker.target
 ```
 
-Use `& $ctl enable worker.service` to start the worker whenever the daemon starts.
+Use `winctl enable worker.service` to start the worker whenever the daemon starts.
 `disable` removes that future activation; it does not stop a running workload.
 Unit files live under `C:\ProgramData\winunitd\units`; logs and enablement are
-stored alongside them. See the [examples](examples/beta/README.md) and
-[unit reference](docs/UNIT-REFERENCE.md) to configure your own applications.
+stored alongside them. See the [unit reference](docs/UNIT-REFERENCE.md) to
+configure your own applications.
 
-## What this beta supports
+## What it supports
 
-The supported path is a system service managing `Type=simple` services and
-`.target` groups: dependencies, start/stop/restart, logging, configuration reload,
-explicit enablement, and workload restart policies. The documented core unit
-syntax is preserved across beta updates.
+The system manager runs services, oneshots and targets with dependencies,
+start/stop/restart including a cooperative stop command, captured logs,
+configuration reload, explicit enablement, restart policies with backoff,
+readiness and health probes, and timers. Admitted users get their own manager
+for units under `%LOCALAPPDATA%\winunitd`, and `winctl enable-linger` keeps a
+user's manager running without a sign-in, for local and Active Directory domain
+accounts.
 
-Install, repair, upgrade, failed-upgrade rollback, reboot, uninstall/reinstall,
-and workload recovery passed on a disposable LTSC guest. The same binaries also
-passed an existing Hermes pilot's maintenance rehearsal and response check.
-See [qualification details](docs/BETA-QUALIFICATION.md).
-
-The main limits are:
-
-- In this beta, stop terminates the owned process job; graceful application stop
-  hooks are not implemented. Source after `0.2.1-beta` adds one cooperative
-  `ExecStop` command ([unit reference](docs/UNIT-REFERENCE.md#core-directives)).
-- User managers and linger, notify/watchdogs, timers, resource limits, native
-  event triggers, and SCM/task proxies are experimental. Interactive user
-  admission is disabled by default.
-- Manual and MSI installation select ordinary automatic startup and one-second
-  SCM failure recovery. Startup availability still requires boot qualification.
-
-See [runtime behavior and advanced features](docs/RUNTIME-REFERENCE.md) for
-operational details and [user admission](docs/USER-ADMISSION.md) for that policy.
+[SUPPORT.md](SUPPORT.md) lists the supported configurations and the limits, and
+[runtime behavior](docs/RUNTIME-REFERENCE.md), [operations](docs/OPERATIONS.md)
+and [user admission](docs/USER-ADMISSION.md) cover the details.
 
 ## Upgrade, repair, and uninstall
 
-Back up `C:\ProgramData\winunitd` and keep the previous MSI. Before changing an
-installation, stop the service and wait for it to reach Stopped:
+Run a newer MSI to upgrade. The installer asks the running manager to quiesce,
+stops the service, replaces the files and starts it again; if that fails it
+restores the previous files and service state. Enabled units start again after
+an upgrade. Uninstall keeps `C:\ProgramData\winunitd`, and a reinstall reuses it.
+Downgrades are refused.
 
-```powershell
-Stop-Service winunitd
-(Get-Service winunitd).WaitForStatus('Stopped', [TimeSpan]::FromMinutes(3))
-```
-
-Close commands using the installed files, then run the new MSI to upgrade.
-The installer rejects a running or transitioning service. Successful install,
-repair, and upgrade start the service again. Uninstall retains configuration
-and logs; reinstall reuses them.
-
-Follow the [installation and recovery instructions](packaging/beta/INSTALL.md)
-for repair, uninstall, failed upgrades, or migration from a manual installation.
-Do not run `winunitd install` or `winunitd uninstall` against an MSI installation.
+Coming from the unsigned 0.2.1-beta, remove the beta first; units, enablement and
+logs carry over ([moving from the beta](docs/INSTALLATION.md#moving-from-the-unsigned-beta)).
+The [installation guide](docs/INSTALLATION.md) covers repair, removal, exit codes
+and the compatibility floor. Do not run `winunitd install` or
+`winunitd uninstall` against an MSI installation.
 
 ## Build and contribute
 
@@ -116,11 +100,11 @@ go test ./...
 go run ./tools/build -out dist
 ```
 
-Build an MSI from clean source with
-`./packaging/beta/build.ps1 -PackageVersion 0.2.1`.
-[BUILDING.md](docs/BUILDING.md) covers the pinned toolchain, manifests, CI, and
-dependency maintenance. Unstamped development binaries retain the `0.1.1-alpha`
-fallback label; the manifest records their exact source revision.
+Build the MSI from clean source with `./packaging/wix/build.ps1`. Published
+releases come from the release workflow instead. [BUILDING.md](docs/BUILDING.md)
+covers the pinned toolchain, manifests, CI, releases, and dependency maintenance.
+Unstamped development binaries retain the `0.3.0` fallback label; the manifest
+records their exact source revision.
 
 For help and the supported configurations see [SUPPORT.md](SUPPORT.md); report
 vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
@@ -128,4 +112,4 @@ vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 The [roadmap](ROADMAP.md), [design](DESIGN.md), and
 [milestones](docs/MILESTONES.md) describe future work. Proposed design semantics
 are not the current unit-file contract. The [architecture review](docs/DESIGN-REVIEW.md)
-and [release notes](docs/RELEASE-NOTES-0.2.1-beta.md) provide further background.
+and the [0.3.0 release notes](docs/RELEASE-NOTES-0.3.0.md) provide further background.

@@ -1,15 +1,15 @@
-param([string]$PackageVersion = '0.1.1', [switch]$AllowDirty)
+param([string]$PackageVersion = '0.3.0', [switch]$AllowDirty)
 $ErrorActionPreference = 'Stop'
-# Installer 0.1.1 is paired with ProductCode 536EFA93-783D-436E-92BF-598D1938BF2C.
+# Installer 0.3.0 is paired with ProductCode 7ECF027D-4F7D-4876-B050-A31A18CEFA8E.
 # Record a new ProductCode in source before publishing another installer version.
-if ($PackageVersion -ne '0.1.1') { throw 'Record a new ProductCode before changing the installer version' }
+if ($PackageVersion -ne '0.3.0') { throw 'Record a new ProductCode before changing the installer version' }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 Push-Location $repo
 try {
 	if ((git status --porcelain) -and !$AllowDirty) { throw 'Clean source required; use AllowDirty only for development' }
 	$packageManifest = "dist/wix/$PackageVersion/package-manifest.json"
 	if (Test-Path -LiteralPath $packageManifest) { Remove-Item -LiteralPath $packageManifest }
-	$release = '0.1.1-alpha'
+	$release = '0.3.0'
 	go run ./tools/build -out dist/wix/payload -version $release
 	if ($LASTEXITCODE) { throw 'Payload build failed' }
 	# The helper evaluates the compatibility floor with its own identity on
@@ -50,7 +50,7 @@ try {
 		# A development package (AllowDirty) is never admissible to servicing.
 		admissible = $identity.admissible
 		identity = $identity
-		productCode = '536EFA93-783D-436E-92BF-598D1938BF2C'
+		productCode = '7ECF027D-4F7D-4876-B050-A31A18CEFA8E'
 		upgradeCode = 'A512B91F-1883-40FD-8EDB-5B8C5708DEEA'
 		signed = $false
 		wix = '7.0.0'

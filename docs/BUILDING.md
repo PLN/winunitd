@@ -55,13 +55,24 @@ a successful MSI build alone is not a release.
 `dist/build-manifest.json` records the compiler, target, source revision, dirty state, module-file hashes, and each binary's SHA256/size. It contains no operator identity, hostname, absolute checkout path, or environment dump. Go's embedded module/build information provides dependency versions and sums (`go version -m`). The builder reads each binary's embedded build information and fails unless its `vcs.revision` equals the manifest commit; the manager reports that revision and `vcs.modified` through `winctl capabilities`. A development build from a changed tree keeps the commit and reports `modified: true`; only a clean build with a matching manifest identifies a release artifact. A failed build leaves no successful manifest for that attempt. Dirty builds are allowed for development and visibly marked; they must not be promoted as release artifacts. Build from a clean checkout and do not modify sources during a qualification build.
 
 The product MSI entry point is `./packaging/wix/build.ps1`. It builds the
-`0.1.1-alpha` payload, stamps PE version metadata from that release identity,
-embeds the daemon message table, and packages `winunitd-0.1.1-x64.msi` with
-WiX 7.0.0. Installer version `0.1.1` is paired with the ProductCode recorded
+`0.3.0` payload, stamps PE version metadata from that release identity,
+embeds the daemon message table, and packages `winunitd-0.3.0-x64.msi` with
+WiX 7.0.0. Installer version `0.3.0` is paired with the ProductCode recorded
 in `internal/version/product.go`. The same script builds `msi-check.exe` and
 the transaction-identity DLL with MinGW GCC 16.1.0 and embeds both in the
 package. They are not installed files and add no runtime requirement on the
 destination machine. A successful package build is not install qualification.
+
+Published releases come from the [release workflow](../.github/workflows/release.yml),
+not from a workstation. Pushing a tag `v<version>` that matches
+`internal/version` builds the MSI on a hosted Windows runner with the same
+script and pinned tools, writes `SHA256SUMS`, attests the build provenance of
+the MSI and its package manifest, and creates a draft release. The maintainer
+verifies the draft and publishes it. Verify a download with:
+
+```text
+gh attestation verify winunitd-<version>-x64.msi --repo PLN/winunitd
+```
 
 The beta MSI additionally builds a small native transaction-identity DLL using
 MinGW GCC 16.1.0, alongside the existing WiX 7/.NET 10.0.400 packaging toolchain.

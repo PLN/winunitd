@@ -46,8 +46,7 @@ are transaction limits, not limits for all control connections or OS workers.
 
 ## Accepted work and cancellation
 
-This section describes development builds after `0.2.1-beta`. The released MSI
-does not yet include these operation-lifetime changes.
+These operation-lifetime rules apply from 0.3.0; the 0.2.1 beta predates them.
 
 After admission, start, stop and restart use manager-owned contexts. Cancelling
 the first caller, a joined caller, or the serving connection ends only that
@@ -178,7 +177,7 @@ credential or store URI, a parser location, or a newline is omitted. Reasons
 longer than 160 bytes are omitted. Each encoded record is at most 1024 bytes.
 
 The reason of `daemon.open` identifies the build, for example
-`version 0.1.1-alpha commit <revision>`, with ` modified` appended for a build
+`version 0.3.0 commit <revision>`, with ` modified` appended for a build
 from a changed tree. Every manager start, including the first start after an
 install, repair, upgrade or rollback, therefore records which build ran. The
 existing reason field keeps the record readable by older and newer managers.
@@ -399,8 +398,8 @@ configuration changes remain serialized.
 
 ## Explicit cancellation
 
-Development builds add `winctl cancel OPERATION_ID` (`cancel-operation` RPC),
-using the same authenticated system/user pipe as operation queries. It cancels
+`winctl cancel OPERATION_ID` (`cancel-operation` RPC), from 0.3.0, uses
+the same authenticated system/user pipe as operation queries. It cancels
 unfinished start/restart work. Successfully completed members remain running,
 matching deadline expiry and partial-start failure; shared start callers all
 receive the same cancellation outcome. No dependency rollback is performed.

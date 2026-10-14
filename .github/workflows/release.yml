@@ -1,0 +1,103 @@
+name: Release
+
+# Builds the product MSI for a version tag, attests its build provenance and
+# creates a draft release. The maintainer verifies the draft and publishes it.
+# Only tag pushes start this workflow; pull requests never run it.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GOTOOLCHAIN: local
+  # MinGW-w64 GCC 16.1.0, the version packaging/wix/build.ps1 requires for the
+  # MSI transaction-identity helper.
+  GCC_URL: https://github.com/niXman/mingw-builds-binaries/releases/download/16.1.0-rt_v14-rev0/x86_64-16.1.0-release-posix-seh-ucrt-rt_v14-rev0.7z
+  GCC_SHA256: ecaceb42639d21c695f875800a29b2dea76bbb05eb2a1cca3049b65499b8d867
+
+jobs:
+  msi:
+    name: build, attest and draft
+    if: github.repository == 'PLN/winunitd'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .go-version
+          cache: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+
+      - name: Install GCC 16.1.0
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'mingw64.7z'
+          Invoke-WebRequest -Uri $env:GCC_URL -OutFile $archive
+          $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $env:GCC_SHA256) { throw "GCC archive hash $hash differs" }
+          7z x $archive "-o$env:RUNNER_TEMP" -y | Out-Null
+          $bin = Join-Path $env:RUNNER_TEMP 'mingw64\bin'
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value $bin
+          & (Join-Path $bin 'gcc.exe') -dumpfullversion
+
+      - name: Check the tag against the source version
+        id: version
+        shell: pwsh
+        run: |
+          $release = (Select-String -LiteralPath internal/version/version.go -Pattern '^var Version = "(.+)"$').Matches[0].Groups[1].Value
+          $installer = (Select-String -LiteralPath internal/version/product.go -Pattern 'InstallerVersion = "(.+)"').Matches[0].Groups[1].Value
+          if ($env:GITHUB_REF_NAME -ne "v$release") { throw "tag $env:GITHUB_REF_NAME does not match release $release" }
+          if ($release -ne $installer) { throw "release $release differs from installer version $installer" }
+          "release=$release" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+
+      - name: Build the MSI
+        shell: pwsh
+        run: ./packaging/wix/build.ps1 -PackageVersion '${{ steps.version.outputs.release }}'
+
+      - name: Stage release assets
+        shell: pwsh
+        run: |
+          $v = '${{ steps.version.outputs.release }}'
+          $out = New-Item -ItemType Directory -Force -Path dist/release
+          Copy-Item "dist/wix/$v/winunitd-$v-x64.msi", "dist/wix/$v/package-manifest.json" $out
+          Get-ChildItem -LiteralPath $out -File | Sort-Object Name | ForEach-Object {
+            '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
+          } | Set-Content -LiteralPath (Join-Path $out 'SHA256SUMS') -Encoding ascii
+          Get-Content -LiteralPath (Join-Path $out 'SHA256SUMS')
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/release/winunitd-*-x64.msi
+            dist/release/package-manifest.json
+
+      - name: Create the draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $v = '${{ steps.version.outputs.release }}'
+          $notes = "docs/RELEASE-NOTES-$v.md"
+          if (-not (Test-Path -LiteralPath $notes)) { throw "missing $notes" }
+          gh release create $env:GITHUB_REF_NAME (Get-ChildItem dist/release -File).FullName --draft --verify-tag --title "winunitd $v" --notes-file $notes
