@@ -548,6 +548,21 @@ environment from that profile and selects the profile working directory after
 startup. S4U does not supply cached outbound credentials; optional credential-store
 modes remain outside the qualified release contract.
 
+What a lingering user's services can reach without anyone signed in was
+measured for local accounts ([R4 evidence](R4-EVIDENCE.md#headless-linger-and-credential-limits)).
+Loopback networking works. A network share needs credentials the service
+supplies itself, such as a user and password given to `net use`; the user's
+own logon credentials and Credential Manager entries are not used. DPAPI
+`CurrentUser`, Credential Manager and EFS do not work. DPAPI and reading EFS
+files may appear to work while the user is signed in, because Windows caches
+the user's keys, so a service must not depend on them. After a lingering
+service has attempted EFS, Windows can keep the user's registry hive loaded
+after `disable-linger` until the next reboot.
+
+If linger is enabled while an interactive manager runs, signing out ends that
+manager and its services with the session. The broker then starts a headless
+manager, which starts the enabled services again.
+
 A separate SYSTEM helper, using the same daemon executable, holds a private
 window station and desktop restricted to SYSTEM and the target SID. It is an
 owned process under the broker job, and never starts a user manager itself.

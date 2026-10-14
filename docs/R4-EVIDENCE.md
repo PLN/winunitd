@@ -6,6 +6,9 @@ matrix remains open. This ledger distinguishes implemented behavior and accepted
 native observations from the remaining qualification; older checkpoint wording
 in other evidence documents describes status at the time of those runs.
 
+October 14, 2026: R4.4 and R4.5 are closed for local accounts. R4.1 remains
+open for domain, cloud and roaming profiles.
+
 ## SCM readiness and combined maintenance acceptance
 
 The [maintenance contract](OPERATIONS.md#global-maintenance) closes admission
@@ -617,6 +620,57 @@ With #295 merged, the four classes are closed for local accounts on a machine
 whose administrators are trusted. Domain, cloud and roaming profiles remain
 under R4.1.
 
+## Headless linger and credential limits
+
+On October 14, 2026 a disposable Windows 11 Enterprise LTSC guest (build 26100)
+ran the MSI built from `8f24b84` (0.1.1-alpha). A local standard user was
+admitted for an interactive manager and later given linger. One user service
+sampled every 30 seconds what its token could reach: loopback TCP; an SMB 3.1.1
+share on the lab network with encryption required, once with the logon's own
+credentials (the server's credential was stored in Credential Manager) and once
+with an explicit user and password given to `net use`; DPAPI `CurrentUser`
+protect and unprotect; a generic Credential Manager entry; an existing
+EFS-encrypted file and a new one. The secrets were created in the user's own
+signed-in session. Sign-ins were genuine RDP sessions over loopback.
+
+| Step | Observed |
+| --- | --- |
+| Fresh install | Service running with no admission hold; the [#295](https://github.com/PLN/winunitd/pull/295) data-directory check passed on a clean tree. |
+| Sign-in | Interactive manager in the user's session. |
+| `enable-linger` while signed in | The running manager kept `mode=interactive`. |
+| Sign-out while lingering | The interactive manager and its service ended with the session. The broker started a `headless-s4u` manager in session 0, and the enabled service sampled again 5 seconds after sign-out. |
+| Two cold boots, nobody signs in | The `headless-s4u` manager started at boot; the service's first sample came about 20 seconds after boot. |
+| Sign-in while the headless manager runs | Same manager and service, `mode=headless-s4u` with one interactive session; no second manager. |
+| Sign-out | Manager and service unchanged. |
+| `disable-linger` | Manager and service stopped. |
+| Profile after `disable-linger` | With no service running, the user's registry hive unloaded within two minutes. After a service that ran only the two EFS checks, it stayed loaded for over seven minutes, until the guest was shut down; with the full probe it also stayed loaded across a restart of the `winunitd` service. No process of the user remained in either case. |
+
+| Capability | Signed-in session or interactive manager | Headless, nobody signed in since boot | Headless while the user is signed in |
+| --- | --- | --- | --- |
+| Loopback TCP | Yes | Yes | Yes |
+| SMB with the logon's own credentials | Yes | Access denied | Access denied |
+| SMB with an explicit user and password | Yes | Yes | Yes |
+| DPAPI `CurrentUser` protect and unprotect | Yes | No | Yes, and briefly after sign-out (gone within 40 seconds) |
+| Credential Manager read | Yes | No (`ERROR_NO_SUCH_LOGON_SESSION`) | No |
+| Read an existing EFS file | Yes | No | Yes, and for as long as observed after sign-out (up to 95 seconds) |
+| Create an EFS file | Yes | No | No |
+
+The S4U token carried the `NETWORK` logon group, not `INTERACTIVE` or `BATCH`.
+The DPAPI and EFS successes in the last column come from keys Windows caches
+while the user is signed in; a service cannot depend on them. Windows also
+reuses an SMB session authenticated with explicit credentials for later access
+to the same server name from the same logon session. After a service maps a
+share with a password, its other accesses to that server therefore succeed as
+well; the probe used a second name for the server in its explicit check to keep
+the two apart.
+
+For local accounts this closes R4.5. Lingering managers behave as documented, a
+headless service reaches the network only with credentials it supplies itself,
+and DPAPI, Credential Manager and EFS are not available to it. The optional
+credential-store mode (`headless-store-uri`) was not exercised; it stays
+experimental and outside supported claims. Domain, cloud and roaming profiles
+remain under R4.1.
+
 ## Current implementation and remaining identity matrix
 
 | Work package | Delivered behavior and evidence | Remaining qualification |
@@ -624,7 +678,7 @@ under R4.1.
 | R4.1 Launch context | Interactive `CreateProcessAsUser` launch disables handle inheritance, obtains the target environment/known folders and retains a Windows-owned profile handle. Suspended creation and job ownership precede execution. Earlier genuine SYSTEM-to-interactive launch/crash/logoff observations are recorded in the [admission contract](USER-ADMISSION.md#implementation-evidence-and-limits). [Selected profile failures and redirection](#interactive-profile-failures-and-redirection) now cover unavailable hive access, local known-folder overrides and delegated UNC/reparse rejection. [Live cross-user and server-validation cases](#live-manager-cross-user-rejection-and-production-client-server-owner-validation) now pass. | Native WTS/S4U file-handle and filtered-token checks now pass as recorded [above](#native-inherited-handles-and-filtered-token-authorization). [Runtime mutation denials and unsafe-root install/repair refusals](#privileged-path-protection-runtime-mutation-attempts-and-unsafe-root-installrepair) now pass for the tested trees and fixtures. The [residual path and handle classes](#residual-path-and-handle-classes) are closed for local accounts. Domain, cloud and roaming profiles remain open; the selected local-profile cases do not qualify them. |
 | R4.2 User host | Protected explicit/delegated admission, per-SID overrides, session reconciliation, fresh-token recovery, bounded backoff and cancellation are implemented. [Policy/admission qualification](R2-EVIDENCE.md#user-policy-and-cleanup-admission-acceptance), [real S4U snapshot/recovery](R2-EVIDENCE.md#system-user-host-snapshot-qualification), [two concurrent headless users](#concurrent-local-headless-users), [cross-manager notification isolation](#notification-isolation-across-managers-and-restarts), [control during pending boot](#user-control-during-pending-boot), [repeated real interactive transitions](#repeated-real-interactive-transitions) and [multiple real sessions/concurrent users](#multiple-real-sessions-and-concurrent-interactive-users) cover their stated scopes. Daemon-log startup, rotation and legacy ACL repair are requalified in [the #253 diagnostics evidence](R5-EVIDENCE.md#diagnostics-and-event-resources); recovery-backoff issue [#254](https://github.com/PLN/winunitd/issues/254) was fixed by [#271](https://github.com/PLN/winunitd/pull/271). Dedicated admission administration commands and installer controls remain separate work; protected file administration is available. | Technical acceptance complete with [native launch overlap and consolidated no-resurrection evidence](#native-launch-overlap-and-user-host-acceptance). R4.1 domain, cloud and roaming profiles and R4.5 credential limits remain separate. |
 | R4.4 Security | Protected policy and pipe checks, bounded impersonation workers and reparse-point rejection are implemented. [Pipe failure handling](R2-EVIDENCE.md#september-12-pipe-impersonation-failure-handling), [genuine cross-user/system pipe denial](#concurrent-local-headless-users) and [native WTS/S4U/filtered-token probes](#native-inherited-handles-and-filtered-token-authorization) cover their stated scopes. [Pipe ownership/DACL/token checks, UAC-filtered users and cross-user rejection](#live-manager-cross-user-rejection-and-production-client-server-owner-validation) are qualified natively with live managers and anti-squatting, within the recorded endpoint scope. [Protected-tree runtime mutation denials and static install/repair refusal of unsafe-root and custom-base fixtures](#privileged-path-protection-runtime-mutation-attempts-and-unsafe-root-installrepair) are qualified for the tested trees and fixtures. | None for local accounts: the [residual path and handle classes](#residual-path-and-handle-classes) are closed, with the data-directory startup check from [#295](https://github.com/PLN/winunitd/pull/295). Domain, cloud and roaming profile qualification remains under R4.1. |
-| R4.5 Linger | Headless local-account S4U launch uses `CreateProcessWithTokenW(LOGON_WITH_PROFILE)` and an exclusive private desktop helper. Windows owns profile lifetime; the old manual `LoadUserProfile` path is removed. [Production crash/recovery](R3-EVIDENCE.md#managed-bound-dependent-cleanup), [user-manager replacements](R2-EVIDENCE.md#system-user-host-snapshot-qualification) and [concurrent existing/first-created profiles](#concurrent-local-headless-users) verify profile/process cleanup in their scenarios. | Complete explicit mode/profile/session matrix and credential limitations. These observations do not qualify network authentication or domain/cloud/roaming profiles. Unqualified credential-store modes remain outside supported claims. |
+| R4.5 Linger | Headless local-account S4U launch uses `CreateProcessWithTokenW(LOGON_WITH_PROFILE)` and an exclusive private desktop helper. Windows owns profile lifetime; the old manual `LoadUserProfile` path is removed. [Production crash/recovery](R3-EVIDENCE.md#managed-bound-dependent-cleanup), [user-manager replacements](R2-EVIDENCE.md#system-user-host-snapshot-qualification) and [concurrent existing/first-created profiles](#concurrent-local-headless-users) verify profile/process cleanup in their scenarios. | Checked for local accounts by the [headless linger and credential limits](#headless-linger-and-credential-limits) run. Domain/cloud/roaming profiles remain under R4.1. The credential-store mode was not exercised and remains outside supported claims. |
 
 The R4 exit gate still requires the complete real-identity matrix. Hosted
 administrator tests, simulated session events and consumer evidence cannot
