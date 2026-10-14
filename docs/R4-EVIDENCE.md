@@ -703,8 +703,8 @@ identity. Sign-ins were genuine RDP sessions over loopback.
 The headless service reached what a local account's service reaches: loopback
 TCP, and a share mapped with credentials it supplied itself. The domain
 controller's share was denied, because an S4U logon has no credentials for
-outbound authentication; Windows allows that only where an administrator has
-configured Kerberos constrained delegation, which winunitd does not do. DPAPI,
+outbound authentication. Windows documents Kerberos constrained delegation as
+the exception; winunitd does not configure it, and that setup was not tested. DPAPI,
 Credential Manager and EFS behaved as in the local-account run.
 
 The roaming-profile user wrote a marker file into its roaming AppData at each

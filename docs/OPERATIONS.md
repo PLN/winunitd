@@ -568,8 +568,9 @@ A share in the domain also needs credentials the service supplies itself.
 
 While a headless manager holds a roaming profile, Windows treats the profile as
 local on that machine: sign-ins beside the manager neither download nor upload
-it. Changes stay on the machine and upload at the first ordinary sign-out after
-linger is disabled and the profile has unloaded. Settings changed on other
+it. Changes stay on the machine. In the lab run they uploaded at the first
+ordinary sign-out after linger was disabled and the profile had unloaded,
+subject to Windows' usual synchronization rules. Settings changed on other
 machines in the meantime can be overwritten, the registry hive in particular,
 because it roams as one file. Keep linger to users without roaming profiles or
 to machines they use alone. Microsoft Entra (cloud) accounts are not tested
