@@ -29,13 +29,13 @@ Administrators only.
 
 ## Install, repair, and remove
 
-Build `winunitd-0.1.0-x64.msi` with `packaging/wix/build.ps1` on a packaging
-host. On the destination:
+Download `winunitd-<version>-x64.msi` from the release, or build it with
+`packaging/wix/build.ps1` on a packaging host. On the destination:
 
 ```text
-msiexec /i winunitd-0.1.0-x64.msi /qn /norestart /L*v install.log
-msiexec /fa winunitd-0.1.0-x64.msi /qn /norestart /L*v repair.log
-msiexec /x winunitd-0.1.0-x64.msi /qn /norestart /L*v uninstall.log
+msiexec /i winunitd-<version>-x64.msi /qn /norestart /L*v install.log
+msiexec /fa winunitd-<version>-x64.msi /qn /norestart /L*v repair.log
+msiexec /x winunitd-<version>-x64.msi /qn /norestart /L*v uninstall.log
 ```
 
 The package does not add a custom setup wizard. Quiet install is `/qn`.
@@ -60,7 +60,7 @@ Ownership is the `PathEntry` value under `HKLM\Software\PLN\winunitd`.
 Opt out on first install:
 
 ```text
-msiexec /i winunitd-0.1.0-x64.msi REMOVE=AddToPath /qn /norestart
+msiexec /i winunitd-<version>-x64.msi REMOVE=AddToPath /qn /norestart
 ```
 
 Uninstall removes that owned PATH entry and leaves unrelated PATH entries.
@@ -411,11 +411,29 @@ history of the previous manager process is gone: `winctl operation` reports
 its operation IDs as not found. A held manager starts nothing until admission
 reopens.
 
+## Moving from the unsigned beta
+
+The product MSI refuses to install while the unsigned 0.2.x beta is
+installed. To move a machine from the beta:
+
+1. Back up `%ProgramData%\winunitd`.
+2. Stop the service and wait for it to reach Stopped.
+3. Uninstall the beta. It leaves its configuration and logs in place.
+4. Install the product MSI, then check `winctl status`.
+
+On October 14, 2026 this was tested from 0.2.1-beta on a disposable guest.
+The beta's unit files, enablement and journal stayed in place; the product
+loaded them, started the enabled example worker, and `winctl logs` showed the
+beta's lines followed by the new ones. The product's commands are under
+`%ProgramFiles%\winunitd\bin`, not directly under `%ProgramFiles%\winunitd`
+as in the beta.
+
 ## Not in this package
 
-The migration command is [tools/migrate](../tools/migrate/README.md).
-R6.5 is that command plus the disposable VM pilot fixture. R7 is the
-live Hermes handoff and soak and has not started. For 0.1-alpha, R6.1
+The migration command for a pilot that runs winunitd from a scheduled task
+is [tools/migrate](../tools/migrate/README.md). R6.5 is that command plus
+the disposable VM pilot fixture. R7, the live pilot handoff and soak, is
+recorded in [R7 evidence](R7-EVIDENCE.md). For 0.1-alpha, R6.1
 and R6.4 are checked. The SYSTEM subset is `9961798-r64-accept` in
 [R6 evidence](R6-EVIDENCE.md#acceptance), including `preflight-reparse`
 and `preflight-unmanaged-service`. `gui-install`, `offline-install`,
