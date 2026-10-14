@@ -155,6 +155,24 @@ func TestStartupHoldFollowsTheFloor(t *testing.T) {
 	}
 }
 
+// A data directory that another account can write, such as one created
+// before the package secured the data root, holds admission without a floor.
+func TestStartupHoldsOnAnUnsafeDataDirectory(t *testing.T) {
+	base := floorBase(t)
+	units := filepath.Join(base, "units")
+	if err := os.Mkdir(units, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	build := servicing.Build{Version: "0.1.0-alpha"}
+	if hold := startupHold(base, build); hold != "" {
+		t.Fatalf("safe data directory: %q", hold)
+	}
+	servicingtest.LetOthersWrite(t, units)
+	if hold := startupHold(base, build); !strings.HasPrefix(hold, "unsafe data directory: data directory units ") {
+		t.Fatalf("hold = %q", hold)
+	}
+}
+
 // A clean-build floor holds a modified build and a build without known
 // source state, built from injected build information the way the daemon
 // builds its own identity, and such a build cannot write that floor.

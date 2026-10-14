@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 )
@@ -49,6 +50,29 @@ func openFloorDirs(path string) (io.Closer, bool, error) {
 		}
 	}
 	return noDirs{}, true, nil
+}
+
+func checkDataDirs(baseDir string) error {
+	for _, name := range DataDirs {
+		fi, err := os.Lstat(filepath.Join(baseDir, name))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("data directory %s: %w", name, err)
+		}
+		switch {
+		case fi.Mode()&os.ModeSymlink != 0:
+			return fmt.Errorf("data directory %s is a symbolic link", name)
+		case !fi.IsDir():
+			return fmt.Errorf("data directory %s is not a directory", name)
+		case !trustedOwner(fi):
+			return fmt.Errorf("data directory %s has an untrusted owner", name)
+		case fi.Mode().Perm()&0o022 != 0:
+			return fmt.Errorf("data directory %s is writable by other principals", name)
+		}
+	}
+	return nil
 }
 
 func trustedDir(fi os.FileInfo, name string) error {

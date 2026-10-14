@@ -187,9 +187,16 @@ func startAdmittedWork(ctx context.Context, m *manager.Manager, host *manager.Us
 }
 
 // startupHold is why a system manager starting from baseDir must hold
-// admission, or "" when it may admit work.
+// admission, or "" when it may admit work. The floor check also checks the
+// data root; then each data directory must be as safe as the root.
 func startupHold(baseDir string, build servicing.Build) string {
-	return servicing.AdmissionHold(servicing.FloorPath(baseDir), build)
+	if hold := servicing.AdmissionHold(servicing.FloorPath(baseDir), build); hold != "" {
+		return hold
+	}
+	if err := servicing.CheckDataDirs(baseDir); err != nil {
+		return "unsafe data directory: " + err.Error()
+	}
+	return ""
 }
 
 // The main serve path must reach finish even when initial token/account I/O is

@@ -313,3 +313,61 @@ func TestWindowsFloorChainRejectsUntrustedOwnerAndLinks(t *testing.T) {
 		t.Fatalf("linked data root: %v", err)
 	}
 }
+
+// A data directory that another account may write holds admission as an
+// unsafe data root does; a missing one is created later under the root.
+func TestWindowsDataDirsRejectWritableDirectories(t *testing.T) {
+	fresh := func() string {
+		t.Helper()
+		base := servicingtest.DataRoot(t)
+		for _, name := range []string{"units", "enabled", "linger"} {
+			if err := os.Mkdir(filepath.Join(base, name), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := CheckDataDirs(base); err != nil {
+			t.Fatalf("safe data directories: %v", err)
+		}
+		return base
+	}
+	check := func(name, base, want string) {
+		t.Helper()
+		if err := CheckDataDirs(base); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// Users may add unit files.
+	base := fresh()
+	servicingtest.SetDACL(t, filepath.Join(base, "units"), servicingtest.ProtectedSDDL(t, "(A;;0x2;;;BU)"))
+	check("units add-file", base, "data directory units permits")
+	// An inherit-only grant would make new enablement entries writable.
+	base = fresh()
+	servicingtest.SetDACL(t, filepath.Join(base, "enabled"), servicingtest.ProtectedSDDL(t, "(A;OICIIO;FW;;;BU)"))
+	check("enabled inherit-only write", base, "data directory enabled permits")
+	if err := CheckDataDirs(servicingtest.Root(t)); err != nil {
+		t.Fatalf("missing data directories: %v", err)
+	}
+}
+
+func TestWindowsDataDirsRejectUntrustedOwnerAndLinks(t *testing.T) {
+	requireElevated(t)
+	base := servicingtest.DataRoot(t)
+	linger := filepath.Join(base, "linger")
+	if err := os.Mkdir(linger, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	restore := enablePrivilege(t, "SeRestorePrivilege")
+	setSecurity(t, linger, "O:BU", windows.OWNER_SECURITY_INFORMATION)
+	restore()
+	if err := CheckDataDirs(base); err == nil || !strings.Contains(err.Error(), "data directory linger must be owned") {
+		t.Fatalf("linger owned by Users: %v", err)
+	}
+	// A linked units directory is refused, not followed.
+	base = servicingtest.DataRoot(t)
+	if err := os.Symlink(servicingtest.Root(t), filepath.Join(base, "units")); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckDataDirs(base); err == nil || !strings.Contains(err.Error(), "data directory units is a reparse point") {
+		t.Fatalf("linked units: %v", err)
+	}
+}

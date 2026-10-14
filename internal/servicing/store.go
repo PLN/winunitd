@@ -19,6 +19,22 @@ func FloorPath(baseDir string) string {
 	return filepath.Join(baseDir, "daemon", FloorFileName)
 }
 
+// DataDirs are the directories of the machine data root that the system
+// manager reads and writes. The package creates them under the protected
+// data root.
+var DataDirs = []string{"units", "enabled", "journal", "runtime", "linger", "daemon"}
+
+// CheckDataDirs checks each of the DataDirs that exists under the data root
+// baseDir with the data root's rules: a directory, not a reparse point,
+// owned by a trusted principal and writable by no one else, including
+// through inherit-only grants. The package secures the data root but leaves
+// a directory that already exists in it as it is, so a directory another
+// account created before the root was secured stays under that account's
+// control; the system manager must not use it.
+func CheckDataDirs(baseDir string) error {
+	return checkDataDirs(baseDir)
+}
+
 // The record's directory chain: the containing directory of the data root,
 // the data root, and its daemon directory. Before a record is read, written
 // or removed, and before its absence counts as "no floor", openFloorDirs
