@@ -6,8 +6,10 @@ matrix remains open. This ledger distinguishes implemented behavior and accepted
 native observations from the remaining qualification; older checkpoint wording
 in other evidence documents describes status at the time of those runs.
 
-October 14, 2026: R4.4 and R4.5 are closed for local accounts. R4.1 remains
-open for domain, cloud and roaming profiles.
+October 14, 2026: R4.4 and R4.5 are closed for local accounts. R4.1 is closed
+for local and domain accounts, including roaming profiles, by the
+[domain run](#domain-accounts-and-roaming-profiles). Microsoft Entra (cloud)
+accounts are excluded from supported claims.
 
 ## SCM readiness and combined maintenance acceptance
 
@@ -671,15 +673,72 @@ credential-store mode (`headless-store-uri`) was not exercised; it stays
 experimental and outside supported claims. Domain, cloud and roaming profiles
 remain under R4.1.
 
+## Domain accounts and roaming profiles
+
+Until October 2026 both user-manager paths refused accounts from outside the
+local machine. The check was left over from the time winunitd loaded profiles
+itself with `LoadUserProfile`, which needs the roaming profile path for domain
+accounts. Windows now loads the profile in both modes, so
+[#297](https://github.com/PLN/winunitd/pull/297) removed the check.
+
+On October 14, 2026 a lab domain ran the MSI built from that change
+(0.1.1-alpha): one Windows Server 2025 evaluation domain controller and a
+domain-joined Windows 11 Enterprise LTSC guest (build 26100). Two standard
+domain users were admitted, one with a local profile and one with a roaming
+profile on a share of the domain controller. The probe service from the
+[linger run](#headless-linger-and-credential-limits) ran again with one more
+check: reading a file on a domain controller share with the logon's own
+identity. Sign-ins were genuine RDP sessions over loopback.
+
+| Step | Observed |
+| --- | --- |
+| Sign-in | Interactive manager in the user's session; the service's token authenticated with Kerberos. |
+| `enable-linger` while signed in, then sign-out | The broker started a `headless-s4u` manager through Kerberos S4U; the enabled service ran again within 15 seconds. |
+| Cold boot with the domain controller running | Headless manager at boot; the service's first sample came 56 seconds after boot. |
+| Cold boot with the domain controller off | No manager. `winctl status` showed the user waiting, the S4U error ("your domain isn't available") and the next retry time. |
+| Domain controller started again | A later retry started the headless manager about two minutes afterwards, without intervention. |
+| Sign-in and sign-out beside the headless manager | The same manager carried on; no second manager started. |
+| `disable-linger` | Manager and service stopped. |
+
+The headless service reached what a local account's service reaches: loopback
+TCP, and a share mapped with credentials it supplied itself. The domain
+controller's share was denied, because an S4U logon has no credentials for
+outbound authentication. Windows documents Kerberos constrained delegation as
+the exception; winunitd does not configure it, and that setup was not tested. DPAPI,
+Credential Manager and EFS behaved as in the local-account run.
+
+The roaming-profile user wrote a marker file into its roaming AppData at each
+stage, and the server's copy of the profile was checked after each step.
+
+| Step | Observed |
+| --- | --- |
+| Sign-in | Profile downloaded; Windows reported it as roaming. |
+| Sign-out with linger enabled | Profile uploaded to the server as usual, then the headless manager started. |
+| While the headless manager ran | Windows reported the loaded profile as local. A sign-in beside it neither downloaded nor uploaded the profile, so a change made in that session stayed on the machine. |
+| `disable-linger` | The hive unloaded; nothing was uploaded. |
+| Next sign-in and sign-out | The profile roamed again. The change made during linger was kept and uploaded. |
+
+No change was lost, but while linger holds a roaming profile, the profile stops
+roaming on that machine. Changes made on other machines do not arrive there,
+and a later upload follows Windows' newest-file rule. A user who signs in on
+several machines can therefore lose settings, the registry hive in particular,
+because it roams as one file. As in the local-account run, a lingering service
+that attempted EFS kept the hive loaded after `disable-linger`; until the next
+reboot that also keeps the profile from roaming.
+
+This closes R4.1 for local and domain accounts, including roaming profiles.
+Microsoft Entra (cloud) accounts and folder redirection were not tested; Entra
+accounts are excluded from supported claims.
+
 ## Current implementation and remaining identity matrix
 
 | Work package | Delivered behavior and evidence | Remaining qualification |
 | --- | --- | --- |
-| R4.1 Launch context | Interactive `CreateProcessAsUser` launch disables handle inheritance, obtains the target environment/known folders and retains a Windows-owned profile handle. Suspended creation and job ownership precede execution. Earlier genuine SYSTEM-to-interactive launch/crash/logoff observations are recorded in the [admission contract](USER-ADMISSION.md#implementation-evidence-and-limits). [Selected profile failures and redirection](#interactive-profile-failures-and-redirection) now cover unavailable hive access, local known-folder overrides and delegated UNC/reparse rejection. [Live cross-user and server-validation cases](#live-manager-cross-user-rejection-and-production-client-server-owner-validation) now pass. | Native WTS/S4U file-handle and filtered-token checks now pass as recorded [above](#native-inherited-handles-and-filtered-token-authorization). [Runtime mutation denials and unsafe-root install/repair refusals](#privileged-path-protection-runtime-mutation-attempts-and-unsafe-root-installrepair) now pass for the tested trees and fixtures. The [residual path and handle classes](#residual-path-and-handle-classes) are closed for local accounts. Domain, cloud and roaming profiles remain open; the selected local-profile cases do not qualify them. |
-| R4.2 User host | Protected explicit/delegated admission, per-SID overrides, session reconciliation, fresh-token recovery, bounded backoff and cancellation are implemented. [Policy/admission qualification](R2-EVIDENCE.md#user-policy-and-cleanup-admission-acceptance), [real S4U snapshot/recovery](R2-EVIDENCE.md#system-user-host-snapshot-qualification), [two concurrent headless users](#concurrent-local-headless-users), [cross-manager notification isolation](#notification-isolation-across-managers-and-restarts), [control during pending boot](#user-control-during-pending-boot), [repeated real interactive transitions](#repeated-real-interactive-transitions) and [multiple real sessions/concurrent users](#multiple-real-sessions-and-concurrent-interactive-users) cover their stated scopes. Daemon-log startup, rotation and legacy ACL repair are requalified in [the #253 diagnostics evidence](R5-EVIDENCE.md#diagnostics-and-event-resources); recovery-backoff issue [#254](https://github.com/PLN/winunitd/issues/254) was fixed by [#271](https://github.com/PLN/winunitd/pull/271). Dedicated admission administration commands and installer controls remain separate work; protected file administration is available. | Technical acceptance complete with [native launch overlap and consolidated no-resurrection evidence](#native-launch-overlap-and-user-host-acceptance). R4.1 domain, cloud and roaming profiles and R4.5 credential limits remain separate. |
-| R4.4 Security | Protected policy and pipe checks, bounded impersonation workers and reparse-point rejection are implemented. [Pipe failure handling](R2-EVIDENCE.md#september-12-pipe-impersonation-failure-handling), [genuine cross-user/system pipe denial](#concurrent-local-headless-users) and [native WTS/S4U/filtered-token probes](#native-inherited-handles-and-filtered-token-authorization) cover their stated scopes. [Pipe ownership/DACL/token checks, UAC-filtered users and cross-user rejection](#live-manager-cross-user-rejection-and-production-client-server-owner-validation) are qualified natively with live managers and anti-squatting, within the recorded endpoint scope. [Protected-tree runtime mutation denials and static install/repair refusal of unsafe-root and custom-base fixtures](#privileged-path-protection-runtime-mutation-attempts-and-unsafe-root-installrepair) are qualified for the tested trees and fixtures. | None for local accounts: the [residual path and handle classes](#residual-path-and-handle-classes) are closed, with the data-directory startup check from [#295](https://github.com/PLN/winunitd/pull/295). Domain, cloud and roaming profile qualification remains under R4.1. |
-| R4.5 Linger | Headless local-account S4U launch uses `CreateProcessWithTokenW(LOGON_WITH_PROFILE)` and an exclusive private desktop helper. Windows owns profile lifetime; the old manual `LoadUserProfile` path is removed. [Production crash/recovery](R3-EVIDENCE.md#managed-bound-dependent-cleanup), [user-manager replacements](R2-EVIDENCE.md#system-user-host-snapshot-qualification) and [concurrent existing/first-created profiles](#concurrent-local-headless-users) verify profile/process cleanup in their scenarios. | Checked for local accounts by the [headless linger and credential limits](#headless-linger-and-credential-limits) run. Domain/cloud/roaming profiles remain under R4.1. The credential-store mode was not exercised and remains outside supported claims. |
+| R4.1 Launch context | Interactive `CreateProcessAsUser` launch disables handle inheritance, obtains the target environment/known folders and retains a Windows-owned profile handle. Suspended creation and job ownership precede execution. Earlier genuine SYSTEM-to-interactive launch/crash/logoff observations are recorded in the [admission contract](USER-ADMISSION.md#implementation-evidence-and-limits). [Selected profile failures and redirection](#interactive-profile-failures-and-redirection) now cover unavailable hive access, local known-folder overrides and delegated UNC/reparse rejection. [Live cross-user and server-validation cases](#live-manager-cross-user-rejection-and-production-client-server-owner-validation) now pass. | Native WTS/S4U file-handle and filtered-token checks now pass as recorded [above](#native-inherited-handles-and-filtered-token-authorization). [Runtime mutation denials and unsafe-root install/repair refusals](#privileged-path-protection-runtime-mutation-attempts-and-unsafe-root-installrepair) now pass for the tested trees and fixtures. The [residual path and handle classes](#residual-path-and-handle-classes) are closed for local accounts. Checked for local and domain accounts, including roaming profiles, by the [domain run](#domain-accounts-and-roaming-profiles), after [#297](https://github.com/PLN/winunitd/pull/297) removed the local-account restriction. Microsoft Entra accounts and folder redirection were not tested; Entra accounts are excluded from supported claims. |
+| R4.2 User host | Protected explicit/delegated admission, per-SID overrides, session reconciliation, fresh-token recovery, bounded backoff and cancellation are implemented. [Policy/admission qualification](R2-EVIDENCE.md#user-policy-and-cleanup-admission-acceptance), [real S4U snapshot/recovery](R2-EVIDENCE.md#system-user-host-snapshot-qualification), [two concurrent headless users](#concurrent-local-headless-users), [cross-manager notification isolation](#notification-isolation-across-managers-and-restarts), [control during pending boot](#user-control-during-pending-boot), [repeated real interactive transitions](#repeated-real-interactive-transitions) and [multiple real sessions/concurrent users](#multiple-real-sessions-and-concurrent-interactive-users) cover their stated scopes. Daemon-log startup, rotation and legacy ACL repair are requalified in [the #253 diagnostics evidence](R5-EVIDENCE.md#diagnostics-and-event-resources); recovery-backoff issue [#254](https://github.com/PLN/winunitd/issues/254) was fixed by [#271](https://github.com/PLN/winunitd/pull/271). Dedicated admission administration commands and installer controls remain separate work; protected file administration is available. | Technical acceptance complete with [native launch overlap and consolidated no-resurrection evidence](#native-launch-overlap-and-user-host-acceptance). Domain accounts and roaming profiles are covered under R4.1, credential limits under R4.5. |
+| R4.4 Security | Protected policy and pipe checks, bounded impersonation workers and reparse-point rejection are implemented. [Pipe failure handling](R2-EVIDENCE.md#september-12-pipe-impersonation-failure-handling), [genuine cross-user/system pipe denial](#concurrent-local-headless-users) and [native WTS/S4U/filtered-token probes](#native-inherited-handles-and-filtered-token-authorization) cover their stated scopes. [Pipe ownership/DACL/token checks, UAC-filtered users and cross-user rejection](#live-manager-cross-user-rejection-and-production-client-server-owner-validation) are qualified natively with live managers and anti-squatting, within the recorded endpoint scope. [Protected-tree runtime mutation denials and static install/repair refusal of unsafe-root and custom-base fixtures](#privileged-path-protection-runtime-mutation-attempts-and-unsafe-root-installrepair) are qualified for the tested trees and fixtures. | None for local accounts: the [residual path and handle classes](#residual-path-and-handle-classes) are closed, with the data-directory startup check from [#295](https://github.com/PLN/winunitd/pull/295). Domain accounts and roaming profiles are covered under R4.1. |
+| R4.5 Linger | Headless local-account S4U launch uses `CreateProcessWithTokenW(LOGON_WITH_PROFILE)` and an exclusive private desktop helper. Windows owns profile lifetime; the old manual `LoadUserProfile` path is removed. [Production crash/recovery](R3-EVIDENCE.md#managed-bound-dependent-cleanup), [user-manager replacements](R2-EVIDENCE.md#system-user-host-snapshot-qualification) and [concurrent existing/first-created profiles](#concurrent-local-headless-users) verify profile/process cleanup in their scenarios. | Checked for local accounts by the [headless linger and credential limits](#headless-linger-and-credential-limits) run. Domain accounts behave the same ([domain run](#domain-accounts-and-roaming-profiles)). The credential-store mode was not exercised and remains outside supported claims. |
 
-The R4 exit gate still requires the complete real-identity matrix. Hosted
-administrator tests, simulated session events and consumer evidence cannot
-substitute for missing disposable SYSTEM/session observations.
+With R4.1 checked, the real-identity matrix is complete for local and domain
+accounts. Microsoft Entra accounts remain outside it and are excluded from
+supported claims.

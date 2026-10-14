@@ -541,7 +541,7 @@ written only while the system manager is stopped; see
 
 ## Headless user managers
 
-Local-machine lingering users run in session zero. Their profile lifetime belongs
+Lingering users run in session zero. Their profile lifetime belongs
 to Windows through CreateProcessWithTokenW(LOGON_WITH_PROFILE), so abrupt broker
 death does not leave a manually loaded profile reference. The manager obtains its
 environment from that profile and selects the profile working directory after
@@ -559,6 +559,23 @@ the user's keys, so a service must not depend on them. After a lingering
 service has attempted EFS, Windows can keep the user's registry hive loaded
 after `disable-linger` until the next reboot.
 
+Domain accounts behave the same, measured on a lab domain
+([R4 evidence](R4-EVIDENCE.md#domain-accounts-and-roaming-profiles)). Their
+headless logon needs a domain controller. If none is reachable, for example at
+boot on a machine away from the network, `winctl status` shows the user waiting
+with the S4U error, and the broker retries until a domain controller answers.
+A share in the domain also needs credentials the service supplies itself.
+
+While a headless manager holds a roaming profile, Windows treats the profile as
+local on that machine: sign-ins beside the manager neither download nor upload
+it. Changes stay on the machine. In the lab run they uploaded at the first
+ordinary sign-out after linger was disabled and the profile had unloaded,
+subject to Windows' usual synchronization rules. Settings changed on other
+machines in the meantime can be overwritten, the registry hive in particular,
+because it roams as one file. Keep linger to users without roaming profiles or
+to machines they use alone. Microsoft Entra (cloud) accounts are not tested
+and are outside supported claims.
+
 If linger is enabled while an interactive manager runs, signing out ends that
 manager and its services with the session. The broker then starts a headless
 manager, which starts the enabled services again.
@@ -573,7 +590,7 @@ Existing station names are rejected instead of reusing their permissions.
 Headless launch requires a session-zero SYSTEM broker in its verified root job.
 The suspended user process must inherit that job and join its dedicated job
 before resuming. Interactive managers continue to use WTS tokens and Windows'
-interactive profile ownership. Managed profiles currently require local accounts.
+interactive profile ownership.
 
 System status includes `userInstances`: the user-host's last accepted per-SID
 state, selected launch mode (`interactive`, `headless-s4u`, or experimental

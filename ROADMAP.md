@@ -61,8 +61,8 @@ identity/session qualification. Those retain their own release gates. R6's R3-R5
 dependencies apply to the fully qualified installer, not the completed narrower
 B1-B4 beta MSI contract. The #251 deferral policy also permits the narrower
 0.1-alpha R6 check without satisfying those full acceptance dependencies.
-R4.1 acceptance for domain, cloud and roaming profiles remains an unmet
-prerequisite for the fully qualified release. This alpha check does not itself authorize the R7 handoff.
+R4 was accepted on October 14, 2026 with Microsoft Entra (cloud) accounts
+excluded from supported claims. This alpha check does not itself authorize the R7 handoff.
 
 R0 packaging research may proceed alongside runtime stabilization. R4 and R5 may proceed independently once their predecessors close. R8 provider research and public-source preparation may start earlier, but do not waive release gates. No date is promised until the Windows qualification work establishes a reliable estimate.
 
@@ -73,7 +73,7 @@ updates labeled as prereleases and publish their limitations. R6-R8 describe the
 release; they no longer block beta delivery. A beta does not confer a stable
 `1.0` API, but documented core unit syntax should remain compatible across betas.
 
-Supported targets must be backed by evidence. The first desktop release targets Windows 11 Enterprise and Enterprise LTSC x64 only. Windows Server 2022/2025 x64, including Core, remain qualification candidates. An untested target is excluded from release claims rather than inferred from compilation. Boot-time linger modes are separately qualified and explicit opt-in. GUI/session attachment, ARM64, and additional account types remain deferred.
+Supported targets must be backed by evidence. The first desktop release targets Windows 11 Enterprise and Enterprise LTSC x64 only. Windows Server 2022/2025 x64, including Core, remain qualification candidates. An untested target is excluded from release claims rather than inferred from compilation. Boot-time linger modes are separately qualified and explicit opt-in. GUI/session attachment, ARM64, and Microsoft Entra (cloud) accounts remain deferred; local and domain accounts are qualified.
 
 The repository is public and the unsigned beta is published. The targeted
 history/artifact review and maintainer publication decision are recorded in the

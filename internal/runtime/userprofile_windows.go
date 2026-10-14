@@ -5,8 +5,6 @@ package runtime
 import (
 	"fmt"
 	"io"
-	"os"
-	"strings"
 	"sync"
 	"unsafe"
 
@@ -38,17 +36,6 @@ func loadUserManagerProfile(tok windows.Token, sid string) (io.Closer, error) {
 	}
 	if identity.User.Sid.String() != sid {
 		return nil, fmt.Errorf("profile token SID mismatch")
-	}
-	_, domain, _, err := identity.User.Sid.LookupAccount("")
-	if err != nil {
-		return nil, err
-	}
-	computer, err := os.Hostname()
-	if err != nil {
-		return nil, err
-	}
-	if !strings.EqualFold(domain, computer) {
-		return nil, fmt.Errorf("managed profile loading currently requires a local machine account")
 	}
 	var session, returned uint32
 	if err := windows.GetTokenInformation(tok, windows.TokenSessionId, (*byte)(unsafe.Pointer(&session)), uint32(unsafe.Sizeof(session)), &returned); err != nil {

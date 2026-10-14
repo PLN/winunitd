@@ -155,9 +155,10 @@ without disrupting the peer. All temporary filesystem grants were restored.
 Production [broker-crash recovery and final profile release](R3-EVIDENCE.md#managed-bound-dependent-cleanup)
 and [repeated S4U user-manager recovery](R2-EVIDENCE.md#system-user-host-snapshot-qualification)
 have passed. These selected native results do not close R4.5's broader mode,
-session, credential and profile matrix. Managed profiles remain limited to local
-machine accounts; domain/cloud/roaming and redirected-profile support is outside
-these qualification claims.
+session, credential and profile matrix. Domain accounts and roaming profiles
+passed the [domain run](R4-EVIDENCE.md#domain-accounts-and-roaming-profiles);
+Microsoft Entra (cloud) accounts and folder redirection were not tested and are
+outside these qualification claims.
 
 Event-log triggers also depend on Windows channel read permission; accepting an
 Application-channel unit does not grant access to that channel. The

@@ -80,8 +80,8 @@ counts were steady.
 
 ### Limitations
 
-- One machine and one user, without linger. R4.1 stays open for domain, cloud
-  and roaming profiles, as documented in [milestones](MILESTONES.md).
+- One machine and one local user, without linger. Linger and domain accounts
+  were qualified separately under R4 ([milestones](MILESTONES.md)).
 - The graceful-stop escalation after `TimeoutStopSec` is covered by automated
   tests, not by this pilot, because the Hermes units define no `ExecStop`.
 - The upgrade row covers 0.1.0 to 0.1.1, which differ only in version identity.
