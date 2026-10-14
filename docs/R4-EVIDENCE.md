@@ -24,8 +24,8 @@ passed, and the merged trees match their tested sources:
 
 | Source / PR | CI | SCM ready | Stop during pending notify boot | Combined maintenance | Equal-tree merge |
 | --- | --- | --- | --- | --- | --- |
-| `5443e4285a7fed74c7633a5a6224308ce50b78d1`, [#128](https://github.com/PLN/winunitd/pull/128) | [34704903915](https://github.com/PLN/winunitd/actions/runs/34704903915) | 0.281s | 0.068s | 0.049s | `a81abe7fd28ad505eb772b3964ca0da458c0f85f` |
-| `d173bf4c0893fa1cb679c8915efe808ca170d5df`, [#136](https://github.com/PLN/winunitd/pull/136) | [34709244930](https://github.com/PLN/winunitd/actions/runs/34709244930) | 0.278s | 0.009s | 0.111s | `02625d89fbb07c15f633926c2e256da3dd495b60` |
+| `5443e4285a7fed74c7633a5a6224308ce50b78d1`, #128 | 34704903915 | 0.281s | 0.068s | 0.049s | `a81abe7fd28ad505eb772b3964ca0da458c0f85f` |
+| `d173bf4c0893fa1cb679c8915efe808ca170d5df`, #136 | 34709244930 | 0.278s | 0.009s | 0.111s | `02625d89fbb07c15f633926c2e256da3dd495b60` |
 
 Both runs verified invalid cold-load repair, system/user quiescence, admission
 remaining closed, idempotent maintenance and enabled-workload recovery after SCM
@@ -51,10 +51,10 @@ the full MSI servicing contract, or the R7 migration/soak gate.
 ## Concurrent local headless users
 
 Source `7396beefb88b4400ff10842bdc86f5cfd433cb38` passed
-[CI 34772550381](https://github.com/PLN/winunitd/actions/runs/34772550381).
+CI 34772550381.
 The immutable Windows/amd64 artifact, module and vendored dependency hashes
 were verified before a disposable Enterprise LTSC build 26100 run. Its
-[PR #212](https://github.com/PLN/winunitd/pull/212) merge
+PR #212 merge
 `912d84197ed2211704d9a36f537758fc1bc03ee6` has the tested source tree.
 
 Two distinct local standard users ran concurrently through the real SYSTEM
@@ -102,8 +102,8 @@ network credentials, arbitrary inherited handles or the complete R4 gate.
 ## Notification isolation across managers and restarts
 
 Source `ab95a799c4c35a74824826dd4ed0e14f295425e8` passed
-[CI 34815323517, attempt 2](https://github.com/PLN/winunitd/actions/runs/34815323517/attempts/2).
-[PR #220](https://github.com/PLN/winunitd/pull/220) merged as
+CI 34815323517, attempt 2.
+PR #220 merged as
 `5217e88e69b9d51ffeb7b05e230e2dcf2c5bcbdc`; both trees are
 `85d729930f8bca1f0cf0e6ca08521326527dfbf6`.
 
@@ -148,8 +148,8 @@ Exact artifacts, scripts, observations and restoration evidence remain private.
 ## User control during pending boot
 
 Source `fdf9d2f6ffabde1e836b079289a02b75071535be` passed
-[CI 34817416447](https://github.com/PLN/winunitd/actions/runs/34817416447).
-[PR #222](https://github.com/PLN/winunitd/pull/222) merged as
+CI 34817416447.
+PR #222 merged as
 `503f9beee972256ebf07257a119d0679e8876fca`; both trees are
 `7c6ddceb447eeb101cb53233f8e8d40d4eb6e1b2`.
 
@@ -195,7 +195,7 @@ the R4 gate remain open.
 ## Repeated real interactive transitions
 
 The same verified immutable `fdf9d2f` Windows artifact and successful
-[CI 34817416447](https://github.com/PLN/winunitd/actions/runs/34817416447)
+CI 34817416447
 ran a separate disposable Enterprise LTSC build 26100 qualification through
 the real SYSTEM broker. Source, merge and equal-tree identities are recorded
 [above](#user-control-during-pending-boot). A fresh local standard account
@@ -231,7 +231,7 @@ Policy/shutdown races inside native manager creation remain open.
 ## Multiple real sessions and concurrent interactive users
 
 The same verified immutable `fdf9d2f` artifact and successful
-[CI 34817416447](https://github.com/PLN/winunitd/actions/runs/34817416447)
+CI 34817416447
 passed a separate disposable Windows Server 2025 Desktop Experience build
 26100.32230 qualification with RD Session Host. The baseline passed native
 SYSTEM service, reboot and SCM-stop smoke before the session fixture. This
@@ -273,8 +273,8 @@ remaining security/linger checks keep the broader R4 gate open.
 ## Interactive profile failures and redirection
 
 Source `187fc6f1e761df1be5c871bcea90efce03140051` passed
-[CI 34834516120, attempt 1](https://github.com/PLN/winunitd/actions/runs/34834516120).
-[PR #226](https://github.com/PLN/winunitd/pull/226) merged as
+CI 34834516120, attempt 1.
+PR #226 merged as
 `f756c3f8c3854b10379bcea26a47c59d5d2ce4c9`; tested and merged trees are
 `3dd7f19f1c2d5bdb5ea7497944aa3e7b08224d9f`.
 
@@ -318,8 +318,8 @@ linger matrix. The R4 gate remains open.
 ## Native launch overlap and user-host acceptance
 
 Source `91d8742f9903fd2ab531176189aabe9714b2f867` passed
-[CI 35401199538, attempt 1](https://github.com/PLN/winunitd/actions/runs/35401199538).
-[PR #229](https://github.com/PLN/winunitd/pull/229) merged as
+CI 35401199538, attempt 1.
+PR #229 merged as
 `4d111c4c274883db351693450a2f02955ea048cd`; tested and merged trees are
 `dbcbf86f5964acb06031fc774135507dc2633a2d`. Local runtime/manager race suites,
 repeated overlap tests, vet and staticcheck passed. CI artifact, module and
@@ -378,9 +378,9 @@ controls remain separate work; protected file administration is available.
 
 ## Native inherited handles and filtered-token authorization
 
-PR [#231](https://github.com/PLN/winunitd/pull/231) qualified source
+PR #231 qualified source
 `0b739a581363c652f8bb0baafae78d4ab9908907` with exact-source
-[CI 35435415557, attempt 1](https://github.com/PLN/winunitd/actions/runs/35435415557).
+CI 35435415557, attempt 1.
 The merge `f02edebab9a1af8ab73686a344c91abe8cb2e7e2` has the same tree,
 `300f703fef1cd63e1a92bd22bf81663b0fee611d`. Native/cross artifact manifests,
 payload hashes, module hashes and the vendored dependency tree were verified.
@@ -454,12 +454,12 @@ The wider R4.1/R4.4 security gates remain open.
 The live qualification used immutable source
 `344bf2d2e970a347b71f03c0da0ab456324f9f85`, whose source tree equals merged main
 (45e374a). The binaries came from successful
-[CI run 35987962097](https://github.com/PLN/winunitd/actions/runs/35987962097),
+CI run 35987962097,
 with Windows artifact `10803655676` and cross-build manifest `10802544533`.
 The qualified tree is `629a6bd7d9b39d2d3c478aec38fe9994293e8c36`;
 the admitted binaries were unchanged.
-Preparation exposed the daemon-log startup regression [#253](https://github.com/PLN/winunitd/issues/253),
-fixed and separately qualified in [#255](https://github.com/PLN/winunitd/pull/255).
+Preparation exposed the daemon-log startup regression #253,
+fixed and separately qualified in #255.
 
 Two standard callers and a filtered administrator used genuine interactive
 logons with native token/session checks. Each caller opened its own live manager
@@ -500,7 +500,7 @@ install/repair variants, reparse races and non-file handle classes were not
 exercised. Earlier file sentinels and
 intentional standard-I/O handles do not cover every socket, pipe, event, mutex,
 semaphore, section, registry, process, thread, token or job handle. It is not soak
-evidence or a resolution of recovery-backoff [#254](https://github.com/PLN/winunitd/issues/254).
+evidence or a resolution of recovery-backoff #254.
 R4.4 remains unchecked; R4.1/R4.5 and the remaining release
 prerequisites are unchanged, and these results do not authorize R7 handoff.
 
@@ -510,7 +510,7 @@ Case C of the live security qualification covered privileged paths. The
 package was built with `packaging/wix/build.ps1` from a clean checkout of
 merged main `b290c63f2d6cf0485ce651eb16407b467b359fd1`, tree
 `e811c80a832e6d7ff0fdac173c1cdaa64c4ac00d`, which passed exact-source
-[CI run 36068345856](https://github.com/PLN/winunitd/actions/runs/36068345856).
+CI run 36068345856.
 CI does not publish the MSI. The payload module and vendor manifests match the
 CI artifacts, but the locally built executables are not byte-equal to the CI
 executables; the package is therefore a local build from the CI-green source
@@ -602,7 +602,7 @@ their corrections, remains private.
 
 ## Residual path and handle classes
 
-Case C and [#231](https://github.com/PLN/winunitd/pull/231) left four classes
+Case C and #231 left four classes
 open: reparse races, recursive descendant junctions, ancestor ACL policy and
 inherited handles other than files. In October 2026 the maintainer reviewed
 the source, asking for each class who could create the shape and what a
@@ -612,7 +612,7 @@ in this model; an administrator can already replace the installed binaries.
 | Class | Who can create the shape | Result |
 | --- | --- | --- |
 | Reparse races and links below a data directory | The data root's protected DACL is inherited by everything below it. Case C showed every create, rename and delete by standard and UAC-filtered callers in the protected trees returning access denied. | Only administrators can create the shape. |
-| A data directory created before the data root is secured | A standard user may create entries in `%ProgramData%`. On a first install, `winunitd` or one of its data directories could be created between the package preflight and `CreateFolders`. | The package sets the data root's owner and protected DACL. Each time it starts, the system manager checks the data root and `%ProgramData%` on open handles (the compatibility-floor chain), and since [#295](https://github.com/PLN/winunitd/pull/295) also `units`, `enabled`, `journal`, `runtime`, `linger` and `daemon`. An unsafe one holds admission. |
+| A data directory created before the data root is secured | A standard user may create entries in `%ProgramData%`. On a first install, `winunitd` or one of its data directories could be created between the package preflight and `CreateFolders`. | The package sets the data root's owner and protected DACL. Each time it starts, the system manager checks the data root and `%ProgramData%` on open handles (the compatibility-floor chain), and since #295 also `units`, `enabled`, `journal`, `runtime`, `linger` and `daemon`. An unsafe one holds admission. |
 | Recursive descendant junctions | A user-created entry stays owned by that user, and a user can create entries only where a directory is user-owned or user-writable. Such a data directory, or such a data root, fails the startup check or the package preflight. | Not reachable through a checked tree. |
 | Ancestor ACL policy | `%ProgramData%` is checked on every start: a trusted owner, and no one else may delete, rename or re-permission its entries. The package refuses an install directory or data root with an ancestor that is a reparse point. The volume root above `%ProgramData%` is not checked; by default Windows does not let users rename or replace `%ProgramData%`. | Changing those ancestors needs an administrator. Documented, not checked. |
 | Per-user paths read by SYSTEM | The broker opens a user's `units` directory only to learn whether unit files exist. It impersonates that user and rejects reparse points. Every other per-user file is read and written by the user's own manager under the user's own token. | No privilege boundary is crossed. |
@@ -637,7 +637,7 @@ signed-in session. Sign-ins were genuine RDP sessions over loopback.
 
 | Step | Observed |
 | --- | --- |
-| Fresh install | Service running with no admission hold; the [#295](https://github.com/PLN/winunitd/pull/295) data-directory check passed on a clean tree. |
+| Fresh install | Service running with no admission hold; the #295 data-directory check passed on a clean tree. |
 | Sign-in | Interactive manager in the user's session. |
 | `enable-linger` while signed in | The running manager kept `mode=interactive`. |
 | Sign-out while lingering | The interactive manager and its service ended with the session. The broker started a `headless-s4u` manager in session 0, and the enabled service sampled again 5 seconds after sign-out. |
@@ -679,7 +679,7 @@ Until October 2026 both user-manager paths refused accounts from outside the
 local machine. The check was left over from the time winunitd loaded profiles
 itself with `LoadUserProfile`, which needs the roaming profile path for domain
 accounts. Windows now loads the profile in both modes, so
-[#297](https://github.com/PLN/winunitd/pull/297) removed the check.
+#297 removed the check.
 
 On October 14, 2026 a lab domain ran the MSI built from that change
 (0.1.1-alpha): one Windows Server 2025 evaluation domain controller and a
@@ -734,9 +734,9 @@ accounts are excluded from supported claims.
 
 | Work package | Delivered behavior and evidence | Remaining qualification |
 | --- | --- | --- |
-| R4.1 Launch context | Interactive `CreateProcessAsUser` launch disables handle inheritance, obtains the target environment/known folders and retains a Windows-owned profile handle. Suspended creation and job ownership precede execution. Earlier genuine SYSTEM-to-interactive launch/crash/logoff observations are recorded in the [admission contract](USER-ADMISSION.md#implementation-evidence-and-limits). [Selected profile failures and redirection](#interactive-profile-failures-and-redirection) now cover unavailable hive access, local known-folder overrides and delegated UNC/reparse rejection. [Live cross-user and server-validation cases](#live-manager-cross-user-rejection-and-production-client-server-owner-validation) now pass. | Native WTS/S4U file-handle and filtered-token checks now pass as recorded [above](#native-inherited-handles-and-filtered-token-authorization). [Runtime mutation denials and unsafe-root install/repair refusals](#privileged-path-protection-runtime-mutation-attempts-and-unsafe-root-installrepair) now pass for the tested trees and fixtures. The [residual path and handle classes](#residual-path-and-handle-classes) are closed for local accounts. Checked for local and domain accounts, including roaming profiles, by the [domain run](#domain-accounts-and-roaming-profiles), after [#297](https://github.com/PLN/winunitd/pull/297) removed the local-account restriction. Microsoft Entra accounts and folder redirection were not tested; Entra accounts are excluded from supported claims. |
-| R4.2 User host | Protected explicit/delegated admission, per-SID overrides, session reconciliation, fresh-token recovery, bounded backoff and cancellation are implemented. [Policy/admission qualification](R2-EVIDENCE.md#user-policy-and-cleanup-admission-acceptance), [real S4U snapshot/recovery](R2-EVIDENCE.md#system-user-host-snapshot-qualification), [two concurrent headless users](#concurrent-local-headless-users), [cross-manager notification isolation](#notification-isolation-across-managers-and-restarts), [control during pending boot](#user-control-during-pending-boot), [repeated real interactive transitions](#repeated-real-interactive-transitions) and [multiple real sessions/concurrent users](#multiple-real-sessions-and-concurrent-interactive-users) cover their stated scopes. Daemon-log startup, rotation and legacy ACL repair are requalified in [the #253 diagnostics evidence](R5-EVIDENCE.md#diagnostics-and-event-resources); recovery-backoff issue [#254](https://github.com/PLN/winunitd/issues/254) was fixed by [#271](https://github.com/PLN/winunitd/pull/271). Dedicated admission administration commands and installer controls remain separate work; protected file administration is available. | Technical acceptance complete with [native launch overlap and consolidated no-resurrection evidence](#native-launch-overlap-and-user-host-acceptance). Domain accounts and roaming profiles are covered under R4.1, credential limits under R4.5. |
-| R4.4 Security | Protected policy and pipe checks, bounded impersonation workers and reparse-point rejection are implemented. [Pipe failure handling](R2-EVIDENCE.md#september-12-pipe-impersonation-failure-handling), [genuine cross-user/system pipe denial](#concurrent-local-headless-users) and [native WTS/S4U/filtered-token probes](#native-inherited-handles-and-filtered-token-authorization) cover their stated scopes. [Pipe ownership/DACL/token checks, UAC-filtered users and cross-user rejection](#live-manager-cross-user-rejection-and-production-client-server-owner-validation) are qualified natively with live managers and anti-squatting, within the recorded endpoint scope. [Protected-tree runtime mutation denials and static install/repair refusal of unsafe-root and custom-base fixtures](#privileged-path-protection-runtime-mutation-attempts-and-unsafe-root-installrepair) are qualified for the tested trees and fixtures. | None for local accounts: the [residual path and handle classes](#residual-path-and-handle-classes) are closed, with the data-directory startup check from [#295](https://github.com/PLN/winunitd/pull/295). Domain accounts and roaming profiles are covered under R4.1. |
+| R4.1 Launch context | Interactive `CreateProcessAsUser` launch disables handle inheritance, obtains the target environment/known folders and retains a Windows-owned profile handle. Suspended creation and job ownership precede execution. Earlier genuine SYSTEM-to-interactive launch/crash/logoff observations are recorded in the [admission contract](USER-ADMISSION.md#implementation-evidence-and-limits). [Selected profile failures and redirection](#interactive-profile-failures-and-redirection) now cover unavailable hive access, local known-folder overrides and delegated UNC/reparse rejection. [Live cross-user and server-validation cases](#live-manager-cross-user-rejection-and-production-client-server-owner-validation) now pass. | Native WTS/S4U file-handle and filtered-token checks now pass as recorded [above](#native-inherited-handles-and-filtered-token-authorization). [Runtime mutation denials and unsafe-root install/repair refusals](#privileged-path-protection-runtime-mutation-attempts-and-unsafe-root-installrepair) now pass for the tested trees and fixtures. The [residual path and handle classes](#residual-path-and-handle-classes) are closed for local accounts. Checked for local and domain accounts, including roaming profiles, by the [domain run](#domain-accounts-and-roaming-profiles), after #297 removed the local-account restriction. Microsoft Entra accounts and folder redirection were not tested; Entra accounts are excluded from supported claims. |
+| R4.2 User host | Protected explicit/delegated admission, per-SID overrides, session reconciliation, fresh-token recovery, bounded backoff and cancellation are implemented. [Policy/admission qualification](R2-EVIDENCE.md#user-policy-and-cleanup-admission-acceptance), [real S4U snapshot/recovery](R2-EVIDENCE.md#system-user-host-snapshot-qualification), [two concurrent headless users](#concurrent-local-headless-users), [cross-manager notification isolation](#notification-isolation-across-managers-and-restarts), [control during pending boot](#user-control-during-pending-boot), [repeated real interactive transitions](#repeated-real-interactive-transitions) and [multiple real sessions/concurrent users](#multiple-real-sessions-and-concurrent-interactive-users) cover their stated scopes. Daemon-log startup, rotation and legacy ACL repair are requalified in [the #253 diagnostics evidence](R5-EVIDENCE.md#diagnostics-and-event-resources); recovery-backoff issue #254 was fixed by #271. Dedicated admission administration commands and installer controls remain separate work; protected file administration is available. | Technical acceptance complete with [native launch overlap and consolidated no-resurrection evidence](#native-launch-overlap-and-user-host-acceptance). Domain accounts and roaming profiles are covered under R4.1, credential limits under R4.5. |
+| R4.4 Security | Protected policy and pipe checks, bounded impersonation workers and reparse-point rejection are implemented. [Pipe failure handling](R2-EVIDENCE.md#september-12-pipe-impersonation-failure-handling), [genuine cross-user/system pipe denial](#concurrent-local-headless-users) and [native WTS/S4U/filtered-token probes](#native-inherited-handles-and-filtered-token-authorization) cover their stated scopes. [Pipe ownership/DACL/token checks, UAC-filtered users and cross-user rejection](#live-manager-cross-user-rejection-and-production-client-server-owner-validation) are qualified natively with live managers and anti-squatting, within the recorded endpoint scope. [Protected-tree runtime mutation denials and static install/repair refusal of unsafe-root and custom-base fixtures](#privileged-path-protection-runtime-mutation-attempts-and-unsafe-root-installrepair) are qualified for the tested trees and fixtures. | None for local accounts: the [residual path and handle classes](#residual-path-and-handle-classes) are closed, with the data-directory startup check from #295. Domain accounts and roaming profiles are covered under R4.1. |
 | R4.5 Linger | Headless local-account S4U launch uses `CreateProcessWithTokenW(LOGON_WITH_PROFILE)` and an exclusive private desktop helper. Windows owns profile lifetime; the old manual `LoadUserProfile` path is removed. [Production crash/recovery](R3-EVIDENCE.md#managed-bound-dependent-cleanup), [user-manager replacements](R2-EVIDENCE.md#system-user-host-snapshot-qualification) and [concurrent existing/first-created profiles](#concurrent-local-headless-users) verify profile/process cleanup in their scenarios. | Checked for local accounts by the [headless linger and credential limits](#headless-linger-and-credential-limits) run. Domain accounts behave the same ([domain run](#domain-accounts-and-roaming-profiles)). The credential-store mode was not exercised and remains outside supported claims. |
 
 With R4.1 checked, the real-identity matrix is complete for local and domain

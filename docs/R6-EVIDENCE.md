@@ -3,11 +3,11 @@
 ## September 13 startup and recovery policy
 
 PR #177 source `dd12c1b9d2436066579dfa4d65a424019fbb718c` passed
-[exact-source Windows/Linux CI](https://github.com/PLN/winunitd/actions/runs/34754375316)
+exact-source Windows/Linux CI
 and merged with the same tree. Manual and MSI installation now use ordinary
 automatic startup, three one-second recovery restarts, an infinite reset period,
 recovery for non-crash failures and a 180-second preshutdown timeout.
-This fixes [consumer startup feedback #173](https://github.com/PLN/winunitd/issues/173).
+This fixes consumer startup feedback #173.
 
 The MSI helper captures the previous native policy before servicing, applies the
 shared policy after registration and restores the captured policy on rollback.
@@ -48,7 +48,7 @@ and its soak have not started.
 
 The product MSI now embeds the servicing helper described in
 [installation](INSTALLATION.md#servicing-a-running-manager) and
-[#241](https://github.com/PLN/winunitd/issues/241). Repair, upgrade, and
+#241. Repair, upgrade, and
 uninstall quiesce a running manager, then wait up to 180 seconds for SCM stop
 and process exit before replacing files. That wait is longer than the
 documented 30-second `ServiceControl` wait. `ServiceControl` stays in the
@@ -149,7 +149,7 @@ id will be added here when it is recorded.
 ## Acceptance
 
 This section is the R6.1 install/repair/uninstall record and the R6.4
-platform matrix for [#245](https://github.com/PLN/winunitd/issues/245).
+platform matrix for #245.
 The repeatable harness is `tests/installer/acceptance.ps1`, with the
 case list in `tests/installer/acceptance-matrix.json`. It runs one case
 on a disposable Windows guest and appends one redacted JSON line to a
@@ -159,7 +159,7 @@ directory. The harness does not assign an evidence id.
 Acceptance evidence id `9961798-r64-accept` records one SYSTEM guest.
 It supersedes draft id `c040800-r64-accept`. The source commit is
 `99617988a3cc0bfa93c26a6c2eed0ac76c68520b`. Exact-source CI
-[run 35807241580](https://github.com/PLN/winunitd/actions/runs/35807241580)
+run 35807241580
 is green on that commit. The equal-tree MSI sha256 is
 `2f57d8388d3a5af79ac87409d950cc326af7bf74c91b0f1d54ca33f6cbf0dd23`.
 Raw MSI logs stay private.
@@ -467,7 +467,7 @@ the lab can provide. Server Core skips `gui-install`.
 
 Evidence id `f1e38a0-r64-continue` records one agent-driven continuation.
 The source tip is `f1e38a0b80b72c18297f6ba1657473e4fa2dc10b`. Exact-source
-CI [run 35810305710](https://github.com/PLN/winunitd/actions/runs/35810305710)
+CI run 35810305710
 is green on that tip. This note is a later commit. That green run does
 not cover this commit, and this commit has no green CI run yet.
 
@@ -507,7 +507,7 @@ Claimed SKUs with no recorded run:
 Server Core remains an installation type of the claimed Server 2022 and
 Server 2025 SKUs. This Evaluation guest fills none of those rows. R6.1
 and R6.4 stay unchecked. R6.5 and overall R6 stay open. A3 / R4.4 stay
-deferred. [#245](https://github.com/PLN/winunitd/issues/245) is closed.
+deferred. #245 is closed.
 deferred-media and deferred-older-msi stay on the deferral lists in
 this file and in [milestones](MILESTONES.md).
 
@@ -577,8 +577,8 @@ These were not run:
 - deferred-older-msi: `downgrade`, `n1-upgrade`, and `rollback-upgrade`, until an older MSI exists with UpgradeCode `A512B91F-1883-40FD-8EDB-5B8C5708DEEA` and ProductVersion lower than `0.1.0`
 
 No OlderMsi version is invented. No claimed SKU is recorded as run.
-R6.5 is recorded under [4223ac9-r65-migrate](#4223ac9-r65-migrate). For 0.1-alpha only, overall R6 is checked under the [#251](https://github.com/PLN/winunitd/issues/251) deferral policy. R4 acceptance (R4.1, R4.4, and R4.5) remains an unmet prerequisite for the fully qualified release. This alpha check does not itself authorize the R7 handoff. The documented limitations are the deferred-media and deferred-older-msi lists above and in [milestones](MILESTONES.md). No new matrix row is added here. A3 / R4.4 stay deferred.
-[#245](https://github.com/PLN/winunitd/issues/245) is closed.
+R6.5 is recorded under [4223ac9-r65-migrate](#4223ac9-r65-migrate). For 0.1-alpha only, overall R6 is checked under the #251 deferral policy. R4 acceptance (R4.1, R4.4, and R4.5) remains an unmet prerequisite for the fully qualified release. This alpha check does not itself authorize the R7 handoff. The documented limitations are the deferred-media and deferred-older-msi lists above and in [milestones](MILESTONES.md). No new matrix row is added here. A3 / R4.4 stay deferred.
+#245 is closed.
 deferred-media and deferred-older-msi stay on the deferral lists above
 and in [milestones](MILESTONES.md).
 

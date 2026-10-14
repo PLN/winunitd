@@ -58,7 +58,7 @@ Path, existence, registry, and event-log adapters use the same resource-plus-err
 ## September 13 native close and bootstrap qualification
 
 PR #171 source `9ee2b5419677763423b24397b463e8820ee141bc` passed
-[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34751916046)
+exact-source CI
 and isolated Enterprise LTSC SYSTEM/headless standard-user qualification.
 Twenty repetitions per identity covered stdout/stderr protected-close retries,
 pending readers during capture/process cleanup, stream attachment and empty-job
@@ -67,7 +67,7 @@ close completion race; a deterministic delayed-close regression reproduced it,
 and serving now joins that native closure before returning.
 
 PR #172 source `7cc8cbbbf7e1513fd3c353f164d3bb1ef8293c1e` passed
-[exact-source CI](https://github.com/PLN/winunitd/actions/runs/34752120996)
+exact-source CI
 and the same native identities. Twenty repetitions of all eight selected tests
 also covered the five bootstrap handles, partial pipe/input setup, failed job
 configuration and parent-writer close after suspended process creation.
@@ -219,7 +219,7 @@ The full Windows race suite also passes, including previous storage-fault and
 process-capture regressions. These checks qualify the queue policy; complete
 journal file/retention and native failure matrices remain open.
 
-Exact-source [Windows/Linux CI](https://github.com/PLN/winunitd/actions/runs/34723049847)
+Exact-source Windows/Linux CI
 passed at `f5f4e37ccd40079d6ceb69c9d07d8e52bcbf433c`, merged in PR #154.
 The real-child fixture produces 8.5 MiB across stdout/stderr per noisy child
 (42.5 MiB total), with five children and a subsequent quiet child all exiting
@@ -270,7 +270,7 @@ bounds for arbitrary service counts, historical journal names or all storage
 failures. Exact-source CI and native lab measurements for this combined fixture
 must be retained before closing its qualification gate.
 
-September 13: [exact-source CI](https://github.com/PLN/winunitd/actions/runs/34726457612)
+September 13: exact-source CI
 passed at `ff822d2e0bc12e69e234cca3bc52ee7e6be574d9`; PR #159 merged the identical
 tree. The full uncached Windows race suite and vet passed locally, alongside
 an isolated race run and three non-race repetitions. A clean-source, non-race
@@ -307,7 +307,7 @@ unit-name churn, total lifecycle admission, MSI servicing, or R7.
 ## Consolidated ownership and cleanup acceptance
 
 September 13: PR #179 source `f91fdb76326472d92045c0e48d2a3d97af50483d`
-passed [exact-source CI](https://github.com/PLN/winunitd/actions/runs/34756114828)
+passed exact-source CI
 and merged with the same tree. Three clean-source, non-race, trimpath test
 binaries built with Go 1.27.1 passed the following combined matrix on Windows 11
 Enterprise LTSC build 26100, as genuine SYSTEM and a headless standard user.

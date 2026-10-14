@@ -3,9 +3,9 @@
 ## Constrained Windows acceptance
 
 September 13, 2026: the technical scope of
-[issue #112](https://github.com/PLN/winunitd/issues/112) is complete. PR #212 source
+issue #112 is complete. PR #212 source
 `7396beefb88b4400ff10842bdc86f5cfd433cb38` passed
-[exact-source Windows/Linux CI](https://github.com/PLN/winunitd/actions/runs/34772550381);
+exact-source Windows/Linux CI;
 merge `912d84197ed2211704d9a36f537758fc1bc03ee6` has the tested tree. R0.4's
 clean-input provisioning/session harness and broader R4 acceptance remain open.
 
@@ -78,7 +78,7 @@ above complete #112; they do not close R0.4 or broader SYSTEM/session acceptance
 
 ## Original September 7 checkpoint
 
-September 7, 2026. Follow-up to [issue #40](https://github.com/PLN/winunitd/issues/40).
+September 7, 2026. Follow-up to issue #40.
 These changes strengthen regressions without changing production behavior or
 expanding the supported beta feature set.
 
@@ -93,7 +93,7 @@ expanding the supported beta feature set.
 The timer store holds no open file handles. Engine Stop joins callbacks before
 the old store is discarded and OpenStore constructs the next instance. This
 tests successful persistence across manager restarts, not atomic crash durability,
-corrupt-state handling or failed writes. Those remain [R5.1](https://github.com/PLN/winunitd/issues/99).
+corrupt-state handling or failed writes. Those remain R5.1.
 Native memory-pressure qualification also remains distinct from injected message
 coverage and existing resource configuration/manager recovery tests.
 
