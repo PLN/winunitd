@@ -61,8 +61,8 @@ identity/session qualification. Those retain their own release gates. R6's R3-R5
 dependencies apply to the fully qualified installer, not the completed narrower
 B1-B4 beta MSI contract. The #251 deferral policy also permits the narrower
 0.1-alpha R6 check without satisfying those full acceptance dependencies.
-R4 acceptance (R4.1, R4.4, and R4.5) remains an unmet prerequisite for the fully
-qualified release. This alpha check does not itself authorize the R7 handoff.
+R4.1 acceptance for domain, cloud and roaming profiles remains an unmet
+prerequisite for the fully qualified release. This alpha check does not itself authorize the R7 handoff.
 
 R0 packaging research may proceed alongside runtime stabilization. R4 and R5 may proceed independently once their predecessors close. R8 provider research and public-source preparation may start earlier, but do not waive release gates. No date is promised until the Windows qualification work establishes a reliable estimate.
 
