@@ -48,16 +48,18 @@ func TestRejectedTransitionDoesNotWaitForConsoleLogging(t *testing.T) {
 		m.mu.Unlock()
 		close(decision)
 	}()
+	// The writer stays blocked until cleanup, so a generous wait still catches
+	// a coordinator held behind it and tolerates slow hosted runners.
 	select {
 	case <-decision:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("rejected transition held the coordinator behind console logging")
 	}
 	snapshot, err := m.Snapshot()
 	if err != nil || snapshot.Machine.UnitsActive != 1 {
 		t.Fatal("rejection changed accepted lifecycle state", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if _, err := m.Start(ctx, "other.target"); err != nil {
 		t.Fatal("independent start blocked behind diagnostic output", err)

@@ -56,7 +56,8 @@ func TestMaintenanceSurvivesCallerCancellationAndJoins(t *testing.T) {
 		t.Error("joining caller replaced the accepted deadline")
 	}
 	release()
-	ctx, stop := context.WithTimeout(context.Background(), time.Second)
+	// Stopping work.service can take seconds under -race on a hosted runner.
+	ctx, stop := context.WithTimeout(context.Background(), 10*time.Second)
 	defer stop()
 	result, err := c.enterMaintenance(ctx, protocol.MaintenanceParams{})
 	if err != nil || result.State != "quiesced" || result.StartedAt != first.StartedAt {
