@@ -122,6 +122,9 @@ Build an MSI from clean source with
 dependency maintenance. Unstamped development binaries retain the `0.1.1-alpha`
 fallback label; the manifest records their exact source revision.
 
+For help and the supported configurations see [SUPPORT.md](SUPPORT.md); report
+vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+
 The [roadmap](ROADMAP.md), [design](DESIGN.md), and
 [milestones](docs/MILESTONES.md) describe future work. Proposed design semantics
 are not the current unit-file contract. The [architecture review](docs/DESIGN-REVIEW.md)
