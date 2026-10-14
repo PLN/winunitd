@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 	"unsafe"
 
@@ -82,7 +83,7 @@ func openFloorDirs(path string) (io.Closer, bool, error) {
 		return fail(fmt.Errorf("floor data root's containing directory: %w", err))
 	}
 	held = append(held, h)
-	if err := checkDir(h, "data root's containing directory", replaceRights, false, self); err != nil {
+	if err := checkDir(h, "floor data root's containing directory", replaceRights, false, self); err != nil {
 		return fail(err)
 	}
 	for _, level := range []struct{ path, name string }{{root, "data root"}, {daemon, "daemon directory"}} {
@@ -94,11 +95,35 @@ func openFloorDirs(path string) (io.Closer, bool, error) {
 			return fail(fmt.Errorf("floor %s: %w", level.name, err))
 		}
 		held = append(held, h)
-		if err := checkDir(h, level.name, writeRights, true, self); err != nil {
+		if err := checkDir(h, "floor "+level.name, writeRights, true, self); err != nil {
 			return fail(err)
 		}
 	}
 	return held, true, nil
+}
+
+func checkDataDirs(baseDir string) error {
+	self, _, err := principals()
+	if err != nil {
+		return err
+	}
+	for _, name := range DataDirs {
+		h, err := openDir(filepath.Join(baseDir, name))
+		if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("data directory %s: %w", name, err)
+		}
+		err = checkDir(h, "data directory "+name, writeRights, true, self)
+		if closeErr := windows.CloseHandle(h); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // openDir opens a directory itself, never a reparse target, for its
@@ -131,12 +156,12 @@ func checkDir(h windows.Handle, name string, forbidden uint32, inheritOnly bool,
 		return err
 	}
 	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-		return fmt.Errorf("floor %s is a reparse point", name)
+		return fmt.Errorf("%s is a reparse point", name)
 	}
 	if info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 {
-		return fmt.Errorf("floor %s is not a directory", name)
+		return fmt.Errorf("%s is not a directory", name)
 	}
-	return checkSecurity(h, "floor "+name, forbidden, inheritOnly, self)
+	return checkSecurity(h, name, forbidden, inheritOnly, self)
 }
 
 func checkSecurity(h windows.Handle, name string, forbidden uint32, inheritOnly bool, self *windows.SID) error {

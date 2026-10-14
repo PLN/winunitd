@@ -221,6 +221,17 @@ Repair does not reapply ACLs on the mutable directories, so a safe
 existing ACL is left as it is. New directories inherit the data-root ACL,
 which grants control to SYSTEM and Administrators only.
 
+The package checks these directories before it changes anything, so one
+created by another account after that check and before the package
+secures the data root would keep its own owner and ACL. The system manager
+therefore checks `units`, `enabled`, `journal`, `runtime`, `linger` and
+`daemon` again each time it starts, with the same rules, on an open handle
+that does not follow a link. An unsafe directory holds admission with
+`unsafe data directory:` and the reason, like an unusable
+[compatibility floor](#compatibility-floor), and the manager does not
+repair it. If `journal` or `runtime` is a file rather than a directory,
+the manager does not start at all.
+
 ## Compatibility floor
 
 A compatibility floor is the minimum build that may admit hosted work on the

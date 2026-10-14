@@ -43,3 +43,9 @@ func ProtectedSDDL(t testing.TB, extra string) string {
 	}
 	return "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;" + user.User.Sid.String() + ")" + extra
 }
+
+// LetOthersWrite adds a grant that lets Users write into path.
+func LetOthersWrite(t testing.TB, path string) {
+	t.Helper()
+	SetDACL(t, path, ProtectedSDDL(t, "(A;;FW;;;BU)"))
+}
