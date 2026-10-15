@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -57,6 +58,9 @@ func OpenAccountSession(spec AccountSessionSpec) (*AccountSession, error) {
 	if got := identity.User.Sid.String(); !strings.EqualFold(got, info.SID) {
 		return fail(fmt.Errorf("S4U token belongs to %s, not %s", got, info.SID))
 	}
+	if err := grantAccountDefaultDACL(native, info.SID); err != nil {
+		return fail(fmt.Errorf("default DACL for %s: %w", spec.Account, err))
+	}
 	keeper, desktop, err := startHeadlessProcess(native, UserManagerSpec{
 		SID: info.SID, Token: tok, Exe: spec.Exe, Daemon: spec.Daemon, LoadProfile: true,
 	}, []string{spec.Exe, ProfileKeeperFlag})
@@ -83,6 +87,24 @@ func OpenAccountSession(spec AccountSessionSpec) (*AccountSession, error) {
 	s.Info = full
 	s.env = MergeDeterministicUserEnv(env, full)
 	return s, nil
+}
+
+// grantAccountDefaultDACL makes the objects the token's processes create,
+// those processes included, accessible to SYSTEM and to the account itself, as
+// for an interactive logon. The S4U logon's own default does not admit another
+// logon of the same account, so a unit's ExecStop, which logs on separately,
+// could not end the unit's processes.
+func grantAccountDefaultDACL(tok windows.Token, sid string) error {
+	sd, err := windows.SecurityDescriptorFromString("D:(A;;GA;;;SY)(A;;GA;;;" + sid + ")")
+	if err != nil {
+		return err
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return err
+	}
+	value := struct{ DefaultDacl *windows.ACL }{dacl}
+	return windows.SetTokenInformation(tok, windows.TokenDefaultDacl, (*byte)(unsafe.Pointer(&value)), uint32(unsafe.Sizeof(value)))
 }
 
 func hasUserProfile(env []string) bool {

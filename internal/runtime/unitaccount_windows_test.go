@@ -5,6 +5,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -56,7 +57,7 @@ func TestSYSTEMAccountUnitRunsAsAccount(t *testing.T) {
 	account, broker := systemAccountFixture(t)
 	script := `whoami & echo VAR=%WINUNITD_ACCOUNT_TEST% & echo USERPROFILE=%USERPROFILE% & echo LOCALAPPDATA=%LOCALAPPDATA% & ` +
 		`reg add HKCU\Software\winunitd-account-test /v probe /d hkcu-ok /f >NUL & reg query HKCU\Software\winunitd-account-test /v probe & ` +
-		`echo file-ok> "%LOCALAPPDATA%\winunitd-account-test.txt" & type "%LOCALAPPDATA%\winunitd-account-test.txt" & ping -n 3 127.0.0.1 >NUL`
+		`echo file-ok> %LOCALAPPDATA%\winunitd-account-test.txt & type %LOCALAPPDATA%\winunitd-account-test.txt & ping -n 3 127.0.0.1 >NUL`
 	p := startAs(t, broker, account, script)
 	info := p.account.Info
 	if !hiveLoaded(t, info.SID) {
@@ -115,6 +116,24 @@ func TestSYSTEMAccountUnitEndsWithItsKeeper(t *testing.T) {
 	}
 	if err := p.Stop(5 * time.Second); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// ExecStop logs on separately from the process it stops; the account's
+// processes must still be able to end each other's trees.
+func TestSYSTEMAccountProcessesCanEndEachOther(t *testing.T) {
+	account, broker := systemAccountFixture(t)
+	first := startAs(t, broker, account, `ping -n 120 127.0.0.1`)
+	second := startAs(t, broker, account, fmt.Sprintf(`taskkill /pid %d /t /f`, first.PID()))
+	out, _ := io.ReadAll(second.Stdout())
+	errOut, _ := io.ReadAll(second.Stderr())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := second.Wait(ctx); err != nil {
+		t.Fatalf("taskkill as the account: %v: %s%s", err, out, errOut)
+	}
+	if err := first.Wait(ctx); err == nil {
+		t.Fatal("the first process was not ended")
 	}
 }
 
