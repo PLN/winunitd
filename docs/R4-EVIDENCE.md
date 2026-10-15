@@ -730,6 +730,27 @@ This closes R4.1 for local and domain accounts, including roaming profiles.
 Microsoft Entra (cloud) accounts and folder redirection were not tested; Entra
 accounts are excluded from supported claims.
 
+## Units placed by SYSTEM in a lingering user's manager
+
+On October 15, 2026 the procedure in
+[running a user's units from SYSTEM](RUNTIME-REFERENCE.md#running-a-users-units-from-system)
+ran on the disposable Windows 11 Enterprise LTSC acceptance guest, with an MSI
+built from `565af36` (#18, #19 and #20 together). Every step ran as LocalSystem
+through the guest agent, for a new local standard user who never signed in.
+The unit ran `cmd.exe`, which started a child.
+
+| Step | Observed |
+| --- | --- |
+| `enable-linger` | A `headless-s4u` manager in session 0. `winctl --user=<user> status` answered at the first attempt and reported the unit directory under the user's profile, which already existed. |
+| Unit file under an ignored name | `daemon-reload` loaded the same units as before; the `.service.tmp` file was not listed. |
+| Renamed to `.service` | Owned by Administrators, with access inherited from the profile, the user's included. Reload accepted it. |
+| `enable`, `start` | The unit ran as the user in session 0. |
+| `unit-of-process` on the user pipe | The main process with `main=true`, its child with `main=false`, both with the unit's invocation. |
+| `unit-of-process` on the system pipe | `not-found`, exit 4. |
+| Go client as SYSTEM | `Dial` and `DialUser` passed the server-identity check, both endpoints listed `unit-of-process`, and the creation times matched those read through the probe's own handles. |
+| Cold boot, nobody signed in | The headless manager started and the enabled unit ran again, its main process 15 seconds after boot, with a new invocation. Attribution as above. |
+| Removal | `stop`, `disable`, deleting the file and `daemon-reload` removed the unit and its processes. `disable-linger` ended the manager and its pipe. |
+
 ## Current implementation and remaining identity matrix
 
 | Work package | Delivered behavior and evidence | Remaining qualification |

@@ -396,7 +396,8 @@ offers the same calls as `winctl`.
    user has no suitable interactive session.
 
 `winctl --user=EXAMPLE\alice unit-of-process PID` attributes a process to one
-of that user's units.
+of that user's units. The whole procedure, a cold boot without a sign-in and
+the removal were [checked natively](R4-EVIDENCE.md#units-placed-by-system-in-a-lingering-users-manager).
 
 To remove a unit: `stop`, `disable`, delete the file, `daemon-reload`. Deleting
 the file alone leaves a running unit running. `disable-linger` revokes the
