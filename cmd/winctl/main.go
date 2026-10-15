@@ -145,10 +145,11 @@ type cli struct {
 	userDial func(context.Context) (net.Conn, error)
 	user     bool
 	// userTarget is the --user=<user> name or SID; empty means the caller.
-	userTarget  string
-	lookupSID   func(name string) (string, error)                       // tests
-	userSIDDial func(ctx context.Context, sid string) (net.Conn, error) // tests
-	followStop  <-chan struct{}                                         // tests: close to end --follow after a poll
+	userTarget    string
+	userTargetSID string                                                  // resolved on first use
+	lookupSID     func(name string) (string, error)                       // tests
+	userSIDDial   func(ctx context.Context, sid string) (net.Conn, error) // tests
+	followStop    <-chan struct{}                                         // tests: close to end --follow after a poll
 }
 
 func main() {
@@ -323,17 +324,25 @@ func extractUserFlag(args []string) (user bool, target string, rest []string, er
 	return bare || target != "", target, rest, nil
 }
 
-// targetUserDial dials the named user's manager. A name resolves on this
-// machine; a SID is used as given.
+// targetUserDial dials the named user's manager. A SID is used as given; a
+// name resolves on this machine once per command.
 func (c *cli) targetUserDial(ctx context.Context) (net.Conn, error) {
-	lookup := c.lookupSID
-	if lookup == nil {
-		lookup = lookupUserSID
+	if c.userTargetSID == "" {
+		if protocol.ValidSID(c.userTarget) {
+			c.userTargetSID = c.userTarget
+		} else {
+			lookup := c.lookupSID
+			if lookup == nil {
+				lookup = lookupUserSID
+			}
+			sid, err := lookup(c.userTarget)
+			if err != nil {
+				return nil, err
+			}
+			c.userTargetSID = sid
+		}
 	}
-	sid, err := lookup(c.userTarget)
-	if err != nil {
-		return nil, err
-	}
+	sid := c.userTargetSID
 	dial := c.userSIDDial
 	if dial == nil {
 		dial = defaultUserSIDDial

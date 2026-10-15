@@ -1263,6 +1263,28 @@ func TestCLIUserTargetDialsThatUsersManager(t *testing.T) {
 	if len(looked) != 1 || looked[0] != `EXAMPLE\alice` || len(dialed) != 1 || dialed[0] != sid {
 		t.Fatalf("looked up %v, dialed %v", looked, dialed)
 	}
+	looked, dialed = nil, nil
+	out.Reset()
+	errb.Reset()
+	if code := newCLI(&out, &errb).run([]string{"--user=" + sid, "status"}); code != 0 {
+		t.Fatalf("by SID: exit %d stderr=%s", code, errb.String())
+	}
+	if len(looked) != 0 || len(dialed) != 1 || dialed[0] != sid {
+		t.Fatalf("a SID target looked up %v, dialed %v", looked, dialed)
+	}
+	looked, dialed = nil, nil
+	c := newCLI(&out, &errb)
+	c.userTarget = "alice"
+	for i := 0; i < 3; i++ {
+		conn, err := c.targetUserDial(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		conn.Close()
+	}
+	if len(looked) != 1 || len(dialed) != 3 {
+		t.Fatalf("three dials looked up %v times", len(looked))
+	}
 	if !strings.Contains(out.String(), `UnitDirectory: C:\Users\alice\AppData\Local\winunitd\units`) {
 		t.Fatalf("status output: %s", out.String())
 	}
@@ -1275,7 +1297,7 @@ func TestCLIUserTargetDialsThatUsersManager(t *testing.T) {
 
 	out.Reset()
 	errb.Reset()
-	c := newCLI(&out, &errb)
+	c = newCLI(&out, &errb)
 	c.userSIDDial = func(context.Context, string) (net.Conn, error) {
 		return nil, &os.PathError{Op: "open", Path: protocol.UserPipeName(sid), Err: os.ErrNotExist}
 	}

@@ -238,7 +238,7 @@ outside the core beta guarantee; passing `verify` is not a qualification claim.
 | Section / directives | Current behavior / limitation |
 | --- | --- |
 | Unit: `BindsTo` | Managed peer exit/failure and confirmed SCM/task inactivity stop bound dependents using captured invocation policy; with `After`, activation requires an active peer. Native query failures remain unknown, with visible diagnostics; they do not prove inactivity |
-| Unit: `RequiresInteractiveSession` | Default no; skip without a suitable session, including in a headless linger manager. `SessionMode=` and `SessionPolicy=` are not implemented |
+| Unit: `RequiresInteractiveSession` | Default no; skip starting while the user has no suitable interactive session, also in a headless linger manager. `SessionMode=` and `SessionPolicy=` are not implemented |
 | Service: `NotifyAccess` | main only; default main |
 | Service: `WatchdogSec`, `WatchdogMode` | Positive duration enables watchdog; mode notify (default), tcp, or http |
 | Service: `WatchdogEndpoint`, `WatchdogExpectedStatus` | TCP/HTTP loopback endpoint only; HTTP expected status defaults to 200 |

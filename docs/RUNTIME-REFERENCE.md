@@ -392,7 +392,8 @@ offers the same calls as `winctl`.
 4. `winctl --user=EXAMPLE\alice daemon-reload`, then `enable` and `start`.
    Reload accepts all of the user's unit files or keeps the previous set, so
    check its errors. Only enabled units, wanted by `default.target`, start at
-   boot. `RequiresInteractiveSession=yes` units do not run headless.
+   boot. Units with `RequiresInteractiveSession=yes` skip starting while the
+   user has no suitable interactive session.
 
 `winctl --user=EXAMPLE\alice unit-of-process PID` attributes a process to one
 of that user's units.
