@@ -129,6 +129,9 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 	}
 
 	inv := journal.NewInvocationID()
+	// Record the invocation first: recovery after a failed start continues
+	// with the invocation's definition, which must be this one.
+	m.recordInvocation(effect, inv, "")
 	userSID := ""
 	if svc.User != "" {
 		// Resolve before anything is opened for the invocation: the notify pipe
@@ -139,12 +142,14 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		}
 		info, err := lookup(svc.User)
 		if err != nil {
+			err = &runtime.AccountError{Account: svc.User, Err: err}
+			m.failAccountStart(effect, err)
 			m.maybeRestart(name, core.ExitFailure, svc)
-			return &runtime.AccountError{Account: svc.User, Err: err}
+			return err
 		}
 		userSID = info.SID
+		m.recordInvocationUser(effect, userSID)
 	}
-	m.recordInvocation(effect, inv, userSID)
 
 	env := journal.InjectEnv(unitEnv(svc), inv)
 	var nrt *notifyRuntime
@@ -214,6 +219,7 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		if proc == nil && errors.As(err, &st) {
 			m.maybeRestart(name, classifyWait(err), svc)
 		} else if proc == nil && errors.As(err, &account) {
+			m.failAccountStart(effect, err)
 			m.maybeRestart(name, core.ExitFailure, svc)
 		}
 		return err

@@ -46,9 +46,12 @@ func (p *parser) finishUser(spec *ServiceSpec, s *serviceBuilder) {
 		p.errorf(s.userL, `User=%s is not an account name: use DOMAIN\name, a local name or a SID`, value)
 		return
 	}
-	if strings.HasPrefix(name, "s-") && !validSIDString(value) {
-		p.errorf(s.userL, "User=%s is not a valid SID", value)
-		return
+	if strings.HasPrefix(name, "s-") {
+		if !validSIDString(value) {
+			p.errorf(s.userL, "User=%s is not a valid SID", value)
+			return
+		}
+		value = "S" + value[1:] // the runtime takes only the canonical form as a SID
 	}
 	spec.User = value
 }

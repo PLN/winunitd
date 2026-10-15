@@ -215,6 +215,29 @@ func (m *Manager) recordInvocation(effect *launchEffect, invocation, userSID str
 	}
 }
 
+func (m *Manager) recordInvocationUser(effect *launchEffect, userSID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if effect.owner.currentLocked(m) {
+		effect.owner.record.invocationUserSID = userSID
+	}
+}
+
+// failAccountStart publishes a User= start that could not log on as failed,
+// with its error, before Restart= decides whether to try again. Recovery
+// discards a launch error, so this is its only record there.
+func (m *Manager) failAccountStart(effect *launchEffect, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || !effect.owner.currentLocked(m) {
+		return
+	}
+	rt := effect.owner.record
+	if !rt.stopping && rt.step(core.EventStartFailed) {
+		rt.err = err.Error()
+	}
+}
+
 func (m *Manager) adoptLaunchNotify(effect *launchEffect, notify *notifyRuntime) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()

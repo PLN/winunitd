@@ -36,15 +36,16 @@ func OpenAccountSession(spec AccountSessionSpec) (*AccountSession, error) {
 		return nil, err
 	}
 	tok, err := s4uLogon(LingerRecord{SID: info.SID, Name: FormatAccount(info)})
-	if err != nil {
-		return nil, fmt.Errorf("S4U logon for %s: %w", spec.Account, err)
-	}
+	// A failed logon can still return a token whose cleanup must be retried.
 	s := &AccountSession{plat: accountPlatform{token: tok}}
 	fail := func(cause error) (*AccountSession, error) {
 		if err := s.Close(); err != nil {
 			return s, errors.Join(cause, err)
 		}
 		return nil, cause
+	}
+	if err != nil {
+		return fail(fmt.Errorf("S4U logon for %s: %w", spec.Account, err))
 	}
 	native, ok := nativeToken(tok)
 	if !ok {

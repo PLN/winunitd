@@ -15,6 +15,7 @@ func TestUserDirective(t *testing.T) {
 		{"domain name", format2 + service + "User=EXAMPLE\\alice\n", true, "EXAMPLE\\alice", true},
 		{"local name", format2 + service + "User=alice\n", true, "alice", true},
 		{"sid", format2 + service + "User=S-1-5-21-1-2-3-1001\n", true, "S-1-5-21-1-2-3-1001", true},
+		{"lowercase sid", format2 + service + "User=s-1-5-21-1-2-3-1001\n", true, "S-1-5-21-1-2-3-1001", true},
 		{"oneshot", format2 + service + "Type=oneshot\nUser=alice\n", true, "alice", true},
 		{"notify", format2 + service + "Type=notify\nUser=alice\n", true, "alice", true},
 		{"system", format2 + service + "User=SYSTEM\n", true, "", true},

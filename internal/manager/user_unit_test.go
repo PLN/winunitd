@@ -10,23 +10,30 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PLN/winunitd/internal/core"
 	"github.com/PLN/winunitd/internal/runtime"
 )
 
 // accountDirectory is a fake User= resolver: alice and bob resolve, once the
-// configured number of failures has run out, and nothing else does.
+// configured failures, for every account or for bob, have run out, and
+// nothing else does.
 type accountDirectory struct {
-	mu       sync.Mutex
-	failures int
-	lookups  []string
+	mu          sync.Mutex
+	failures    int
+	bobFailures int
+	lookups     []string
 }
 
 func (d *accountDirectory) lookup(name string) (runtime.UserInfo, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.lookups = append(d.lookups, name)
-	if d.failures > 0 {
-		d.failures--
+	if d.failures > 0 || (d.bobFailures > 0 && strings.EqualFold(name, `EXAMPLE\bob`)) {
+		if d.failures > 0 {
+			d.failures--
+		} else {
+			d.bobFailures--
+		}
 		return runtime.UserInfo{}, errors.New("domain controller unreachable")
 	}
 	switch strings.ToLower(name) {
@@ -131,5 +138,107 @@ func TestUserUnitWithSystemSpellingKeepsManagerEnvironment(t *testing.T) {
 	}
 	if st, _ := m.Status("work"); st.Unit.User != "" {
 		t.Fatalf("User=SYSTEM status %+v", st.Unit)
+	}
+}
+
+// A start of a reloaded definition that cannot resolve its account must be
+// retried with that definition, not with the previous invocation's.
+func TestUserUnitRecoveryUsesTheNewDefinition(t *testing.T) {
+	dir := &accountDirectory{}
+	m, launch, units := userUnitManager(t, userService+"User=EXAMPLE\\alice\n", dir)
+	if _, err := m.Start(context.Background(), "work"); err != nil {
+		t.Fatal(err)
+	}
+	// An invocation that exits by itself, unlike a stopped one, keeps its
+	// definition as the one recovery would use.
+	launch.guard.Lock()
+	main := launch.main
+	launch.guard.Unlock()
+	main.die(0)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		m.mu.Lock()
+		rt := m.units["work.service"]
+		idle := rt.proc == nil && !rt.cleanupPending() && rt.invocationUnit != nil
+		m.mu.Unlock()
+		if idle {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the main process exit was not cleaned up")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	writeUnit(t, units, "work.service", userService+"User=EXAMPLE\\bob\nRestart=on-failure\nRestartSec=20ms\n")
+	if _, err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	dir.mu.Lock()
+	dir.bobFailures = 1
+	dir.mu.Unlock()
+	if _, err := m.Start(context.Background(), "work"); err == nil {
+		t.Fatal("start succeeded although the account did not resolve")
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		var workloads []runtime.StartSpec
+		for _, spec := range launch.specs() {
+			if spec.Argv[0] == `C:\Tools\work.exe` {
+				workloads = append(workloads, spec)
+			}
+		}
+		if len(workloads) >= 2 {
+			if workloads[1].User != "S-1-5-21-1-2-3-1002" {
+				t.Fatalf("recovery launched as %q, want bob", workloads[1].User)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no recovery start; lookups %v", dir.lookups)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Recovery discards a launch error, so an account failure in a recovery that
+// Restart= does not repeat must still leave the unit failed with its error.
+func TestUserUnitAccountFailureInRecoveryIsPublished(t *testing.T) {
+	dir := &accountDirectory{}
+	m, launch, _ := userUnitManager(t, userService+"User=EXAMPLE\\alice\nRestart=on-watchdog\n", dir)
+	if _, err := m.Start(context.Background(), "work"); err != nil {
+		t.Fatal(err)
+	}
+	launch.guard.Lock()
+	main := launch.main
+	launch.guard.Unlock()
+	main.die(1)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		m.mu.Lock()
+		rt := m.units["work.service"]
+		idle := rt.proc == nil && !rt.cleanupPending()
+		svc := rt.ownedUnit().Service
+		m.mu.Unlock()
+		if idle {
+			dir.mu.Lock()
+			dir.failures = 1
+			dir.mu.Unlock()
+			m.maybeRestart("work.service", core.ExitWatchdog, svc)
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the main process exit was not cleaned up")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	for {
+		st, err := m.Status("work")
+		if err == nil && st.Unit.ActiveState == "failed" && strings.Contains(st.Unit.Error, "domain controller unreachable") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("after a failed recovery logon: %+v %v", st.Unit, err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
