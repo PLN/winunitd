@@ -113,8 +113,11 @@ func (m *Manager) executeStopHelper(h *stopHelperWork) {
 	if h.main != nil && h.main.Alive() {
 		env = append(env, "MAINPID="+strconv.Itoa(h.main.PID()))
 	}
-	p, launchErr := m.launch.Start(h.ctx, runtime.StartSpec{Unit: h.owner.name, Type: unit.TypeOneshot, Argv: append([]string(nil), svc.ExecStop...), Dir: svc.WorkingDirectory, Env: env, Limits: runtime.JobLimitsFromSpec(svc)})
+	spec := runtime.StartSpec{Unit: h.owner.name, Type: unit.TypeOneshot, Argv: append([]string(nil), svc.ExecStop...), Dir: svc.WorkingDirectory, Env: env, Limits: runtime.JobLimitsFromSpec(svc)}
+	launching := m.trackLaunchingJob(&spec, processOwner{unit: h.owner.name, invocation: h.invocation, stopHelper: true})
+	p, launchErr := m.launch.Start(h.ctx, spec)
 	m.publishStopHelperProcess(h, p)
+	m.untrackLaunchingJob(launching)
 	var capture *journal.Capture
 	if p != nil {
 		capture = m.journal.AttachConcurrent(h.owner.name, p.PID(), inv, p.Stdout(), p.Stderr())

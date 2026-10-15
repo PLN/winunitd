@@ -62,6 +62,7 @@ type Manager struct {
 	stops                stopSet
 	closePending         []unitTeardown
 	stopHelpers          map[*stopHelperWork]struct{}
+	launchingJobs        map[*processOwner]struct{} // assigned, not yet published
 	snapshotSequence     uint64
 	boundStops           map[string]boundStopMember
 	boundStopsDone       chan struct{}
@@ -342,6 +343,12 @@ func (m *Manager) Handle(ctx context.Context, method string, params json.RawMess
 			return m.CancelOperation(ctx, p.ID)
 		}
 		return m.Operation(p.ID)
+	case protocol.MethodUnitOfProcess:
+		var p protocol.UnitOfProcessParams
+		if err := protocol.DecodeParams(params, &p); err != nil {
+			return nil, err
+		}
+		return m.UnitOfProcess(p.PID)
 	case protocol.MethodListUnits:
 		var p protocol.ListUnitsParams
 		if err := protocol.DecodeParams(params, &p); err != nil {

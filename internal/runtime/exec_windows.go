@@ -236,6 +236,9 @@ func (l *winLauncher) finishProcessSetup(p *winProc, spec StartSpec, setup proce
 		return err
 	}
 	p.unassigned = false
+	if spec.Assigned != nil {
+		spec.Assigned(p.pid, p.job)
+	}
 	if spec.Limits.IoPrioritySet {
 		if err := setup.priority(p.process, spec.Limits.IoPriority); err != nil {
 			return err

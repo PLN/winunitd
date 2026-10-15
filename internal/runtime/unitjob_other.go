@@ -40,6 +40,19 @@ func (j *UnitJob) Contains(pid int) (bool, error) {
 	return false, nil
 }
 
+// HasProcess is always false on the stub.
+func (j *UnitJob) HasProcess(*ProcessProbe) (bool, error) {
+	if j == nil {
+		return false, ErrJobClosed
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.closed {
+		return false, ErrJobClosed
+	}
+	return false, nil
+}
+
 // PIDs is empty on non-Windows builds.
 func (j *UnitJob) PIDs() ([]int, error) {
 	if j == nil {

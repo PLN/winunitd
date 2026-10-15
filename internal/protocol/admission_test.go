@@ -76,6 +76,7 @@ func TestServerReservedAdmission(t *testing.T) {
 	assertBusy(MethodStatus)
 	assertBusy(MethodOperation)
 	assertBusy(MethodCapabilities)
+	assertBusy(MethodUnitOfProcess)
 	if err := call(MethodStop); err != nil {
 		t.Fatal(err)
 	}

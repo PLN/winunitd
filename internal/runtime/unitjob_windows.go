@@ -150,6 +150,24 @@ func (j *UnitJob) Contains(pid int) (bool, error) {
 	return isProcessInJob(ph, j.handle)
 }
 
+// HasProcess reports whether the probed process is in this unit job,
+// including descendants that inherited it. ErrJobClosed means the job was
+// released first.
+func (j *UnitJob) HasProcess(p *ProcessProbe) (bool, error) {
+	if p == nil || p.handle == 0 {
+		return false, fmt.Errorf("process probe is closed")
+	}
+	if j == nil {
+		return false, ErrJobClosed
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.handle == 0 {
+		return false, ErrJobClosed
+	}
+	return isProcessInJob(p.handle, j.handle)
+}
+
 // PIDs lists process IDs currently assigned to the job.
 func (j *UnitJob) PIDs() ([]int, error) {
 	if j == nil {

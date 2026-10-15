@@ -62,7 +62,32 @@ Versioned JSON-RPC on `\\.\pipe\winunitd\control` (LocalSystem and Administrator
 
 ### `winctl` commands
 
-`start`, `stop`, `restart`, `status`, `operation`, `cancel`, `snapshot`, `migrate`, `enable`, `disable`, `list-units`, `list-timers`, `logs`, `daemon-reload`, `enable-linger`, `disable-linger`, `verify`, `capabilities`.
+`start`, `stop`, `restart`, `status`, `operation`, `cancel`, `snapshot`, `migrate`, `enable`, `disable`, `list-units`, `list-timers`, `logs`, `daemon-reload`, `enable-linger`, `disable-linger`, `verify`, `capabilities`, `unit-of-process`.
+
+### Which unit a process belongs to
+
+`winctl unit-of-process PID` (protocol method `unit-of-process`, parameter
+`pid`) asks the answering manager which of its units holds a process. A
+process belongs to a unit while it is in that unit's Job Object: the main
+process and every descendant that inherited the job, or a process in the
+unit's ExecStop helper job. The reply names the unit, its invocation ID,
+whether the process is the main process (`main`) or in the stop helper's job
+(`stopHelper`), the process creation time from `GetProcessTimes`
+(`processCreatedAt`, UTC RFC 3339 with 100-nanosecond precision), and the
+answering manager (`scope` `system` or `user`, and the user's `sid`).
+
+The manager holds one process handle for the whole query, so the membership
+and the creation time describe the same process. A caller that opened its own
+handle first, for example to a named-pipe client from
+`GetNamedPipeClientProcessId`, can compare `processCreatedAt` with
+`GetProcessTimes` on that handle to rule out PID reuse.
+
+Each manager answers only for its own units. For a process in a user's unit,
+ask that user's pipe; the system manager does not look into user managers. Native proxy
+units (`Type=scm`, `Type=scheduled-task`) have no unit job and never match.
+A process outside every unit returns `not-found` (exit 4); a process that does
+not exist also returns `not-found`; a process the manager may not query returns
+`permission-denied`. Any authorized peer of the pipe may ask, as for `status`.
 
 Unit status and list-units responses add optional `subState` and
 `terminationUncertain` fields. `winctl status` shows the manager phase and
