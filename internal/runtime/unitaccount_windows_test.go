@@ -122,20 +122,25 @@ func TestSYSTEMAccountUnitEndsWithItsKeeper(t *testing.T) {
 // ExecStop logs on separately from the process it stops. The default DACL
 // Windows gives an S4U token admits the account itself, so the account's
 // processes can still end each other. (taskkill.exe refuses to run under an
-// S4U logon at all, so this uses TerminateProcess through PowerShell.)
+// S4U logon at all, so this calls TerminateProcess from the test binary.)
 func TestSYSTEMAccountProcessesCanEndEachOther(t *testing.T) {
 	account, broker := systemAccountFixture(t)
 	first := startAs(t, broker, account, `ping -n 120 127.0.0.1`)
-	second := startAs(t, broker, account, fmt.Sprintf(`powershell.exe -NoProfile -Command "Stop-Process -Id %d -Force -ErrorAction Stop"`, first.PID()))
+	exe, err := filepath.Abs(os.Args[0])
+	if err != nil || strings.ContainsAny(exe, " &") {
+		t.Fatalf("test binary %q must have a path cmd.exe takes unquoted: %v", exe, err)
+	}
+	second := startAs(t, broker, account, fmt.Sprintf(`set WINUNITD_TERMINATE_PID=%d& %s -winunitd-helper=terminate`, first.PID(), exe))
 	out, _ := io.ReadAll(second.Stdout())
 	errOut, _ := io.ReadAll(second.Stderr())
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := second.Wait(ctx); err != nil {
-		t.Fatalf("taskkill as the account: %v: %s%s", err, out, errOut)
+		t.Fatalf("TerminateProcess as the account: %v: %s%s", err, out, errOut)
 	}
-	if err := first.Wait(ctx); err == nil {
-		t.Fatal("the first process was not ended")
+	var exit *ExitStatus
+	if err := first.Wait(ctx); !errors.As(err, &exit) || exit.Code != 1 {
+		t.Fatalf("the first process was not terminated: %v", err)
 	}
 }
 
