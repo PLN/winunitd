@@ -21,9 +21,11 @@
 //		...
 //	}
 //
-// Requests on one Client are sequential. A context deadline or cancellation
-// interrupts the request in flight; after that, or after any other transport
-// failure, the Client is closed and the caller dials again. A request whose
+// A Client is safe for concurrent use; its requests take turns on the one
+// connection, and a request waiting for its turn honours its context. A
+// context deadline or cancellation interrupts the request in flight; after
+// that, or after any other transport failure, the Client is closed and the
+// caller dials again. Close interrupts a request in flight. A request whose
 // reply was lost may still have been carried out; the client never retries.
 // Manager refusals are *Error values with a Code such as CodeNotFound and
 // leave the Client open.

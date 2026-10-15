@@ -14,11 +14,14 @@ import (
 // ErrClosed is returned by requests on a closed Client.
 var ErrClosed = errors.New("winunitd client is closed")
 
-// Client is one connection to a winunitd manager.
+// Client is one connection to a winunitd manager. It is safe for concurrent
+// use; requests take turns, and a request waiting for its turn honours its
+// context.
 type Client struct {
-	mu      sync.Mutex
+	turn    chan struct{} // held by the request using the connection
 	conn    net.Conn
 	rpc     *protocol.Client
+	mu      sync.Mutex // closed and methods
 	closed  bool
 	methods []string // from the last capabilities reply; nil before one
 }
@@ -53,17 +56,13 @@ func DialCurrentUser(ctx context.Context) (*Client, error) {
 }
 
 func newClient(conn net.Conn) *Client {
-	return &Client{conn: conn, rpc: protocol.NewClient(conn)}
+	return &Client{turn: make(chan struct{}, 1), conn: conn, rpc: protocol.NewClient(conn)}
 }
 
-// Close closes the connection.
+// Close closes the connection. A request in progress fails with ErrClosed.
 func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.closeLocked()
-}
-
-func (c *Client) closeLocked() error {
 	if c.closed {
 		return nil
 	}
@@ -71,13 +70,23 @@ func (c *Client) closeLocked() error {
 	return c.conn.Close()
 }
 
+func (c *Client) isClosed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closed
+}
+
 // do runs one request with ctx bounding the connection I/O. A failure other
 // than a manager refusal leaves the stream position unknown, so it closes the
 // connection.
 func (c *Client) do(ctx context.Context, request func() error) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
+	select {
+	case c.turn <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-c.turn }()
+	if c.isClosed() {
 		return ErrClosed
 	}
 	if err := ctx.Err(); err != nil {
@@ -86,15 +95,24 @@ func (c *Client) do(ctx context.Context, request func() error) error {
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = c.conn.SetDeadline(deadline)
 	}
-	stop := context.AfterFunc(ctx, func() { _ = c.conn.SetDeadline(time.Unix(1, 0)) })
+	interrupted := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		_ = c.conn.SetDeadline(time.Unix(1, 0))
+		close(interrupted)
+	})
 	err := request()
-	stop()
+	if !stop() {
+		<-interrupted // never leave an expired deadline for the next request
+	}
 	_ = c.conn.SetDeadline(time.Time{})
 	var refusal *Error
 	if err == nil || errors.As(err, &refusal) {
 		return err
 	}
-	_ = c.closeLocked()
+	if c.isClosed() {
+		return errors.Join(ErrClosed, err)
+	}
+	_ = c.Close()
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return errors.Join(ctxErr, err)
 	}

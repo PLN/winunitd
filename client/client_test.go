@@ -103,16 +103,47 @@ func TestSupportsFollowsCapabilities(t *testing.T) {
 	}
 }
 
-func TestCancellationClosesClient(t *testing.T) {
-	release := make(chan struct{})
+// blockingClient's handler signals entered and blocks until release closes.
+func blockingClient(t *testing.T) (c *Client, entered chan string, release chan struct{}) {
+	t.Helper()
+	entered = make(chan string, 4)
+	release = make(chan struct{})
 	t.Cleanup(func() { close(release) })
-	c := pipeClient(t, func(ctx context.Context, method string, _ json.RawMessage) (any, error) {
+	c = pipeClient(t, func(ctx context.Context, method string, _ json.RawMessage) (any, error) {
+		entered <- method
 		select {
 		case <-release:
 		case <-ctx.Done():
 		}
-		return UnitResult{Unit: "app.service", ActiveState: "active"}, nil
+		return StatusResult{Machine: &MachineStatus{State: "running"}}, nil
 	})
+	return c, entered, release
+}
+
+func bounded(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	return ctx
+}
+
+func TestCancellationClosesClient(t *testing.T) {
+	c, entered, _ := blockingClient(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-entered
+		cancel()
+	}()
+	if _, err := c.Start(ctx, "app"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled start: %v", err)
+	}
+	if _, err := c.Status(bounded(t), ""); !errors.Is(err, ErrClosed) {
+		t.Fatalf("after an interrupted request: %v", err)
+	}
+}
+
+func TestDeadlineInterruptsRequest(t *testing.T) {
+	c, _, _ := blockingClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	start := time.Now()
@@ -122,8 +153,72 @@ func TestCancellationClosesClient(t *testing.T) {
 	if time.Since(start) > 5*time.Second {
 		t.Fatal("deadline did not interrupt the request")
 	}
+}
+
+func TestQueuedRequestHonoursItsContext(t *testing.T) {
+	c, entered, release := blockingClient(t)
+	first := make(chan error, 1)
+	go func() {
+		_, err := c.Status(bounded(t), "")
+		first <- err
+	}()
+	<-entered
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := c.Status(ctx, ""); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("queued request: %v", err)
+	}
+	select {
+	case err := <-first:
+		t.Fatalf("active request ended early: %v", err)
+	default:
+	}
+	release <- struct{}{}
+	if err := <-first; err != nil {
+		t.Fatalf("active request after the queued one gave up: %v", err)
+	}
+	go func() {
+		<-entered
+		release <- struct{}{}
+	}()
+	if _, err := c.Status(bounded(t), ""); err != nil {
+		t.Fatalf("client after both: %v", err)
+	}
+}
+
+func TestCloseInterruptsRequest(t *testing.T) {
+	c, entered, _ := blockingClient(t)
+	go func() {
+		<-entered
+		_ = c.Close()
+	}()
 	if _, err := c.Status(context.Background(), ""); !errors.Is(err, ErrClosed) {
-		t.Fatalf("after an interrupted request: %v", err)
+		t.Fatalf("request during Close: %v", err)
+	}
+}
+
+// A cancellation that loses the race to the reply must not leave an expired
+// deadline behind for the next request.
+func TestLateCancellationLeavesClientUsable(t *testing.T) {
+	c := pipeClient(t, func(context.Context, string, json.RawMessage) (any, error) {
+		return StatusResult{Machine: &MachineStatus{State: "running"}}, nil
+	})
+	for i := 0; i < 200; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		go cancel()
+		if _, err := c.Status(ctx, ""); err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("round %d: %v", i, err)
+		}
+		if c.isClosed() {
+			// The cancellation interrupted that request; dialing again is the contract.
+			c = pipeClient(t, func(context.Context, string, json.RawMessage) (any, error) {
+				return StatusResult{Machine: &MachineStatus{State: "running"}}, nil
+			})
+			continue
+		}
+		if _, err := c.Status(bounded(t), ""); err != nil {
+			t.Fatalf("round %d, request after a late cancellation: %v", i, err)
+		}
 	}
 }
 
