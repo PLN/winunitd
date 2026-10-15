@@ -235,7 +235,7 @@ func TestRuntimeReferenceDocumentsFeatures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{protocol.FeatureExecStop, protocol.FeatureRestartBackoff, protocol.FeatureJobLimits, protocol.FeatureLingerS4U} {
+	for _, name := range []string{protocol.FeatureExecStop, protocol.FeatureRestartBackoff, protocol.FeatureJobLimits, protocol.FeatureLingerS4U, protocol.FeatureUnitUserS4U} {
 		if !strings.Contains(string(data), "| `"+name+"` |") {
 			t.Fatalf("RUNTIME-REFERENCE.md does not document feature %s", name)
 		}

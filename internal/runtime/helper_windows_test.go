@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	goruntime "runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +30,23 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
+	if len(os.Args) == 2 && os.Args[1] == ProfileKeeperFlag {
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
 	switch helperMode() {
+	case "terminate":
+		pid, _ := strconv.Atoi(os.Getenv("WINUNITD_TERMINATE_PID"))
+		h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(pid))
+		if err == nil {
+			err = windows.TerminateProcess(h, 1)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "terminate %d: %v\n", pid, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
 	case "security-report":
 		if err := runSecurityReportHelper(); err != nil {
 			fmt.Fprintln(os.Stderr, err)

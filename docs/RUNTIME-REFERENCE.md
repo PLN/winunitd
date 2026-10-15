@@ -104,6 +104,9 @@ even when there is no error string yet. A successful stop clears uncertainty.
 The phase belongs to manager lifecycle; a native proxy's ActiveState is a separate
 external observation. Missing fields from an older daemon remain supported.
 These fields do not claim immutable aggregate snapshots or new health semantics.
+A system unit with `User=` also reports `user`, the account of the definition
+that owns its invocation, and `userSid`, the SID that invocation resolved;
+`winctl status` shows them as `User:`. Machine status reports `unitDirectory`.
 
 `winctl status UNIT` exit codes are systemctl-shaped: **0** active, **3** loaded but inactive/failed, **4** not loaded. Transport/protocol errors keep their existing non-zero exit. Machine status (no unit) exits 0 on success.
 
@@ -142,10 +145,11 @@ fields:
 | `restart-backoff` | Format-2 `RestartBackoff=exponential` with `RestartMaxDelaySec=` ([recovery delay and backoff](UNIT-REFERENCE.md#recovery-delay-and-backoff)) |
 | `job-limits` | The `jobLimits` directives are applied to the Job Object of each managed process service; native SCM and task proxies do not reach this path |
 | `linger-s4u` | System endpoint only: lingering users get a headless user manager through an S4U logon |
+| `unit-user-s4u` | System endpoint only: `User=` in a system unit runs its processes as that account through an S4U logon ([accounts](UNIT-REFERENCE.md#accounts)) |
 
 A name is listed only when the answering endpoint enforces that contract. On
-Windows the system endpoint lists all four and user endpoints omit
-`linger-s4u`. Builds for other systems are test stand-ins with stub launchers
+Windows the system endpoint lists all five and user endpoints omit
+`linger-s4u` and `unit-user-s4u`. Builds for other systems are test stand-ins with stub launchers
 and list only `restart-backoff`, with empty `jobLimits` and mode lists. A name
 is never reused for different behavior; a new contract gets a new name. The
 result describes the build, not qualification: the limits recorded in
@@ -208,7 +212,7 @@ revision, and verify of a loaded unit whose file gained one reports
 directives added since: `ExecStop`, `ExecStopArg`, `FormatVersion`,
 `PathExistsAll`, `ReadinessEndpoint`, `ReadinessExpectedStatus`,
 `ReadinessIntervalSec`, `ReadinessMode`, `ReadinessTimeoutSec`,
-`RemainAfterExit`, `RestartBackoff`, `RestartMaxDelaySec`,
+`RemainAfterExit`, `RestartBackoff`, `RestartMaxDelaySec`, `User`,
 `WatchdogFailureThreshold`, `WatchdogGraceSec`, `WatchdogTimeoutSec`,
 `WindowsCPUQuota` and `WindowsCPUWeight`. A unit that uses one fails there:
 reload rejects the candidate, so verify by name reports a new unit, or any unit

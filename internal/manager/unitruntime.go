@@ -45,6 +45,7 @@ type unitRuntime struct {
 	stopHelper        *stopHelperWork
 	stopHelperAttempt string
 	invocation        string
+	invocationUserSID string // the User= account the invocation resolved
 	hub               *watchRuntime
 	timer             *timerArm
 	err               string

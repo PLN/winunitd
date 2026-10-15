@@ -41,6 +41,9 @@ type Config struct {
 	BaseDir string
 	// Launch starts unit processes. Nil uses runtime.NewLauncher(Daemon).
 	Launch runtime.Launcher
+	// LookupAccount resolves a User= account before each start. Nil uses
+	// runtime.LookupAccountName. Tests inject a fake.
+	LookupAccount func(name string) (runtime.UserInfo, error)
 	// JournalOpen constructs the owned store; nil uses journal.Open. A returned
 	// store transfers to the manager, including cleanup if later setup fails.
 	// Qualification fixtures can inject storage faults through this factory.

@@ -617,6 +617,12 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 		if rt.proc != nil {
 			st.MainPID = rt.mainPID
 		}
+		if owned := rt.ownedUnit(); owned != nil && owned.Service != nil && owned.Service.User != "" {
+			st.User = owned.Service.User
+			if rt.invocationUnit == owned {
+				st.UserSID = rt.invocationUserSID
+			}
+		}
 		st.SubState = rt.sub.String()
 		st.RestartAttempt = rt.restartAttempt
 		if rt.sub == core.SubAutoRestart {

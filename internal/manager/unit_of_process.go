@@ -75,11 +75,10 @@ func (m *Manager) UnitOfProcess(pid int) (*protocol.UnitOfProcessResult, error) 
 // trackLaunchingJob has spec report its job before the process runs. Until
 // the caller untracks it, after publishing the process, the job counts as
 // owned, so a process that connects somewhere at once is already attributed.
-func (m *Manager) trackLaunchingJob(spec *runtime.StartSpec, owner processOwner) *processOwner {
+func (m *Manager) trackLaunchingJob(spec *runtime.StartSpec, owner processOwner, also func(pid int, job runtime.Job)) *processOwner {
 	pending := &owner
 	spec.Assigned = func(pid int, job runtime.Job) {
 		m.mu.Lock()
-		defer m.mu.Unlock()
 		if !pending.stopHelper {
 			pending.mainPID = pid
 		}
@@ -88,6 +87,10 @@ func (m *Manager) trackLaunchingJob(spec *runtime.StartSpec, owner processOwner)
 			m.launchingJobs = make(map[*processOwner]struct{})
 		}
 		m.launchingJobs[pending] = struct{}{}
+		m.mu.Unlock()
+		if also != nil {
+			also(pid, job)
+		}
 	}
 	return pending
 }

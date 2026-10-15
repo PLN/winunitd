@@ -1027,6 +1027,13 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		if u.MainPID != 0 {
 			fmt.Fprintf(c.stdout, "   Main PID: %d\n", u.MainPID)
 		}
+		if u.User != "" {
+			fmt.Fprintf(c.stdout, "       User: %s", u.User)
+			if u.UserSID != "" {
+				fmt.Fprintf(c.stdout, " (%s)", u.UserSID)
+			}
+			fmt.Fprintln(c.stdout)
+		}
 		if u.InvocationID != "" {
 			fmt.Fprintf(c.stdout, "InvocationID=%s\n", u.InvocationID)
 		}

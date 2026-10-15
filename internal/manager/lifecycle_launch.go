@@ -203,7 +203,7 @@ func (m *Manager) recordServiceLaunch(effect *launchEffect, native bool) {
 	m.recordStartLocked(rt)
 }
 
-func (m *Manager) recordInvocation(effect *launchEffect, invocation string) {
+func (m *Manager) recordInvocation(effect *launchEffect, invocation, userSID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if effect.owner.currentLocked(m) {
@@ -211,6 +211,31 @@ func (m *Manager) recordInvocation(effect *launchEffect, invocation string) {
 		rt.invocationUnit = effect.unit
 		rt.invocationRevision = effect.revision
 		rt.invocation = invocation
+		rt.invocationUserSID = userSID
+	}
+}
+
+func (m *Manager) recordInvocationUser(effect *launchEffect, userSID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if effect.owner.currentLocked(m) {
+		effect.owner.record.invocationUserSID = userSID
+	}
+}
+
+// failAccountStart publishes a recovery start that could not log on as failed,
+// with its error, before Restart= decides whether to try again. Recovery
+// discards a launch error, so this is its only record there; an explicit start
+// is still inactive or failed here and its operation publishes the outcome.
+func (m *Manager) failAccountStart(effect *launchEffect, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || !effect.owner.currentLocked(m) {
+		return
+	}
+	rt := effect.owner.record
+	if !rt.stopping && rt.state == core.Activating && rt.step(core.EventStartFailed) {
+		rt.err = err.Error()
 	}
 }
 

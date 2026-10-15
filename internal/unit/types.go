@@ -195,20 +195,25 @@ type Unit struct {
 
 // ServiceSpec is the [Service] section.
 type ServiceSpec struct {
-	ReadinessMode            WatchdogMode
-	ReadinessEndpoint        string
-	ReadinessAddr            string
-	ReadinessURL             string
-	ReadinessExpectedStatus  int
-	ReadinessIntervalSec     time.Duration
-	ReadinessTimeoutSec      time.Duration
-	Type                     ServiceType
-	RemainAfterExit          bool     // oneshot: retain active state after successful completion
-	ServiceName              string   // Type=scm: existing SCM service (DESIGN.md §51)
-	TaskName                 string   // Type=scheduled-task: existing task path (DESIGN.md §52)
-	ExecStart                []string // argv: executable then arguments
-	ExecStop                 []string // optional cooperative-stop command, same identity
-	WorkingDirectory         string
+	ReadinessMode           WatchdogMode
+	ReadinessEndpoint       string
+	ReadinessAddr           string
+	ReadinessURL            string
+	ReadinessExpectedStatus int
+	ReadinessIntervalSec    time.Duration
+	ReadinessTimeoutSec     time.Duration
+	Type                    ServiceType
+	RemainAfterExit         bool     // oneshot: retain active state after successful completion
+	ServiceName             string   // Type=scm: existing SCM service (DESIGN.md §51)
+	TaskName                string   // Type=scheduled-task: existing task path (DESIGN.md §52)
+	ExecStart               []string // argv: executable then arguments
+	ExecStop                []string // optional cooperative-stop command, same identity
+	WorkingDirectory        string
+	// User is the account the processes run as (User=, format 2), logged on
+	// by S4U at each start. Empty means LocalSystem, also when UserDeclared
+	// is set by a SYSTEM spelling.
+	User                     string
+	UserDeclared             bool
 	Environment              []EnvVar
 	Restart                  RestartPolicy
 	RestartSec               time.Duration

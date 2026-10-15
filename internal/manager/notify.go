@@ -32,10 +32,15 @@ type notifyRuntime struct {
 	closed    bool
 }
 
-func (m *Manager) openNotify(name, invocation string) (*notifyRuntime, error) {
+// openNotify opens the invocation's notify pipe. userSID, when set, is the
+// User= account it admits instead of the manager's own NotifySID.
+func (m *Manager) openNotify(name, invocation, userSID string) (*notifyRuntime, error) {
 	listen := m.cfg.NotifyListen
 	if listen == nil {
 		sid := m.cfg.NotifySID
+		if userSID != "" {
+			sid = userSID
+		}
 		listen = func(id string) (notify.Listener, error) {
 			return notify.Listen(id, sid)
 		}

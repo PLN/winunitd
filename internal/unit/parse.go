@@ -41,6 +41,7 @@ var knownDirectives = map[string]map[string]bool{
 		"ExecStop":                 true,
 		"ExecStopArg":              true,
 		"WorkingDirectory":         true,
+		"User":                     true,
 		"Environment":              true,
 		"Restart":                  true,
 		"RestartSec":               true,
@@ -134,6 +135,8 @@ type serviceBuilder struct {
 	restartSecL      int
 	restartBackoff   string
 	restartBackoffL  int
+	user             string
+	userL            int
 	restartMaxDelay  string
 	restartMaxDelayL int
 	timeoutStart     string
@@ -461,6 +464,12 @@ func (p *parser) applyService(e iniEntry) {
 		s.restSet = true
 	case "RestartBackoff":
 		s.restartBackoff, s.restartBackoffL = e.value, e.line
+	case "User":
+		if s.userL != 0 {
+			p.errorf(e.line, "User may be specified only once")
+			return
+		}
+		s.user, s.userL = e.value, e.line
 	case "RestartMaxDelaySec":
 		s.restartMaxDelay, s.restartMaxDelayL = e.value, e.line
 	case "ReadinessMode":
@@ -804,6 +813,7 @@ func (p *parser) finishService() {
 		}
 	}
 	p.finishRestartBackoff(spec, s)
+	p.finishUser(spec, s)
 	if s.timeoutStart != "" {
 		d, err := ParseDuration(s.timeoutStart)
 		if err != nil {

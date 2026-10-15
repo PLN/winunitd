@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/PLN/winunitd/internal/manager"
 	"github.com/PLN/winunitd/internal/protocol"
@@ -91,6 +92,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return 0
+	}
+	if len(args) == 1 && args[0] == runtime.ProfileKeeperFlag {
+		// Holds a User= unit's profile; the manager ends it through its job.
+		for {
+			time.Sleep(time.Hour)
+		}
 	}
 	if len(args) > 0 && args[0] == "floor" {
 		return runFloor(args[1:], stdout, stderr, floorEnv{build: runningBuild(), stopped: systemStopped})
