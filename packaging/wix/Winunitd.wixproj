@@ -2,7 +2,7 @@
 	<PropertyGroup>
 		<OutputType>Package</OutputType>
 		<InstallerPlatform>x64</InstallerPlatform>
-		<PackageVersion Condition="'$(PackageVersion)' == ''">0.4.0</PackageVersion>
+		<PackageVersion Condition="'$(PackageVersion)' == ''">0.5.0</PackageVersion>
 		<IntermediateOutputPath>obj\$(PackageVersion)\</IntermediateOutputPath>
 		<DefineConstants>PackageVersion=$(PackageVersion);Payload=$(MSBuildThisFileDirectory)..\..\dist\wix\payload;Repo=$(MSBuildThisFileDirectory)..\..</DefineConstants>
 		<OutputPath>..\..\dist\wix\$(PackageVersion)\</OutputPath>

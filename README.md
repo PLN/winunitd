@@ -8,18 +8,18 @@ It borrows unit files and familiar commands from systemd, using Windows services
 Job Objects, and named pipes underneath. It is not a systemd compatibility layer.
 See the [unit reference](docs/UNIT-REFERENCE.md) for the supported syntax.
 
-**[Download 0.4.0](https://github.com/PLN/winunitd/releases/tag/v0.4.0)**
+**[Download 0.5.0](https://github.com/PLN/winunitd/releases/tag/v0.5.0)**
 for Windows 11 Enterprise and Enterprise LTSC x64. No Go or .NET runtime is needed
 on the destination. The MSI is not code-signed yet; check it against the release's
 `SHA256SUMS` and its build attestation as the
-[release notes](docs/RELEASE-NOTES-0.4.0.md) describe.
+[release notes](docs/RELEASE-NOTES-0.5.0.md) describe.
 
 ## Install and try it
 
 Run the MSI from an elevated PowerShell terminal in your download directory:
 
 ```powershell
-msiexec.exe /i .\winunitd-0.4.0-x64.msi /qb
+msiexec.exe /i .\winunitd-0.5.0-x64.msi /qb
 ```
 
 It starts the LocalSystem `winunitd` service, installs the commands under
@@ -104,7 +104,7 @@ go run ./tools/build -out dist
 Build the MSI from clean source with `./packaging/wix/build.ps1`. Published
 releases come from the release workflow instead. [BUILDING.md](docs/BUILDING.md)
 covers the pinned toolchain, manifests, CI, releases, and dependency maintenance.
-Unstamped development binaries retain the `0.4.0` fallback label; the manifest
+Unstamped development binaries retain the `0.5.0` fallback label; the manifest
 records their exact source revision.
 
 For help and the supported configurations see [SUPPORT.md](SUPPORT.md); report
@@ -113,8 +113,9 @@ vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 The [roadmap](ROADMAP.md), [design](DESIGN.md), and
 [milestones](docs/MILESTONES.md) describe future work. Proposed design semantics
 are not the current unit-file contract. The [architecture review](docs/DESIGN-REVIEW.md)
-and the release notes for [0.4.0](docs/RELEASE-NOTES-0.4.0.md) and
-[0.3.0](docs/RELEASE-NOTES-0.3.0.md) provide further background.
+and the release notes for [0.5.0](docs/RELEASE-NOTES-0.5.0.md),
+[0.4.0](docs/RELEASE-NOTES-0.4.0.md) and [0.3.0](docs/RELEASE-NOTES-0.3.0.md)
+provide further background.
 
 This GitHub repository was recreated on October 14, 2026. The Git history, tags,
 and releases carried over unchanged. Issue and pull request numbers up to #300
