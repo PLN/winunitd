@@ -50,36 +50,50 @@ func validateHeadlessLaunch(tok windows.Token, spec UserManagerSpec) error {
 }
 
 func startHeadlessUserManager(tok windows.Token, spec UserManagerSpec) (UserManagerProc, error) {
+	proc, _, err := startHeadlessProcess(tok, spec, append([]string{spec.Exe}, UserManagerArgs(spec.SID, spec.ExtraArgs)...))
+	return proc, err
+}
+
+// startHeadlessProcess launches argv as the token's user in session zero, with
+// a Windows-owned profile, on a private desktop that the returned process owns
+// until it is killed. The desktop path lets later processes of that user share
+// the desktop while this one runs.
+func startHeadlessProcess(tok windows.Token, spec UserManagerSpec, argv []string) (UserManagerProc, string, error) {
 	if err := validateHeadlessLaunch(tok, spec); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	lease, desktop, err := startUserDesktop(spec)
 	if lease == nil {
-		return nil, err
+		return nil, "", err
 	}
 	if err != nil {
-		return finishProfileLaunch(spec.SID, nil, lease, err)
+		proc, err := finishProfileLaunch(spec.SID, nil, lease, err)
+		return proc, "", err
 	}
 	job, err := OpenDaemonJob()
 	if err != nil {
-		return finishProfileLaunch(spec.SID, nil, lease, err)
+		proc, err := finishProfileLaunch(spec.SID, nil, lease, err)
+		return proc, "", err
 	}
 	lease.pending = job
-	p, err := createHeadlessUserManager(tok, spec, job, desktop)
+	p, err := createHeadlessUserManager(tok, spec, job, desktop, argv)
 	var proc UserManagerProc
 	if p != nil {
 		lease.pending = nil
 		proc = p
 	}
-	return finishProfileLaunch(spec.SID, proc, lease, err)
+	proc, err = finishProfileLaunch(spec.SID, proc, lease, err)
+	if err != nil {
+		return proc, "", err
+	}
+	return proc, desktop, nil
 }
 
-func createHeadlessUserManager(tok windows.Token, spec UserManagerSpec, job *DaemonJob, desktop string) (*userMgrProc, error) {
-	app, err := windows.UTF16PtrFromString(spec.Exe)
+func createHeadlessUserManager(tok windows.Token, spec UserManagerSpec, job *DaemonJob, desktop string, argv []string) (*userMgrProc, error) {
+	app, err := windows.UTF16PtrFromString(argv[0])
 	if err != nil {
 		return nil, err
 	}
-	argv := append([]string{spec.Exe}, UserManagerArgs(spec.SID, spec.ExtraArgs)...)
 	command := windows.ComposeCommandLine(argv)
 	cmd, err := windows.UTF16FromString(command)
 	if err != nil {

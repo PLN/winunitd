@@ -29,6 +29,11 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
+	if len(os.Args) == 2 && os.Args[1] == ProfileKeeperFlag {
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
 	switch helperMode() {
 	case "security-report":
 		if err := runSecurityReportHelper(); err != nil {

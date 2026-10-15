@@ -169,23 +169,30 @@ func (l *winLauncher) createWithSetup(spec StartSpec, openJob func(JobLimits) (*
 
 	var pi windows.ProcessInformation
 	flags := uint32(windows.CREATE_SUSPENDED | windows.CREATE_UNICODE_ENVIRONMENT | windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW | windows.EXTENDED_STARTUPINFO_PRESENT)
-	err = windows.CreateProcess(
-		app,
-		cmdLine,
-		nil,
-		nil,
-		len(inherit) > 0,
-		flags,
-		envp,
-		dirp,
-		&si.StartupInfo,
-		&pi,
-	)
+	if spec.As != nil {
+		var tok windows.Token
+		var desktop *uint16
+		tok, desktop, err = spec.As.launchIdentity()
+		if err != nil {
+			return p, err
+		}
+		si.Desktop = desktop
+		err = windows.CreateProcessAsUser(tok, app, cmdLine, nil, nil, len(inherit) > 0, flags, envp, dirp, &si.StartupInfo, &pi)
+		goruntime.KeepAlive(desktop)
+		if err != nil {
+			err = fmt.Errorf("CreateProcessAsUser %s as %s: %w", spec.Argv[0], spec.As.Info.SID, err)
+		}
+	} else {
+		err = windows.CreateProcess(app, cmdLine, nil, nil, len(inherit) > 0, flags, envp, dirp, &si.StartupInfo, &pi)
+		if err != nil {
+			err = fmt.Errorf("CreateProcess %s: %w", spec.Argv[0], err)
+		}
+	}
 	goruntime.KeepAlive(block)
 	goruntime.KeepAlive(inherit)
 	goruntime.KeepAlive(attrList)
 	if err != nil {
-		return p, fmt.Errorf("CreateProcess %s: %w", spec.Argv[0], err)
+		return p, err
 	}
 	p.pid, p.process, p.thread = int(pi.ProcessId), pi.Process, pi.Thread
 	p.unassigned = true
