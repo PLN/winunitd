@@ -202,4 +202,3 @@ func processIdentity(t *testing.T, pid int) (sid string, session uint32, elevate
 	}
 	return user.User.Sid.String(), session, tok.IsElevated()
 }
-
