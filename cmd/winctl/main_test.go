@@ -1197,21 +1197,90 @@ RegistryChanged=HKCU\Software\Example
 
 func TestExtractUserFlag(t *testing.T) {
 	t.Parallel()
-	user, rest := extractUserFlag([]string{"--user", "status", "foo"})
-	if !user || strings.Join(rest, " ") != "status foo" {
-		t.Fatalf("before verb: user=%v rest=%v", user, rest)
+	for _, tc := range []struct {
+		args   []string
+		user   bool
+		target string
+		rest   string
+		bad    bool
+	}{
+		{args: []string{"--user", "status", "foo"}, user: true, rest: "status foo"},
+		{args: []string{"status", "--user", "foo"}, user: true, rest: "status foo"},
+		{args: []string{"status", "foo", "--user"}, user: true, rest: "status foo"},
+		{args: []string{"status", "foo"}, rest: "status foo"},
+		{args: []string{"--user=alice", "status"}, user: true, target: "alice", rest: "status"},
+		{args: []string{"status", `--user=EXAMPLE\alice`, "--user=example\\ALICE"}, user: true, target: `EXAMPLE\alice`, rest: "status"},
+		{args: []string{"--user=", "status"}, bad: true},
+		{args: []string{"--user=alice", "--user=bob", "status"}, bad: true},
+		{args: []string{"--user", "--user=alice", "status"}, bad: true},
+	} {
+		user, target, rest, err := extractUserFlag(tc.args)
+		if tc.bad {
+			if err == nil {
+				t.Fatalf("%v: accepted", tc.args)
+			}
+			continue
+		}
+		if err != nil || user != tc.user || target != tc.target || strings.Join(rest, " ") != tc.rest {
+			t.Fatalf("%v: user=%v target=%q rest=%v err=%v", tc.args, user, target, rest, err)
+		}
 	}
-	user, rest = extractUserFlag([]string{"status", "--user", "foo"})
-	if !user || strings.Join(rest, " ") != "status foo" {
-		t.Fatalf("after verb: user=%v rest=%v", user, rest)
+}
+
+func TestCLIUserTargetDialsThatUsersManager(t *testing.T) {
+	const sid = "S-1-5-21-1-2-3-1001"
+	var looked, dialed []string
+	serve := func(_ context.Context, sid string) (net.Conn, error) {
+		dialed = append(dialed, sid)
+		client, server := net.Pipe()
+		go func() {
+			defer server.Close()
+			protocol.ServeConn(context.Background(), server, protocol.HandlerFunc(func(_ context.Context, method string, _ json.RawMessage) (any, error) {
+				if method != protocol.MethodStatus {
+					return nil, protocol.ErrMethodNotFound(method)
+				}
+				return protocol.StatusResult{Machine: &protocol.MachineStatus{State: "running", UnitDirectory: `C:\Users\alice\AppData\Local\winunitd\units`}}, nil
+			}), protocol.AllowLocalSystem)
+		}()
+		return client, nil
 	}
-	user, rest = extractUserFlag([]string{"status", "foo", "--user"})
-	if !user || strings.Join(rest, " ") != "status foo" {
-		t.Fatalf("after args: user=%v rest=%v", user, rest)
+	newCLI := func(out, errb *bytes.Buffer) *cli {
+		return &cli{
+			stdout: out, stderr: errb,
+			dial:     func(context.Context) (net.Conn, error) { t.Fatal("system pipe dialed"); return nil, nil },
+			userDial: func(context.Context) (net.Conn, error) { t.Fatal("caller's own pipe dialed"); return nil, nil },
+			lookupSID: func(name string) (string, error) {
+				looked = append(looked, name)
+				return sid, nil
+			},
+			userSIDDial: serve,
+		}
 	}
-	user, rest = extractUserFlag([]string{"status", "foo"})
-	if user || strings.Join(rest, " ") != "status foo" {
-		t.Fatalf("no flag: user=%v rest=%v", user, rest)
+	var out, errb bytes.Buffer
+	if code := newCLI(&out, &errb).run([]string{`--user=EXAMPLE\alice`, "status"}); code != 0 {
+		t.Fatalf("exit %d stderr=%s", code, errb.String())
+	}
+	if len(looked) != 1 || looked[0] != `EXAMPLE\alice` || len(dialed) != 1 || dialed[0] != sid {
+		t.Fatalf("looked up %v, dialed %v", looked, dialed)
+	}
+	if !strings.Contains(out.String(), `UnitDirectory: C:\Users\alice\AppData\Local\winunitd\units`) {
+		t.Fatalf("status output: %s", out.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	if code := newCLI(&out, &errb).run([]string{"enable-linger", "--user=alice", "alice"}); code != 2 {
+		t.Fatalf("linger with --user=: exit %d", code)
+	}
+
+	out.Reset()
+	errb.Reset()
+	c := newCLI(&out, &errb)
+	c.userSIDDial = func(context.Context, string) (net.Conn, error) {
+		return nil, &os.PathError{Op: "open", Path: protocol.UserPipeName(sid), Err: os.ErrNotExist}
+	}
+	if code := c.run([]string{"--user=alice", "status"}); code != 1 || !strings.Contains(errb.String(), "enable-linger") {
+		t.Fatalf("no manager running: exit %d stderr=%s", code, errb.String())
 	}
 }
 

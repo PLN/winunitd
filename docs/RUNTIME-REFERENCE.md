@@ -339,8 +339,9 @@ User units load from `%LOCALAPPDATA%\winunitd\units\`. User processes get a dete
 The system manager's native user launch obtains its default environment from the
 target token, excluding the broker process environment. AppData paths use Windows
 known-folder resolution. It does not inherit broker handles; Windows supplies
-default standard streams. Cross-session and profile-lifetime qualification remain
-under R4; these implementation details do not qualify headless linger.
+default standard streams. R4 qualified interactive and headless managers,
+including profile lifetime, for local and domain accounts
+([evidence](R4-EVIDENCE.md#headless-linger-and-credential-limits)).
 
 The user control listener opens before default and graphical-session target
 activation. Pending notify readiness leaves `status` and `stop` available,
@@ -350,9 +351,56 @@ boot work.
 
 Each user manager watches WTS for its SID and starts builtin `graphical-session.target` while that SID has a suitable interactive session (Inactive when none, including linger-without-session). `RequiresInteractiveSession=yes` skips that unit when no suitable interactive session exists (SessionMode is not implemented).
 
-Administrators can `winctl enable-linger <user>` on the system pipe (not `--user`). Linger state is a tiny record at `<base-dir>\linger\<SID>` (not an NTFS symlink). At boot, lingering user managers start with no session. Last logoff does not kill a lingering manager; `disable-linger` kills it if no session remains. Non-admin enable-linger fails closed.
+Administrators can `winctl enable-linger <user>` on the system pipe (not `--user`). Linger state is a tiny record at `<base-dir>\linger\<SID>` (not an NTFS symlink). At boot, lingering user managers start with no session. Last logoff does not kill a lingering manager; `disable-linger` kills it if no admitted session remains. Non-admin enable-linger fails closed.
+
+If linger is enabled while the user's interactive manager runs, that manager
+keeps running until sign-out. Then a headless manager replaces it and starts the
+user's enabled units again, within seconds in the R4 runs. From then on the
+headless manager stays: later sign-ins and sign-outs neither replace it nor
+start a second one. Units started by hand and not enabled are not restarted.
+
+A headless manager runs with an S4U token. Its units have no Windows
+credentials for other machines, so a share needs credentials the unit supplies
+itself, and DPAPI, Credential Manager and EFS are not available to them
+([credential limits](R4-EVIDENCE.md#headless-linger-and-credential-limits)).
+A domain account's manager starts once a domain controller answers; the broker
+retries. While linger holds a roaming profile, that profile stops roaming on
+this machine.
 
 S4U uses a trusted LSA connection (`LsaRegisterLogonProcess`; LocalSystem has `SeTcbPrivilege`). An optional named CredMan/LSA URI on the linger record is used only if present and S4U is insufficient for outbound network creds. That fallback calls `LogonUserW` with `LOGON32_LOGON_BATCH` (never a password in a unit file, env, or path). The daemon logs which path produced the token (`s4u` vs `store-uri`).
+
+### Running a user's units from SYSTEM
+
+LocalSystem or an administrator can run units as an ordinary user without that
+user signing in, through the user's own manager. The [Go client](#control-api)
+offers the same calls as `winctl`.
+
+1. `winctl enable-linger EXAMPLE\alice` on the system pipe. The reply names
+   the user's SID. The system manager starts a headless manager for that user
+   now and at every boot. Linger is a separate grant; it does not need an entry
+   in `user-admission.json`.
+2. Wait for that manager: retry `winctl --user=EXAMPLE\alice status` (or
+   `client.DialUser` with the SID) until it answers, with a deadline. While it
+   does not, `winctl status` on the system pipe shows the user's recovery state
+   and next attempt.
+3. `UnitDirectory` in that status is where the manager reads its unit files,
+   resolved through the user's known folders. Write the unit file there
+   completely before reloading: write it under a name the manager ignores, such
+   as `worker.service.tmp`, then rename it. The user must be able to read it,
+   which the profile's inherited permissions provide; the owner may be SYSTEM
+   or Administrators.
+4. `winctl --user=EXAMPLE\alice daemon-reload`, then `enable` and `start`.
+   Reload accepts all of the user's unit files or keeps the previous set, so
+   check its errors. Only enabled units, wanted by `default.target`, start at
+   boot. `RequiresInteractiveSession=yes` units do not run headless.
+
+`winctl --user=EXAMPLE\alice unit-of-process PID` attributes a process to one
+of that user's units.
+
+To remove a unit: `stop`, `disable`, delete the file, `daemon-reload`. Deleting
+the file alone leaves a running unit running. `disable-linger` revokes the
+grant for the whole user, so revoke it only when nothing else needs that
+user's manager.
 
 ## Unverified
 
