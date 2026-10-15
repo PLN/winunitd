@@ -60,6 +60,14 @@ Versioned JSON-RPC on `\\.\pipe\winunitd\control` (LocalSystem and Administrator
 
 `winctl --user …` and `winctl <command> --user` both use `\\.\pipe\winunitd\user\<SID>\control`. Bare `winctl` stays on the system pipe. Linger admin verbs do not use `--user`.
 
+Go programs can use the `github.com/PLN/winunitd/client` package instead of
+`winctl`. Its `Dial`, `DialUser` and `DialCurrentUser` apply the same
+server-identity check before sending a request, and its types are the
+protocol's. A SYSTEM or administrator caller can dial any user's manager.
+`Capabilities` followed by `Supports` tells whether a manager serves a method.
+The package follows the product version and may change between minor releases
+until 1.0.
+
 ### `winctl` commands
 
 `start`, `stop`, `restart`, `status`, `operation`, `cancel`, `snapshot`, `migrate`, `enable`, `disable`, `list-units`, `list-timers`, `logs`, `daemon-reload`, `enable-linger`, `disable-linger`, `verify`, `capabilities`, `unit-of-process`.

@@ -63,7 +63,8 @@ configuration reload, explicit enablement, restart policies with backoff,
 readiness and health probes, and timers. Admitted users get their own manager
 for units under `%LOCALAPPDATA%\winunitd`, and `winctl enable-linger` keeps a
 user's manager running without a sign-in, for local and Active Directory domain
-accounts.
+accounts. Go programs can drive the managers through the
+[`client`](client/doc.go) package.
 
 [SUPPORT.md](SUPPORT.md) lists the supported configurations and the limits, and
 [runtime behavior](docs/RUNTIME-REFERENCE.md), [operations](docs/OPERATIONS.md)
