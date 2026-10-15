@@ -263,7 +263,10 @@ type MachineStatus struct {
 	DaemonLogLastError      string        `json:"daemonLogLastError,omitempty"`
 	DaemonEvents            []DaemonEvent `json:"daemonEvents,omitempty"`
 
-	State          string               `json:"state"`
+	State string `json:"state"`
+	// UnitDirectory is where this manager reads unit files. Status reports
+	// it; snapshot does not.
+	UnitDirectory  string               `json:"unitDirectory,omitempty"`
 	UnitsLoaded    int                  `json:"unitsLoaded"`
 	UnitsActive    int                  `json:"unitsActive"`
 	UnitsFailed    int                  `json:"unitsFailed"`

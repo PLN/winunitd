@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/PLN/winunitd/internal/protocol"
+	"github.com/PLN/winunitd/internal/runtime"
 	"github.com/PLN/winunitd/internal/unit"
 	"github.com/PLN/winunitd/internal/version"
 )
@@ -22,8 +23,8 @@ const usage = `winctl — control interface for winunitd
 Usage:
   winctl [--help]
   winctl [--version]
-  winctl [--user] <command> [args]
-  winctl <command> [--user] [args]
+  winctl [--user | --user=<user>] <command> [args]
+  winctl <command> [--user | --user=<user>] [args]
 
 Commands:
   start <unit>        Start a unit
@@ -60,14 +61,16 @@ Commands:
 
 Commands other than migrate and verify-on-a-file-path talk to winunitd over
 \\.\pipe\winunitd\control. --user talks to
-\\.\pipe\winunitd\user\<SID>\control for the current user.
---user is accepted before or after the verb. enable-linger /
-disable-linger always use the system pipe. Maintenance uses the separate
+\\.\pipe\winunitd\user\<SID>\control for the current user, and
+--user=<user> (DOMAIN\name, name or SID) talks to that user's manager, for
+administrators and LocalSystem. --user is accepted before or after the verb.
+enable-linger / disable-linger always use the system pipe. Maintenance uses the separate
 \\.\pipe\winunitd\maintenance endpoint so ordinary connections cannot consume
 its capacity; the broker and client must both support this endpoint.
 
 Flags:
   --user          Talk to the per-user manager (current user SID)
+  --user=<user>   Talk to that user's manager (administrators, LocalSystem)
   -h, --help      Show this help
   --version       Print the binary version and exit
 `
@@ -136,12 +139,17 @@ Path verify checks the companion .service next to the file.
 `
 
 type cli struct {
-	stdout     io.Writer
-	stderr     io.Writer
-	dial       func(context.Context) (net.Conn, error)
-	userDial   func(context.Context) (net.Conn, error)
-	user       bool
-	followStop <-chan struct{} // tests: close to end --follow after a poll
+	stdout   io.Writer
+	stderr   io.Writer
+	dial     func(context.Context) (net.Conn, error)
+	userDial func(context.Context) (net.Conn, error)
+	user     bool
+	// userTarget is the --user=<user> name or SID; empty means the caller.
+	userTarget    string
+	userTargetSID string                                                  // resolved on first use
+	lookupSID     func(name string) (string, error)                       // tests
+	userSIDDial   func(ctx context.Context, sid string) (net.Conn, error) // tests
+	followStop    <-chan struct{}                                         // tests: close to end --follow after a poll
 }
 
 func main() {
@@ -184,8 +192,12 @@ func runCLIUser(args []string, stdout, stderr io.Writer, dial, userDial func(con
 }
 
 func (c *cli) run(args []string) int {
-	user, rest := extractUserFlag(args)
-	c.user = user
+	user, target, rest, err := extractUserFlag(args)
+	if err != nil {
+		fmt.Fprintf(c.stderr, "winctl: %v\n", err)
+		return 2
+	}
+	c.user, c.userTarget = user, target
 	args = rest
 
 	if len(args) == 0 || isHelpFlag(args[0]) {
@@ -280,19 +292,76 @@ func isVersionFlag(s string) bool {
 	}
 }
 
-// extractUserFlag pulls --user from anywhere in argv (before or after the
-// verb). Duplicate --user is accepted. The flag is not a value for other
-// options (--since --user would lose the since operand).
-func extractUserFlag(args []string) (user bool, rest []string) {
+// extractUserFlag pulls --user and --user=<user> from anywhere in argv
+// (before or after the verb). Duplicate --user is accepted; two different
+// targets, or a target with bare --user, are not. The flag is not a value for
+// other options (--since --user would lose the since operand).
+func extractUserFlag(args []string) (user bool, target string, rest []string, err error) {
 	rest = make([]string, 0, len(args))
+	bare := false
 	for _, a := range args {
-		if a == "--user" {
-			user = true
-			continue
+		switch {
+		case a == "--user":
+			bare = true
+		case strings.HasPrefix(a, "--user="):
+			t := strings.TrimSpace(strings.TrimPrefix(a, "--user="))
+			if t == "" {
+				return false, "", nil, errors.New("--user= needs a user name or SID")
+			}
+			if target != "" && !strings.EqualFold(target, t) {
+				return false, "", nil, fmt.Errorf("conflicting --user=%s and --user=%s", target, t)
+			}
+			if target == "" {
+				target = t
+			}
+		default:
+			rest = append(rest, a)
 		}
-		rest = append(rest, a)
 	}
-	return user, rest
+	if bare && target != "" {
+		return false, "", nil, fmt.Errorf("--user and --user=%s together", target)
+	}
+	return bare || target != "", target, rest, nil
+}
+
+// targetUserDial dials the named user's manager. A SID is used as given; a
+// name resolves on this machine once per command.
+func (c *cli) targetUserDial(ctx context.Context) (net.Conn, error) {
+	if c.userTargetSID == "" {
+		if protocol.ValidSID(c.userTarget) {
+			c.userTargetSID = c.userTarget
+		} else {
+			lookup := c.lookupSID
+			if lookup == nil {
+				lookup = lookupUserSID
+			}
+			sid, err := lookup(c.userTarget)
+			if err != nil {
+				return nil, err
+			}
+			c.userTargetSID = sid
+		}
+	}
+	sid := c.userTargetSID
+	dial := c.userSIDDial
+	if dial == nil {
+		dial = defaultUserSIDDial
+	}
+	return dial(ctx, sid)
+}
+
+func lookupUserSID(name string) (string, error) {
+	info, err := runtime.LookupAccountName(name)
+	if err != nil {
+		return "", err
+	}
+	return info.SID, nil
+}
+
+func defaultUserSIDDial(ctx context.Context, sid string) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	return protocol.DialUser(ctx, sid)
 }
 
 func (c *cli) call(fn func(context.Context, *protocol.Client) error) error {
@@ -301,6 +370,9 @@ func (c *cli) call(fn func(context.Context, *protocol.Client) error) error {
 	dial := c.dial
 	if c.user {
 		dial = c.userDial
+		if c.userTarget != "" {
+			dial = c.targetUserDial
+		}
 		if dial == nil {
 			dial = defaultUserDial
 		}
@@ -310,6 +382,9 @@ func (c *cli) call(fn func(context.Context, *protocol.Client) error) error {
 	}
 	conn, err := dial(ctx)
 	if err != nil {
+		if c.user && errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("cannot connect to winunitd user manager: %w (no manager runs for that user; one starts at sign-in for admitted users or with enable-linger)", err)
+		}
 		if c.user {
 			return fmt.Errorf("cannot connect to winunitd user manager: %w", err)
 		}
@@ -827,6 +902,9 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 		m := st.Machine
 		fmt.Fprintf(c.stdout, "winunitd\n")
 		fmt.Fprintf(c.stdout, "  State: %s\n", m.State)
+		if m.UnitDirectory != "" {
+			fmt.Fprintf(c.stdout, "  UnitDirectory: %s\n", m.UnitDirectory)
+		}
 		if m.Maintenance != nil {
 			fmt.Fprintf(c.stdout, "  Maintenance: %s\n", m.Maintenance.State)
 			if m.Maintenance.Error != "" {

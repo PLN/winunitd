@@ -528,6 +528,7 @@ func (m *Manager) Status(name string) (*protocol.StatusResult, error) {
 	if strings.TrimSpace(name) == "" {
 		ms := m.machineLocked()
 		m.mu.Unlock()
+		ms.UnitDirectory = m.cfg.UnitsDir()
 		stats := m.journal.TotalCaptureStats()
 		ms.LogEvictedFiles, ms.LogEvictedBytes = stats.EvictedFiles, stats.EvictedBytes
 		ms.LogDroppedRecords, ms.LogDroppedBytes = stats.DroppedRecords, stats.DroppedBytes
