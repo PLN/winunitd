@@ -157,6 +157,16 @@ func (c *Client) Status(ctx context.Context, unit string) (*StatusResult, error)
 	return &out, nil
 }
 
+// UnitOfProcess asks which unit's job holds pid. A process outside every unit
+// of this manager is a not-found error.
+func (c *Client) UnitOfProcess(ctx context.Context, pid int) (*UnitOfProcessResult, error) {
+	var out UnitOfProcessResult
+	if err := c.Call(ctx, MethodUnitOfProcess, UnitOfProcessParams{PID: pid}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 func (c *Client) Start(ctx context.Context, unit string) (*UnitResult, error) {
 	return c.unitVerb(ctx, MethodStart, unit)
 }

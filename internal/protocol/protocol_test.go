@@ -18,6 +18,7 @@ func TestMethodsCoverCLIVerbs(t *testing.T) {
 		"list-units", "list-timers", "logs", "daemon-reload", "verify",
 		"enable-linger", "disable-linger",
 		"operation", "cancel-operation", "maintenance", "capabilities",
+		"unit-of-process",
 	}
 	if len(Methods) != len(want) {
 		t.Fatalf("Methods = %v, want %v", Methods, want)
@@ -164,6 +165,12 @@ func TestAllMethodsRoundTrip(t *testing.T) {
 			return StatusResult{Machine: &MachineStatus{State: "running"}}, nil
 		case MethodSnapshot:
 			return SnapshotResult{Machine: MachineStatus{State: "running"}}, nil
+		case MethodUnitOfProcess:
+			var p UnitOfProcessParams
+			if err := DecodeParams(params, &p); err != nil {
+				return nil, err
+			}
+			return UnitOfProcessResult{PID: p.PID, Scope: "system", Unit: "a.service", Main: true, ProcessCreatedAt: "2026-10-15T12:00:00.1234567Z"}, nil
 		case MethodStart, MethodStop, MethodRestart:
 			var p UnitParams
 			if err := DecodeParams(params, &p); err != nil {
@@ -282,6 +289,9 @@ func TestAllMethodsRoundTrip(t *testing.T) {
 	}
 	if result, err := client.Capabilities(ctx); err != nil || result.Version != "1.2.3" || len(result.Features) != 1 || result.Features[0] != FeatureExecStop {
 		t.Fatalf("capabilities round trip: %+v %v", result, err)
+	}
+	if result, err := client.UnitOfProcess(ctx, 4321); err != nil || result.PID != 4321 || result.Unit != "a.service" || !result.Main || result.ProcessCreatedAt != "2026-10-15T12:00:00.1234567Z" {
+		t.Fatalf("unit-of-process round trip: %+v %v", result, err)
 	}
 	for _, name := range Methods {
 		if seen[name] != 1 {

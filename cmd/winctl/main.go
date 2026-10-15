@@ -40,6 +40,8 @@ Commands:
                       Show unit logs (poll --follow; --since RFC3339 / 1d / "1 hour ago")
   daemon-reload       Reload unit files
   operation ID        Query a retained start/stop/restart outcome
+  unit-of-process PID Show which unit's job holds a process
+                      (exit 0 found, 4 in no unit of this manager)
   cancel ID           Cancel unfinished start/restart work
   maintenance [--timeout DURATION]
                       Quiesce system and user workloads until manager restart
@@ -229,6 +231,8 @@ func (c *cli) run(args []string) int {
 		return c.status(rest)
 	case "operation":
 		return c.operation(rest, false)
+	case "unit-of-process":
+		return c.unitOfProcess(rest)
 	case "cancel":
 		return c.operation(rest, true)
 	case "maintenance":

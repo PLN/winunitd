@@ -41,7 +41,7 @@ func TestMaintenanceEndpointRestrictsMethodsAndIdentity(t *testing.T) {
 		t.Fatalf("owner entered maintenance: %v", err)
 	}
 	admin.Store(true)
-	for _, method := range []string{MethodStart, MethodStatus, MethodStop} {
+	for _, method := range []string{MethodStart, MethodStatus, MethodStop, MethodUnitOfProcess} {
 		if err := call(method); !errors.As(err, &rpcErr) || rpcErr.Code != CodeMethodNotFound {
 			t.Fatalf("ordinary method %s entered reserved endpoint: %v", method, err)
 		}

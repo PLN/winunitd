@@ -102,7 +102,7 @@ For a valid changed definition, the running invocation keeps its captured config
 
 ## 6. Process lifecycle and stop
 
-The launcher creates a suspended process, assigns its Job Object and resource policy, installs output handling, and resumes it. It returns an owned process handle promptly. The manager, not the launcher, implements readiness and oneshot completion. Main-process exit triggers teardown of remaining owned descendants before replacement. Unowned external services are handled only by their adapters.
+The launcher creates a suspended process, assigns its Job Object and resource policy, installs output handling, and resumes it. It returns an owned process handle promptly. The manager, not the launcher, implements readiness and oneshot completion. Main-process exit triggers teardown of remaining owned descendants before replacement. Unowned external services are handled only by their adapters. The same job membership answers which unit a process belongs to; the `unit-of-process` query checks the retained workload and stop-helper jobs, never a PID alone.
 
 The SYSTEM broker's root job permits explicit breakaway for cross-session user
 launches. Windows jobs cannot span sessions. Such a launch atomically joins a

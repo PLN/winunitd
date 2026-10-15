@@ -26,6 +26,7 @@ const (
 	MethodCancelOperation = "cancel-operation"
 	MethodMaintenance     = "maintenance"
 	MethodCapabilities    = "capabilities"
+	MethodUnitOfProcess   = "unit-of-process"
 )
 
 // Methods is the full set of control verbs.
@@ -48,6 +49,7 @@ var Methods = []string{
 	MethodCancelOperation,
 	MethodMaintenance,
 	MethodCapabilities,
+	MethodUnitOfProcess,
 }
 
 var knownMethods = func() map[string]bool {
@@ -423,6 +425,38 @@ type OperationResult struct {
 	CompletedAt        string `json:"completedAt,omitempty"`
 	Error              string `json:"error,omitempty"`
 	ErrorTruncated     bool   `json:"errorTruncated,omitempty"`
+}
+
+// UnitOfProcessParams is the body for unit-of-process.
+type UnitOfProcessParams struct {
+	PID int `json:"pid"`
+}
+
+// UnitOfProcessResult names the unit of the answering manager whose Job
+// Object holds a process: the unit's workload job, which includes the main
+// process's descendants, or its ExecStop helper's job. The manager holds one
+// process handle for the whole query, so the membership and the creation time
+// describe the same process. Native proxy units and user managers have no unit
+// job here and never match; ask a user manager about its own units.
+//
+// A caller that opened its own handle to the process can compare
+// ProcessCreatedAt with GetProcessTimes on that handle to rule out PID reuse.
+type UnitOfProcessResult struct {
+	PID int `json:"pid"`
+	// Scope is "system" or "user": the manager that answered. SID is the
+	// user manager's user.
+	Scope string `json:"scope"`
+	SID   string `json:"sid,omitempty"`
+	Unit  string `json:"unit"`
+	// InvocationID is the unit invocation that owns the job.
+	InvocationID string `json:"invocationId,omitempty"`
+	// Main is true for the unit's main process. StopHelper is true for a
+	// process in the ExecStop helper's job; Main is then false.
+	Main       bool `json:"main"`
+	StopHelper bool `json:"stopHelper,omitempty"`
+	// ProcessCreatedAt is the creation time from GetProcessTimes, in UTC
+	// RFC 3339 with the FILETIME's full 100-nanosecond precision.
+	ProcessCreatedAt string `json:"processCreatedAt"`
 }
 
 // EnableResult is the payload for enable and disable.
