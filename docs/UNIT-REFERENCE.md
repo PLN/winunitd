@@ -100,11 +100,55 @@ winctl status app.service
 winctl logs app.service
 ```
 
-System units run as LocalSystem. A unit file does not select another account.
-Use the separately documented user-manager path for user identity, which
-LocalSystem or an administrator can also drive without the user signing in
-([running a user's units from SYSTEM](RUNTIME-REFERENCE.md#running-a-users-units-from-system)).
-Do not place user-writable executables or scripts in a privileged system unit.
+System units run as LocalSystem unless `User=` names another account. Do not
+place user-writable executables or scripts in a privileged system unit.
+
+### Accounts
+
+`User=` in a `FormatVersion=2` system unit of `Type=simple`, `oneshot` or
+`notify` runs the main process, its descendants and `ExecStop` as that account:
+`DOMAIN\name`, a local name, or a SID. No password is involved. Before each
+start the system manager logs the account on with an S4U logon, loads its
+normal profile (creating it on first use) and starts the process on a private
+desktop. The process gets the account's own environment, with `USERPROFILE`,
+`APPDATA`, `LOCALAPPDATA`, `TEMP`, `TMP`, `USERNAME` and `USERDOMAIN` set from
+its profile, then the unit's `Environment=`, then the manager's variables.
+`HOMEDRIVE` and `HOMEPATH` are removed, as for user managers.
+
+```ini
+[Unit]
+FormatVersion=2
+Description=Worker running as alice
+[Service]
+ExecStart=["C:\\Apps\\worker.exe", "--serve"]
+WorkingDirectory=C:\Apps
+User=EXAMPLE\alice
+Restart=on-failure
+RestartSec=5s
+[Install]
+WantedBy=default.target
+```
+
+- An S4U logon has no Windows credentials for other machines: shares need
+  credentials the unit supplies itself, and DPAPI, Credential Manager and EFS
+  are not available. An administrator account runs with its full,
+  elevated token.
+- The account is resolved and logged on at every start. A start that cannot do
+  so (an unknown account, an unreachable domain controller) fails, and
+  `Restart=` applies. `ExecStop` logs on again, as the account the running
+  invocation started with, even if a reload changed `User=` meanwhile.
+- `SYSTEM`, `LocalSystem`, `NT AUTHORITY\SYSTEM` and `S-1-5-18` mean the default
+  LocalSystem launch. `LocalService` and `NetworkService` are rejected, as are
+  `User=` in format 1 files, in user units (a user manager already runs as its
+  user) and on `Type=scm` and `Type=scheduled-task`. `Group=` is not supported.
+- Status shows the account and the SID the invocation resolved. Journal entries
+  of system units carry no user SID.
+
+The account's profile stays loaded while any of its processes run and is
+released when the last one ends; a profile also held by the account's own user
+manager or a sign-in stays loaded for them. Only administrators can write the
+system unit directory of an installed manager, so `User=` lets no one run
+anything they could not already run as LocalSystem.
 
 ## Arguments and environment
 
@@ -147,6 +191,7 @@ and `%NAME%` are not substituted.
 | Service: `RemainAfterExit` | oneshot only; no (default) finishes inactive after success; yes retains active state |
 | Service: `ExecStart`, `ExecStartArg`, `WorkingDirectory`, `Environment` | Arguments/environment rules above |
 | Service: `ExecStop`, `ExecStopArg` | Optional single cooperative stop command; same executable/argument grammar as ExecStart |
+| Service: `User` | Format 2 system units of Type simple, oneshot and notify: the account the processes run as ([accounts](#accounts)); default LocalSystem |
 | Service: `Restart` | no (default), on-failure, always, on-watchdog |
 | Service: `RestartSec` | Recovery delay; default 100ms; setting 2s is a practical application default |
 | Service: `RestartBackoff` | Format 2: fixed (default) or exponential |
@@ -416,9 +461,9 @@ readiness directives above or Type=notify when dependent activation must wait.
 
 ## Unsupported syntax and updates
 
-`User`, `Group`, `EnvironmentFile`, `SessionMode`,
-`SessionPolicy`, and unknown directives
-are rejected. Do not copy a Linux systemd unit without checking this reference.
+`Group`, `EnvironmentFile`, `SessionMode`, `SessionPolicy`, and unknown
+directives are rejected; `User` is accepted only as described under
+[accounts](#accounts). Do not copy a Linux systemd unit without checking this reference.
 
 Use `winctl verify` before deployment and `daemon-reload` after changing files.
 Warnings about ignored or defaulted settings do not fail verification; read

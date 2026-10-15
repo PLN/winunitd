@@ -30,8 +30,8 @@ posting.
 | Managers | The system manager; user managers in the user's session; linger (`enable-linger`), which runs a user manager without a sign-in. | The `headless-store-uri` linger mode is experimental. |
 | Units | The syntax in the [unit reference](docs/UNIT-REFERENCE.md). | Directives listed there as experimental. |
 
-A lingering user's services run without the user's credentials: they reach
-network shares only with credentials they supply themselves, and DPAPI,
-Credential Manager and EFS are unavailable. While linger holds a roaming
+A lingering user's services, and system units with `User=`, run without the
+user's credentials: they reach network shares only with credentials they supply
+themselves, and DPAPI, Credential Manager and EFS are unavailable. While linger holds a roaming
 profile, the profile stops roaming on that machine. See
 [headless user managers](docs/OPERATIONS.md#headless-user-managers).

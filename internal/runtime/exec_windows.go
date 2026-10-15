@@ -38,6 +38,7 @@ type winProc struct {
 	thread        windows.Handle
 	unassigned    bool
 	job           *UnitJob
+	account       *AccountSession   // User= logon, released after the job is closed
 	launchHandles [5]windows.Handle // stdin, stdout writer, stderr writer, stdout reader, stderr reader
 	stdout        *ownedOutput
 	stderr        *ownedOutput
@@ -105,8 +106,20 @@ func (l *winLauncher) createWith(spec StartSpec, openJob func(JobLimits) (*UnitJ
 }
 
 func (l *winLauncher) createWithSetup(spec StartSpec, openJob func(JobLimits) (*UnitJob, error), openPipe func() (windows.Handle, windows.Handle, error), openInput func() (windows.Handle, error), setup processSetup) (*winProc, error) {
+	p := &winProc{}
+	if spec.User != "" {
+		exe, err := os.Executable()
+		if err != nil {
+			return nil, &AccountError{Account: spec.User, Err: err}
+		}
+		account, err := OpenAccountSession(AccountSessionSpec{Account: spec.User, Exe: exe, Daemon: l.daemon})
+		p.account = account
+		if err != nil {
+			return p, &AccountError{Account: spec.User, Err: err}
+		}
+	}
 	job, err := openJob(spec.Limits)
-	p := &winProc{job: job}
+	p.job = job
 	if err != nil {
 		return p, err
 	}
@@ -141,7 +154,11 @@ func (l *winLauncher) createWithSetup(spec StartSpec, openJob func(JobLimits) (*
 			return p, err
 		}
 	}
-	block, err := envBlock(spec.Env)
+	env := spec.Env
+	if p.account != nil {
+		env = OverlayEnv(p.account.Environment(), spec.Env)
+	}
+	block, err := envBlock(env)
 	if err != nil {
 		return p, err
 	}
@@ -169,10 +186,10 @@ func (l *winLauncher) createWithSetup(spec StartSpec, openJob func(JobLimits) (*
 
 	var pi windows.ProcessInformation
 	flags := uint32(windows.CREATE_SUSPENDED | windows.CREATE_UNICODE_ENVIRONMENT | windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW | windows.EXTENDED_STARTUPINFO_PRESENT)
-	if spec.As != nil {
+	if p.account != nil {
 		var tok windows.Token
 		var desktop *uint16
-		tok, desktop, err = spec.As.launchIdentity()
+		tok, desktop, err = p.account.launchIdentity()
 		if err != nil {
 			return p, err
 		}
@@ -180,7 +197,7 @@ func (l *winLauncher) createWithSetup(spec StartSpec, openJob func(JobLimits) (*
 		err = windows.CreateProcessAsUser(tok, app, cmdLine, nil, nil, len(inherit) > 0, flags, envp, dirp, &si.StartupInfo, &pi)
 		goruntime.KeepAlive(desktop)
 		if err != nil {
-			err = fmt.Errorf("CreateProcessAsUser %s as %s: %w", spec.Argv[0], spec.As.Info.SID, err)
+			err = fmt.Errorf("CreateProcessAsUser %s as %s: %w", spec.Argv[0], p.account.Info.SID, err)
 		}
 	} else {
 		err = windows.CreateProcess(app, cmdLine, nil, nil, len(inherit) > 0, flags, envp, dirp, &si.StartupInfo, &pi)
@@ -204,6 +221,12 @@ func (l *winLauncher) createWithSetup(spec StartSpec, openJob func(JobLimits) (*
 	}
 	if err := l.finishProcessSetup(p, spec, setup); err != nil {
 		return p, err
+	}
+	if p.account != nil {
+		// Without its profile keeper the unit must not run on: end its job, and
+		// the main process's exit reports the failure.
+		job := p.job
+		p.account.onKeeperExit(func() { _ = job.Kill() })
 	}
 	return p, nil
 }
@@ -534,6 +557,12 @@ func (p *winProc) closeHandles() error {
 		p.mu.Lock()
 		p.stderr = nil
 		p.mu.Unlock()
+	}
+	if p.account != nil {
+		if err := p.account.Close(); err != nil {
+			return err
+		}
+		p.account = nil
 	}
 	p.mu.Lock()
 	p.closed = true

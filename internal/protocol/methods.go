@@ -142,6 +142,9 @@ const (
 	// FeatureLingerS4U (system endpoint): lingering users get a headless user
 	// manager from an S4U logon.
 	FeatureLingerS4U = "linger-s4u"
+	// FeatureUnitUserS4U (system endpoint): User= in a system unit runs its
+	// processes as that account through an S4U logon.
+	FeatureUnitUserS4U = "unit-user-s4u"
 )
 
 // Validate checks the identity and structure of a capability reply.
@@ -385,15 +388,19 @@ type UnitStatus struct {
 	PendingCleanup       []string `json:"pendingCleanup,omitempty"`
 	Enabled              bool     `json:"enabled"`
 	MainPID              int      `json:"mainPid,omitempty"`
-	InvocationID         string   `json:"invocationId,omitempty"`
-	Error                string   `json:"error,omitempty"`
-	LogDroppedRecords    uint64   `json:"logDroppedRecords,omitempty"`
-	LogDroppedBytes      uint64   `json:"logDroppedBytes,omitempty"`
-	LogStorageErrors     uint64   `json:"logStorageErrors,omitempty"`
-	LogLastStorageError  string   `json:"logLastStorageError,omitempty"`
-	Reason               string   `json:"reason,omitempty"` // DESIGN.md §44
-	Next                 string   `json:"next,omitempty"`
-	Last                 string   `json:"last,omitempty"`
+	// User is the User= account of the definition that owns the invocation,
+	// UserSID the SID that invocation resolved it to.
+	User                string `json:"user,omitempty"`
+	UserSID             string `json:"userSid,omitempty"`
+	InvocationID        string `json:"invocationId,omitempty"`
+	Error               string `json:"error,omitempty"`
+	LogDroppedRecords   uint64 `json:"logDroppedRecords,omitempty"`
+	LogDroppedBytes     uint64 `json:"logDroppedBytes,omitempty"`
+	LogStorageErrors    uint64 `json:"logStorageErrors,omitempty"`
+	LogLastStorageError string `json:"logLastStorageError,omitempty"`
+	Reason              string `json:"reason,omitempty"` // DESIGN.md §44
+	Next                string `json:"next,omitempty"`
+	Last                string `json:"last,omitempty"`
 	// Configured [Service] R2 limits (unit file; not a live Job Object query).
 	CPUWeight  uint32 `json:"cpuWeight,omitempty"`
 	CPUQuota   uint32 `json:"cpuQuota,omitempty"` // N from CPUQuota=N%

@@ -19,6 +19,7 @@ func runVerify(paths []string, userScope bool, stdout, stderr io.Writer) int {
 	for _, p := range paths {
 		rep := unit.VerifyPath(p)
 		if !rep.HasError() {
+			rep.Issues = append(rep.Issues, unit.UserScopeIssues(rep.Unit, userScope)...)
 			rep.Issues = append(rep.Issues, unit.RegistryScopeIssues(rep.Unit, userScope)...)
 			rep.Issues = append(rep.Issues, unit.EventLogScopeIssues(rep.Unit, userScope)...)
 		}

@@ -99,7 +99,7 @@ func (m *Manager) executeStopHelper(h *stopHelperWork) {
 	defer h.cancel()
 	svc := h.unit.Service
 	inv := h.invocation + "-stop"
-	env := journal.InjectEnv(mergeEnv(svc.Environment), inv)
+	env := journal.InjectEnv(unitEnv(svc), inv)
 	// Never inherit an unrelated parent's MAINPID. No argv expansion or shell
 	// is implied; cooperative scripts can read this environment variable.
 	filtered := env[:0]
@@ -113,8 +113,10 @@ func (m *Manager) executeStopHelper(h *stopHelperWork) {
 	if h.main != nil && h.main.Alive() {
 		env = append(env, "MAINPID="+strconv.Itoa(h.main.PID()))
 	}
-	spec := runtime.StartSpec{Unit: h.owner.name, Type: unit.TypeOneshot, Argv: append([]string(nil), svc.ExecStop...), Dir: svc.WorkingDirectory, Env: env, Limits: runtime.JobLimitsFromSpec(svc)}
-	launching := m.trackLaunchingJob(&spec, processOwner{unit: h.owner.name, invocation: h.invocation, stopHelper: true})
+	// h.unit is the invocation's definition, so a reload that changed User=
+	// still stops this invocation as the account it ran as.
+	spec := runtime.StartSpec{Unit: h.owner.name, Type: unit.TypeOneshot, Argv: append([]string(nil), svc.ExecStop...), Dir: svc.WorkingDirectory, Env: env, Limits: runtime.JobLimitsFromSpec(svc), User: svc.User}
+	launching := m.trackLaunchingJob(&spec, processOwner{unit: h.owner.name, invocation: h.invocation, stopHelper: true}, nil)
 	p, launchErr := m.launch.Start(h.ctx, spec)
 	m.publishStopHelperProcess(h, p)
 	m.untrackLaunchingJob(launching)

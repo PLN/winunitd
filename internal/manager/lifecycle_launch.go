@@ -203,7 +203,7 @@ func (m *Manager) recordServiceLaunch(effect *launchEffect, native bool) {
 	m.recordStartLocked(rt)
 }
 
-func (m *Manager) recordInvocation(effect *launchEffect, invocation string) {
+func (m *Manager) recordInvocation(effect *launchEffect, invocation, userSID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if effect.owner.currentLocked(m) {
@@ -211,6 +211,7 @@ func (m *Manager) recordInvocation(effect *launchEffect, invocation string) {
 		rt.invocationUnit = effect.unit
 		rt.invocationRevision = effect.revision
 		rt.invocation = invocation
+		rt.invocationUserSID = userSID
 	}
 }
 

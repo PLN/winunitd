@@ -3,6 +3,7 @@
 package runtime
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,11 +13,14 @@ import (
 )
 
 type accountPlatform struct {
-	mu      sync.Mutex
-	token   *UserToken
-	keeper  UserManagerProc
-	desktop string
-	closed  bool
+	mu          sync.Mutex
+	token       *UserToken
+	keeper      UserManagerProc
+	desktop     string
+	closing     bool
+	closed      bool
+	keeperEnded chan struct{}
+	onExit      func()
 }
 
 // OpenAccountSession logs the account on by trusted S4U, never with a stored
@@ -61,6 +65,8 @@ func OpenAccountSession(spec AccountSessionSpec) (*AccountSession, error) {
 		return fail(fmt.Errorf("profile keeper for %s: %w", spec.Account, err))
 	}
 	s.plat.desktop = desktop
+	s.plat.keeperEnded = make(chan struct{})
+	go s.watchKeeper(keeper)
 	// The keeper's launch loaded the profile, so the token's environment and
 	// known folders now resolve.
 	env, err := native.Environ(false)
@@ -87,6 +93,37 @@ func hasUserProfile(env []string) bool {
 		}
 	}
 	return false
+}
+
+func (s *AccountSession) watchKeeper(keeper UserManagerProc) {
+	_ = keeper.Wait(context.Background())
+	s.plat.mu.Lock()
+	close(s.plat.keeperEnded)
+	onExit := s.plat.onExit
+	if s.plat.closing {
+		onExit = nil
+	}
+	s.plat.mu.Unlock()
+	if onExit != nil {
+		onExit()
+	}
+}
+
+// onKeeperExit runs fn if the profile keeper ends before Close, at once if it
+// already has.
+func (s *AccountSession) onKeeperExit(fn func()) {
+	s.plat.mu.Lock()
+	s.plat.onExit = fn
+	ended := false
+	select {
+	case <-s.plat.keeperEnded:
+		ended = !s.plat.closing
+	default:
+	}
+	s.plat.mu.Unlock()
+	if ended {
+		fn()
+	}
 }
 
 // launchIdentity is the token and desktop for CreateProcessAsUser.
@@ -119,6 +156,7 @@ func (s *AccountSession) Close() error {
 	if s.plat.closed {
 		return nil
 	}
+	s.plat.closing = true
 	if s.plat.keeper != nil {
 		if err := s.plat.keeper.Kill(); err != nil {
 			return fmt.Errorf("stop profile keeper: %w", err)

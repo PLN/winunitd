@@ -129,13 +129,28 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 	}
 
 	inv := journal.NewInvocationID()
-	m.recordInvocation(effect, inv)
+	userSID := ""
+	if svc.User != "" {
+		// Resolve before anything is opened for the invocation: the notify pipe
+		// admits this account, and status pairs it with the configured name.
+		lookup := m.cfg.LookupAccount
+		if lookup == nil {
+			lookup = runtime.LookupAccountName
+		}
+		info, err := lookup(svc.User)
+		if err != nil {
+			m.maybeRestart(name, core.ExitFailure, svc)
+			return &runtime.AccountError{Account: svc.User, Err: err}
+		}
+		userSID = info.SID
+	}
+	m.recordInvocation(effect, inv, userSID)
 
-	env := journal.InjectEnv(mergeEnv(svc.Environment), inv)
+	env := journal.InjectEnv(unitEnv(svc), inv)
 	var nrt *notifyRuntime
 	if svc.NeedsNotifyPipe() {
 		var err error
-		nrt, err = m.openNotify(name, inv)
+		nrt, err = m.openNotify(name, inv, userSID)
 		if err != nil {
 			return errors.Join(err, m.disposeNotify(nrt))
 		}
@@ -157,6 +172,7 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		Env:          env,
 		TimeoutStart: svc.TimeoutStartSec,
 		Limits:       runtime.JobLimitsFromSpec(svc),
+		User:         userSID,
 	}
 	if svc.Type == unit.TypeNotify {
 		// TimeoutStartSec bounds READY=1, not CreateProcess.
@@ -173,7 +189,11 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		defer m.clearStartWait(effect)
 		spec.TimeoutStart = 0 // one shared creation/readiness budget above
 	}
-	launching := m.trackLaunchingJob(&spec, processOwner{unit: name, invocation: inv})
+	launching := m.trackLaunchingJob(&spec, processOwner{unit: name, invocation: inv}, func(pid int, job runtime.Job) {
+		if nrt != nil {
+			nrt.SetMain(pid, job) // before the process can send anything
+		}
+	})
 	defer m.untrackLaunchingJob(launching)
 	proc, err := m.launch.Start(ctx, spec)
 	pid := 0
@@ -190,8 +210,11 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		}
 		err = errors.Join(err, m.closeNotify(name))
 		var st *runtime.ExitStatus
+		var account *runtime.AccountError
 		if proc == nil && errors.As(err, &st) {
 			m.maybeRestart(name, classifyWait(err), svc)
+		} else if proc == nil && errors.As(err, &account) {
+			m.maybeRestart(name, core.ExitFailure, svc)
 		}
 		return err
 	}
@@ -545,6 +568,21 @@ func (m *Manager) stopProcessContext(ctx context.Context, proc runtime.Process, 
 
 func (m *Manager) awaitStop(ctx context.Context, key stopKey, timeout time.Duration, stop func() error) error {
 	return m.stops.wait(ctx, m.clock(), key, timeout, stop)
+}
+
+// unitEnv is what a unit's processes start with before the manager's own
+// variables: the manager's environment with Environment= applied, or for a
+// User= unit only Environment=, which the launcher applies over the
+// account's environment.
+func unitEnv(svc *unit.ServiceSpec) []string {
+	if svc.User == "" {
+		return mergeEnv(svc.Environment)
+	}
+	out := make([]string, 0, len(svc.Environment))
+	for _, v := range svc.Environment {
+		out = append(out, v.Name+"="+v.Value)
+	}
+	return out
 }
 
 func mergeEnv(extra []unit.EnvVar) []string {

@@ -196,6 +196,10 @@ func (m *Manager) parseUnitDir() ([]*unit.Unit, *protocol.DaemonReloadResult, er
 			continue
 		}
 		scopeFail := false
+		for _, iss := range unit.UserScopeIssues(rep.Unit, m.cfg.UserScope) {
+			addError(iss.String())
+			scopeFail = true
+		}
 		for _, iss := range unit.RegistryScopeIssues(rep.Unit, m.cfg.UserScope) {
 			addError(iss.String())
 			scopeFail = true

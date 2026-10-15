@@ -12,5 +12,5 @@ func platformWorkloadFeatures() []string {
 }
 
 func platformSystemFeatures() []string {
-	return []string{protocol.FeatureLingerS4U}
+	return []string{protocol.FeatureLingerS4U, protocol.FeatureUnitUserS4U}
 }

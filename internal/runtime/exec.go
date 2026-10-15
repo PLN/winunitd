@@ -62,9 +62,10 @@ type StartSpec struct {
 	// before it runs, so its owner is known before the process can act. It
 	// must not block. Only the Windows launcher calls it.
 	Assigned func(pid int, job Job)
-	// As, if set, creates the process as another account (User=) with the
-	// session's token and desktop. Nil keeps the manager's own account.
-	As *AccountSession
+	// User, if set, names the account the process runs as (User=): a SID or
+	// DOMAIN\name. The launcher logs it on by S4U for this process alone and
+	// releases that logon with the process. Empty keeps the manager's account.
+	User string
 }
 
 // Job is a per-unit Job Object (DESIGN.md §5.1). Closing or killing it

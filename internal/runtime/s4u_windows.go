@@ -493,7 +493,7 @@ func duplicatePrimary(tok windows.Token) (windows.Token, error) {
 	var primary windows.Token
 	err := windows.DuplicateTokenEx(
 		tok,
-		windows.TOKEN_ASSIGN_PRIMARY|windows.TOKEN_DUPLICATE|windows.TOKEN_QUERY|windows.TOKEN_ADJUST_DEFAULT|windows.TOKEN_ADJUST_SESSIONID,
+		windows.TOKEN_ASSIGN_PRIMARY|windows.TOKEN_DUPLICATE|windows.TOKEN_QUERY|windows.TOKEN_IMPERSONATE|windows.TOKEN_ADJUST_DEFAULT|windows.TOKEN_ADJUST_SESSIONID,
 		nil,
 		windows.SecurityImpersonation,
 		windows.TokenPrimary,
