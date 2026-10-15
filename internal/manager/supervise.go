@@ -173,6 +173,8 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		defer m.clearStartWait(effect)
 		spec.TimeoutStart = 0 // one shared creation/readiness budget above
 	}
+	launching := m.trackLaunchingJob(&spec, processOwner{unit: name, invocation: inv})
+	defer m.untrackLaunchingJob(launching)
 	proc, err := m.launch.Start(ctx, spec)
 	pid := 0
 	if proc != nil {
@@ -211,6 +213,7 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		m.applyLateLaunchCleanup(effect, proc, stopErr)
 		return errors.Join(fmt.Errorf("start superseded during process creation"), stopErr, notifyErr)
 	}
+	m.untrackLaunchingJob(launching) // published as rt.proc
 	gen := effect.owner.gen
 
 	if svc.Type == unit.TypeOneshot {

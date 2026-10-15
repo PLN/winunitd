@@ -72,13 +72,42 @@ func (m *Manager) UnitOfProcess(pid int) (*protocol.UnitOfProcessResult, error) 
 	return nil, &protocol.Error{Code: protocol.CodeNotFound, Message: fmt.Sprintf("process %d belongs to no unit of this manager", pid)}
 }
 
+// trackLaunchingJob has spec report its job before the process runs. Until
+// the caller untracks it, after publishing the process, the job counts as
+// owned, so a process that connects somewhere at once is already attributed.
+func (m *Manager) trackLaunchingJob(spec *runtime.StartSpec, owner processOwner) *processOwner {
+	pending := &owner
+	spec.Assigned = func(pid int, job runtime.Job) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if !pending.stopHelper {
+			pending.mainPID = pid
+		}
+		pending.job = job
+		if m.launchingJobs == nil {
+			m.launchingJobs = make(map[*processOwner]struct{})
+		}
+		m.launchingJobs[pending] = struct{}{}
+	}
+	return pending
+}
+
+func (m *Manager) untrackLaunchingJob(pending *processOwner) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.launchingJobs, pending)
+}
+
 // processOwners copies every retained workload and stop-helper job, whatever
 // the unit's state: a stopping unit still owns its processes until cleanup
-// releases the job.
+// releases the job. Jobs of launches not yet published are included.
 func (m *Manager) processOwners() []processOwner {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	owners := make([]processOwner, 0, len(m.units)+len(m.stopHelpers))
+	owners := make([]processOwner, 0, len(m.units)+len(m.stopHelpers)+len(m.launchingJobs))
+	for pending := range m.launchingJobs {
+		owners = append(owners, *pending)
+	}
 	for name, rt := range m.units {
 		if rt.proc == nil {
 			continue

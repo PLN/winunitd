@@ -62,6 +62,7 @@ type Manager struct {
 	stops                stopSet
 	closePending         []unitTeardown
 	stopHelpers          map[*stopHelperWork]struct{}
+	launchingJobs        map[*processOwner]struct{} // assigned, not yet published
 	snapshotSequence     uint64
 	boundStops           map[string]boundStopMember
 	boundStopsDone       chan struct{}

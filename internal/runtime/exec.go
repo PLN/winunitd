@@ -58,6 +58,10 @@ type StartSpec struct {
 	TimeoutStart time.Duration
 	// Limits are applied to the unit Job Object (whole tree). Zero is today's job.
 	Limits JobLimits
+	// Assigned, if set, is called once the process is in its unit job and
+	// before it runs, so its owner is known before the process can act. It
+	// must not block. Only the Windows launcher calls it.
+	Assigned func(pid int, job Job)
 }
 
 // Job is a per-unit Job Object (DESIGN.md §5.1). Closing or killing it
