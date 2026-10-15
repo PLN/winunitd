@@ -223,9 +223,10 @@ func (m *Manager) recordInvocationUser(effect *launchEffect, userSID string) {
 	}
 }
 
-// failAccountStart publishes a User= start that could not log on as failed,
+// failAccountStart publishes a recovery start that could not log on as failed,
 // with its error, before Restart= decides whether to try again. Recovery
-// discards a launch error, so this is its only record there.
+// discards a launch error, so this is its only record there; an explicit start
+// is still inactive or failed here and its operation publishes the outcome.
 func (m *Manager) failAccountStart(effect *launchEffect, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -233,7 +234,7 @@ func (m *Manager) failAccountStart(effect *launchEffect, err error) {
 		return
 	}
 	rt := effect.owner.record
-	if !rt.stopping && rt.step(core.EventStartFailed) {
+	if !rt.stopping && rt.state == core.Activating && rt.step(core.EventStartFailed) {
 		rt.err = err.Error()
 	}
 }
