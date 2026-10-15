@@ -65,8 +65,8 @@ func TestRunVersion(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("%s stdout=%q want %q", flag, out.String(), want)
 		}
-		if version.Version != "0.3.0" {
-			t.Fatalf("version.Version = %q, want 0.3.0", version.Version)
+		if version.Version != "0.4.0" {
+			t.Fatalf("version.Version = %q, want 0.4.0", version.Version)
 		}
 	}
 	var out, errb bytes.Buffer
