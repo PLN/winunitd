@@ -4,6 +4,7 @@ package runtime
 
 import "errors"
 
+//lint:ignore U1000 Used by the Windows account session only.
 type accountPlatform struct{}
 
 // OpenAccountSession is only available on Windows.

@@ -14,6 +14,7 @@ type AccountSession struct {
 	// Info identifies the account the token belongs to.
 	Info UserInfo
 	env  []string
+	//lint:ignore U1000 Used by the Windows account session only.
 	plat accountPlatform
 }
 
