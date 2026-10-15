@@ -116,4 +116,4 @@ the processes through the unit job as before.
 - A native run on the disposable acceptance guest with the MSI, for a standard
   account that never signed in: status, logs, `unit-of-process`, `ExecStop`,
   a cold boot, a killed service process, an account that cannot log on, and
-  removal.
+  removal. All passed ([evidence](R4-EVIDENCE.md#system-units-with-user)).

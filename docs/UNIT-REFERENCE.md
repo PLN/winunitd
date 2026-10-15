@@ -133,6 +133,11 @@ WantedBy=default.target
   credentials the unit supplies itself, and DPAPI, Credential Manager and EFS
   are not available. An administrator account runs with its full,
   elevated token.
+- The logon is a network logon: the process belongs to `NETWORK`, not to
+  `INTERACTIVE`, `SERVICE` or `BATCH`, so access granted only to those groups,
+  such as writing to `C:\Users\Public`, is denied. `taskkill.exe` refuses to
+  run under such a logon; a stop command can end the main process with
+  PowerShell's `Stop-Process -Id $env:MAINPID` instead.
 - The account is resolved and logged on at every start. A start that cannot do
   so (an unknown account, an unreachable domain controller) fails, and
   `Restart=` applies. `ExecStop` logs on again, as the account the running

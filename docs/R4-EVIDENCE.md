@@ -751,6 +751,34 @@ The unit ran `cmd.exe`, which started a child.
 | Cold boot, nobody signed in | The headless manager started and the enabled unit ran again, its main process 15 seconds after boot, with a new invocation. Attribution as above. |
 | Removal | `stop`, `disable`, deleting the file and `daemon-reload` removed the unit and its processes. `disable-linger` ended the manager and its pipe. |
 
+## System units with User=
+
+On October 15, 2026 [`User=` on system units](SYSTEM-UNIT-USER.md) ran on the
+disposable Windows 11 Enterprise LTSC acceptance guest. Every step ran as
+LocalSystem through the guest agent, with an MSI built from `7823b0a` and new
+local standard accounts that never signed in. `7823b0a` still contained a
+change to the token's default DACL. That change was removed afterwards because
+Windows' own default already admits the account. The LocalSystem tests below
+then passed again at `761efa1`.
+
+| Step | Observed |
+| --- | --- |
+| Start | `member.service` with `User=` a standard account ran `cmd.exe` and its children as that account in session 0. Status showed `User:` with the resolved SID. The unit wrote and read HKCU and a file in its LocalAppData, and its output reached the journal. |
+| `unit-of-process` | The main process with `Main=true`, its children with `Main=false`, all with the invocation. |
+| Stop | `ExecStop` ran as the account with `MAINPID` set and wrote into the account's LocalAppData. The workload ended and the profile unloaded. |
+| Cold boot | Shutdown with the unit running took 6 seconds. After boot, with nobody signed in, the enabled unit ran again as the account 15 seconds after boot. |
+| Service process killed | The unit's processes and its profile keeper ended, the profile unloaded, and the SCM restarted the service. |
+| Disabled account | The start failed at the S4U logon with Windows' account-restriction message; `Restart=` retried until the start limit. |
+| Unknown account | The start failed at the name lookup; `Restart=` retried until the start limit. |
+| Removal | `stop`, `disable`, deleting the file and `daemon-reload` left no keeper, and the profile unloaded. |
+| LocalSystem tests | At `761efa1`: a process runs as the account in session 0 inside its unit job, with HKCU and profile files; ending the keeper ends the workload; a separate logon of the account terminates another of its processes; two processes keep the profile until the last ends. An administrator account, in an earlier prototype run, got an elevated token. |
+
+The S4U logon is a network logon: its processes belong to `NETWORK`, not to
+`INTERACTIVE`, `SERVICE` or `BATCH`. Writing to `C:\Users\Public`, which grants
+those groups, was denied, and `taskkill.exe` refused to run. `TerminateProcess`,
+for example through PowerShell's `Stop-Process`, worked across logons of the
+account.
+
 ## Current implementation and remaining identity matrix
 
 | Work package | Delivered behavior and evidence | Remaining qualification |
