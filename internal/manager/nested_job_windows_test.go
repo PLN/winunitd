@@ -496,6 +496,19 @@ func TestWindowsNestedJobForcedStop(t *testing.T) {
 		if err != nil {
 			t.Fatalf("forced stop did not return within TimeoutStopSec plus the %s allowance: %v", nestedStopAllowance, err)
 		}
+		// A hung ExecStop is expected to fail. Retain its captured outcome on
+		// failure without delaying the held-handle assertions below.
+		defer func() {
+			if !t.Failed() {
+				return
+			}
+			t.Logf("forced stop at return: elapsed=%s error=%v active=%s reason=%q uncertain=%t main=%d helperSlots=%d helpers=%d inspect=%s",
+				out.elapsed, out.err, out.view.ActiveState, out.view.Reason, out.view.TerminationUncertain,
+				out.view.MainPID, out.view.StopHelpers, len(out.view.Helpers), nestedjob.SafeFailure(out.view.InspectError))
+			for _, h := range out.view.Helpers {
+				t.Logf("stop helper at return: pid=%d exited=%t observation=%s", h.PID, h.Exited, nestedjob.SafeFailure(h.Error))
+			}
+		}()
 		if out.err == nil {
 			t.Fatal("hung helper reported a successful cooperative stop")
 		}
