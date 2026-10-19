@@ -1,14 +1,15 @@
 # winunitd roadmap
 
-**Current priority: post-beta stabilization.** Public `0.2.1-beta` shipped on
-September 6, 2026; the [B1-B4 delivery gates](docs/BETA-RELEASE.md) are complete.
-Prioritize adopter feedback and reproducible defects in the supported core,
-preserve documented beta syntax, and continue the R0-R8 architecture and
-qualification backlog. [Post-beta tracking](docs/POST-BETA-TRACKING.md) links
-GitHub milestones and the next focused work.
+**Current priority: supported-path defects and adopter feedback.** The current
+public release is [0.5.0](docs/RELEASE-NOTES-0.5.0.md), published unsigned on
+October 15, 2026. The MSI-backed pilot completed its exercise and 24-hour soak
+on 0.1.1-alpha ([R7 evidence](docs/R7-EVIDENCE.md)); that recorded pilot version
+is separate from the current release. Signing remains deferred.
+[Post-beta tracking](docs/POST-BETA-TRACKING.md) links the remaining work to the
+R0-R8 acceptance gates.
 
-Revision 2 - status refreshed September 13, 2026. Original review baseline:
-`98abb80`, `0.1.0-alpha`; current published release: `0.2.1-beta`.
+Revision 2 - status refreshed October 19, 2026. Original review baseline:
+`98abb80`, `0.1.0-alpha`.
 
 This roadmap adopts the direction of the [architecture review](docs/DESIGN-REVIEW.md). It defines future work; it does not mark reviewed defects as fixed. [DESIGN.md](DESIGN.md) specifies the target architecture. [Milestones](docs/MILESTONES.md) define work packages, dependencies, and completion evidence. The [installer plan](docs/MSI-INSTALLER-PLAN.md) specifies package servicing details.
 
@@ -27,18 +28,23 @@ Keep Go, the portable core and Windows adapters, one SCM system manager, per-use
 5. Bound logs, triggers, and restart activity; make persistence failures observable.
 6. Prove installation, servicing, and the Hermes migration before a public installation release.
 
-The prioritized semantic slice is repeatable `Type=oneshot` execution with
-`RemainAfterExit=no` by default, split from R3.3 graceful-stop work. This enables
-on-demand maintenance units that return inactive after successful completion.
+Repeatable `Type=oneshot` execution is delivered, with `RemainAfterExit=no` by
+default. It enables on-demand maintenance units that return inactive after
+successful completion.
 See [scope and acceptance](docs/POST-BETA-TRACKING.md#priority-repeatable-oneshots).
-Existing ownership/cancellation invariants still apply. The default changes
-directly, without a versioned migration; `RemainAfterExit=yes` retains active state.
+Existing ownership/cancellation invariants still apply; `RemainAfterExit=yes`
+retains active state.
 
-Other feature expansion is paused through the stabilization milestones. Existing triggers, proxies, and resource controls are retained, tested, and corrected; their presence does not establish release qualification. New language implementations, remote control, and generic plugin infrastructure are outside this iteration.
+Process attribution, the public Go client and administrative access to user
+managers shipped in 0.4.0; system-unit `User=` through S4U shipped in 0.5.0.
+Further expansion needs a concrete workload. Existing triggers, proxies and
+resource controls retain their documented support boundaries. New language
+implementations, remote control and generic plugin infrastructure remain outside
+this iteration.
 
 ## Milestone sequence
 
-R2, R3, and R5 have completed technical acceptance. For 0.1-alpha only, overall R6 is checked under the #251 deferral policy with documented limitations (deferred-media and deferred-older-msi). R0 and R1 remain **in progress**; R4 was accepted on October 14, 2026. R7 is accepted for the dev-machine pilot on 0.1-alpha ([evidence](docs/R7-EVIDENCE.md)); R8 is in progress, with 0.3.0 published unsigned on October 14, 2026. The [coordinator audit](docs/R2-COORDINATOR-AUDIT.md) and [consolidated evidence](docs/R2-EVIDENCE.md#consolidated-coordinator-acceptance) record the latest closure. Their IDs track the longer-term design, not beta release prerequisites or deadlines. See the milestones for completed work packages and qualification evidence; B1-B4 record the completed first beta delivery. Use the post-beta tracking for current work.
+R2, R3, and R5 have completed technical acceptance. For 0.1-alpha only, overall R6 is checked under the #251 deferral policy with documented limitations (deferred-media and deferred-older-msi). R0 and R1 remain **in progress**; R4 was accepted on October 14, 2026. R7 is accepted for the dev-machine pilot on 0.1-alpha ([evidence](docs/R7-EVIDENCE.md)); R8 is in progress, with 0.5.0 published unsigned on October 15, 2026 and signing deferred. The [coordinator audit](docs/R2-COORDINATOR-AUDIT.md) and [consolidated evidence](docs/R2-EVIDENCE.md#consolidated-coordinator-acceptance) record the latest closure. Their IDs track the longer-term design, not beta release prerequisites or deadlines. See the milestones for completed work packages and qualification evidence; B1-B4 record the completed first beta delivery. Use the post-beta tracking for current work.
 
 | ID | Outcome | Depends on | Completion signal |
 | --- | --- | --- | --- |
@@ -105,7 +111,7 @@ Sign payloads before packaging, sign the MSI, then hash and attest the final sig
 
 ## Deferred scope
 
-Do not add full systemd compatibility, Linux runtime support, socket activation, in-process component supervision, remote management, GUI execution/session executors, arbitrary account/credential brokering, automatic updates, or multiple fault-isolated system managers in this iteration. Application-specific health endpoints may describe in-process components, but recovery remains at the owned-process boundary.
+Do not add full systemd compatibility, Linux runtime support, socket activation, in-process component supervision, remote management, GUI execution/session executors, account/credential brokering beyond the documented S4U support, automatic updates, or multiple fault-isolated system managers in this iteration. Application-specific health endpoints may describe in-process components, but recovery remains at the owned-process boundary.
 
 Additional features require a concrete workload, an architectural decision, and acceptance tests. Deferred functionality must remain rejected or explicitly experimental in the released parser/API; it must not silently accept configuration that cannot be enforced.
 
