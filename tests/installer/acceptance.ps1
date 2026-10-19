@@ -296,13 +296,13 @@ function Get-LogMarkers([string]$Log) {
 	return $found.ToArray()
 }
 
-function Get-InstallFailureNote($Run) {
+function Get-InstallFailureNote($Run, [bool]$RequireRunning = $true) {
 	if ($Run.Reboot) { return 'reboot started' }
 	if ($Run.ExitCode -ne 0) { return 'unexpected exit' }
 	if (-not (Test-Layout)) { return 'layout mismatch' }
 	$identity = Get-ServiceIdentityNote
 	if ($identity) { return $identity }
-	if ((Get-ServiceState) -ne 'running') { return 'service is not running' }
+	if ($RequireRunning -and (Get-ServiceState) -ne 'running') { return 'service is not running' }
 	if ((Get-EventSourceState) -ne 'present') { return 'event source mismatch' }
 	if (-not (Test-PathOwned)) { return 'PATH ownership mismatch' }
 	if (Test-PrerequisiteAction $Run.Log) { return 'destination prerequisite invoked' }
@@ -953,6 +953,8 @@ function Invoke-SelectedCase {
 		'offline-install' { return Invoke-OfflineInstall }
 		'repair-fa' { return Invoke-Repair 'repair-fa' @('/fa', (ConvertTo-MsiArg $MsiPath)) }
 		'repair-reinstall' { return Invoke-Repair 'repair-reinstall' @('/i', (ConvertTo-MsiArg $MsiPath), 'REINSTALL=ALL', 'REINSTALLMODE=amus') }
+		'repeat-install-running' { return Invoke-RepeatInstall $true }
+		'repeat-install-stopped' { return Invoke-RepeatInstall $false }
 		'uninstall' { return Invoke-Uninstall }
 		'reinstall-retained' { return Invoke-ReinstallRetained }
 		'downgrade' { return Invoke-Downgrade }
@@ -960,6 +962,7 @@ function Invoke-SelectedCase {
 		'locked-file' { return Invoke-LockedFile }
 		'rollback-test-fail-running' { return Invoke-TestFailRepair $true }
 		'rollback-test-fail-stopped' { return Invoke-TestFailRepair $false }
+		'rollback-repeat-install-running' { return Invoke-TestFailRepair $true $true }
 		'rollback-upgrade' { return Invoke-RollbackUpgrade }
 		'non-admin' { return Invoke-NonAdmin }
 		'beta-conflict' { return Invoke-BetaConflict }
@@ -967,6 +970,53 @@ function Invoke-SelectedCase {
 		'preflight-unmanaged-service' { return Invoke-PreflightUnmanaged }
 		default { throw 'case is not implemented' }
 	}
+}
+
+function Invoke-RepeatInstall([bool]$Running) {
+	if ($Running) {
+		if (-not (Start-Winunitd)) { return New-CaseResult 'failed' 'service is not running' $null '' $false (Get-ServiceState) (Get-ServiceState) $null }
+		Write-FixtureUnit 'alice.service' 'alice'
+		$script:FixturesWritten = $true
+		foreach ($words in @(@('daemon-reload'), @('enable', 'alice.service'), @('start', 'alice.service'))) {
+			$ctl = Invoke-Winctl $words
+			if ($ctl.ExitCode -ne 0) { return New-CaseResult 'failed' 'fixture preparation failed' $null '' $false (Get-ServiceState) (Get-ServiceState) $null }
+		}
+		$worker = Get-UnitReport 'alice.service'
+		if ($worker.Active -ne 'active' -or $worker.Enabled -ne 'enabled') { return New-CaseResult 'failed' 'fixture did not start enabled' $null '' $false (Get-ServiceState) (Get-ServiceState) $null }
+		$unitPath = Join-Path (Get-DataRoot) 'units\alice.service'
+		$unitHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $unitPath).Hash
+	} else {
+		if (-not (Stop-Winunitd)) { return New-CaseResult 'failed' 'service did not stop' $null '' $false (Get-ServiceState) (Get-ServiceState) $null }
+	}
+	$before = Get-ServiceState
+	$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Get-ProductExe)).Hash
+	$logName = $(if ($Running) { 'repeat-install-running' } else { 'repeat-install-stopped' })
+	# Use the exact package installed on this fresh guest; do not add repair properties.
+	$run = Invoke-Msiexec -LogName $logName -Quiet -TimeoutSec 600 -Words @('/i', (ConvertTo-MsiArg $MsiPath))
+	$note = Get-InstallFailureNote $run $Running
+	$retained = $null
+	if (-not $note -and (Get-ServiceState) -ne $before) { $note = 'service state changed' }
+	if (-not $note -and (Get-FileHash -Algorithm SHA256 -LiteralPath (Get-ProductExe)).Hash -ne $hash) { $note = 'payload hash changed' }
+	if (-not $note -and $Running) {
+		$retained = (Test-Path -LiteralPath (Join-Path (Get-DataRoot) 'enabled\default.target\alice.service')) -and
+			(Get-FileHash -Algorithm SHA256 -LiteralPath $unitPath).Hash -eq $unitHash
+		if (-not $retained) { $note = 'unit data or enablement changed' }
+		if (-not $note) {
+			$deadline = (Get-Date).AddSeconds(60)
+			do {
+				$worker = Get-UnitReport 'alice.service'
+				if ($worker.Active -eq 'active' -and $worker.Enabled -eq 'enabled') { break }
+				Start-Sleep -Seconds 1
+			} while ((Get-Date) -lt $deadline)
+			if ($worker.Active -ne 'active' -or $worker.Enabled -ne 'enabled') { $note = 'enabled unit did not return' }
+		}
+		if (-not $note) {
+			$ctl = Invoke-Winctl @('capabilities')
+			if ($ctl.ExitCode -ne 0) { $note = 'control endpoint did not return' }
+		}
+	}
+	if (-not $note -and $Running) { $note = Clear-Fixtures }
+	return New-CaseResult $(if ($note) { 'failed' } else { 'passed' }) $note $run.ExitCode $run.Log $run.Reboot $before (Get-ServiceState) $retained
 }
 
 function Invoke-Uninstall {
@@ -1154,7 +1204,7 @@ function Invoke-LockedFile {
 	}
 }
 
-function Invoke-TestFailRepair([bool]$Running) {
+function Invoke-TestFailRepair([bool]$Running, [bool]$RepeatInstall = $false) {
 	$changed = $false
 	try {
 		if ($Running) {
@@ -1166,7 +1216,13 @@ function Invoke-TestFailRepair([bool]$Running) {
 		$changed = $true
 		$before = Get-ServiceState
 		$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Get-ProductExe)).Hash.ToLowerInvariant()
-		$run = Invoke-Msiexec -LogName $(if ($Running) { 'rollback-test-fail-running' } else { 'rollback-test-fail-stopped' }) -Quiet -TestFail -TimeoutSec 600 -Words @('/fa', (ConvertTo-MsiArg $MsiPath))
+		$logName = $(if ($Running) { 'rollback-test-fail-running' } else { 'rollback-test-fail-stopped' })
+		$words = @('/fa', (ConvertTo-MsiArg $MsiPath))
+		if ($RepeatInstall) {
+			$logName = 'rollback-repeat-install-running'
+			$words = @('/i', (ConvertTo-MsiArg $MsiPath))
+		}
+		$run = Invoke-Msiexec -LogName $logName -Quiet -TestFail -TimeoutSec 600 -Words $words
 		$delayedOk = Get-DelayedStart
 		$note = ''
 		if ($run.Reboot) { $note = 'reboot started' }

@@ -194,6 +194,7 @@
 		<CustomAction Id="RollbackService" BinaryRef="ServiceHelper" ExeCommand="service-rollback &quot;[INSTALLDIR].&quot; &quot;[DATADIR].&quot; [WinunitdPolicyTransaction]" Execute="rollback" Impersonate="no" Return="check" />
 		<!-- Deferred DLL so the helper's stderr, including "abort replacement", is written to the MSI log. -->
 		<CustomAction Id="PrepareService" BinaryRef="ServiceToken" DllEntry="RunServiceHelper" Execute="deferred" Impersonate="no" Return="check" />
+		<CustomAction Id="CompleteService" BinaryRef="ServiceHelper" ExeCommand="service-complete &quot;[INSTALLDIR].&quot; &quot;[DATADIR].&quot; [WinunitdPolicyTransaction]" Execute="deferred" Impersonate="no" Return="check" />
 		<CustomAction Id="CommitService" BinaryRef="ServiceHelper" ExeCommand="service-commit &quot;[INSTALLDIR].&quot; &quot;[DATADIR].&quot; [WinunitdPolicyTransaction]" Execute="commit" Impersonate="no" Return="check" />
 		<CustomAction Id="InjectServiceFailure" BinaryRef="ServiceHelper" ExeCommand="fail" Execute="deferred" Impersonate="no" Return="check" />
 		<InstallUISequence>
@@ -219,7 +220,12 @@
 			<Custom Action="PrepareService" Before="StopServices" Condition="NOT UPGRADINGPRODUCTCODE" />
 			<!-- Commit actions run after a successful transaction, not at this sequence slot. -->
 			<Custom Action="CommitService" After="PrepareService" Condition="NOT UPGRADINGPRODUCTCODE" />
-			<Custom Action="InjectServiceFailure" After="StartServices" Condition="WINUNITD_TEST_FAIL = &quot;1&quot; AND NOT REMOVE AND NOT UPGRADINGPRODUCTCODE" />
+			<!-- A plain repeat /i may reinstall no component, so StartServices
+			     does nothing. Restore a service this transaction stopped while
+			     rollback is still available. Fresh install and major upgrade
+			     retain MSI startup, and removal must never restart it. -->
+			<Custom Action="CompleteService" After="StartServices" Condition="Installed AND NOT REMOVE AND NOT UPGRADINGPRODUCTCODE" />
+			<Custom Action="InjectServiceFailure" After="CompleteService" Condition="WINUNITD_TEST_FAIL = &quot;1&quot; AND NOT REMOVE AND NOT UPGRADINGPRODUCTCODE" />
 		</InstallExecuteSequence>
 	</Package>
 </Wix>

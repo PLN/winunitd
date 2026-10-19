@@ -118,6 +118,14 @@ install. Success deletes the record. On failure, after Windows Installer
 restores files and service registration, the helper restores the recorded
 configuration and the previous running or stopped state.
 
+Repeating `/i <package.msi>` with the exact installed package is maintenance,
+even without `REINSTALL=ALL`. If the service was running before that operation,
+the package starts it again before the transaction commits, including when no
+component was reinstalled. A service that was stopped stays stopped on that
+plain repeat install. Explicit repair (`/f` or `REINSTALL=ALL`) retains MSI's
+normal service-start behavior. A failed restart fails the transaction and runs
+the existing rollback; success does not restore the old service configuration.
+
 Restarting the manager after a successful upgrade starts enabled units.
 Units that were started manually and are not enabled are not restored.
 Known limit: operation history does not survive servicing. The restarted

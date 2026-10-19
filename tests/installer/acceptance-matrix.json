@@ -135,6 +135,38 @@
       }
     },
     {
+      "id": "repeat-install-running",
+      "gate": ["R6.4"],
+      "title": "Repeat the installed MSI with a running service and enabled worker",
+      "expect_exit": [0],
+      "expect_markers": [],
+      "requires": {
+        "identity": "elevated",
+        "interactive": false,
+        "offline": false,
+        "product": "present",
+        "older_msi": false,
+        "beta_msi": false,
+        "gui_sku": false
+      }
+    },
+    {
+      "id": "repeat-install-stopped",
+      "gate": ["R6.4"],
+      "title": "Repeat the installed MSI with a stopped service",
+      "expect_exit": [0],
+      "expect_markers": [],
+      "requires": {
+        "identity": "elevated",
+        "interactive": false,
+        "offline": false,
+        "product": "present",
+        "older_msi": false,
+        "beta_msi": false,
+        "gui_sku": false
+      }
+    },
+    {
       "id": "uninstall",
       "gate": ["R6.1", "R6.4"],
       "title": "Quiet uninstall",
@@ -234,6 +266,22 @@
       "id": "rollback-test-fail-stopped",
       "gate": ["R6.4"],
       "title": "WINUNITD_TEST_FAIL repair leaves a stopped service stopped",
+      "expect_exit": [1603],
+      "expect_markers": ["InjectServiceFailure"],
+      "requires": {
+        "identity": "elevated",
+        "interactive": false,
+        "offline": false,
+        "product": "present",
+        "older_msi": false,
+        "beta_msi": false,
+        "gui_sku": false
+      }
+    },
+    {
+      "id": "rollback-repeat-install-running",
+      "gate": ["R6.4"],
+      "title": "Rollback a failed plain repeat install after service completion",
       "expect_exit": [1603],
       "expect_markers": ["InjectServiceFailure"],
       "requires": {

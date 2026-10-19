@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
-func TestServiceRollbackWithoutPrepareDoesNotInspectRegistration(t *testing.T) {
+func TestServiceCompletionRequiresPrepareWhileRollbackDoesNot(t *testing.T) {
 	// Invalid directories would fail a real prepare. With no saved state,
 	// rollback has nothing to undo and does not open SCM.
 	var nonce [16]byte
@@ -23,6 +23,9 @@ func TestServiceRollbackWithoutPrepareDoesNotInspectRegistration(t *testing.T) {
 	token := hex.EncodeToString(nonce[:])
 	if err := serviceTransaction([]string{"service-rollback", `C:\Apps\Other`, `C:\Data\Other`, token}); err != nil {
 		t.Fatalf("rollback without prepare: %v", err)
+	}
+	if err := serviceTransaction([]string{"service-complete", `C:\Apps\Other`, `C:\Data\Other`, token}); !os.IsNotExist(err) {
+		t.Fatalf("completion without prepare must require its saved state: %v", err)
 	}
 }
 

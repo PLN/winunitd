@@ -1,6 +1,7 @@
 # Post-beta tracking
 
-Status refreshed October 14, 2026. The public 0.2.1-beta delivery gates B1-B4 are complete.
+Status refreshed October 19, 2026. The current unsigned public release is
+[0.5.0](RELEASE-NOTES-0.5.0.md). The public 0.2.1-beta delivery gates B1-B4 are complete.
 Prioritize adopter feedback and reproducible defects in the supported core, then
 continue the architecture and qualification backlog. Preserve documented beta
 syntax. Status follows the linked qualification evidence; no new release is
@@ -10,7 +11,14 @@ implied by this tracking update.
 
 GitHub milestones mirror [repository acceptance gates](MILESTONES.md). R2, R3, and R5
 technical acceptance is complete. For 0.1-alpha only, overall R6 is checked under the #251 deferral policy with documented limitations (deferred-media and deferred-older-msi). R0 and R1 remain in progress. R7 is accepted for the dev-machine pilot on 0.1-alpha ([evidence](R7-EVIDENCE.md)); R8 is in progress,
-with 0.3.0 published unsigned on October 14, 2026. R4 was accepted on October 14, 2026 with Microsoft Entra (cloud) accounts excluded from supported claims. This alpha check does not itself authorize the R7 handoff.
+with 0.5.0 published unsigned on October 15, 2026 and signing deferred. R4 was accepted on October 14, 2026 with Microsoft Entra (cloud) accounts excluded from supported claims. The accepted pilot remains a separate qualification record from the current release.
+
+## Earlier qualification notes
+
+The following notes trace intermediate results. Their remaining-work statements
+describe those earlier stages; the milestone summary above and
+[MILESTONES.md](MILESTONES.md) give the current acceptance status.
+
 The packaging spike is already delivered.
 R5.1 timer persistence and R5.2 delivery policy are technically complete;
 [timer evidence](R5-EVIDENCE.md#timer-delivery-acceptance) records the final
@@ -51,6 +59,8 @@ completes #112; R0.4's clean-input provisioning/session harness remains open.
 Planned milestones may have no implementation issues yet; their work packages
 remain in MILESTONES.md. There are no promised due dates.
 
+## Milestone links
+
 | Gate | GitHub tracking |
 | --- | --- |
 | R0 | [Reproducible baseline and qualification harness](https://github.com/PLN/winunitd/milestone/1) |
@@ -64,6 +74,19 @@ remain in MILESTONES.md. There are no promised due dates.
 | R8 | [Verified signed installation release](https://github.com/PLN/winunitd/milestone/9) |
 
 ## Focused follow-up
+
+The repeat-install service-state correction is tracked in
+[#25](https://github.com/PLN/winunitd/issues/25) and documented in the
+[installation guide](INSTALLATION.md#servicing-a-running-manager).
+[#22](https://github.com/PLN/winunitd/issues/22) records an intermittent nested-job
+cleanup assertion; its cause is not established. Further feature work requires
+a concrete consumer need. Signing and the broader qualification backlog retain
+their separate gates.
+
+## Earlier implementation tracking
+
+The list and narrative below preserve the earlier implementation sequence;
+completed work is recorded in the milestone evidence above.
 
 Test hardening #40 belongs to R0.
 The [test audit](TEST-HARDENING.md) records coverage and evidence boundaries.
@@ -89,9 +112,8 @@ the [maintenance contract](OPERATIONS.md#global-maintenance). The complete
 [coordinator audit and qualification](R2-EVIDENCE.md#consolidated-coordinator-acceptance)
 now finish the technical scope of #96/#97 and the R2 dependency of the delivered
 R3 conformance work. Broader session/security, operational stress, MSI servicing
-and signing retain their separate gates. The live pilot handoff and
-soak have not begun;
-successful beta installation and selected runtime tests do not close them.
+and signing retained their separate gates at that stage. The pilot subsequently
+completed its handoff, exercise and soak in October ([R7 evidence](R7-EVIDENCE.md)).
 
 September 13: Fable issues #162-#165 are closed by PR #166-#169: unrelated
 dependency allocation, journal retention, staticcheck enforcement and snapshot
