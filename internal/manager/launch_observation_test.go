@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -9,6 +10,39 @@ import (
 
 	"github.com/PLN/winunitd/internal/runtime"
 )
+
+func TestFailedReplacementStartPublishesFailure(t *testing.T) {
+	launch := &failSecondRecoveryLauncher{}
+	m := managerWith(t, launch, map[string]string{
+		"work.service": "[Service]\nExecStart=C:\\Tools\\work.exe\n",
+	})
+	if _, err := m.Start(context.Background(), "work"); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	old := m.units["work.service"].proc.(*fakeProc)
+	m.mu.Unlock()
+	// Liveness can become false before the old exit waiter is scheduled.
+	// Keep its wait blocked until the replacement start cleans up the process.
+	old.mu.Lock()
+	old.dead, old.exited = true, true
+	old.mu.Unlock()
+	const cause = "injected fresh start failure"
+	result, err := m.Start(context.Background(), "work")
+	if err == nil || !strings.Contains(err.Error(), cause) {
+		t.Fatalf("replacement error = %v, want %q", err, cause)
+	}
+	if result == nil || result.ActiveState != "failed" || !strings.Contains(result.Error, cause) {
+		t.Errorf("replacement result = %+v", result)
+	}
+	st, err := m.Status("work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Unit.ActiveState != "failed" || st.Unit.SubState != "" || st.Unit.MainPID != 0 || st.Unit.TerminationUncertain || !strings.Contains(st.Unit.Error, cause) {
+		t.Fatalf("status after failed replacement = %+v", st.Unit)
+	}
+}
 
 type delayedAliveLauncher struct {
 	fakeLauncher

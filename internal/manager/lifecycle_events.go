@@ -56,7 +56,7 @@ func (m *Manager) applyStartCompletionLocked(event observedStartCompletion) {
 	} else if event.err != nil {
 		state = core.Failed
 	}
-	m.applyStartOutcomeLocked(event.name, state, event.err != nil, event.message)
+	m.applyStartOutcomeLocked(event.name, state, event.err != nil, planned.launched, event.message)
 	if event.err == nil {
 		m.clearErrLocked(event.name)
 		if u := planned.record.ownedUnit(); scmServiceName(u) != "" || scheduledTaskName(u) != "" {
@@ -68,13 +68,13 @@ func (m *Manager) applyStartCompletionLocked(event observedStartCompletion) {
 
 // applyStartOutcomeLocked handles one identity-checked member outcome. Graph
 // transaction snapshots are diagnostic results, never lifecycle input.
-func (m *Manager) applyStartOutcomeLocked(name string, state core.State, failed bool, message string) {
+func (m *Manager) applyStartOutcomeLocked(name string, state core.State, failed, launched bool, message string) {
 	rt := m.units[name]
 	if rt == nil || rt.sub == core.SubAutoRestart {
 		return
 	}
-	if state == core.Failed && rt.state == core.Active {
-		return // successful members survive a later dependency failure
+	if state == core.Failed && rt.state == core.Active && !launched {
+		return // successful members survive a rejection before launch
 	}
 	if state == core.Active && rt.stopping {
 		return
