@@ -9,7 +9,7 @@
   The script does not assign an evidence id. Pass -EvidenceId only when
   publishing a reviewed run. A skipped case is missing evidence.
 
-  Installer 0.5.0 is the current product package; 0.4.0, 0.3.0, 0.1.1 and 0.1.0 are earlier releases. -OlderMsi is an
+  Installer 0.5.1 is the current source package; 0.5.0, 0.4.0, 0.3.0, 0.1.1 and 0.1.0 are earlier releases. -OlderMsi is an
   operator-supplied earlier package with the same UpgradeCode, or a
   package discovered under dist\wix, the top of packaging\wix, or
   beside the product MSI. This script does not invent a version.
@@ -42,8 +42,8 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 $ProgressPreference = 'SilentlyContinue'
 
-$InstallerVersion = '0.5.0'
-$ProductCode = 'CECB8AEC-2F03-4697-8924-3E6BB832A7C1'
+$InstallerVersion = '0.5.1'
+$ProductCode = 'B63628E2-7996-4FB1-801D-F2F2BB5985AB'
 $UpgradeCode = 'A512B91F-1883-40FD-8EDB-5B8C5708DEEA'
 $BetaUpgradeCode = '9443AE50-251B-4A46-9465-B835A3A27133'
 $script:PackageSha = ''
