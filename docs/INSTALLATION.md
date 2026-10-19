@@ -2,9 +2,10 @@
 
 This is the product MSI for WinUnit Manager. It is separate from the unsigned
 beta package in `packaging/beta`. The product UpgradeCode is
-`A512B91F-1883-40FD-8EDB-5B8C5708DEEA`. Installer version `0.5.0` uses
-ProductCode `CECB8AEC-2F03-4697-8924-3E6BB832A7C1` and the release `0.5.0`.
-It upgrades the public releases `0.4.0` (ProductCode
+`A512B91F-1883-40FD-8EDB-5B8C5708DEEA`. Installer version `0.5.1` uses
+ProductCode `B63628E2-7996-4FB1-801D-F2F2BB5985AB` and the release `0.5.1`.
+It upgrades the public releases `0.5.0` (ProductCode
+`CECB8AEC-2F03-4697-8924-3E6BB832A7C1`), `0.4.0` (ProductCode
 `2EF31E5B-5159-4629-8D9D-5C9A9298FE0A`) and `0.3.0` (ProductCode
 `7ECF027D-4F7D-4876-B050-A31A18CEFA8E`), and the unpublished pilot
 installers `0.1.1` (ProductCode `536EFA93-783D-436E-92BF-598D1938BF2C`) and

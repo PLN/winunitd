@@ -1,9 +1,9 @@
 # winunitd roadmap
 
 **Current priority: supported-path defects and adopter feedback.** The current
-public release is [0.5.0](docs/RELEASE-NOTES-0.5.0.md), published unsigned on
-October 15, 2026. The MSI-backed pilot completed its exercise and 24-hour soak
-on 0.1.1-alpha ([R7 evidence](docs/R7-EVIDENCE.md)); that recorded pilot version
+source release is [0.5.1](docs/RELEASE-NOTES-0.5.1.md), an unsigned patch.
+0.5.0 was published on October 15, 2026. The MSI-backed pilot completed its
+exercise and 24-hour soak on 0.1.1-alpha ([R7 evidence](docs/R7-EVIDENCE.md)); that recorded pilot version
 is separate from the current release. Signing remains deferred.
 [Post-beta tracking](docs/POST-BETA-TRACKING.md) links the remaining work to the
 R0-R8 acceptance gates.
@@ -44,7 +44,7 @@ this iteration.
 
 ## Milestone sequence
 
-R2, R3, and R5 have completed technical acceptance. For 0.1-alpha only, overall R6 is checked under the #251 deferral policy with documented limitations (deferred-media and deferred-older-msi). R0 and R1 remain **in progress**; R4 was accepted on October 14, 2026. R7 is accepted for the dev-machine pilot on 0.1-alpha ([evidence](docs/R7-EVIDENCE.md)); R8 is in progress, with 0.5.0 published unsigned on October 15, 2026 and signing deferred. The [coordinator audit](docs/R2-COORDINATOR-AUDIT.md) and [consolidated evidence](docs/R2-EVIDENCE.md#consolidated-coordinator-acceptance) record the latest closure. Their IDs track the longer-term design, not beta release prerequisites or deadlines. See the milestones for completed work packages and qualification evidence; B1-B4 record the completed first beta delivery. Use the post-beta tracking for current work.
+R2, R3, and R5 have completed technical acceptance. For 0.1-alpha only, overall R6 is checked under the #251 deferral policy with documented limitations (deferred-media and deferred-older-msi). R0 and R1 remain **in progress**; R4 was accepted on October 14, 2026. R7 is accepted for the dev-machine pilot on 0.1-alpha ([evidence](docs/R7-EVIDENCE.md)); R8 is in progress, with source release 0.5.1 and signing deferred. The [coordinator audit](docs/R2-COORDINATOR-AUDIT.md) and [consolidated evidence](docs/R2-EVIDENCE.md#consolidated-coordinator-acceptance) record the latest closure. Their IDs track the longer-term design, not beta release prerequisites or deadlines. See the milestones for completed work packages and qualification evidence; B1-B4 record the completed first beta delivery. Use the post-beta tracking for current work.
 
 | ID | Outcome | Depends on | Completion signal |
 | --- | --- | --- | --- |

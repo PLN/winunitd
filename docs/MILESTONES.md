@@ -1,14 +1,15 @@
 # Revision 2 implementation milestones
 
-**Delivery status:** [0.5.0](RELEASE-NOTES-0.5.0.md) was published unsigned on
-October 15, 2026. The pilot exercise and 24-hour soak are accepted for the
-recorded 0.1.1-alpha deployment ([R7 evidence](R7-EVIDENCE.md)). Prioritize
+**Delivery status:** The current source release is [0.5.1](RELEASE-NOTES-0.5.1.md).
+0.5.0 was published unsigned on October 15, 2026. The pilot exercise and 24-hour
+soak are accepted for the recorded 0.1.1-alpha deployment
+([R7 evidence](R7-EVIDENCE.md)). Prioritize
 supported-path defects and adopter feedback; signing and the remaining broader
 qualification work retain their separate acceptance gates.
 
 Status updated October 19, 2026. Implements [ROADMAP.md](../ROADMAP.md) and [Design v2](../DESIGN.md).
 R2, R3, and R5 have completed their technical acceptance. For 0.1-alpha, overall R6 is checked with documented limitations (deferred-media and deferred-older-msi). R0 and R1 remain
-**in progress**; R4 was accepted on October 14, 2026. R7 is accepted for the dev-machine pilot on 0.1-alpha; R8 is in progress, with 0.5.0 published unsigned and signing deferred. The packaging spike and public beta are
+**in progress**; R4 was accepted on October 14, 2026. R7 is accepted for the dev-machine pilot on 0.1-alpha; R8 is in progress, with source release 0.5.1 and signing deferred. The packaging spike and public beta are
 already delivered. [Post-beta tracking](POST-BETA-TRACKING.md)
 maps the GitHub milestones and focused issues to these gates. Documentation and
 issue creation do not complete implementation or substitute for acceptance.
@@ -138,7 +139,7 @@ Exit gate: all three components meet their health/authentication checks under MS
 
 ## R8 — Public source and verified installation release
 
-Status: in progress. Version 0.3.0 was the first public release of the product package on October 14, 2026; 0.5.0 is the current unsigned release, published October 15. Signing waits for R8.2. Dependencies for release: R7. Public-source/provider preparation may begin earlier under roadmap policy.
+Status: in progress. Version 0.3.0 was the first public release of the product package on October 14, 2026; 0.5.0 was published unsigned on October 15. The current source release is 0.5.1. Signing waits for R8.2. Dependencies for release: R7. Public-source/provider preparation may begin earlier under roadmap policy.
 
 - [x] **R8.1 Public readiness:** public source and unsigned beta publication are complete under the recorded [B4 review and decision](BETA-RELEASE.md#publication-decision). For the signed release, review source history and release inputs for credentials, personal names, real machine names, internal addresses, and host artifacts; review historical content against the recorded publication decision and resolve newly discovered exposure before publishing new artifacts. Complete behavior, installation, recovery, support, license, and security-reporting documentation. Record qualified platforms/modes. Source visibility changes remain a separate action. Done for 0.3.0 on October 14, 2026. [SECURITY.md](../SECURITY.md), [SUPPORT.md](../SUPPORT.md), and the [installation guide](INSTALLATION.md) cover reporting, supported configurations, and the move from the beta. The history review found one exposure, handled by replacing the repository ([publication decision](BETA-RELEASE.md#publication-decision)). Repeat the review for new content before the signed release.
 - [ ] **R8.2 Provider:** investigate/apply to SignPath Foundation once eligible; record terms, roles, MFA, manual signing approval, required policy, verifiable build origin, and Windows publisher display. If not accepted, select an eligible alternative. Do not claim acceptance before enrollment succeeds.
