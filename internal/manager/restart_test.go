@@ -196,7 +196,7 @@ Type=simple
 ExecStart=C:\Tools\web.exe
 WorkingDirectory=C:\Tools
 Restart=always
-RestartSec=5s
+RestartSec=7s
 `,
 		"db.service": `
 [Service]
@@ -211,7 +211,9 @@ Restart=no
 	}
 	launch.releaseExits()
 	waitSub(t, m, "web.service", core.SubAutoRestart)
-	advanceWait(t, fk, 5*time.Second)
+	// Distinguish the recovery timer from the five-second cleanup deadline.
+	waitCond(t, func() bool { return fk.WaitingAt(7 * time.Second) })
+	fk.Advance(7 * time.Second)
 	waitCond(t, func() bool {
 		nweb := 0
 		for _, name := range launch.units() {

@@ -296,6 +296,43 @@ func TestLaunchRejectsUnownedDaemonJob(t *testing.T) {
 	})
 }
 
+func TestTerminateDaemonChildRequiresExitConfirmation(t *testing.T) {
+	t.Run("exited", func(t *testing.T) {
+		sleeper := startSleepHelper(t, nil)
+		process, err := windows.OpenProcess(windows.SYNCHRONIZE|windows.PROCESS_TERMINATE, false, uint32(sleeper.Process.Pid))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer windows.CloseHandle(process)
+		if err := windows.TerminateProcess(process, 1); err != nil {
+			t.Fatal(err)
+		}
+		if state, err := windows.WaitForSingleObject(process, 5000); err != nil || state != windows.WAIT_OBJECT_0 {
+			t.Fatalf("child exit unconfirmed: wait=%d err=%v", state, err)
+		}
+		if err := windows.TerminateProcess(process, 1); !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			t.Fatalf("terminating an exited process = %v, want access denied", err)
+		}
+		if err := terminateDaemonChild(process); err != nil {
+			t.Fatalf("confirmed child exit: %v", err)
+		}
+	})
+	t.Run("live without terminate rights", func(t *testing.T) {
+		sleeper := startSleepHelper(t, nil)
+		process, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(sleeper.Process.Pid))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer windows.CloseHandle(process)
+		if err := terminateDaemonChild(process); !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			t.Fatalf("live child without terminate rights = %v, want access denied", err)
+		}
+		if state, err := windows.WaitForSingleObject(process, 0); err != nil || state != uint32(windows.WAIT_TIMEOUT) {
+			t.Fatalf("denied child must remain live: wait=%d err=%v", state, err)
+		}
+	})
+}
+
 func TestDaemonSelfCloseConfirmsChildrenAndRetainsFailures(t *testing.T) {
 	for _, fault := range []string{"none", "query", "terminate", "captured-close", "job-close"} {
 		t.Run(fault, func(t *testing.T) {
