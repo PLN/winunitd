@@ -260,6 +260,8 @@ still missing evidence.
 | `offline-install` | R6.4 | 0 | Same assertions with no default route. An empty IPv4 and IPv6 default-route table is offline. The probe is indeterminate only when NetTCPIP cannot load. The harness removes and restores that route for this case |
 | `repair-fa` | R6.1, R6.4 | 0 | Quiet `/fa` repair keeps the layout, event source, and PATH ownership |
 | `repair-reinstall` | R6.1, R6.4 | 0 | Quiet `/i REINSTALL=ALL REINSTALLMODE=amus` repair, the same layout assertions |
+| `repeat-install-running` | R6.4 | 0 | Plain `/i` of the exact installed MSI restores the running service, control endpoint and enabled worker; unit bytes and enablement stay |
+| `repeat-install-stopped` | R6.4 | 0 | Plain `/i` of the exact installed MSI leaves a stopped service stopped; payload bytes stay |
 | `uninstall` | R6.1, R6.4 | 0 | Service, product binaries, event source, and the owned PATH entry are gone. Unrelated PATH entries stay. ProgramData and a retained marker stay |
 | `reinstall-retained` | R6.4 | 0 | After uninstall, enabled `alice.service` starts again. Manually started, non-enabled `bob.service` stays inactive. Unit bytes stay |
 | `downgrade` | R6.4 | 1603 | Log contains `A newer package is installed.` Payload hash and service state stay |
@@ -267,6 +269,7 @@ still missing evidence.
 | `locked-file` | R6.4 | 1603 | Log contains `abort replacement`. Payload hash is unchanged. `reboot_started` is false |
 | `rollback-test-fail-running` | R6.4 | 1603 | `WINUNITD_TEST_FAIL=1` during `/fa`. Log contains `InjectServiceFailure`. Delayed start and the running state are restored. Same-version bytes match; the delayed-start value is the restore check |
 | `rollback-test-fail-stopped` | R6.4 | 1603 | Same injected failure from a stopped service. The service stays stopped and delayed start is restored |
+| `rollback-repeat-install-running` | R6.4 | 1603 | `WINUNITD_TEST_FAIL=1` during plain repeat `/i`, after completion restarted the service. Running state, delayed start and payload bytes are restored |
 | `rollback-upgrade` | R6.4 | 1603 | Injected failure while moving from the older package to `0.1.0`. The older payload hash, delayed start, and running state are restored |
 | `non-admin` | R6.4 | 1601, 1602, 1603, or 1625 | Quiet install without an elevated token. An elevated parent creates fixture user alice, starts the Secondary Logon service, and starts msiexec with LogonUser and CreateProcessAsUser. A start failure note includes the Win32 code. A standard-user quiet install may return 1601 when Windows Installer service access is denied, and the product must stay absent |
 | `beta-conflict` | R6.4 | 1603 | Unsigned beta is installed. Product install logs `The unsigned beta package is installed.` and leaves the beta in place. The harness discovers a built beta MSI when `-BetaMsi` is omitted, stops winunitd, waits until it is stopped, then removes the beta. A failed removal force-stops the service and records the remove exit |

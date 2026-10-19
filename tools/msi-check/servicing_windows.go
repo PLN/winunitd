@@ -45,7 +45,7 @@ func serviceTransaction(args []string) error {
 		if len(args) != 7 || !validServiceToken(args[3]) {
 			return fmt.Errorf("invalid service transaction arguments")
 		}
-	case "service-rollback", "service-commit":
+	case "service-rollback", "service-complete", "service-commit":
 		if len(args) != 4 || !validServiceToken(args[3]) {
 			return fmt.Errorf("invalid service transaction arguments")
 		}
@@ -59,7 +59,7 @@ func serviceTransaction(args []string) error {
 	}
 	if op != "service-prepare" {
 		saved, err := readServiceState(statePath, token)
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, os.ErrNotExist) && op != "service-complete" {
 			return nil // Prepare may not have run before rollback.
 		}
 		if err != nil {
@@ -67,6 +67,9 @@ func serviceTransaction(args []string) error {
 		}
 		if err := requireStandardDirs(args[1], args[2]); err != nil {
 			return err
+		}
+		if op == "service-complete" {
+			return completeService(saved)
 		}
 		if op == "service-rollback" && saved.Policy.Exists {
 			if err := rollbackService(saved); err != nil {
@@ -401,6 +404,46 @@ func rollbackService(saved savedServiceState) error {
 	}
 	if err := waitServiceState(s, svc.Running, time.Now().Add(serviceStopBudget)); err != nil {
 		return fmt.Errorf("rollback did not restore running state: %w", err)
+	}
+	return nil
+}
+
+// completeService restores a manager stopped by installed-package maintenance
+// when no component was reinstalled, so MSI's StartServices did not start it.
+// Keep the snapshot for rollback until commit; successful maintenance must not
+// restore the previous service policy or start a previously stopped service.
+func completeService(saved savedServiceState) error {
+	if !saved.Policy.Exists || !saved.Running {
+		return nil
+	}
+	m, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(runtime.ServiceName)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	st, err := s.Query()
+	if err != nil {
+		return err
+	}
+	switch st.State {
+	case svc.Running:
+		return nil
+	case svc.Stopped:
+		if err := s.Start(); err != nil && !errors.Is(err, windows.ERROR_SERVICE_ALREADY_RUNNING) {
+			return err
+		}
+	case svc.StartPending:
+		// MSI may have started it; wait without issuing a second start.
+	default:
+		return fmt.Errorf("maintenance cannot restore running state: service is in transition")
+	}
+	if err := waitServiceState(s, svc.Running, time.Now().Add(serviceStopBudget)); err != nil {
+		return fmt.Errorf("maintenance did not restore running state: %w", err)
 	}
 	return nil
 }
