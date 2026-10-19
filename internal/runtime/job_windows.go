@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -182,7 +183,7 @@ func (j *DaemonJob) Close() error {
 			if !member {
 				return fmt.Errorf("captured process is no longer a daemon job member")
 			}
-			if err := windows.TerminateProcess(process, 1); err != nil {
+			if err := terminateDaemonChild(process); err != nil {
 				return fmt.Errorf("terminate daemon child: %w", err)
 			}
 		}
@@ -218,6 +219,20 @@ func (j *DaemonJob) Close() error {
 	}
 	j.handle = 0
 	return nil
+}
+
+func terminateDaemonChild(process windows.Handle) error {
+	err := windows.TerminateProcess(process, 1)
+	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		// A child can exit after the caller's liveness check. Windows also
+		// returns access denied when terminating an already exited process;
+		// only a signaled held handle distinguishes that from a live denial.
+		state, waitErr := windows.WaitForSingleObject(process, 0)
+		if waitErr == nil && state == windows.WAIT_OBJECT_0 {
+			return nil
+		}
+	}
+	return err
 }
 
 // Closed reports whether Close has released the job handle.
