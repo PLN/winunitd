@@ -999,6 +999,7 @@ func (m *Manager) Verify(name string) (*protocol.VerifyResult, error) {
 	}
 	m.mu.Unlock()
 
+	rep.Issues = append(rep.Issues, unit.UserScopeIssues(rep.Unit, userScope)...)
 	rep.Issues = append(rep.Issues, unit.RegistryScopeIssues(rep.Unit, userScope)...)
 	rep.Issues = append(rep.Issues, unit.EventLogScopeIssues(rep.Unit, userScope)...)
 	if companionMissing != "" {

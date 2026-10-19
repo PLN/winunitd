@@ -67,6 +67,58 @@ func userUnitManager(t *testing.T, body string, dir *accountDirectory) (*Manager
 
 const userService = "[Unit]\nFormatVersion=2\n[Service]\nExecStart=C:\\Tools\\work.exe\nExecStop=C:\\Tools\\stop.exe\nWorkingDirectory=C:\\Tools\nEnvironment=CONFIG=unit\nTimeoutStopSec=5s\n"
 
+func TestUserUnitVerifyRechecksScope(t *testing.T) {
+	for _, userScope := range []bool{true, false} {
+		name := "system"
+		if userScope {
+			name = "user"
+		}
+		t.Run(name, func(t *testing.T) {
+			m, err := New(Config{BaseDir: t.TempDir(), Launch: &fakeLauncher{}, UserScope: userScope})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { stopAll(m) })
+			if err := os.MkdirAll(m.cfg.UnitsDir(), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			writeUnit(t, m.cfg.UnitsDir(), "work.service", userService)
+			if rel, err := m.Reload(); err != nil || len(rel.Errors) != 0 {
+				t.Fatalf("initial reload = %+v, %v", rel, err)
+			}
+			if rep, err := m.Verify("work"); err != nil || !rep.OK {
+				t.Fatalf("valid unit = %+v, %v", rep, err)
+			}
+
+			// Verify re-reads the edited file before Reload accepts or rejects it.
+			writeUnit(t, m.cfg.UnitsDir(), "work.service", userService+"User=alice\n")
+			rep, err := m.Verify("work")
+			if err != nil {
+				t.Fatal(err)
+			}
+			rel, err := m.Reload()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !userScope {
+				if !rep.OK || len(rel.Errors) != 0 {
+					t.Fatalf("system scope rejected User=: verify %+v, reload %+v", rep, rel)
+				}
+				return
+			}
+			found := false
+			for _, issue := range rep.Issues {
+				if issue.Severity == "error" && strings.Contains(issue.Message, "User is only supported in system units") {
+					found = true
+				}
+			}
+			if rep.OK || !found || !strings.Contains(strings.Join(rel.Errors, "\n"), "User is only supported in system units") {
+				t.Fatalf("user scope must reject User= in both paths: verify %+v, reload %+v", rep, rel)
+			}
+		})
+	}
+}
+
 func TestUserUnitRunsAsItsInvocationAccount(t *testing.T) {
 	t.Setenv("WINUNITD_MANAGER_ONLY", "must-not-reach-the-unit")
 	dir := &accountDirectory{}
