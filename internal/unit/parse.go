@@ -601,7 +601,23 @@ func (p *parser) applyPath(e iniEntry) {
 func (p *parser) applyInstall(e iniEntry) {
 	switch e.key {
 	case "WantedBy":
-		p.unit.WantedBy = applyList(p.unit.WantedBy, e.value)
+		if e.value == "" {
+			p.unit.WantedBy = nil
+			return
+		}
+		for _, n := range parseUnitNames(e.value) {
+			n = NormalizeName(n)
+			if n == "" {
+				continue
+			}
+			// Enable creates enabled/<target>/<unit>; a target must stay one
+			// directory below enabled/.
+			if err := CheckLinkName(n); err != nil {
+				p.errorf(e.line, "invalid WantedBy: %v", err)
+				continue
+			}
+			p.unit.WantedBy = append(p.unit.WantedBy, n)
+		}
 	}
 }
 

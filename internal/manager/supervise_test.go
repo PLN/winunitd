@@ -258,6 +258,10 @@ func (l *holdExitLauncher) Start(ctx context.Context, spec runtime.StartSpec) (r
 	if l.pid != 0 {
 		p.pid = l.pid
 	}
+	// Assign before the spec (and its notify address) becomes visible.
+	if spec.Assigned != nil {
+		spec.Assigned(p.pid, job)
+	}
 	l.mu.Lock()
 	l.n++
 	l.starts = append(l.starts, spec)

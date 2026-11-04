@@ -35,6 +35,13 @@ func (m *Manager) Enable(name string) (*protocol.EnableResult, error) {
 		targets = []string{DefaultTarget}
 	}
 	normalized := uniqueTargets(targets)
+	// The parser rejects these; recheck every name before any write so a
+	// link can never land outside enabled/<target>/.
+	for _, n := range append([]string{name}, normalized...) {
+		if err := unit.CheckLinkName(n); err != nil {
+			return nil, protocol.ErrFailed(err.Error())
+		}
+	}
 	for _, t := range normalized {
 		path := m.cfg.EnabledPath(t, name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
