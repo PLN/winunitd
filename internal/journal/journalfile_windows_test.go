@@ -84,18 +84,39 @@ func dACLAllowsWellKnown(t *testing.T, path string, kind windows.WELL_KNOWN_SID_
 
 // assertJournalFileProtected requires the daemon-log principal set on a
 // protected DACL and the process user, not a group or other identity, as owner.
+// It applies to files the store created.
 func assertJournalFileProtected(t *testing.T, path string) {
+	t.Helper()
+	assertJournalFileRepaired(t, path, journalTestUser(t))
+}
+
+// assertJournalFileRepaired requires the daemon-log principal set on a
+// protected DACL and the given owner. Repair replaces only the DACL, so an
+// existing file keeps its trusted owner.
+func assertJournalFileRepaired(t *testing.T, path string, owner *windows.SID) {
 	t.Helper()
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		t.Fatalf("%s: %v", filepath.Base(path), err)
 	}
-	user := journalTestUser(t)
-	owner, _, err := sd.Owner()
-	if err != nil || owner == nil || !owner.Equals(user) {
-		t.Fatalf("%s owner = %v, want process user (err=%v)", filepath.Base(path), owner, err)
+	got, _, err := sd.Owner()
+	if err != nil || got == nil || !got.Equals(owner) {
+		t.Fatalf("%s owner = %v, want %v (err=%v)", filepath.Base(path), got, owner, err)
 	}
-	assertDaemonDACL(t, sd, user)
+	assertDaemonDACL(t, sd, journalTestUser(t))
+}
+
+func journalFileOwner(t *testing.T, path string) *windows.SID {
+	t.Helper()
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, _, err := sd.Owner()
+	if err != nil || owner == nil {
+		t.Fatalf("%s owner: %v", filepath.Base(path), err)
+	}
+	return owner
 }
 
 func TestJournalFileSDDL(t *testing.T) {
@@ -153,22 +174,95 @@ func TestJournalFilesProtectedUnderPermissiveParent(t *testing.T) {
 	assertDiskAccounting(t, s)
 }
 
+// Existing files keep a trusted owner: the process user, SYSTEM or
+// Administrators. An elevated creator usually leaves Administrators as owner,
+// a filtered token leaves the user. The default case keeps whichever the test
+// token produced; the explicit cases cover both owners, and the restricted
+// case repairs an Administrators-owned file without Administrators in effect.
 func TestJournalRepairsExistingFiles(t *testing.T) {
-	dir := filepath.Join(permissiveJournalParent(t), "journal")
+	for _, tc := range []struct {
+		name, owner string // owner: "" keeps the creator default, else user or admins
+		restricted  bool
+	}{
+		{name: "creator default owner"},
+		{name: "process user owner", owner: "user"},
+		{name: "administrators owner", owner: "admins"},
+		{name: "administrators owner restricted token", owner: "admins", restricted: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var owner *windows.SID
+			switch tc.owner {
+			case "user":
+				owner = journalTestUser(t)
+			case "admins":
+				sid, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
+				if err != nil {
+					t.Fatal(err)
+				}
+				owner = sid
+			}
+			if tc.restricted && journalTestUser(t).IsWellKnown(windows.WinLocalSystemSid) {
+				t.Skip("requires user-token lane: disabling Administrators cannot remove LocalSystem identity")
+			}
+			dir, current, archive, legacy := legacyJournalFiles(t, owner)
+			run := func() {
+				repairLegacyJournal(t, dir, current, archive, legacy)
+			}
+			if tc.restricted {
+				withoutAdministrators(t, run)
+			} else {
+				run()
+			}
+		})
+	}
+}
+
+// legacyJournalFiles writes a current and an archive journal that inherit
+// Users access, optionally setting their owner first. It skips when the test
+// token cannot assign that owner, as a filtered token cannot assign
+// Administrators.
+func legacyJournalFiles(t *testing.T, owner *windows.SID) (dir, current, archive, legacy string) {
+	t.Helper()
+	dir = filepath.Join(permissiveJournalParent(t), "journal")
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	const name = "legacy.service"
-	current := filepath.Join(dir, unitFileName(name))
-	archive := current + ".2"
-	legacy := `{"v":4,"timestamp":"2026-01-01T00:00:00Z","unit":"legacy.service","message":"legacy","severity":"","session":"","userSid":""}` + "\n"
+	current = filepath.Join(dir, unitFileName("legacy.service"))
+	archive = current + ".2"
+	legacy = `{"v":4,"timestamp":"2026-01-01T00:00:00Z","unit":"legacy.service","message":"legacy","severity":"","session":"","userSid":""}` + "\n"
 	for _, path := range []string{current, archive} {
 		if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		if owner != nil {
+			err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION, owner, nil, nil, nil)
+			if errors.Is(err, windows.ERROR_INVALID_OWNER) {
+				t.Skipf("test token cannot assign owner %v", owner)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := journalFileOwner(t, path); !got.Equals(owner) {
+				t.Fatalf("legacy owner = %v, want %v", got, owner)
+			}
+		}
 		if !dACLAllowsWellKnown(t, path, windows.WinBuiltinUsersSid) {
 			t.Fatal("legacy file did not inherit Users access")
 		}
+	}
+	return dir, current, archive, legacy
+}
+
+func repairLegacyJournal(t *testing.T, dir, current, archive, legacy string) {
+	t.Helper()
+	const name = "legacy.service"
+	owners := map[string]*windows.SID{}
+	for _, path := range []string{current, archive} {
+		owner := journalFileOwner(t, path)
+		if !daemonPathOwnerAllowed(owner, journalTestUser(t)) {
+			t.Fatalf("%s legacy owner %v is not trusted", filepath.Base(path), owner)
+		}
+		owners[path] = owner
 	}
 	s, err := Open(dir)
 	if err != nil {
@@ -182,7 +276,7 @@ func TestJournalRepairsExistingFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, path := range []string{current, archive} {
-		assertJournalFileProtected(t, path)
+		assertJournalFileRepaired(t, path, owners[path])
 	}
 	body, err := os.ReadFile(current)
 	if err != nil || !strings.HasPrefix(string(body), legacy) || !strings.Contains(string(body), `"message":"new"`) {
