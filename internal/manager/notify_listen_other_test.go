@@ -61,6 +61,10 @@ func (l *unixNotifyListener) Accept() (notify.Conn, error) {
 	return unixNotifyConn{Conn: c}, nil
 }
 
+// Unix socket peers carry no client PID. This test-only marker lets notify
+// admission accept them once the main process is assigned.
+func (*unixNotifyListener) notifyUnidentifiedPeersForTest() {}
+
 func (l *unixNotifyListener) Close() error {
 	err := l.ln.Close()
 	_ = os.RemoveAll(l.dir)

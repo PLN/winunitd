@@ -1270,10 +1270,6 @@ func (f *fakeLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runti
 		}
 	}
 	f.mu.Lock()
-	f.starts = append(f.starts, spec)
-	if f.firstAt.IsZero() {
-		f.firstAt = time.Now()
-	}
 	out, errOut := f.stdout, f.stderr
 	pid := f.pid
 	f.mu.Unlock()
@@ -1284,6 +1280,18 @@ func (f *fakeLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runti
 	if err != nil {
 		return nil, err
 	}
+	// Like the Windows launcher, report the job before the workload can act:
+	// tests read the notify address from the recorded spec and then act as
+	// the workload, which notify admission accepts only after assignment.
+	if spec.Assigned != nil {
+		spec.Assigned(pid, job)
+	}
+	f.mu.Lock()
+	f.starts = append(f.starts, spec)
+	if f.firstAt.IsZero() {
+		f.firstAt = time.Now()
+	}
+	f.mu.Unlock()
 	p := &fakeProc{
 		name:   spec.Unit,
 		rec:    f,

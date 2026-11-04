@@ -206,7 +206,9 @@ and `%NAME%` are not substituted.
 | Install: `WantedBy` | Enable links for named targets; enable does not itself start a service |
 
 Dependency lists and `WantedBy` split on whitespace, append on repetition, and
-clear on an empty assignment. Use `.target` files with `[Unit]`/`[Install]` to
+clear on an empty assignment. Each `WantedBy` entry must be a single name:
+path separators, drive or stream colons, control characters and Windows-invalid
+filename characters are rejected. Use `.target` files with `[Unit]`/`[Install]` to
 group services. `Requires` and ordering are independent: specify `After` when a
 dependent must wait for required startup. A failed transaction does not roll back
 every member that already started.

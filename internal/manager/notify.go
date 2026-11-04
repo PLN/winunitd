@@ -30,6 +30,17 @@ type notifyRuntime struct {
 	job       runtime.Job
 	readySet  bool
 	closed    bool
+	// unidentifiedPeers admits clients whose listener reports no PID. Only
+	// a manager test listener can enable it (notifyUnidentifiedPeersForTest).
+	unidentifiedPeers bool
+}
+
+// notifyUnidentifiedPeersForTest marks a manager test listener whose transport
+// cannot report a client PID (Unix sockets, net.Pipe). The method is
+// unexported, so no production listener can implement it: on Windows a failed
+// client PID lookup always fails closed.
+type notifyUnidentifiedPeersForTest interface {
+	notifyUnidentifiedPeersForTest()
 }
 
 // openNotify opens the invocation's notify pipe. userSID, when set, is the
@@ -57,16 +68,18 @@ func (m *Manager) openNotify(name, invocation, userSID string) (*notifyRuntime, 
 	if lis == nil {
 		return nil, fmt.Errorf("notification open returned no listener")
 	}
+	_, unidentified := lis.(notifyUnidentifiedPeersForTest)
 	lis = &notifyCloseListener{Listener: lis}
 	ctx, cancel := context.WithCancel(context.Background())
 	rt := &notifyRuntime{
-		name:      name,
-		lis:       lis,
-		cancel:    cancel,
-		ready:     make(chan struct{}),
-		pulse:     make(chan struct{}, 8),
-		done:      make(chan struct{}),
-		serveDone: make(chan struct{}),
+		name:              name,
+		lis:               lis,
+		cancel:            cancel,
+		ready:             make(chan struct{}),
+		pulse:             make(chan struct{}, 8),
+		done:              make(chan struct{}),
+		serveDone:         make(chan struct{}),
+		unidentifiedPeers: unidentified,
 	}
 	go func() {
 		defer close(rt.serveDone)
@@ -94,20 +107,27 @@ func (r *notifyRuntime) SetMain(pid int, job runtime.Job) {
 	r.mu.Unlock()
 }
 
+// allowed decides admission once per accepted connection, and the decision
+// lasts for the connection's lifetime, so it fails closed. The listener serves
+// before the process exists; until SetMain no client can be shown to belong to
+// the unit. The Windows launcher assigns the main process to its job and calls
+// SetMain (StartSpec.Assigned) before the process runs, so a legitimate
+// workload never connects earlier. A client PID that cannot be read is
+// rejected unless a test listener declares that it never reports one.
 func (r *notifyRuntime) allowed(pid int) bool {
 	if r == nil {
 		return false
 	}
-	if pid <= 0 {
-		// Fake TCP listener (Linux tests): no client PID.
-		return true
-	}
 	r.mu.Lock()
 	main := r.mainPID
 	job := r.job
+	unidentified := r.unidentifiedPeers
 	r.mu.Unlock()
 	if main <= 0 {
-		return true
+		return false
+	}
+	if pid <= 0 {
+		return unidentified
 	}
 	if pid == main {
 		return true

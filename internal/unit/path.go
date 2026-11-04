@@ -18,6 +18,29 @@ func NormalizeName(name string) string {
 	return name + ".service"
 }
 
+// CheckLinkName reports whether name can serve as one file-name component,
+// as WantedBy= targets must under the enabled tree. Path separators of either
+// platform, drive or stream colons, Windows-invalid file-name characters,
+// control characters and dot components are rejected, so a name never
+// leaves its parent directory.
+func CheckLinkName(name string) error {
+	switch name {
+	case "":
+		return fmt.Errorf("empty unit name")
+	case ".", "..":
+		return fmt.Errorf("unit name %q is not a file name", name)
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("unit name %q contains a control character", name)
+		}
+		if strings.ContainsRune(`/\:*?"<>|`, r) {
+			return fmt.Errorf("unit name %q must be a single name without %q", name, r)
+		}
+	}
+	return nil
+}
+
 // KindFromName returns the unit kind implied by a file name.
 func KindFromName(name string) (Kind, error) {
 	n := strings.ToLower(name)
