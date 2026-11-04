@@ -34,6 +34,12 @@ winunitd runs as a LocalSystem service. These boundaries matter for reports:
 - The control pipes check the caller's identity: one user cannot control
   another user's manager or the system manager.
 
+The shared Windows Application event log contains manager lifecycle and
+start-limit metadata, including unit names and restart timing. Users who can
+read that channel may see this metadata for other managers. These events do
+not include workload output, command lines or environment variables; the
+metadata is an exception to log isolation.
+
 A way for a standard user to cross one of these boundaries, run code as SYSTEM
 or another user, or read another user's units, logs or data is in scope.
 Behaviour that needs administrator rights to begin with is not. The

@@ -15,6 +15,13 @@ import (
 )
 
 func TestDaemonLogNonAdminIdentity(t *testing.T) {
+	withoutAdministrators(t, func() { testDaemonLogNonAdminWrites(t) })
+}
+
+// withoutAdministrators runs fn on a locked thread impersonating the current
+// user with privileges removed and Administrators deny-only.
+func withoutAdministrators(t *testing.T, fn func()) {
+	t.Helper()
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +68,7 @@ func TestDaemonLogNonAdminIdentity(t *testing.T) {
 		}
 		runtime.UnlockOSThread()
 	}()
-	testDaemonLogNonAdminWrites(t)
+	fn()
 }
 
 func testDaemonLogNonAdminWrites(t *testing.T) {
