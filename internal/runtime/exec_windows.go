@@ -417,11 +417,8 @@ func (p *winProc) Alive() bool {
 	if p.exited {
 		return false
 	}
-	var code uint32
-	if err := windows.GetExitCodeProcess(p.process, &code); err != nil {
-		return false
-	}
-	return code == stillActiveExit
+	exited, err := processHandleExited(p.process)
+	return err == nil && !exited
 }
 
 func (p *winProc) Wait(ctx context.Context) error {

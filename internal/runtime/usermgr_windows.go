@@ -283,11 +283,10 @@ func (p *userMgrProc) Alive() bool {
 	if p.closed || p.process == 0 {
 		return false
 	}
-	var code uint32
-	if err := windows.GetExitCodeProcess(p.process, &code); err != nil {
-		return false
-	}
-	return code == stillActiveExit
+	// Derive liveness from the handle state, not the exit code: a manager
+	// that exited with code 259 (STILL_ACTIVE) is not alive.
+	exited, err := processHandleExited(p.process)
+	return err == nil && !exited
 }
 
 func (p *userMgrProc) Kill() error {
