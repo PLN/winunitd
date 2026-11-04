@@ -141,6 +141,9 @@ type unitFile struct {
 	retryAt    time.Time
 	rotating   bool
 	rotateStep int // keep removes the oldest; keep-1..0 move archives/current
+	// archivesProtected records that existing archives received the journal
+	// descriptor; later archives are renamed from an already protected file.
+	archivesProtected bool
 }
 
 // Open creates dir if needed and returns a store rooted there.
@@ -467,12 +470,18 @@ func (u *unitFile) write(raw []byte, messageBytes int) error {
 }
 
 func (u *unitFile) openLocked() error {
+	if !u.archivesProtected {
+		if err := u.protectArchivesLocked(); err != nil {
+			return err
+		}
+		u.archivesProtected = true
+	}
 	// Reserve a possible new file and the interrupted-tail repair byte before
 	// native creation. The final size replaces this conservative reservation.
 	if err := u.store.reserveDisk(u.unit, 1, true); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(u.path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
+	f, err := openJournalFile(u.path)
 	if err != nil {
 		u.store.releaseDisk(u.unit, 1)
 		return err
@@ -491,6 +500,21 @@ func (u *unitFile) openLocked() error {
 	u.store.observeDisk(u.unit, size)
 	if u.store.onOpen != nil {
 		u.store.onOpen()
+	}
+	return nil
+}
+
+// protectArchivesLocked applies the journal descriptor to archives that an
+// older version may have created with inherited directory ACLs.
+func (u *unitFile) protectArchivesLocked() error {
+	keep := u.store.keep
+	if keep <= 0 {
+		keep = DefaultKeep
+	}
+	for i := 1; i <= keep; i++ {
+		if err := protectJournalArchive(fmt.Sprintf("%s.%d", u.path, i)); err != nil {
+			return fmt.Errorf("journal archive %d: %w", i, err)
+		}
 	}
 	return nil
 }
