@@ -2,12 +2,12 @@
 
 ## Pinned toolchain
 
-Build with Go **1.27.2**, recorded in `.go-version` and the `toolchain` directive. The module's Go **1.26.0** directive is its dependency/language minimum, not the compiler selected for qualification. The `golang.org/x/sys v0.49.0` dependency requires that minimum. CI reads `.go-version`, disables automatic toolchain switching after setup, and uses full commit pins for checkout, setup-go, and artifact upload.
+Build with Go **1.27.3**, recorded in `.go-version` and the `toolchain` directive. The module's Go **1.26.0** directive is its dependency/language minimum, not the compiler selected for qualification. The `golang.org/x/sys v0.49.0` dependency requires that minimum. CI reads `.go-version`, disables automatic toolchain switching after setup, and uses full commit pins for checkout, setup-go, and artifact upload.
 
 From the repository root:
 
 ```powershell
-$env:GOTOOLCHAIN = 'go1.27.2'
+$env:GOTOOLCHAIN = 'go1.27.3'
 go vet ./...
 go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
 go test -race -parallel 1 ./... -timeout 180s
