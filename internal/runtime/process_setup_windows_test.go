@@ -5,6 +5,7 @@ package runtime
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -104,5 +105,46 @@ func TestPostCreationSetupFailuresRetainNativeOwnership(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// A launch step that fails after a session logon opened is an AccountError when
+// the selected session has signed out, and stays the plain launch error while
+// the session is still signed in.
+func TestSessionLogonLaunchFailureAfterSignOutIsAccountError(t *testing.T) {
+	const sid, session = "S-1-5-21-1-2-3-1001", 7
+	for _, signedIn := range []bool{false, true} {
+		t.Run(fmt.Sprintf("signedIn=%v", signedIn), func(t *testing.T) {
+			injected := errors.New("injected job failure")
+			var asked []uint32
+			setup := processSetup{
+				openAccount: func(AccountSessionSpec) (*AccountSession, error) {
+					return &AccountSession{Info: UserInfo{SID: sid}, Logon: LogonSession, SessionID: session}, nil
+				},
+				signedIn: func(id uint32, got string) bool {
+					if got != sid {
+						t.Errorf("signed-in check for %s, want %s", got, sid)
+					}
+					asked = append(asked, id)
+					return signedIn
+				},
+			}
+			openJob := func(JobLimits) (*UnitJob, error) { return nil, injected }
+			spec := StartSpec{Argv: []string{testAbs(t)}, User: `.\alice`, UserSession: true}
+			p, err := (&winLauncher{}).createWithSetup(spec, openJob, makeStdPipe, openNUL, setup)
+			if owner, cleanup := failedProcessStart(p, err); owner != nil || !errors.Is(cleanup, err) {
+				t.Fatalf("failed launch cleanup: owner=%v error=%v", owner != nil, cleanup)
+			}
+			if !errors.Is(err, injected) || len(asked) != 1 || asked[0] != session {
+				t.Fatalf("error = %v, signed-in checks = %v", err, asked)
+			}
+			var account *AccountError
+			if got := errors.As(err, &account); got == signedIn {
+				t.Fatalf("AccountError = %v with signedIn=%v: %v", got, signedIn, err)
+			}
+			if !signedIn && !strings.Contains(err.Error(), "session 7: signed out during the launch") {
+				t.Fatalf("error lacks the sign-out reason: %v", err)
+			}
+		})
 	}
 }

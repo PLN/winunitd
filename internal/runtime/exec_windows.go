@@ -109,21 +109,29 @@ func (l *winLauncher) createWith(spec StartSpec, openJob func(JobLimits) (*UnitJ
 
 func (l *winLauncher) createWithSetup(spec StartSpec, openJob func(JobLimits) (*UnitJob, error), openPipe func() (windows.Handle, windows.Handle, error), openInput func() (windows.Handle, error), setup processSetup) (_ *winProc, err error) {
 	p := &winProc{}
+	if setup.openAccount == nil {
+		setup.openAccount = OpenAccountSession
+	}
+	if setup.signedIn == nil {
+		setup.signedIn = SessionSignedIn
+	}
 	if spec.User != "" {
-		exe, err := os.Executable()
-		if err != nil {
-			return nil, &AccountError{Account: spec.User, Err: err}
+		// No err may be declared in this block: the deferred conversion below
+		// must read the launch's returned error.
+		exe, exeErr := os.Executable()
+		if exeErr != nil {
+			return nil, &AccountError{Account: spec.User, Err: exeErr}
 		}
-		account, err := OpenAccountSession(AccountSessionSpec{Account: spec.User, Exe: exe, Daemon: l.daemon, Session: spec.UserSession})
+		account, openErr := setup.openAccount(AccountSessionSpec{Account: spec.User, Exe: exe, Daemon: l.daemon, Session: spec.UserSession})
 		p.account = account
-		if err != nil {
-			return p, &AccountError{Account: spec.User, Err: err}
+		if openErr != nil {
+			return p, &AccountError{Account: spec.User, Err: openErr}
 		}
 		p.logon, p.logonSession = account.Logon, account.SessionID
 		defer func() {
 			// A launch that fails because its session signed out is an account
 			// failure, to which Restart= applies; the next start selects again.
-			if err != nil && p.logon == LogonSession && !SessionSignedIn(p.logonSession, account.Info.SID) {
+			if err != nil && p.logon == LogonSession && !setup.signedIn(p.logonSession, account.Info.SID) {
 				err = &AccountError{Account: spec.User, Err: &sessionGoneError{ID: p.logonSession, Cause: err}}
 			}
 		}()
@@ -244,6 +252,11 @@ func (l *winLauncher) createWithSetup(spec StartSpec, openJob func(JobLimits) (*
 // Each launch has its own native setup operations. Tests can inject a failure at
 // one boundary while retaining a real suspended process and real cleanup calls.
 type processSetup struct {
+	// openAccount and signedIn default to OpenAccountSession and
+	// SessionSignedIn; tests replace them to drive a session logon without
+	// LocalSystem.
+	openAccount  func(AccountSessionSpec) (*AccountSession, error)
+	signedIn     func(id uint32, sid string) bool
 	assignDaemon func(*DaemonJob, windows.Handle) error
 	assignUnit   func(*UnitJob, windows.Handle) error
 	priority     func(windows.Handle, uint32) error
