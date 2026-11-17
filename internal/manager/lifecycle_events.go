@@ -196,6 +196,10 @@ func (m *Manager) applyProcessExit(event processExitCompletion) {
 		m.mu.Unlock()
 		return
 	}
+	if rt.sessionEnded && !event.limitHit {
+		// Killed because its session signed out before it was active.
+		kind, message = core.ExitFailure, sessionEndReason(rt.invocationSession)
+	}
 	// A start without After may have completed while peer cleanup was blocked.
 	// Reconcile it before recovery or final exit publication as well.
 	if event.service == nil || event.service.Type != unit.TypeOneshot || kind != core.ExitSuccess || !event.service.RemainAfterExit {
@@ -230,6 +234,8 @@ type watchdogEffect struct {
 	process      runtime.Process
 	cancel       context.CancelFunc
 	stopEligible bool
+	kind         core.ExitKind // what Restart= decides on
+	cause        string        // names the cleanup in its errors
 }
 
 type watchdogCleanup struct {
@@ -253,7 +259,7 @@ func (m *Manager) acceptWatchdogFailure(owner runtimeIdentity) *watchdogEffect {
 	rt.health = "unhealthy"
 	rt.err = "watchdog timed out"
 	rt.terminated = true
-	effect := &watchdogEffect{owner: owner, unit: rt.ownedUnit(), process: rt.proc, cancel: rt.watchdog, stopEligible: stopEligible}
+	effect := &watchdogEffect{owner: owner, unit: rt.ownedUnit(), process: rt.proc, cancel: rt.watchdog, stopEligible: stopEligible, kind: core.ExitWatchdog, cause: "watchdog"}
 	rt.setCleanup(cleanupWorkload, effect.process != nil)
 	rt.watchdog = nil
 	return effect
@@ -271,7 +277,7 @@ func (m *Manager) applyWatchdogCleanup(event watchdogCleanup) bool {
 		return false
 	}
 	if event.err != nil {
-		rt.err = "watchdog cleanup: " + message
+		rt.err = event.effect.cause + " cleanup: " + message
 		return false
 	}
 	rt.proc = nil

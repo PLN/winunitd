@@ -36,6 +36,10 @@ type UserHostConfig struct {
 	LingerToken    runtime.LingerTokenFunc
 	Logf           func(string, ...any)
 	Now            func() time.Time
+	// OnSessionLogoff, if set, is called first for every logoff Listen
+	// receives, before the host's own handling. The system manager uses it to
+	// end invocations on that session's logon. It must not block.
+	OnSessionLogoff func(sessionID uint32)
 	// AdmissionHold, when non-empty, stops every user-manager launch:
 	// session admission, reconciliation and linger starts. Policy changes,
 	// revocation and cleanup remain available. See manager Config.
@@ -161,6 +165,9 @@ func (h *UserHost) Listen(ctx context.Context, ch <-chan runtime.SessionChange) 
 			if sc.Logon {
 				h.dispatchLogon(sc.SessionID, true)
 			} else {
+				if h.cfg.OnSessionLogoff != nil {
+					h.cfg.OnSessionLogoff(sc.SessionID)
+				}
 				h.queueIdleCleanup(h.recordLogoff(sc.SessionID))
 			}
 		}

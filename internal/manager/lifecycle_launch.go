@@ -212,6 +212,8 @@ func (m *Manager) recordInvocation(effect *launchEffect, invocation, userSID str
 		rt.invocationRevision = effect.revision
 		rt.invocation = invocation
 		rt.invocationUserSID = userSID
+		rt.invocationLogon, rt.invocationSession, rt.sessionEnded = "", 0, false
+		rt.launchingSession, rt.launchLogoffs = false, nil
 	}
 }
 
@@ -433,6 +435,10 @@ func (m *Manager) acceptProcessActivation(ctx context.Context, effect *launchEff
 		return time.Time{}, false
 	}
 	rt := effect.owner.record
+	if rt.sessionEnded {
+		// The session whose logon the process uses signed out during the start.
+		return time.Time{}, false
+	}
 	if effect.unit.Service.WaitsForReadiness() {
 		if !rt.step(core.EventStartSucceeded) {
 			return time.Time{}, false

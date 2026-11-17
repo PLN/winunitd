@@ -106,7 +106,11 @@ external observation. Missing fields from an older daemon remain supported.
 These fields do not claim immutable aggregate snapshots or new health semantics.
 A system unit with `User=` also reports `user`, the account of the definition
 that owns its invocation, and `userSid`, the SID that invocation resolved;
-`winctl status` shows them as `User:`. Machine status reports `unitDirectory`.
+`winctl status` shows them as `User:`. While the invocation has a process it
+also reports `userLogon`, `s4u` or `session`, and for `session` the session
+whose token it used in `userSession`; `winctl status` shows `Logon: s4u` or
+`Logon: session 2` ([session logon](UNIT-REFERENCE.md#session-logon)).
+Machine status reports `unitDirectory`.
 
 `winctl status UNIT` exit codes are systemctl-shaped: **0** active, **3** loaded but inactive/failed, **4** not loaded. Transport/protocol errors keep their existing non-zero exit. Machine status (no unit) exits 0 on success.
 
@@ -146,10 +150,11 @@ fields:
 | `job-limits` | The `jobLimits` directives are applied to the Job Object of each managed process service; native SCM and task proxies do not reach this path |
 | `linger-s4u` | System endpoint only: lingering users get a headless user manager through an S4U logon |
 | `unit-user-s4u` | System endpoint only: `User=` in a system unit runs its processes as that account through an S4U logon ([accounts](UNIT-REFERENCE.md#accounts)) |
+| `unit-user-session` | System endpoint only: `UserLogon=session-or-s4u` starts a `User=` unit with a copy of its account's signed-in session token when there is one, S4U otherwise, and ends the invocation when that session signs out ([session logon](UNIT-REFERENCE.md#session-logon)) |
 
 A name is listed only when the answering endpoint enforces that contract. On
-Windows the system endpoint lists all five and user endpoints omit
-`linger-s4u` and `unit-user-s4u`. Builds for other systems are test stand-ins with stub launchers
+Windows the system endpoint lists all six and user endpoints omit
+`linger-s4u`, `unit-user-s4u` and `unit-user-session`. Builds for other systems are test stand-ins with stub launchers
 and list only `restart-backoff`, with empty `jobLimits` and mode lists. A name
 is never reused for different behavior; a new contract gets a new name. The
 result describes the build, not qualification: the limits recorded in

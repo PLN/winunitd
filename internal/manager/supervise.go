@@ -178,6 +178,7 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		TimeoutStart: svc.TimeoutStartSec,
 		Limits:       runtime.JobLimitsFromSpec(svc),
 		User:         userSID,
+		UserSession:  svc.UserSession && userSID != "",
 	}
 	if svc.Type == unit.TypeNotify {
 		// TimeoutStartSec bounds READY=1, not CreateProcess.
@@ -200,12 +201,18 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		}
 	})
 	defer m.untrackLaunchingJob(launching)
+	if spec.UserSession {
+		m.beginSessionLaunch(effect)
+	}
 	proc, err := m.launch.Start(ctx, spec)
 	pid := 0
 	if proc != nil {
 		pid = proc.PID()
 	}
 	if err != nil {
+		if spec.UserSession {
+			m.endSessionLaunch(effect)
+		}
 		if proc != nil {
 			// The launcher could not finish cleanup after process creation.
 			// This operation retains the record, and the unit lock excludes a
@@ -234,6 +241,9 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		alive = proc.Alive()
 	}
 	if !m.adoptProcess(processAdoption{effect: effect, process: proc, pid: pid, autoRestart: autoRestart, alive: alive}) {
+		if spec.UserSession {
+			m.endSessionLaunch(effect)
+		}
 		stopErr := m.stopProcess(proc, stopTimeout(u))
 		if stopErr == nil && proc.Alive() {
 			stopErr = fmt.Errorf("process remains alive after late launch cleanup")
@@ -243,6 +253,9 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		return errors.Join(fmt.Errorf("start superseded during process creation"), stopErr, notifyErr)
 	}
 	m.untrackLaunchingJob(launching) // published as rt.proc
+	if spec.User != "" {
+		m.adoptLaunchLogon(effect, proc, userSID)
+	}
 	gen := effect.owner.gen
 
 	if svc.Type == unit.TypeOneshot {
@@ -260,6 +273,11 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		cancel()
 		m.clearStartWait(effect)
 		if err != nil {
+			kind := classifyWait(err)
+			var signedOut bool
+			if err, signedOut = m.sessionEndCause(effect, proc, err); signedOut {
+				kind = core.ExitFailure
+			}
 			stopErr := m.stopProcess(proc, stopTimeout(u))
 			if stopErr == nil && proc.Alive() {
 				stopErr = fmt.Errorf("process remains alive after stop")
@@ -267,7 +285,7 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 			m.applyOneshotCleanup(effect, proc, stopErr, err)
 			go m.watch(name, proc)
 			if stopErr == nil {
-				m.maybeRestart(name, classifyWait(err), svc)
+				m.maybeRestart(name, kind, svc)
 			}
 			return errors.Join(err, stopErr)
 		}
@@ -308,6 +326,9 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		} else {
 			readyErr = m.waitReady(ctx, name, proc, svc.TimeoutStartSec)
 		}
+		if readyErr != nil {
+			readyErr, _ = m.sessionEndCause(effect, proc, readyErr)
+		}
 		if err := readyErr; err != nil {
 			stopping := m.acceptReadinessFailure(effect, proc, err)
 			stopErr := m.stopProcess(proc, stopTimeout(u))
@@ -324,6 +345,11 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 	}
 
 	when, accepted := m.acceptProcessActivation(ctx, effect, proc)
+	if !accepted {
+		if reason, signedOut := m.sessionEndCause(effect, proc, nil); signedOut {
+			return m.failStartBeforeActivation(effect, proc, reason)
+		}
+	}
 	if accepted {
 		if m.engine != nil {
 			m.engine.UnitActive(name, when)
@@ -341,6 +367,23 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		return fmt.Errorf("start superseded after readiness")
 	}
 	return nil
+}
+
+// failStartBeforeActivation fails a start whose process is published but not
+// active, as a readiness failure does: cleanup, the error, and Restart= once.
+func (m *Manager) failStartBeforeActivation(effect *launchEffect, proc runtime.Process, err error) error {
+	name, u := effect.owner.name, effect.unit
+	stopping := m.acceptReadinessFailure(effect, proc, err)
+	stopErr := m.stopProcess(proc, stopTimeout(u))
+	if stopErr == nil && proc.Alive() {
+		stopErr = fmt.Errorf("process remains alive after start cleanup")
+	}
+	notifyErr := m.closeNotify(name)
+	m.applyReadinessCleanup(effect, proc, stopErr)
+	if !stopping && stopErr == nil && notifyErr == nil {
+		m.maybeRestart(name, core.ExitFailure, u.Service)
+	}
+	return errors.Join(err, stopErr, notifyErr)
 }
 
 func (m *Manager) watch(name string, proc runtime.Process) {

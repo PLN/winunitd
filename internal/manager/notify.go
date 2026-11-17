@@ -483,6 +483,13 @@ func (m *Manager) probeWatchdogLoop(ctx context.Context, owner runtimeIdentity, 
 }
 
 func (m *Manager) onWatchdogTimeout(owner runtimeIdentity) {
+	m.endInvocation(owner, m.acceptWatchdogFailure)
+}
+
+// endInvocation stops an invocation that the manager ends itself, a watchdog
+// failure or a sign-out, and lets Restart= decide with the effect's exit kind.
+// It is the operator stop without rt.stopping, which would suppress Restart=.
+func (m *Manager) endInvocation(owner runtimeIdentity, accept func(runtimeIdentity) *watchdogEffect) {
 	name := owner.name
 	unlock := m.ops.lock(name)
 	released := false
@@ -493,7 +500,7 @@ func (m *Manager) onWatchdogTimeout(owner runtimeIdentity) {
 		}
 	}
 	defer release()
-	effect := m.acceptWatchdogFailure(owner)
+	effect := accept(owner)
 	if effect == nil {
 		return
 	}
@@ -506,7 +513,7 @@ func (m *Manager) onWatchdogTimeout(owner runtimeIdentity) {
 	helperErr := m.cooperativeStop(stopCtx, owner, u, proc, effect.stopEligible)
 	stopErr := m.stopProcessContext(stopCtx, proc, stopTimeout(u))
 	if stopErr == nil && proc != nil && proc.Alive() {
-		stopErr = fmt.Errorf("process remains alive after watchdog cleanup")
+		stopErr = fmt.Errorf("process remains alive after %s cleanup", effect.cause)
 	}
 	notifyErr := m.closeNotifyContext(stopCtx, name, stopTimeout(u))
 	if helperErr != nil {
@@ -524,7 +531,7 @@ func (m *Manager) onWatchdogTimeout(owner runtimeIdentity) {
 	if u != nil {
 		svc = u.Service
 	}
-	if svc != nil && core.ShouldRestart(svc.Restart, core.ExitWatchdog) {
+	if svc != nil && core.ShouldRestart(svc.Restart, effect.kind) {
 		m.beginRestart(recoveryRequest{owner: owner, delay: restartDelay(svc)})
 	}
 }
