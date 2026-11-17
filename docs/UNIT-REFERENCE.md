@@ -204,7 +204,10 @@ RestartSec=2s
   another session. Windows does not end these processes at sign-out. Lock,
   unlock, disconnect, reconnect and other users' sign-ins and sign-outs do
   nothing to the unit. A session that signs out while a start is under way
-  fails that start, and `Restart=` applies.
+  fails that start, and `Restart=` applies; for `Type=oneshot` that holds until
+  the start completes, also when its process exited 0. A completed
+  `RemainAfterExit=yes` oneshot has no process left, and stays active when the
+  session signs out later.
 - When neither logon works, the start fails with both reasons, for example
   `User=<SID>: no signed-in session of the account; S4U logon for <SID>: ...`,
   or `session 2: linked token: ...` in place of the first half when a session

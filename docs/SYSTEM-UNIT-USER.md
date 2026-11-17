@@ -142,7 +142,10 @@ lock, unlock, disconnect and reconnect are not logoffs. An active invocation
 on that session's logon is stopped as a watchdog failure is: `ExecStop` (by
 S4U), the job, the account session, then `Restart=` decides on a failed exit.
 A start that is still waiting for exit, readiness or publication has its job
-killed and cannot become active. The reason,
+killed and cannot become active; a `Type=oneshot` start whose session signs out
+before it completes fails even when its process exited 0. A completed
+`RemainAfterExit=yes` oneshot owns no process, so a later sign-out leaves it
+active. The reason,
 `session <N>, whose logon this invocation used, signed out`, is in status and
 the journal. Liveness is the token query and the SID comparison only: the
 logon session in LSA and the loaded profile outlive the sign-out.

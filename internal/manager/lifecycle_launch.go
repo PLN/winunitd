@@ -351,22 +351,24 @@ func (m *Manager) applyOneshotCleanup(effect *launchEffect, proc runtime.Process
 
 // Successful completion owns cleanup and final state before releasing the unit
 // gate. A later invocation cannot race the old process's exit watcher.
-func (m *Manager) completeOneshot(ctx context.Context, effect *launchEffect, proc runtime.Process, cleanupErr, completionErr error) (time.Time, error) {
+// signedOut reports a start that failed because its session signed out after
+// the process exited, on which Restart= decides as on a failed exit.
+func (m *Manager) completeOneshot(ctx context.Context, effect *launchEffect, proc runtime.Process, cleanupErr, completionErr error) (_ time.Time, signedOut bool, _ error) {
 	cleanupMessage, completionMessage := waitFailMessage(cleanupErr), waitFailMessage(completionErr)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rt := effect.owner.record
 	if !effect.owner.currentLocked(m) || rt.proc != proc {
-		return time.Time{}, fmt.Errorf("oneshot completion superseded")
+		return time.Time{}, false, fmt.Errorf("oneshot completion superseded")
 	}
-	if !rt.stopping && (!effect.unit.Service.RemainAfterExit || cleanupErr != nil || completionErr != nil) {
+	if !rt.stopping && (!effect.unit.Service.RemainAfterExit || cleanupErr != nil || completionErr != nil || rt.sessionEnded) {
 		m.queueBoundStopsLocked(effect.owner.name)
 	}
 	if cleanupErr != nil {
 		rt.setCleanup(cleanupWorkload, true)
 		rt.step(core.EventStartFailed)
 		rt.err = "oneshot cleanup: " + cleanupMessage
-		return time.Time{}, cleanupErr
+		return time.Time{}, false, cleanupErr
 	}
 	rt.proc = nil
 	rt.setCleanup(cleanupWorkload, false)
@@ -375,15 +377,20 @@ func (m *Manager) completeOneshot(ctx context.Context, effect *launchEffect, pro
 		if completionErr != nil {
 			rt.err = completionMessage
 		}
-		return time.Time{}, fmt.Errorf("oneshot cleanup remains pending: %s", rt.err)
+		return time.Time{}, false, fmt.Errorf("oneshot cleanup remains pending: %s", rt.err)
 	}
 	if ctx.Err() != nil || m.closed || rt.stopping {
-		return time.Time{}, fmt.Errorf("oneshot completion canceled: %w", context.Canceled)
+		return time.Time{}, false, fmt.Errorf("oneshot completion canceled: %w", context.Canceled)
+	}
+	if rt.sessionEnded {
+		rt.step(core.EventStartFailed)
+		rt.err = sessionEndReason(rt.invocationSession)
+		return time.Time{}, true, errors.Join(errors.New(rt.err), completionErr)
 	}
 	if completionErr != nil {
 		rt.step(core.EventStartFailed)
 		rt.err = completionMessage
-		return time.Time{}, completionErr
+		return time.Time{}, false, completionErr
 	}
 	state := core.Inactive
 	if effect.unit.Service.RemainAfterExit {
@@ -391,7 +398,7 @@ func (m *Manager) completeOneshot(ctx context.Context, effect *launchEffect, pro
 	}
 	rt.publishStartOutcome(state)
 	rt.err = ""
-	return m.now(), nil
+	return m.now(), false, nil
 }
 
 func (m *Manager) acceptReadinessFailure(effect *launchEffect, proc runtime.Process, err error) bool {

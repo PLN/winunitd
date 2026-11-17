@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,6 +31,7 @@ type sessionLauncher struct {
 	hold     chan struct{} // the first workload start waits for it
 	startErr error         // the first workload start fails with it
 	killJob  bool          // killing the unit job ends the main process
+	onKill   func()        // runs at the first kill of the first workload's job
 }
 
 func (l *sessionLauncher) Start(ctx context.Context, spec runtime.StartSpec) (runtime.Process, error) {
@@ -39,7 +41,8 @@ func (l *sessionLauncher) Start(ctx context.Context, spec runtime.StartSpec) (ru
 	l.logonMu.Lock()
 	hold, entered, startErr := l.hold, l.entered, l.startErr
 	l.hold, l.entered, l.startErr = nil, nil, nil
-	logon, session, killJob := l.logon, l.session, l.killJob
+	logon, session, killJob, onKill := l.logon, l.session, l.killJob, l.onKill
+	l.onKill = nil
 	l.logonMu.Unlock()
 	if hold != nil {
 		close(entered)
@@ -55,7 +58,7 @@ func (l *sessionLauncher) Start(ctx context.Context, spec runtime.StartSpec) (ru
 	if err != nil {
 		return p, err
 	}
-	return &logonProc{fakeProc: p.(*fakeProc), logon: logon, session: session, killJob: killJob}, nil
+	return &logonProc{fakeProc: p.(*fakeProc), logon: logon, session: session, killJob: killJob, onKill: onKill}, nil
 }
 
 func (l *sessionLauncher) workloads() []runtime.StartSpec {
@@ -83,15 +86,35 @@ type logonProc struct {
 	logon   string
 	session uint32
 	killJob bool
+	onKill  func()
+	killed  atomic.Bool
 }
 
 func (p *logonProc) AccountLogon() (string, uint32) { return p.logon, p.session }
 
 func (p *logonProc) Job() runtime.Job {
-	if !p.killJob || p.fakeProc.job == nil {
+	if p.fakeProc.job == nil {
+		return p.fakeProc.job
+	}
+	if p.onKill != nil {
+		return hookJob{Job: p.fakeProc.job, proc: p}
+	}
+	if !p.killJob {
 		return p.fakeProc.job
 	}
 	return killingJob{Job: p.fakeProc.job, main: p.fakeProc}
+}
+
+type hookJob struct {
+	runtime.Job
+	proc *logonProc
+}
+
+func (j hookJob) Kill() error {
+	if j.proc.killed.CompareAndSwap(false, true) {
+		j.proc.onKill() // may kill the job again
+	}
+	return j.Job.Kill()
 }
 
 // killingJob ends the fake main process when the unit job is killed, as
@@ -394,5 +417,51 @@ func TestUserHostReportsLogoffsToTheSystemManager(t *testing.T) {
 	defer mu.Unlock()
 	if len(got) != 1 || got[0] != 2 {
 		t.Fatalf("logoff hook calls %v, want [2]", got)
+	}
+}
+
+// A oneshot whose session signed out before it completed failed its start, even
+// when its process exited 0, with either RemainAfterExit=.
+func TestUserLogonSignedOutOneshotFails(t *testing.T) {
+	reason := "session 2, whose logon this invocation used, signed out"
+	for _, remain := range []bool{false, true} {
+		t.Run(fmt.Sprintf("at exit, RemainAfterExit=%v", remain), func(t *testing.T) {
+			// The check at adoption finds the session gone; the process has
+			// already exited 0.
+			launch := &sessionLauncher{logon: runtime.LogonSession, session: 2}
+			sessions := &signedInSessions{gone: map[uint32]int{2: 1}}
+			body := sessionService + fmt.Sprintf("Type=oneshot\nRemainAfterExit=%v\nRestart=no\n", remain)
+			m := sessionUnitManager(t, body, launch, sessions)
+			if _, err := m.Start(context.Background(), "work"); err == nil || !strings.Contains(err.Error(), reason) {
+				t.Fatalf("start = %v, want the sign-out reason", err)
+			}
+			waitCond(t, func() bool {
+				st := unitStatus(t, m)
+				return st.ActiveState == "failed" && st.Error == reason && st.MainPID == 0
+			})
+			waitCond(t, func() bool { return strings.Contains(journalText(t, m), reason) })
+		})
+		t.Run(fmt.Sprintf("before completion, RemainAfterExit=%v", remain), func(t *testing.T) {
+			// The logoff arrives after the exit, when the manager kills the
+			// unit job before completing the start.
+			launch := &sessionLauncher{logon: runtime.LogonSession, session: 2}
+			body := sessionService + fmt.Sprintf("Type=oneshot\nRemainAfterExit=%v\nRestart=on-failure\nRestartSec=20ms\n", remain)
+			m := sessionUnitManager(t, body, launch, nil)
+			launch.onKill = func() { m.SessionSignedOut(2) }
+			if _, err := m.Start(context.Background(), "work"); err == nil || !strings.Contains(err.Error(), reason) {
+				t.Fatalf("start = %v, want the sign-out reason", err)
+			}
+			// Restart=on-failure starts it again, once; that run completes.
+			final := "inactive"
+			if remain {
+				final = "active"
+			}
+			waitCond(t, func() bool { return len(launch.workloads()) == 2 && unitStatus(t, m).ActiveState == final })
+			time.Sleep(100 * time.Millisecond) // longer than RestartSec
+			if st := unitStatus(t, m); len(launch.workloads()) != 2 || st.ActiveState != final || st.Error != "" {
+				t.Fatalf("after the restart %+v, %d workload starts", st, len(launch.workloads()))
+			}
+			waitCond(t, func() bool { return strings.Contains(journalText(t, m), reason) })
+		})
 	}
 }

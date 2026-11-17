@@ -272,10 +272,12 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 		}
 		cancel()
 		m.clearStartWait(effect)
+		// A oneshot whose session signed out before it completed failed its
+		// start, also when its process exited 0.
+		err, signedOut := m.sessionEndCause(effect, proc, err)
 		if err != nil {
 			kind := classifyWait(err)
-			var signedOut bool
-			if err, signedOut = m.sessionEndCause(effect, proc, err); signedOut {
+			if signedOut {
 				kind = core.ExitFailure
 			}
 			stopErr := m.stopProcess(proc, stopTimeout(u))
@@ -308,8 +310,11 @@ func (m *Manager) launchUnitOwnedOp(ctx context.Context, name string, autoRestar
 			cleanupErr = fmt.Errorf("process remains alive after oneshot cleanup")
 		}
 		notifyErr := m.closeNotifyContext(stopCtx, name, stopTimeout(u))
-		when, err := m.completeOneshot(ctx, effect, proc, cleanupErr, errors.Join(helperErr, journalErr))
+		when, signedOut, err := m.completeOneshot(ctx, effect, proc, cleanupErr, errors.Join(helperErr, journalErr))
 		if err != nil || notifyErr != nil {
+			if signedOut && notifyErr == nil {
+				m.maybeRestart(name, core.ExitFailure, svc)
+			}
 			return errors.Join(err, notifyErr)
 		}
 		if m.engine != nil {
