@@ -2,7 +2,8 @@
 
 Status: implemented for issue #17, October 15, 2026. The contract for unit
 authors is in the [unit reference](UNIT-REFERENCE.md#accounts); this note
-records the design and why.
+records the design and why. `UserLogon=` (issue #39) adds the
+[session logon](#session-logon).
 
 System units ran only as LocalSystem. Anyone coming from systemd expects
 `User=` to work, and a service that defines all its workers in the system
@@ -41,6 +42,11 @@ unit as an ordinary user is that user's own manager
   `userSid`, the SID that invocation resolved, together. Journal entries of
   system units keep an empty user SID. Capabilities list `unit-user-s4u` on
   the system endpoint.
+- `[Service] UserLogon=s4u|session-or-s4u`, added later (see
+  [session logon](#session-logon)), chooses per start where the token comes
+  from. `s4u` and an absent directive are the contract above. It is valid only
+  beside a `User=` that passed these rules and names an account other than
+  SYSTEM. Capabilities list `unit-user-session` on the system endpoint.
 
 ## Launch
 
@@ -48,8 +54,9 @@ Each process a `User=` unit starts, the workload or its `ExecStop` command,
 has its own account session, opened by the launcher and released with the
 process:
 
-1. Log the account on by trusted S4U and check that the token's user is the
-   resolved SID.
+1. Log the account on by trusted S4U, or with `UserLogon=session-or-s4u` take
+   a signed-in session's token first ([session logon](#session-logon)), and
+   check that the token's user is the resolved SID.
 2. Start a profile keeper, `winunitd.exe --profile-keeper`, with that token,
    through the headless path the user host already uses. It runs suspended
    until it is placed in its own kill-on-close job.
@@ -78,13 +85,79 @@ invocation, so a reload that changed `User=` still stops the running invocation
 as the account it started with. Holding one logon for the whole invocation
 would avoid the second logon, but a oneshot with `RemainAfterExit=yes` would
 then keep a logon and the profile while no process runs. If the stop command
-cannot log on, stopping proceeds as when `ExecStop` fails.
+cannot log on, stopping proceeds as when `ExecStop` fails. An invocation on a
+session logon stops through the same session-then-S4U open as a start while
+its session has not been reported signed out, and by S4U otherwise; an S4U
+invocation stops by S4U even if its account has signed in since.
 
 The notify pipe of such a unit admits the resolved account. The launcher
 reports the main process and its job before the process runs, so the pipe
 accepts only that process and its job from the start. Readiness and health
 probes run inside the manager and are unchanged. `unit-of-process` attributes
 the processes through the unit job as before.
+
+## Session logon
+
+A domain account's S4U logon needs a domain controller, so a `User=` unit of a
+laptop's own domain account cannot start, restart or be upgraded away from the
+network even while that account is signed in from cached credentials.
+`UserLogon=session-or-s4u` starts it with the signed-in session's token in
+that case.
+
+Selection, at every start and by SID only: enumerate the active and
+disconnected sessions, never session 0; query each one's token with
+`WTSQueryUserToken` and read the user SID from the token, never the session's
+user name, which may need the domain. Another user's token is closed at once.
+The first match among the active sessions by ascending ID, then the
+disconnected ones, is used. A query that fails for another reason is reported
+when no session matches, because whose session it was cannot be known.
+
+Preparation: a UAC-filtered administrator token is replaced by its linked full
+token, so the unit has the rights an S4U start gives; failure to obtain it is a
+failure of the session path, and the filtered token is never used. The token
+is duplicated as a primary token and the copy's session set to 0. From there
+the launch is steps 2 to 6 above, unchanged: the keeper adds a reference to the
+profile the sign-in loaded, and the process runs on the private desktop in the
+daemon and unit jobs. No token is cached or shared; each process opens its own.
+
+Fallback: when no session matches, or any step of the session path fails up
+to the account session being open (token, linked token, duplicate, session,
+keeper, profile, environment, account lookup), the same start logs on by S4U.
+When both fail, the error names both, as
+`User=<SID>: no signed-in session of the account; S4U logon for <SID>: ...`
+or with the session path's own error first. Two cases are not followed by S4U:
+a session path that could not release what it opened, which keeps it for a
+cleanup retry as an S4U failure does, and a session that signed out while the
+launch was under way, which fails the start
+(`session <id>: signed out during the launch`). A launch that fails after the
+account session opened is an account error, to which `Restart=` applies, when
+its session has signed out; otherwise it stays a plain launch error, as for
+S4U.
+
+Sign-out: Windows does not end session-0 processes that hold a copy of a
+signed-in session's token when that session signs out, so the manager does.
+The logoff notifications the user host already receives, from the service
+control manager and the session poll, are passed to the system manager first;
+lock, unlock, disconnect and reconnect are not logoffs. An active invocation
+on that session's logon is stopped as a watchdog failure is: `ExecStop` (by
+S4U), the job, the account session, then `Restart=` decides on a failed exit.
+A start that is still waiting for exit, readiness or publication has its job
+killed and cannot become active; a `Type=oneshot` start whose session signs out
+before it completes fails even when its process exited 0. A completed
+`RemainAfterExit=yes` oneshot owns no process, so a later sign-out leaves it
+active. The reason,
+`session <N>, whose logon this invocation used, signed out`, is in status and
+the journal. Liveness is the token query and the SID comparison only: the
+logon session in LSA and the loaded profile outlive the sign-out.
+
+Limits. A logoff is missed only if the notification is dropped and Windows
+reuses the session ID within one poll interval; the invocation then keeps its
+logon until its next restart, a weakness user managers share. At machine
+shutdown users sign out before the service's preshutdown, so such a unit may
+get a sign-out stop and one S4U start before the ordered stop. `ExecStop` at
+sign-out uses S4U, so off the network it fails before the kill, as for any
+S4U unit stopped there. A `User=` written as a name is resolved before every
+start and may ask the domain; a SID spelling does not depend on that lookup.
 
 ## Rejected alternatives
 
@@ -101,6 +174,11 @@ the processes through the unit job as before.
 - **Running the unit inside the user's manager.** That needs linger and a
   second manager, and it is not what a system unit means; that route remains
   separately available.
+- **A session logon's process inside the user's session.** Handles are not
+  inherited across sessions and the process could not share the daemon's job,
+  as the user-manager launch records; Windows would also end it at sign-out
+  without `ExecStop`. The copy of the token moved to session 0 keeps the
+  launch above unchanged.
 
 ## Verification
 
@@ -117,3 +195,11 @@ the processes through the unit job as before.
   account that never signed in: status, logs, `unit-of-process`, `ExecStop`,
   a cold boot, a killed service process, an account that cannot log on, and
   removal. All passed ([evidence](R4-EVIDENCE.md#system-units-with-user)).
+- For `UserLogon=`: portable tests of the directive's rules, the capability,
+  session order and SID matching over a fake native layer, the full-token
+  rule and handle ownership, the fallback and its composed errors, status,
+  the sign-out stop with `Restart=` and duplicate logoffs, a sign-out during a
+  start, and the logoff hook. Windows tests that run only as LocalSystem with
+  the test account signed in check the process in session 0 in its unit job,
+  and that a failed linked token falls back to S4U. A native run on a domain
+  pair with the controller off follows before release.

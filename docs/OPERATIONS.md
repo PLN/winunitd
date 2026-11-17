@@ -564,6 +564,10 @@ headless logon needs a domain controller. If none is reachable, for example at
 boot on a machine away from the network, `winctl status` shows the user waiting
 with the S4U error, and the broker retries until a domain controller answers.
 A share in the domain also needs credentials the service supplies itself.
+A `User=` system unit of a domain account has the same dependency unless it
+sets `UserLogon=session-or-s4u`, which starts it with the token of the
+account's signed-in session, also from cached credentials, and stops it when
+that session signs out ([session logon](UNIT-REFERENCE.md#session-logon)).
 
 While a headless manager holds a roaming profile, Windows treats the profile as
 local on that machine: sign-ins beside the manager neither download nor upload

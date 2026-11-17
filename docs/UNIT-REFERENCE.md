@@ -110,7 +110,8 @@ place user-writable executables or scripts in a privileged system unit.
 `DOMAIN\name`, a local name, or a SID. No password is involved. Before each
 start the system manager logs the account on with an S4U logon, loads its
 normal profile (creating it on first use) and starts the process on a private
-desktop. The process gets the account's own environment, with `USERPROFILE`,
+desktop. With `UserLogon=session-or-s4u` it uses the account's signed-in
+session instead when there is one ([session logon](#session-logon)). The process gets the account's own environment, with `USERPROFILE`,
 `APPDATA`, `LOCALAPPDATA`, `TEMP`, `TMP`, `USERNAME` and `USERDOMAIN` set from
 its profile, then the unit's `Environment=`, then the manager's variables.
 `HOMEDRIVE` and `HOMEPATH` are removed, as for user managers.
@@ -140,20 +141,83 @@ WantedBy=default.target
   PowerShell's `Stop-Process -Id $env:MAINPID` instead.
 - The account is resolved and logged on at every start. A start that cannot do
   so (an unknown account, an unreachable domain controller) fails, and
-  `Restart=` applies. `ExecStop` logs on again, as the account the running
+  `Restart=` applies. An S4U logon of a domain account needs a domain
+  controller; `UserLogon=session-or-s4u` lets a unit start without one while
+  its account is signed in. `ExecStop` logs on again, as the account the running
   invocation started with, even if a reload changed `User=` meanwhile.
 - `SYSTEM`, `LocalSystem`, `NT AUTHORITY\SYSTEM` and `S-1-5-18` mean the default
   LocalSystem launch. `LocalService` and `NetworkService` are rejected, as are
   `User=` in format 1 files, in user units (a user manager already runs as its
   user) and on `Type=scm` and `Type=scheduled-task`. `Group=` is not supported.
-- Status shows the account and the SID the invocation resolved. Journal entries
-  of system units carry no user SID.
+- Status shows the account and the SID the invocation resolved, and while it
+  runs the logon its process got: `Logon: s4u` or `Logon: session 2` in
+  `winctl status`, `userLogon` and `userSession` in the JSON. The journal
+  records the logon of each start. Journal entries of system units carry no
+  user SID.
 
 The account's profile stays loaded while any of its processes run and is
 released when the last one ends; a profile also held by the account's own user
 manager or a sign-in stays loaded for them. Only administrators can write the
 system unit directory of an installed manager, so `User=` lets no one run
 anything they could not already run as LocalSystem.
+
+#### Session logon
+
+`[Service] UserLogon=` chooses where each start of a `User=` unit gets its
+logon. `s4u`, the default, is the S4U logon above. With `session-or-s4u` the
+manager first looks for a session the account is signed in to, active or
+disconnected, and starts the process with a copy of that session's token;
+only when there is no such session, or that session's token cannot be used,
+does it log on by S4U, in the same start. It is accepted only beside a `User=`
+that names an account other than SYSTEM; `verify` and reload reject it
+anywhere else. Capabilities list `unit-user-session` on the system endpoint
+when the build enforces it.
+
+```ini
+[Service]
+ExecStart=C:\Apps\worker.exe
+User=S-1-5-21-1-2-3-1001
+UserLogon=session-or-s4u
+Restart=always
+RestartSec=2s
+```
+
+- Sessions are matched by the SID in their token, never by name, and another
+  user's session is never used. With several, the lowest-numbered active
+  session wins, then the lowest-numbered disconnected one.
+- The process still runs in session 0, on the private desktop, in its unit
+  job, with no window and nothing visible in the user's session. Its
+  environment, profile, notify pipe and job limits are those of an S4U start.
+- An administrator under UAC gets the full token linked to the session's
+  filtered one, the same rights an S4U start has. If the full token cannot be
+  obtained the start goes to S4U; the filtered token is never used.
+- A session logon has what S4U lacks: Windows credentials for other machines,
+  DPAPI, Credential Manager and EFS, and the `INTERACTIVE` group in place of
+  `NETWORK` or `BATCH`. A unit gets one or the other depending on the moment it
+  starts, and must not depend on the difference.
+- An invocation keeps the logon it started with. A unit started by S4U is not
+  replaced when its account signs in; its next start uses the session.
+- When the session whose logon an invocation uses signs out, the manager stops
+  that invocation (with `ExecStop`, by S4U) and records
+  `session <N>, whose logon this invocation used, signed out`. It counts as a
+  failed exit, so `Restart=on-failure` and `always` start it again, by S4U or
+  another session. Windows does not end these processes at sign-out. Lock,
+  unlock, disconnect, reconnect and other users' sign-ins and sign-outs do
+  nothing to the unit. A session that signs out while a start is under way
+  fails that start, and `Restart=` applies; for `Type=oneshot` that holds until
+  the start completes, also when its process exited 0. A completed
+  `RemainAfterExit=yes` oneshot has no process left, and stays active when the
+  session signs out later.
+- When neither logon works, the start fails with both reasons, for example
+  `User=<SID>: no signed-in session of the account; S4U logon for <SID>: ...`,
+  or `session 2: linked token: ...` in place of the first half when a session
+  was found and its path failed.
+- `ExecStop` asks for the session logon first while the invocation's session is
+  signed in, and uses S4U for an invocation that started by S4U. Off the
+  domain network an S4U `ExecStop` fails, quickly in practice, and stopping
+  goes on as when `ExecStop` fails.
+- A `User=` written as `DOMAIN\name` is still resolved to a SID before every
+  start, which may ask a domain controller; write the SID to avoid that.
 
 ## Arguments and environment
 
@@ -197,6 +261,7 @@ and `%NAME%` are not substituted.
 | Service: `ExecStart`, `ExecStartArg`, `WorkingDirectory`, `Environment` | Arguments/environment rules above |
 | Service: `ExecStop`, `ExecStopArg` | Optional single cooperative stop command; same executable/argument grammar as ExecStart |
 | Service: `User` | Format 2 system units of Type simple, oneshot and notify: the account the processes run as ([accounts](#accounts)); default LocalSystem |
+| Service: `UserLogon` | Beside `User=`: s4u (default) or session-or-s4u, the account's signed-in session first ([session logon](#session-logon)) |
 | Service: `Restart` | no (default), on-failure, always, on-watchdog |
 | Service: `RestartSec` | Recovery delay; default 100ms; setting 2s is a practical application default |
 | Service: `RestartBackoff` | Format 2: fixed (default) or exponential |
@@ -469,7 +534,7 @@ readiness directives above or Type=notify when dependent activation must wait.
 ## Unsupported syntax and updates
 
 `Group`, `EnvironmentFile`, `SessionMode`, `SessionPolicy`, and unknown
-directives are rejected; `User` is accepted only as described under
+directives are rejected; `User` and `UserLogon` are accepted only as described under
 [accounts](#accounts). Do not copy a Linux systemd unit without checking this reference.
 
 Use `winctl verify` before deployment and `daemon-reload` after changing files.

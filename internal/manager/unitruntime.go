@@ -46,6 +46,13 @@ type unitRuntime struct {
 	stopHelperAttempt string
 	invocation        string
 	invocationUserSID string // the User= account the invocation resolved
+	// The logon of the invocation's process (UserLogon=): runtime.LogonS4U or
+	// runtime.LogonSession, and the session whose token it copied.
+	invocationLogon   string
+	invocationSession uint32
+	sessionEnded      bool     // that session signed out; the invocation is ending
+	launchingSession  bool     // a session-or-s4u launch is inside Launcher.Start
+	launchLogoffs     []uint32 // sign-outs delivered while launchingSession
 	hub               *watchRuntime
 	timer             *timerArm
 	err               string

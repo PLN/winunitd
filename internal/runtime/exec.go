@@ -66,6 +66,10 @@ type StartSpec struct {
 	// DOMAIN\name. The launcher logs it on by S4U for this process alone and
 	// releases that logon with the process. Empty keeps the manager's account.
 	User string
+	// UserSession asks for the token of a signed-in session of User first and
+	// S4U only after that fails (UserLogon=session-or-s4u). The process stays
+	// in session 0 either way.
+	UserSession bool
 }
 
 // Job is a per-unit Job Object (DESIGN.md §5.1). Closing or killing it

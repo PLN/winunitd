@@ -1034,6 +1034,13 @@ func (c *cli) printStatus(st *protocol.StatusResult) int {
 			}
 			fmt.Fprintln(c.stdout)
 		}
+		switch u.UserLogon {
+		case "":
+		case "session":
+			fmt.Fprintf(c.stdout, "      Logon: session %d\n", u.UserSession)
+		default:
+			fmt.Fprintf(c.stdout, "      Logon: %s\n", u.UserLogon)
+		}
 		if u.InvocationID != "" {
 			fmt.Fprintf(c.stdout, "InvocationID=%s\n", u.InvocationID)
 		}

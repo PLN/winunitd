@@ -16,6 +16,17 @@ const maxDiagnosticMessage = 4096
 // code before either the unit journal or the attached daemon log sees them.
 // The daemon log enqueue does not wait on its sink.
 func (s *Store) RecordDiagnostic(unit, invocation, message string) {
+	s.recordDaemonLine(unit, invocation, message, SeverityErr, true)
+}
+
+// RecordNote is the unit-journal half of RecordDiagnostic at info severity: a
+// daemon line about an invocation that is not a rejected decision, such as
+// the logon it started with. The daemon log does not see it.
+func (s *Store) RecordNote(unit, invocation, message string) {
+	s.recordDaemonLine(unit, invocation, message, SeverityInfo, false)
+}
+
+func (s *Store) recordDaemonLine(unit, invocation, message, severity string, daemonLog bool) {
 	if s == nil {
 		return
 	}
@@ -39,9 +50,12 @@ func (s *Store) RecordDiagnostic(unit, invocation, message string) {
 	s.enqueue(Entry{
 		Timestamp: time.Now().UTC(), Unit: strings.Clone(canonicalUnit(unit)),
 		InvocationID: strings.Clone(invocation), Message: strings.Clone(message),
-		Stream: "daemon", Severity: SeverityErr, Partial: partial,
+		Stream: "daemon", Severity: severity, Partial: partial,
 		Session: origin.Session, UserSID: origin.UserSID,
 	}, &s.diagnostics)
+	if !daemonLog {
+		return
+	}
 	if log := s.daemonLog.Load(); log != nil {
 		reason := ""
 		if !redacted {

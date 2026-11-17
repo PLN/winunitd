@@ -44,6 +44,10 @@ type Config struct {
 	// LookupAccount resolves a User= account before each start. Nil uses
 	// runtime.LookupAccountName. Tests inject a fake.
 	LookupAccount func(name string) (runtime.UserInfo, error)
+	// SessionSignedIn reports whether the account sid is still signed in to a
+	// session whose token a User= process uses (UserLogon=session-or-s4u). Nil
+	// uses runtime.SessionSignedIn. Tests inject a fake.
+	SessionSignedIn func(session uint32, sid string) bool
 	// JournalOpen constructs the owned store; nil uses journal.Open. A returned
 	// store transfers to the manager, including cleanup if later setup fails.
 	// Qualification fixtures can inject storage faults through this factory.

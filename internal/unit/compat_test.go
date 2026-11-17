@@ -34,7 +34,7 @@ var postBetaDirectives = []string{
 	"ExecStop", "ExecStopArg", "FormatVersion", "PathExistsAll",
 	"ReadinessEndpoint", "ReadinessExpectedStatus", "ReadinessIntervalSec",
 	"ReadinessMode", "ReadinessTimeoutSec", "RemainAfterExit", "RestartBackoff",
-	"RestartMaxDelaySec", "User", "WatchdogFailureThreshold", "WatchdogGraceSec",
+	"RestartMaxDelaySec", "User", "UserLogon", "WatchdogFailureThreshold", "WatchdogGraceSec",
 	"WatchdogTimeoutSec", "WindowsCPUQuota", "WindowsCPUWeight",
 }
 

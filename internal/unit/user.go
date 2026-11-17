@@ -56,6 +56,25 @@ func (p *parser) finishUser(spec *ServiceSpec, s *serviceBuilder) {
 	spec.User = value
 }
 
+// finishUserLogon checks UserLogon=, where each start of a User= unit gets its
+// logon: s4u (the default) or session-or-s4u. It applies only beside a User=
+// that passed its own rules and names an account other than SYSTEM.
+func (p *parser) finishUserLogon(spec *ServiceSpec, s *serviceBuilder) {
+	if s.userLogonL == 0 {
+		return
+	}
+	value := strings.ToLower(strings.TrimSpace(s.userLogon))
+	if value != "s4u" && value != "session-or-s4u" {
+		p.errorf(s.userLogonL, "UserLogon must be s4u or session-or-s4u")
+		return
+	}
+	if spec.User == "" {
+		p.errorf(s.userLogonL, "UserLogon requires User= naming an account other than SYSTEM")
+		return
+	}
+	spec.UserSession = value == "session-or-s4u"
+}
+
 func containsName(names []string, name string) bool {
 	for _, n := range names {
 		if n == name {

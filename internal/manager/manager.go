@@ -622,6 +622,12 @@ func (m *Manager) unitStatusLocked(name string) protocol.UnitStatus {
 			if rt.invocationUnit == owned {
 				st.UserSID = rt.invocationUserSID
 			}
+			if rt.proc != nil {
+				st.UserLogon = rt.invocationLogon
+				if rt.invocationLogon == runtime.LogonSession {
+					st.UserSession = rt.invocationSession
+				}
+			}
 		}
 		st.SubState = rt.sub.String()
 		st.RestartAttempt = rt.restartAttempt

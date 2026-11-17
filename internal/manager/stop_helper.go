@@ -29,6 +29,7 @@ type stopHelperWork struct {
 	process    runtime.Process  // manager mutex
 	capture    *journal.Capture // published by closing done; retained until joined
 	reserve    time.Duration
+	session    bool // ask for the session logon first (UserLogon=session-or-s4u)
 }
 
 func (m *Manager) acceptStopHelper(ctx context.Context, owner runtimeIdentity, u *unit.Unit, main runtime.Process, eligible bool, reserve time.Duration) (*stopHelperWork, bool, error) {
@@ -54,7 +55,7 @@ func (m *Manager) acceptStopHelper(ctx context.Context, owner runtimeIdentity, u
 		return nil, false, fmt.Errorf("stop helper capacity %d exhausted", maxStopHelpers)
 	}
 	workCtx, cancel := context.WithCancel(ctx)
-	h := &stopHelperWork{owner: owner, invocation: rt.invocation, unit: u, main: main, ctx: workCtx, cancel: cancel, done: make(chan struct{}), reserve: reserve}
+	h := &stopHelperWork{owner: owner, invocation: rt.invocation, unit: u, main: main, ctx: workCtx, cancel: cancel, done: make(chan struct{}), reserve: reserve, session: stopHelperSessionLocked(rt)}
 	if m.stopHelpers == nil {
 		m.stopHelpers = make(map[*stopHelperWork]struct{})
 	}
@@ -114,8 +115,10 @@ func (m *Manager) executeStopHelper(h *stopHelperWork) {
 		env = append(env, "MAINPID="+strconv.Itoa(h.main.PID()))
 	}
 	// h.unit is the invocation's definition, so a reload that changed User=
-	// still stops this invocation as the account it ran as.
-	spec := runtime.StartSpec{Unit: h.owner.name, Type: unit.TypeOneshot, Argv: append([]string(nil), svc.ExecStop...), Dir: svc.WorkingDirectory, Env: env, Limits: runtime.JobLimitsFromSpec(svc), User: svc.User}
+	// still stops this invocation as the account it ran as. An invocation on
+	// a session logon stops through the same session-then-S4U open as a start
+	// while its session is signed in, by S4U otherwise; an S4U one by S4U.
+	spec := runtime.StartSpec{Unit: h.owner.name, Type: unit.TypeOneshot, Argv: append([]string(nil), svc.ExecStop...), Dir: svc.WorkingDirectory, Env: env, Limits: runtime.JobLimitsFromSpec(svc), User: svc.User, UserSession: h.session}
 	launching := m.trackLaunchingJob(&spec, processOwner{unit: h.owner.name, invocation: h.invocation, stopHelper: true}, nil)
 	p, launchErr := m.launch.Start(h.ctx, spec)
 	m.publishStopHelperProcess(h, p)

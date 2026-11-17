@@ -58,6 +58,9 @@ func TestCapabilitiesOverControlWithoutStartingUnits(t *testing.T) {
 			t.Fatalf("[%s] = %v, want %v", section, got.Directives[section], names)
 		}
 	}
+	if !slices.Contains(got.Directives["Service"], "UserLogon") {
+		t.Fatalf("[Service] lacks UserLogon: %v", got.Directives["Service"])
+	}
 	launch.mu.Lock()
 	starts := len(launch.starts)
 	launch.mu.Unlock()
@@ -235,7 +238,7 @@ func TestRuntimeReferenceDocumentsFeatures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{protocol.FeatureExecStop, protocol.FeatureRestartBackoff, protocol.FeatureJobLimits, protocol.FeatureLingerS4U, protocol.FeatureUnitUserS4U} {
+	for _, name := range []string{protocol.FeatureExecStop, protocol.FeatureRestartBackoff, protocol.FeatureJobLimits, protocol.FeatureLingerS4U, protocol.FeatureUnitUserS4U, protocol.FeatureUnitUserSession} {
 		if !strings.Contains(string(data), "| `"+name+"` |") {
 			t.Fatalf("RUNTIME-REFERENCE.md does not document feature %s", name)
 		}

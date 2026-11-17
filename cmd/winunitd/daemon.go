@@ -82,6 +82,9 @@ func serveReady(ctx context.Context, baseDir string, stderr io.Writer, sessions 
 		Daemon:    job,
 		LingerDir: filepath.Join(baseDir, "linger"),
 		Logf:      logf,
+		// Session changes reach only this host; a logoff also ends system
+		// units running on that session's logon (UserLogon=).
+		OnSessionLogoff: m.SessionSignedOut,
 		// The broker launches no user managers, so none of the user units
 		// it would host starts. A user manager started directly with
 		// --user-manager is outside the floor's scope.

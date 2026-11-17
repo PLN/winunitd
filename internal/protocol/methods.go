@@ -145,6 +145,10 @@ const (
 	// FeatureUnitUserS4U (system endpoint): User= in a system unit runs its
 	// processes as that account through an S4U logon.
 	FeatureUnitUserS4U = "unit-user-s4u"
+	// FeatureUnitUserSession (system endpoint): UserLogon=session-or-s4u
+	// starts a User= unit with the token of a signed-in session of its account
+	// when there is one, in session 0, and ends the invocation at sign-out.
+	FeatureUnitUserSession = "unit-user-session"
 )
 
 // Validate checks the identity and structure of a capability reply.
@@ -390,8 +394,13 @@ type UnitStatus struct {
 	MainPID              int      `json:"mainPid,omitempty"`
 	// User is the User= account of the definition that owns the invocation,
 	// UserSID the SID that invocation resolved it to.
-	User                string `json:"user,omitempty"`
-	UserSID             string `json:"userSid,omitempty"`
+	User    string `json:"user,omitempty"`
+	UserSID string `json:"userSid,omitempty"`
+	// UserLogon is the logon of the running invocation's process, "s4u" or
+	// "session"; UserSession, for "session", the session whose token it used.
+	// Both are set only while the invocation owns a process.
+	UserLogon           string `json:"userLogon,omitempty"`
+	UserSession         uint32 `json:"userSession,omitempty"`
 	InvocationID        string `json:"invocationId,omitempty"`
 	Error               string `json:"error,omitempty"`
 	LogDroppedRecords   uint64 `json:"logDroppedRecords,omitempty"`

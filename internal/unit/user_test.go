@@ -57,4 +57,42 @@ func TestUserScopeIssues(t *testing.T) {
 	if len(UserScopeIssues(r.Unit, true)) != 1 {
 		t.Fatal("user scope accepted User=, even a SYSTEM spelling")
 	}
+	// UserLogon= needs a valid User=, which no user unit can have.
+	r = ParseUnit("work.service", "[Unit]\nFormatVersion=2\n[Service]\nExecStart=C:\\Apps\\work.exe\nUser=alice\nUserLogon=session-or-s4u\n")
+	if r.HasError() || len(UserScopeIssues(r.Unit, true)) != 1 {
+		t.Fatalf("user scope: %+v %+v", r.Issues, UserScopeIssues(r.Unit, true))
+	}
+}
+
+func TestUserLogonDirective(t *testing.T) {
+	const service = "[Service]\nExecStart=C:\\Apps\\work.exe\n"
+	const format2 = "[Unit]\nFormatVersion=2\n"
+	for _, tc := range []struct {
+		name, unit string
+		valid      bool
+		session    bool
+	}{
+		{"absent", format2 + service + "User=alice\n", true, false},
+		{"s4u", format2 + service + "User=alice\nUserLogon=s4u\n", true, false},
+		{"session or s4u", format2 + service + "User=S-1-5-21-1-2-3-1001\nUserLogon=session-or-s4u\n", true, true},
+		{"case and space", format2 + service + "User=alice\nUserLogon= Session-Or-S4U \n", true, true},
+		{"notify", format2 + service + "Type=notify\nUser=alice\nUserLogon=session-or-s4u\n", true, true},
+		{"bad value", format2 + service + "User=alice\nUserLogon=session\n", false, false},
+		{"no user", format2 + service + "UserLogon=session-or-s4u\n", false, false},
+		{"system", format2 + service + "User=SYSTEM\nUserLogon=session-or-s4u\n", false, false},
+		{"system s4u", format2 + service + "User=S-1-5-18\nUserLogon=s4u\n", false, false},
+		{"twice", format2 + service + "User=alice\nUserLogon=s4u\nUserLogon=session-or-s4u\n", false, false},
+		{"scm", format2 + "[Service]\nType=scm\nServiceName=Spooler\nUser=alice\nUserLogon=session-or-s4u\n", false, false},
+		{"format 1", service + "User=alice\nUserLogon=session-or-s4u\n", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := ParseUnit("work.service", tc.unit)
+			if r.HasError() == tc.valid {
+				t.Fatalf("validity: %+v", r.Issues)
+			}
+			if tc.valid && r.Unit.Service.UserSession != tc.session {
+				t.Fatalf("UserSession=%t, want %t", r.Unit.Service.UserSession, tc.session)
+			}
+		})
+	}
 }
