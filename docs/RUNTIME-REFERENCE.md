@@ -212,7 +212,7 @@ revision, and verify of a loaded unit whose file gained one reports
 directives added since: `ExecStop`, `ExecStopArg`, `FormatVersion`,
 `PathExistsAll`, `ReadinessEndpoint`, `ReadinessExpectedStatus`,
 `ReadinessIntervalSec`, `ReadinessMode`, `ReadinessTimeoutSec`,
-`RemainAfterExit`, `RestartBackoff`, `RestartMaxDelaySec`, `User`,
+`RemainAfterExit`, `RestartBackoff`, `RestartMaxDelaySec`, `User`, `UserLogon`,
 `WatchdogFailureThreshold`, `WatchdogGraceSec`, `WatchdogTimeoutSec`,
 `WindowsCPUQuota` and `WindowsCPUWeight`. A unit that uses one fails there:
 reload rejects the candidate, so verify by name reports a new unit, or any unit

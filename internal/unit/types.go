@@ -212,8 +212,11 @@ type ServiceSpec struct {
 	// User is the account the processes run as (User=, format 2), logged on
 	// by S4U at each start. Empty means LocalSystem, also when UserDeclared
 	// is set by a SYSTEM spelling.
-	User                     string
-	UserDeclared             bool
+	User         string
+	UserDeclared bool
+	// UserSession is UserLogon=session-or-s4u: each start uses the token of a
+	// signed-in session of the User= account when there is one, S4U otherwise.
+	UserSession              bool
 	Environment              []EnvVar
 	Restart                  RestartPolicy
 	RestartSec               time.Duration
