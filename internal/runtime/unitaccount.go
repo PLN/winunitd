@@ -8,12 +8,17 @@ import "strings"
 const ProfileKeeperFlag = "--profile-keeper"
 
 // AccountSession is the identity of one invocation of a system unit that runs
-// as another account (User=): an S4U token, a private desktop and a profile
-// keeper. Processes started with it run as that account until Close.
+// as another account (User=): an S4U token or a copy of a signed-in session's
+// token, a private desktop and a profile keeper. Processes started with it run
+// as that account until Close.
 type AccountSession struct {
 	// Info identifies the account the token belongs to.
 	Info UserInfo
-	env  []string
+	// Logon is LogonS4U or LogonSession; SessionID is the session whose token
+	// a LogonSession copied. The processes run in session 0 either way.
+	Logon     string
+	SessionID uint32
+	env       []string
 	//lint:ignore U1000 Used by the Windows account session only.
 	plat accountPlatform
 }
@@ -24,6 +29,9 @@ type AccountSessionSpec struct {
 	Account string     // DOMAIN\name, name or SID
 	Exe     string     // absolute path of winunitd.exe
 	Daemon  *DaemonJob // the manager's self-assigned broker job
+	// Session asks for a signed-in session's token first and S4U only when
+	// there is none or its path fails (UserLogon=session-or-s4u).
+	Session bool
 }
 
 // AccountError reports that a User= account could not be logged on or

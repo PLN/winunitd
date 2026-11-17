@@ -23,8 +23,9 @@ type accountPlatform struct {
 	onExit      func()
 }
 
-// OpenAccountSession logs the account on by trusted S4U, never with a stored
-// credential, and starts its profile keeper on a private desktop. A failed
+// OpenAccountSession logs the account on, never with a stored credential, and
+// starts its profile keeper on a private desktop. The logon is trusted S4U,
+// or with spec.Session first a copy of a signed-in session's token. A failed
 // open that could not release what it started returns the session with the
 // error so the caller can retry Close.
 func OpenAccountSession(spec AccountSessionSpec) (*AccountSession, error) {
@@ -35,28 +36,73 @@ func OpenAccountSession(spec AccountSessionSpec) (*AccountSession, error) {
 	if err != nil {
 		return nil, err
 	}
+	return openAccountLogons(spec.Session,
+		func() (*AccountSession, error) { return openSessionAccount(nativeSessionLogon, spec, info) },
+		func() (*AccountSession, error) { return openS4UAccount(spec, info) })
+}
+
+func openS4UAccount(spec AccountSessionSpec, info UserInfo) (*AccountSession, error) {
 	tok, err := s4uLogon(LingerRecord{SID: info.SID, Name: FormatAccount(info)})
-	// A failed logon can still return a token whose cleanup must be retried.
-	s := &AccountSession{plat: accountPlatform{token: tok}}
+	if err != nil {
+		// A failed logon can still return a token whose cleanup must be retried.
+		s := &AccountSession{plat: accountPlatform{token: tok}}
+		cause := fmt.Errorf("S4U logon for %s: %w", spec.Account, err)
+		if err := s.Close(); err != nil {
+			return s, errors.Join(cause, err)
+		}
+		return nil, cause
+	}
+	return finishOpen(spec, info, tok, LogonS4U, 0)
+}
+
+// openSessionAccount opens the account session with the token of a signed-in
+// session of the account. Every failure names that session; one whose session
+// signed out meanwhile is a sessionGoneError, never followed by S4U.
+func openSessionAccount(api sessionLogonAPI, spec AccountSessionSpec, info UserInfo) (*AccountSession, error) {
+	tok, id, selected, err := api.acquire(info.SID)
+	if err == nil {
+		var s *AccountSession
+		s, err = finishOpen(spec, info, tok, LogonSession, id)
+		if err == nil {
+			return s, nil
+		}
+		err = fmt.Errorf("session %d: %w", id, err)
+		if s != nil {
+			return s, err
+		}
+	} else if tok != nil {
+		return &AccountSession{plat: accountPlatform{token: tok}}, err
+	}
+	if selected && !api.signedIn(id, info.SID) {
+		return nil, &sessionGoneError{ID: id}
+	}
+	return nil, err
+}
+
+// finishOpen starts the profile keeper for tok, which it owns from here on,
+// and builds the account's environment.
+func finishOpen(spec AccountSessionSpec, info UserInfo, tok *UserToken, logon string, sessionID uint32) (*AccountSession, error) {
+	s := &AccountSession{Logon: logon, SessionID: sessionID, plat: accountPlatform{token: tok}}
 	fail := func(cause error) (*AccountSession, error) {
 		if err := s.Close(); err != nil {
 			return s, errors.Join(cause, err)
 		}
 		return nil, cause
 	}
-	if err != nil {
-		return fail(fmt.Errorf("S4U logon for %s: %w", spec.Account, err))
+	kind := "S4U"
+	if logon == LogonSession {
+		kind = "session"
 	}
 	native, ok := nativeToken(tok)
 	if !ok {
-		return fail(errors.New("S4U logon returned no token"))
+		return fail(fmt.Errorf("%s logon returned no token", kind))
 	}
 	identity, err := native.GetTokenUser()
 	if err != nil {
 		return fail(err)
 	}
 	if got := identity.User.Sid.String(); !strings.EqualFold(got, info.SID) {
-		return fail(fmt.Errorf("S4U token belongs to %s, not %s", got, info.SID))
+		return fail(fmt.Errorf("%s token belongs to %s, not %s", kind, got, info.SID))
 	}
 	keeper, desktop, err := startHeadlessProcess(native, UserManagerSpec{
 		SID: info.SID, Token: tok, Exe: spec.Exe, Daemon: spec.Daemon, LoadProfile: true,

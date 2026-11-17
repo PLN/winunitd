@@ -14,3 +14,6 @@ func OpenAccountSession(AccountSessionSpec) (*AccountSession, error) {
 
 // Close does nothing on this build.
 func (s *AccountSession) Close() error { return nil }
+
+// SessionSignedIn is true off Windows, which has no session logon to end.
+func SessionSignedIn(uint32, string) bool { return true }

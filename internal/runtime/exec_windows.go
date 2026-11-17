@@ -39,6 +39,8 @@ type winProc struct {
 	unassigned    bool
 	job           *UnitJob
 	account       *AccountSession   // User= logon, released after the job is closed
+	logon         string            // account.Logon, kept after release
+	logonSession  uint32            // account.SessionID, kept after release
 	launchHandles [5]windows.Handle // stdin, stdout writer, stderr writer, stdout reader, stderr reader
 	stdout        *ownedOutput
 	stderr        *ownedOutput
@@ -105,18 +107,26 @@ func (l *winLauncher) createWith(spec StartSpec, openJob func(JobLimits) (*UnitJ
 	return l.createWithSetup(spec, openJob, openPipe, openInput, processSetup{})
 }
 
-func (l *winLauncher) createWithSetup(spec StartSpec, openJob func(JobLimits) (*UnitJob, error), openPipe func() (windows.Handle, windows.Handle, error), openInput func() (windows.Handle, error), setup processSetup) (*winProc, error) {
+func (l *winLauncher) createWithSetup(spec StartSpec, openJob func(JobLimits) (*UnitJob, error), openPipe func() (windows.Handle, windows.Handle, error), openInput func() (windows.Handle, error), setup processSetup) (_ *winProc, err error) {
 	p := &winProc{}
 	if spec.User != "" {
 		exe, err := os.Executable()
 		if err != nil {
 			return nil, &AccountError{Account: spec.User, Err: err}
 		}
-		account, err := OpenAccountSession(AccountSessionSpec{Account: spec.User, Exe: exe, Daemon: l.daemon})
+		account, err := OpenAccountSession(AccountSessionSpec{Account: spec.User, Exe: exe, Daemon: l.daemon, Session: spec.UserSession})
 		p.account = account
 		if err != nil {
 			return p, &AccountError{Account: spec.User, Err: err}
 		}
+		p.logon, p.logonSession = account.Logon, account.SessionID
+		defer func() {
+			// A launch that fails because its session signed out is an account
+			// failure, to which Restart= applies; the next start selects again.
+			if err != nil && p.logon == LogonSession && !SessionSignedIn(p.logonSession, account.Info.SID) {
+				err = &AccountError{Account: spec.User, Err: &sessionGoneError{ID: p.logonSession, Cause: err}}
+			}
+		}()
 	}
 	job, err := openJob(spec.Limits)
 	p.job = job
@@ -400,6 +410,9 @@ func (p *winProc) ExitCode() (uint32, bool) {
 }
 
 func (p *winProc) Job() Job { return p.job }
+
+// AccountLogon reports the logon of a User= process; empty for none.
+func (p *winProc) AccountLogon() (string, uint32) { return p.logon, p.logonSession }
 
 func (p *winProc) Stdout() io.ReadCloser { return p.stdout }
 
