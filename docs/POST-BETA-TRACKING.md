@@ -1,7 +1,7 @@
 # Post-beta tracking
 
 Status refreshed October 19, 2026. The current source release is
-[0.6.0](RELEASE-NOTES-0.6.0.md); 0.5.1 was published unsigned on October 19.
+[0.6.1](RELEASE-NOTES-0.6.1.md); 0.6.0 was published unsigned on November 18.
 The public 0.2.1-beta delivery gates B1-B4 are complete.
 Prioritize adopter feedback and reproducible defects in the supported core, then
 continue the architecture and qualification backlog. Preserve documented beta
@@ -12,7 +12,7 @@ implied by this tracking update.
 
 GitHub milestones mirror [repository acceptance gates](MILESTONES.md). R2, R3, and R5
 technical acceptance is complete. For 0.1-alpha only, overall R6 is checked under the #251 deferral policy with documented limitations (deferred-media and deferred-older-msi). R0 and R1 remain in progress. R7 is accepted for the dev-machine pilot on 0.1-alpha ([evidence](R7-EVIDENCE.md)); R8 is in progress,
-with source release 0.6.0 and signing deferred. R4 was accepted on October 14, 2026 with Microsoft Entra (cloud) accounts excluded from supported claims. The accepted pilot remains a separate qualification record from the current release.
+with source release 0.6.1 and signing deferred. R4 was accepted on October 14, 2026 with Microsoft Entra (cloud) accounts excluded from supported claims. The accepted pilot remains a separate qualification record from the current release.
 
 ## Earlier qualification notes
 
