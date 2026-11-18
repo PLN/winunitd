@@ -89,7 +89,8 @@ func (m *Manager) shutdownPass(ctx context.Context) error {
 
 	// Each stop publishes its own generation-checked outcome. The graph's
 	// historical summary must not overwrite a later lifecycle operation.
-	_, err := g.Shutdown(ctx, core.StopFunc(m.stopUnitCtx), roots...)
+	// The seal rejects external stop-helper admission; this pass owns ExecStop.
+	_, err := g.Shutdown(shutdownStopContext(ctx, m), core.StopFunc(m.stopUnitCtx), roots...)
 	return errors.Join(err, ctx.Err())
 }
 

@@ -519,3 +519,80 @@ func TestStopBudgetReservesParentDeadline(t *testing.T) {
 		t.Fatalf("consumed budget below the unit limit: %v", remaining)
 	}
 }
+
+// Shutdown seals admission before its stop pass. That pass must still run the
+// invocation's ExecStop, while a stop outside the pass stays refused.
+func TestShutdownRunsExecStopAfterSealingAdmission(t *testing.T) {
+	t.Run("shutdown-all", func(t *testing.T) {
+		l := &cooperativeLauncher{mode: "cooperate"}
+		m := managerWith(t, l, map[string]string{"work.service": cooperativeService})
+		if _, err := m.Start(context.Background(), "work"); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := ShutdownAll(ctx, m, nil); err != nil {
+			t.Fatal(err)
+		}
+		l.guard.Lock()
+		spec, helper, main := l.helperSpec, l.helper, l.main
+		l.guard.Unlock()
+		if len(l.specs()) != 2 || len(spec.Argv) == 0 || spec.Argv[0] != `C:\Tools\stop.exe` {
+			t.Fatalf("shutdown skipped ExecStop: %+v", spec)
+		}
+		if helper == nil || helper.Alive() || main.Alive() {
+			t.Fatal("shutdown left helper or workload running")
+		}
+		m.mu.Lock()
+		retained := len(m.stopHelpers)
+		m.mu.Unlock()
+		if retained != 0 {
+			t.Fatal("shutdown retained a completed helper")
+		}
+	})
+	t.Run("sealed-external-stop", func(t *testing.T) {
+		l := &cooperativeLauncher{mode: "cooperate"}
+		m := managerWith(t, l, map[string]string{"work.service": cooperativeService})
+		if _, err := m.Start(context.Background(), "work"); err != nil {
+			t.Fatal(err)
+		}
+		m.mu.Lock()
+		m.sealShutdownLocked()
+		m.mu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := m.stopUnitWithContext(ctx, "work"); err == nil || !strings.Contains(err.Error(), "manager is closing") {
+			t.Fatalf("sealed manager admitted an external ExecStop: %v", err)
+		}
+		if len(l.specs()) != 1 {
+			t.Fatal("sealed manager launched an external ExecStop")
+		}
+	})
+}
+
+// Close's helper snapshot is final: a still-running shutdown pass cannot
+// admit a helper that Close would no longer join.
+func TestCloseBarrierRejectsShutdownOwnedHelper(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	l := &blockedHelperLauncher{release: release}
+	m := &Manager{units: make(map[string]*unitRuntime), launch: l}
+	const name = "work.service"
+	u := &unit.Unit{Name: name, Kind: unit.KindService, Service: &unit.ServiceSpec{ExecStop: []string{`C:\Tools\stop.exe`}}}
+	rt := &unitRuntime{unit: u, state: core.Active, invocation: "inv"}
+	m.units[name] = rt
+	m.mu.Lock()
+	m.sealShutdownLocked()
+	m.mu.Unlock()
+	owner := runtimeIdentity{name: name, record: rt}
+	if err := m.CloseContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h, _, err := m.acceptStopHelper(shutdownStopContext(context.Background(), m), owner, u, nil, true, time.Second)
+	if h != nil || err == nil {
+		t.Fatal("shutdown pass admitted a helper after Close's barrier")
+	}
+	if l.calls.Load() != 0 {
+		t.Fatal("helper launched after Close's barrier")
+	}
+}
