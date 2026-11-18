@@ -217,7 +217,8 @@ RestartSec=2s
   invocation's own token, with a profile keeper and desktop of its own; it
   selects no session and logs on nowhere, so it also runs after the sign-out
   and off the domain network. `ExecStop` of an invocation that started by S4U logs on by
-  S4U.
+  S4U. A completed `RemainAfterExit=yes` oneshot holds no token; its `ExecStop`
+  logs on as a start does, the session first and S4U otherwise.
 - A `User=` written as `DOMAIN\name` is still resolved to a SID before every
   start, which may ask a domain controller; write the SID to avoid that.
 

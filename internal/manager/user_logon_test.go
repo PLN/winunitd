@@ -245,6 +245,25 @@ func TestUserLogonStatusAndStopHelper(t *testing.T) {
 	}
 }
 
+// A completed RemainAfterExit oneshot has released its process and token, so
+// its stop helper logs on as a start does: the session first, then S4U.
+func TestUserLogonCompletedOneshotStopHelperSelectsAgain(t *testing.T) {
+	launch := &sessionLauncher{logon: runtime.LogonSession, session: 2}
+	m := sessionUnitManager(t, sessionService+"Type=oneshot\nRemainAfterExit=yes\n", launch, nil)
+	if _, err := m.Start(context.Background(), "work"); err != nil {
+		t.Fatal(err)
+	}
+	if st := unitStatus(t, m); st.ActiveState != "active" || st.MainPID != 0 {
+		t.Fatalf("completed status %+v", st)
+	}
+	if _, err := m.Stop("work"); err != nil {
+		t.Fatal(err)
+	}
+	if h := launch.helpers(); len(h) != 1 || !h[0].UserSession || h[0].UserLogonOf != nil {
+		t.Fatalf("stop helper %+v", h)
+	}
+}
+
 func TestUserLogonDefaultAsksForS4U(t *testing.T) {
 	launch := &sessionLauncher{logon: runtime.LogonS4U}
 	m := sessionUnitManager(t, userService+"User=EXAMPLE\\alice\n", launch, nil)
