@@ -147,6 +147,15 @@ func (s *signedInSessions) signedIn(session uint32, sid string) bool {
 	return true
 }
 
+// onLogonOf reports whether a helper spec asks for the token of the process
+// with pid, or with want false for none.
+func onLogonOf(spec runtime.StartSpec, pid int, want bool) bool {
+	if !want {
+		return spec.UserLogonOf == nil
+	}
+	return spec.UserLogonOf != nil && spec.UserLogonOf.PID() == pid
+}
+
 const sessionService = userService + "User=EXAMPLE\\alice\nUserLogon=session-or-s4u\n"
 
 func sessionUnitManager(t *testing.T, body string, launch *sessionLauncher, sessions *signedInSessions) *Manager {
@@ -199,10 +208,10 @@ func journalText(t *testing.T, m *Manager) string {
 
 func TestUserLogonStatusAndStopHelper(t *testing.T) {
 	for _, tc := range []struct {
-		logon       string
-		session     uint32
-		statusLine  string
-		helperFirst bool
+		logon      string
+		session    uint32
+		statusLine string
+		ownLogon   bool
 	}{
 		{runtime.LogonSession, 2, "logon: session 2", true},
 		{runtime.LogonS4U, 0, "logon: s4u", false},
@@ -224,15 +233,34 @@ func TestUserLogonStatusAndStopHelper(t *testing.T) {
 			if _, err := m.Stop("work"); err != nil {
 				t.Fatal(err)
 			}
-			// The stop helper asks for the session logon only for an invocation
-			// on one, whose session is still signed in.
-			if h := launch.helpers(); len(h) != 1 || h[0].UserSession != tc.helperFirst || h[0].User != `EXAMPLE\alice` {
+			// The stop helper of an invocation on a session logon runs on that
+			// invocation's token and logs on nowhere; an S4U one logs on by S4U.
+			if h := launch.helpers(); len(h) != 1 || h[0].UserSession || h[0].User != `EXAMPLE\alice` || !onLogonOf(h[0], st.MainPID, tc.ownLogon) {
 				t.Fatalf("stop helper %+v", h)
 			}
 			if st := unitStatus(t, m); st.UserLogon != "" || st.UserSession != 0 {
 				t.Fatalf("stopped status %+v", st)
 			}
 		})
+	}
+}
+
+// A completed RemainAfterExit oneshot has released its process and token, so
+// its stop helper logs on as a start does: the session first, then S4U.
+func TestUserLogonCompletedOneshotStopHelperSelectsAgain(t *testing.T) {
+	launch := &sessionLauncher{logon: runtime.LogonSession, session: 2}
+	m := sessionUnitManager(t, sessionService+"Type=oneshot\nRemainAfterExit=yes\n", launch, nil)
+	if _, err := m.Start(context.Background(), "work"); err != nil {
+		t.Fatal(err)
+	}
+	if st := unitStatus(t, m); st.ActiveState != "active" || st.MainPID != 0 {
+		t.Fatalf("completed status %+v", st)
+	}
+	if _, err := m.Stop("work"); err != nil {
+		t.Fatal(err)
+	}
+	if h := launch.helpers(); len(h) != 1 || !h[0].UserSession || h[0].UserLogonOf != nil {
+		t.Fatalf("stop helper %+v", h)
 	}
 }
 
@@ -258,7 +286,8 @@ func TestUserLogonSignOutEndsTheInvocation(t *testing.T) {
 		if _, err := m.Start(context.Background(), "work"); err != nil {
 			t.Fatal(err)
 		}
-		first := unitStatus(t, m).InvocationID
+		running := unitStatus(t, m)
+		first := running.InvocationID
 		// SCM and the poll usually both report one logoff.
 		m.SessionSignedOut(2)
 		m.SessionSignedOut(2)
@@ -266,8 +295,10 @@ func TestUserLogonSignOutEndsTheInvocation(t *testing.T) {
 			st := unitStatus(t, m)
 			return len(launch.workloads()) == 2 && st.ActiveState == "active" && st.InvocationID != first
 		})
-		if h := launch.helpers(); len(h) != 1 || h[0].UserSession {
-			t.Fatalf("stop helpers %+v, want one by S4U", h)
+		// Signed out, possibly off the network: the helper still runs on the
+		// invocation's token, with no logon that could wait for a controller.
+		if h := launch.helpers(); len(h) != 1 || h[0].UserSession || !onLogonOf(h[0], running.MainPID, true) {
+			t.Fatalf("stop helpers %+v, want one on the invocation's logon", h)
 		}
 		if !strings.Contains(journalText(t, m), reason) {
 			t.Fatalf("journal lacks the sign-out reason:\n%s", journalText(t, m))

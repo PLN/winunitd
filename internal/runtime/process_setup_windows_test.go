@@ -148,3 +148,46 @@ func TestSessionLogonLaunchFailureAfterSignOutIsAccountError(t *testing.T) {
 		})
 	}
 }
+
+// A launch on another process's logon opens its account session from that
+// process's, without selecting a session, and its cleanup leaves the other
+// account session open. Once the other process is closed there is nothing to
+// copy, and the launch fails before opening anything.
+func TestLaunchOnAnotherProcessLogon(t *testing.T) {
+	const sid = "S-1-5-21-1-2-3-1001"
+	from := &AccountSession{Info: UserInfo{SID: sid}, Logon: LogonSession, SessionID: 7}
+	main := &winProc{account: from}
+	var opened []AccountSessionSpec
+	setup := processSetup{
+		openAccount: func(spec AccountSessionSpec) (*AccountSession, error) {
+			opened = append(opened, spec)
+			return &AccountSession{Info: UserInfo{SID: sid}, Logon: LogonSession, SessionID: 7}, nil
+		},
+		signedIn: func(uint32, string) bool {
+			t.Error("a launch on another process's logon asked for its session")
+			return false
+		},
+	}
+	injected := errors.New("injected job failure")
+	openJob := func(JobLimits) (*UnitJob, error) { return nil, injected }
+	spec := StartSpec{Argv: []string{testAbs(t)}, User: `.\alice`, UserLogonOf: main}
+	p, err := (&winLauncher{}).createWithSetup(spec, openJob, makeStdPipe, openNUL, setup)
+	if owner, cleanup := failedProcessStart(p, err); owner != nil || !errors.Is(cleanup, err) {
+		t.Fatalf("failed launch cleanup: owner=%v error=%v", owner != nil, cleanup)
+	}
+	var account *AccountError
+	if !errors.Is(err, injected) || errors.As(err, &account) {
+		t.Fatalf("error = %v, want the plain launch error", err)
+	}
+	if len(opened) != 1 || opened[0].From != from || opened[0].Session {
+		t.Fatalf("account session opened with %+v, want From the invocation's", opened)
+	}
+	if p.account != nil || from.plat.closed || main.accountSession() != from {
+		t.Fatal("the launch's cleanup closed the other process's account session")
+	}
+
+	_, err = (&winLauncher{}).createWithSetup(StartSpec{Argv: []string{testAbs(t)}, User: `.\alice`, UserLogonOf: &winProc{}}, openJob, makeStdPipe, openNUL, setup)
+	if !errors.As(err, &account) || len(opened) != 1 {
+		t.Fatalf("launch on a closed process's logon: %v after %d opens", err, len(opened))
+	}
+}

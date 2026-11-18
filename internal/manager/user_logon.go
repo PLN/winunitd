@@ -195,10 +195,3 @@ func (m *Manager) acceptSessionEnd(owner runtimeIdentity, proc runtime.Process) 
 	rt.watchdog = nil
 	return effect
 }
-
-// stopHelperSessionLocked is the logon an ExecStop helper asks for: the
-// session logon while the invocation's session has not been reported signed
-// out, S4U otherwise.
-func stopHelperSessionLocked(rt *unitRuntime) bool {
-	return rt.invocationLogon == runtime.LogonSession && !rt.sessionEnded
-}

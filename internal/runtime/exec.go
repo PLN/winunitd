@@ -70,6 +70,12 @@ type StartSpec struct {
 	// S4U only after that fails (UserLogon=session-or-s4u). The process stays
 	// in session 0 either way.
 	UserSession bool
+	// UserLogonOf, if set, is a running process of User started by this
+	// launcher. The new process runs on a duplicate of the token its account
+	// session holds, in an account session of its own, and nothing logs on:
+	// the ExecStop helper of a session-logon invocation. UserSession is then
+	// ignored. The process's own account session is only read.
+	UserLogonOf Process
 }
 
 // Job is a per-unit Job Object (DESIGN.md §5.1). Closing or killing it

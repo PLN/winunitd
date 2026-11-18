@@ -122,7 +122,14 @@ func (l *winLauncher) createWithSetup(spec StartSpec, openJob func(JobLimits) (*
 		if exeErr != nil {
 			return nil, &AccountError{Account: spec.User, Err: exeErr}
 		}
-		account, openErr := setup.openAccount(AccountSessionSpec{Account: spec.User, Exe: exe, Daemon: l.daemon, Session: spec.UserSession})
+		accountSpec := AccountSessionSpec{Account: spec.User, Exe: exe, Daemon: l.daemon, Session: spec.UserSession}
+		if spec.UserLogonOf != nil {
+			from, _ := spec.UserLogonOf.(*winProc)
+			if accountSpec.From = from.accountSession(); accountSpec.From == nil {
+				return nil, &AccountError{Account: spec.User, Err: errors.New("the invocation's account session is gone")}
+			}
+		}
+		account, openErr := setup.openAccount(accountSpec)
 		p.account = account
 		if openErr != nil {
 			return p, &AccountError{Account: spec.User, Err: openErr}
@@ -131,7 +138,8 @@ func (l *winLauncher) createWithSetup(spec StartSpec, openJob func(JobLimits) (*
 		defer func() {
 			// A launch that fails because its session signed out is an account
 			// failure, to which Restart= applies; the next start selects again.
-			if err != nil && p.logon == LogonSession && !setup.signedIn(p.logonSession, account.Info.SID) {
+			// A launch on another process's logon selected no session.
+			if err != nil && accountSpec.From == nil && p.logon == LogonSession && !setup.signedIn(p.logonSession, account.Info.SID) {
 				err = &AccountError{Account: spec.User, Err: &sessionGoneError{ID: p.logonSession, Cause: err}}
 			}
 		}()
@@ -427,6 +435,17 @@ func (p *winProc) Job() Job { return p.job }
 // AccountLogon reports the logon of a User= process; empty for none.
 func (p *winProc) AccountLogon() (string, uint32) { return p.logon, p.logonSession }
 
+// accountSession is the process's account session until its handles are
+// closed; nil for none, for a closed process and for a nil p.
+func (p *winProc) accountSession() *AccountSession {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.account
+}
+
 func (p *winProc) Stdout() io.ReadCloser { return p.stdout }
 
 func (p *winProc) Stderr() io.ReadCloser { return p.stderr }
@@ -585,7 +604,10 @@ func (p *winProc) closeHandles() error {
 		if err := p.account.Close(); err != nil {
 			return err
 		}
+		// accountSession reads it from another launch.
+		p.mu.Lock()
 		p.account = nil
+		p.mu.Unlock()
 	}
 	p.mu.Lock()
 	p.closed = true

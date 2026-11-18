@@ -143,8 +143,9 @@ WantedBy=default.target
   so (an unknown account, an unreachable domain controller) fails, and
   `Restart=` applies. An S4U logon of a domain account needs a domain
   controller; `UserLogon=session-or-s4u` lets a unit start without one while
-  its account is signed in. `ExecStop` logs on again, as the account the running
-  invocation started with, even if a reload changed `User=` meanwhile.
+  its account is signed in. `ExecStop` runs as the account the running
+  invocation started with, even if a reload changed `User=` meanwhile: by a
+  new S4U logon, or on the invocation's own session logon (below).
 - `SYSTEM`, `LocalSystem`, `NT AUTHORITY\SYSTEM` and `S-1-5-18` mean the default
   LocalSystem launch. `LocalService` and `NetworkService` are rejected, as are
   `User=` in format 1 files, in user units (a user manager already runs as its
@@ -198,7 +199,7 @@ RestartSec=2s
 - An invocation keeps the logon it started with. A unit started by S4U is not
   replaced when its account signs in; its next start uses the session.
 - When the session whose logon an invocation uses signs out, the manager stops
-  that invocation (with `ExecStop`, by S4U) and records
+  that invocation (with `ExecStop`) and records
   `session <N>, whose logon this invocation used, signed out`. It counts as a
   failed exit, so `Restart=on-failure` and `always` start it again, by S4U or
   another session. Windows does not end these processes at sign-out. Lock,
@@ -212,10 +213,12 @@ RestartSec=2s
   `User=<SID>: no signed-in session of the account; S4U logon for <SID>: ...`,
   or `session 2: linked token: ...` in place of the first half when a session
   was found and its path failed.
-- `ExecStop` asks for the session logon first while the invocation's session is
-  signed in, and uses S4U for an invocation that started by S4U. Off the
-  domain network an S4U `ExecStop` fails, quickly in practice, and stopping
-  goes on as when `ExecStop` fails.
+- `ExecStop` of an invocation on a session logon runs on a copy of that
+  invocation's own token, with a profile keeper and desktop of its own; it
+  selects no session and logs on nowhere, so it also runs after the sign-out
+  and off the domain network. `ExecStop` of an invocation that started by S4U logs on by
+  S4U. A completed `RemainAfterExit=yes` oneshot holds no token; its `ExecStop`
+  logs on as a start does, the session first and S4U otherwise.
 - A `User=` written as `DOMAIN\name` is still resolved to a SID before every
   start, which may ask a domain controller; write the SID to avoid that.
 

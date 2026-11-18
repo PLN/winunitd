@@ -29,7 +29,6 @@ type stopHelperWork struct {
 	process    runtime.Process  // manager mutex
 	capture    *journal.Capture // published by closing done; retained until joined
 	reserve    time.Duration
-	session    bool // ask for the session logon first (UserLogon=session-or-s4u)
 }
 
 func (m *Manager) acceptStopHelper(ctx context.Context, owner runtimeIdentity, u *unit.Unit, main runtime.Process, eligible bool, reserve time.Duration) (*stopHelperWork, bool, error) {
@@ -55,7 +54,7 @@ func (m *Manager) acceptStopHelper(ctx context.Context, owner runtimeIdentity, u
 		return nil, false, fmt.Errorf("stop helper capacity %d exhausted", maxStopHelpers)
 	}
 	workCtx, cancel := context.WithCancel(ctx)
-	h := &stopHelperWork{owner: owner, invocation: rt.invocation, unit: u, main: main, ctx: workCtx, cancel: cancel, done: make(chan struct{}), reserve: reserve, session: stopHelperSessionLocked(rt)}
+	h := &stopHelperWork{owner: owner, invocation: rt.invocation, unit: u, main: main, ctx: workCtx, cancel: cancel, done: make(chan struct{}), reserve: reserve}
 	if m.stopHelpers == nil {
 		m.stopHelpers = make(map[*stopHelperWork]struct{})
 	}
@@ -116,9 +115,18 @@ func (m *Manager) executeStopHelper(h *stopHelperWork) {
 	}
 	// h.unit is the invocation's definition, so a reload that changed User=
 	// still stops this invocation as the account it ran as. An invocation on
-	// a session logon stops through the same session-then-S4U open as a start
-	// while its session is signed in, by S4U otherwise; an S4U one by S4U.
-	spec := runtime.StartSpec{Unit: h.owner.name, Type: unit.TypeOneshot, Argv: append([]string(nil), svc.ExecStop...), Dir: svc.WorkingDirectory, Env: env, Limits: runtime.JobLimitsFromSpec(svc), User: svc.User, UserSession: h.session}
+	// a session logon stops on a copy of its own token, which needs neither
+	// the session nor a domain controller, also after a sign-out; an S4U one
+	// logs on by S4U. The stop sequence closes the invocation's process, and
+	// its account session, only after this helper. A completed
+	// RemainAfterExit oneshot owns no process and so no token: its stop logs on
+	// as a start of the unit does.
+	spec := runtime.StartSpec{Unit: h.owner.name, Type: unit.TypeOneshot, Argv: append([]string(nil), svc.ExecStop...), Dir: svc.WorkingDirectory, Env: env, Limits: runtime.JobLimitsFromSpec(svc), User: svc.User}
+	if logon, _ := processLogon(h.main); logon == runtime.LogonSession {
+		spec.UserLogonOf = h.main
+	} else if h.main == nil {
+		spec.UserSession = svc.UserSession
+	}
 	launching := m.trackLaunchingJob(&spec, processOwner{unit: h.owner.name, invocation: h.invocation, stopHelper: true}, nil)
 	p, launchErr := m.launch.Start(h.ctx, spec)
 	m.publishStopHelperProcess(h, p)
