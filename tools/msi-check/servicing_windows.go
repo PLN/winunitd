@@ -105,7 +105,7 @@ func serviceTransaction(args []string) error {
 	if err := floorPreflight(mode, dataDir, servicing.Running()); err != nil {
 		return err
 	}
-	return prepareService(statePath, token, installDir, dataDir, mode)
+	return prepareService(statePath, token, installDir, dataDir, mode, args[5])
 }
 
 func standardProductDirs() (installDir, dataDir string, err error) {
@@ -143,7 +143,7 @@ func serviceStatePath(token string) (string, error) {
 	return filepath.Join(base, "winunitd-service-"+token+".json"), nil
 }
 
-func prepareService(statePath, token, installDir, dataDir, mode string) error {
+func prepareService(statePath, token, installDir, dataDir, mode, upgrade string) error {
 	m, err := mgr.Connect()
 	if err != nil {
 		return err
@@ -177,6 +177,14 @@ func prepareService(statePath, token, installDir, dataDir, mode string) error {
 	quiesce, err := planServiceStop(serviceStateName(st.State))
 	if err != nil {
 		return err
+	}
+	// A legacy manager refuses its own shutdown ExecStop. Decline while
+	// nothing is recorded, quiesced or stopped, so rollback has no service
+	// state to restore and does not restart the manager.
+	if release := legacyStopRelease(mode, upgrade); quiesce && release != "" {
+		if err := legacyStopPreflight(context.Background(), release, dataDir); err != nil {
+			return err
+		}
 	}
 	saved.Running = st.State == svc.Running
 	saved.Policy.Version = 1

@@ -8,7 +8,7 @@ const (
 	// InstallerVersion is the MSI ProductVersion paired with Version.
 	// Windows Installer orders only the first three numeric fields, so the
 	// human prerelease suffix is not part of this value.
-	InstallerVersion = "0.6.0"
+	InstallerVersion = "0.6.1"
 
 	ProductName  = "WinUnit Manager"
 	Manufacturer = "PLN"
@@ -16,7 +16,7 @@ const (
 	SupportURL   = "https://github.com/PLN/winunitd"
 
 	UpgradeCode = "A512B91F-1883-40FD-8EDB-5B8C5708DEEA"
-	ProductCode = "09120BB5-3A58-4A2B-B6E9-09173A441709"
+	ProductCode = "939F44EA-084E-46D9-8DF9-11F6E3B25A9A"
 
 	// BetaUpgradeCode is the shipped beta package (packaging/beta). The
 	// product MSI only detects it. It is not this product's upgrade identity.

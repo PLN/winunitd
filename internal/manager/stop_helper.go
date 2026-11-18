@@ -31,6 +31,18 @@ type stopHelperWork struct {
 	reserve    time.Duration
 }
 
+// shutdownStopOwner marks a context derived from this manager's shutdown pass.
+type shutdownStopOwner struct{}
+
+func shutdownStopContext(ctx context.Context, m *Manager) context.Context {
+	return context.WithValue(ctx, shutdownStopOwner{}, m)
+}
+
+func (m *Manager) shutdownOwnsStop(ctx context.Context) bool {
+	owner, _ := ctx.Value(shutdownStopOwner{}).(*Manager)
+	return owner == m
+}
+
 func (m *Manager) acceptStopHelper(ctx context.Context, owner runtimeIdentity, u *unit.Unit, main runtime.Process, eligible bool, reserve time.Duration) (*stopHelperWork, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -44,7 +56,9 @@ func (m *Manager) acceptStopHelper(ctx context.Context, owner runtimeIdentity, u
 	if !eligible || u == nil || u.Service == nil || len(u.Service.ExecStop) == 0 || rt.invocation == "" || rt.stopHelperAttempt == rt.invocation {
 		return nil, false, nil
 	}
-	if m.closed {
+	// The shutdown seal closes external admission, but its own stop pass still
+	// runs ExecStop. Close's helper barrier ends every admission, also that one.
+	if m.stopHelpersClosed || (m.closed && !m.shutdownOwnsStop(ctx)) {
 		return nil, false, fmt.Errorf("manager is closing")
 	}
 	if ctx.Err() != nil {

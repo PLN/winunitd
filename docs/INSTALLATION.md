@@ -2,9 +2,10 @@
 
 This is the product MSI for WinUnit Manager. It is separate from the unsigned
 beta package in `packaging/beta`. The product UpgradeCode is
-`A512B91F-1883-40FD-8EDB-5B8C5708DEEA`. Installer version `0.6.0` uses
-ProductCode `09120BB5-3A58-4A2B-B6E9-09173A441709` and the release `0.6.0`.
-It upgrades the public releases `0.5.1` (ProductCode
+`A512B91F-1883-40FD-8EDB-5B8C5708DEEA`. Installer version `0.6.1` uses
+ProductCode `939F44EA-084E-46D9-8DF9-11F6E3B25A9A` and the release `0.6.1`.
+It upgrades the public releases `0.6.0` (ProductCode
+`09120BB5-3A58-4A2B-B6E9-09173A441709`), `0.5.1` (ProductCode
 `B63628E2-7996-4FB1-801D-F2F2BB5985AB`), `0.5.0` (ProductCode
 `CECB8AEC-2F03-4697-8924-3E6BB832A7C1`), `0.4.0` (ProductCode
 `2EF31E5B-5159-4629-8D9D-5C9A9298FE0A`) and `0.3.0` (ProductCode
@@ -168,6 +169,55 @@ and `REINSTALLMODE`, as in the packaging spike. The package disables Restart
 Manager so a live payload handle aborts in `service-prepare` instead of being
 closed at `InstallValidate`. The verbose MSI log includes that helper's
 standard error, including `abort replacement` and the locked file name.
+
+### Upgrading from 0.6.0 or earlier
+
+The installed manager performs the maintenance shutdown. Through 0.6.0,
+it could terminate a running system service without executing its
+`ExecStop=` command, report `manager is closing`, and cause an MSI rollback
+that restarted the previous manager. Version 0.6.1 runs those helpers during
+its own shutdown.
+
+The 0.6.1 MSI checks for this condition before requesting maintenance on a
+running older product. A `preflight conflict` naming system units leaves
+the manager and workloads running. The message identifies units to drain
+or definitions to check. The probe uses the current unit files. An edit
+on disk without a reload can hide the stop command captured by a running
+invocation. Include any such invocation in your drain, and keep supervisors
+paused until the upgrade finishes. The probe covers the system manager.
+If its ordinary control pipe cannot provide a snapshot, the installer
+checks the system unit directory. It can still use the reserved maintenance
+pipe when the files show no possible stop helpers. If it reports a conflict,
+restore ordinary control so it can confirm which units are active.
+
+For a direct upgrade from an affected manager, drain it first during a
+planned outage:
+
+1. Make sure units can stop and start again. A `User=` unit of a domain
+   account needs its domain controller for an S4U logon, for `ExecStop` and
+   for the start after the upgrade.
+2. Pause external automation that can start or restart these services. Stop
+   any timer, path, registry or event-log unit that can trigger them with
+   `winctl stop <trigger-unit>`.
+   Record which triggers to resume after servicing. Disabling an enabled
+   service changes its next boot and does not prevent an explicit start.
+3. Stop the active units that have `ExecStop=` with `winctl stop <unit>`,
+   dependents before the units they depend on. The manager still runs
+   `ExecStop` for an ordinary stop. Include active oneshots that have
+   completed their main process. For a per-user workload that relies on its
+   stop command, use `winctl --user=<user> stop <unit>` before servicing.
+   Confirm that each stop succeeds and that status shows the unit inactive
+   with no pending cleanup.
+4. Keep the `winunitd` service running. Stopping it would run the affected
+   shutdown, and the MSI quiesces the running manager itself.
+5. Run the upgrade with a log, for example
+   `msiexec /i winunitd-0.6.1-x64.msi /qn /norestart /L*v upgrade.log`.
+   Check `winctl capabilities` as above. The new manager starts enabled
+   units. Resume the triggers you paused, start any previously running
+   manual units, and verify the workloads are healthy.
+
+The drain interrupts workloads. Running `winctl maintenance` also begins
+teardown immediately.
 
 ## Data kept across repair, upgrade, and remove
 

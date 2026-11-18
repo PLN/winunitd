@@ -62,6 +62,7 @@ type Manager struct {
 	stops                stopSet
 	closePending         []unitTeardown
 	stopHelpers          map[*stopHelperWork]struct{}
+	stopHelpersClosed    bool                       // Close's final barrier; shutdown's seal leaves its own pass open
 	launchingJobs        map[*processOwner]struct{} // assigned, not yet published
 	snapshotSequence     uint64
 	boundStops           map[string]boundStopMember
@@ -209,6 +210,7 @@ func (m *Manager) CloseContext(ctx context.Context) error {
 	}
 	m.mu.Lock()
 	m.closed = true
+	m.stopHelpersClosed = true
 	if m.nativeProbesCancel != nil {
 		m.nativeProbesCancel()
 	}
