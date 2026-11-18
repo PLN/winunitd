@@ -32,6 +32,10 @@ type AccountSessionSpec struct {
 	// Session asks for a signed-in session's token first and S4U only when
 	// there is none or its path fails (UserLogon=session-or-s4u).
 	Session bool
+	// From, if set, is the open account session of a running invocation of
+	// Account. The new session duplicates its token instead of logging on,
+	// and Session is ignored. From is only read; it stays open.
+	From *AccountSession
 }
 
 // AccountError reports that a User= account could not be logged on or

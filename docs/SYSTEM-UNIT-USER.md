@@ -85,10 +85,10 @@ invocation, so a reload that changed `User=` still stops the running invocation
 as the account it started with. Holding one logon for the whole invocation
 would avoid the second logon, but a oneshot with `RemainAfterExit=yes` would
 then keep a logon and the profile while no process runs. If the stop command
-cannot log on, stopping proceeds as when `ExecStop` fails. An invocation on a
-session logon stops through the same session-then-S4U open as a start while
-its session has not been reported signed out, and by S4U otherwise; an S4U
-invocation stops by S4U even if its account has signed in since.
+cannot log on, stopping proceeds as when `ExecStop` fails. An S4U invocation
+stops by S4U even if its account has signed in since. An invocation on a
+session logon is the exception: its `ExecStop` does not log on, see
+[Session logon](#session-logon).
 
 The notify pipe of such a unit admits the resolved account. The launcher
 reports the main process and its job before the process runs, so the pipe
@@ -118,7 +118,8 @@ failure of the session path, and the filtered token is never used. The token
 is duplicated as a primary token and the copy's session set to 0. From there
 the launch is steps 2 to 6 above, unchanged: the keeper adds a reference to the
 profile the sign-in loaded, and the process runs on the private desktop in the
-daemon and unit jobs. No token is cached or shared; each process opens its own.
+daemon and unit jobs. No token is cached; each workload opens its own, and
+only its `ExecStop` uses a copy of it (below).
 
 Fallback: when no session matches, or any step of the session path fails up
 to the account session being open (token, linked token, duplicate, session,
@@ -134,13 +135,23 @@ account session opened is an account error, to which `Restart=` applies, when
 its session has signed out; otherwise it stays a plain launch error, as for
 S4U.
 
+`ExecStop`: the stop command of an invocation on a session logon runs on a
+copy of that invocation's own token, duplicated from the token its account
+session holds, with a profile keeper, desktop and environment of its own that
+end with the stop command. It selects no session and logs on nowhere: the token
+stays valid after its session signed out and needs no domain controller, so
+`ExecStop` runs at sign-out and off the network too. If the copy or its account
+session cannot be opened, stopping proceeds as when `ExecStop` fails; there is
+no fallback to S4U. The invocation's account session is only read; the stop
+sequence closes it after the stop command, with the invocation's job.
+
 Sign-out: Windows does not end session-0 processes that hold a copy of a
 signed-in session's token when that session signs out, so the manager does.
 The logoff notifications the user host already receives, from the service
 control manager and the session poll, are passed to the system manager first;
 lock, unlock, disconnect and reconnect are not logoffs. An active invocation
-on that session's logon is stopped as a watchdog failure is: `ExecStop` (by
-S4U), the job, the account session, then `Restart=` decides on a failed exit.
+on that session's logon is stopped as a watchdog failure is: `ExecStop`, the
+job, the account session, then `Restart=` decides on a failed exit.
 A start that is still waiting for exit, readiness or publication has its job
 killed and cannot become active; a `Type=oneshot` start whose session signs out
 before it completes fails even when its process exited 0. A completed
@@ -154,10 +165,9 @@ Limits. A logoff is missed only if the notification is dropped and Windows
 reuses the session ID within one poll interval; the invocation then keeps its
 logon until its next restart, a weakness user managers share. At machine
 shutdown users sign out before the service's preshutdown, so such a unit may
-get a sign-out stop and one S4U start before the ordered stop. `ExecStop` at
-sign-out uses S4U, so off the network it fails before the kill, as for any
-S4U unit stopped there. A `User=` written as a name is resolved before every
-start and may ask the domain; a SID spelling does not depend on that lookup.
+get a sign-out stop and one S4U start before the ordered stop. A `User=`
+written as a name is resolved before every start and may ask the domain; a SID
+spelling does not depend on that lookup.
 
 ## Rejected alternatives
 
@@ -201,5 +211,7 @@ start and may ask the domain; a SID spelling does not depend on that lookup.
   the sign-out stop with `Restart=` and duplicate logoffs, a sign-out during a
   start, and the logoff hook. Windows tests that run only as LocalSystem with
   the test account signed in check the process in session 0 in its unit job,
-  and that a failed linked token falls back to S4U. A native run on a domain
-  pair with the controller off follows before release.
+  that a failed linked token falls back to S4U, and that an `ExecStop` on the
+  invocation's token runs as the account in session 0 and leaves the
+  invocation running when it ends. A native run on a domain pair with the
+  controller off follows before release.

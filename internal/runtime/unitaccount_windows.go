@@ -25,12 +25,16 @@ type accountPlatform struct {
 
 // OpenAccountSession logs the account on, never with a stored credential, and
 // starts its profile keeper on a private desktop. The logon is trusted S4U,
-// or with spec.Session first a copy of a signed-in session's token. A failed
+// or with spec.Session first a copy of a signed-in session's token. With
+// spec.From it is a copy of that session's token and nothing logs on. A failed
 // open that could not release what it started returns the session with the
 // error so the caller can retry Close.
 func OpenAccountSession(spec AccountSessionSpec) (*AccountSession, error) {
 	if !runningAsLocalSystem() {
 		return nil, errors.New("User= requires the system manager running as LocalSystem")
+	}
+	if spec.From != nil {
+		return openFromAccount(spec)
 	}
 	info, err := LookupAccountName(spec.Account)
 	if err != nil {
@@ -77,6 +81,38 @@ func openSessionAccount(api sessionLogonAPI, spec AccountSessionSpec, info UserI
 		return nil, &sessionGoneError{ID: id}
 	}
 	return nil, err
+}
+
+// openFromAccount opens an account session of its own on a duplicate of the
+// token spec.From holds: the invocation's logon, which stays valid after its
+// session signed out and needs neither that session nor a domain controller.
+// The account is the one spec.From was opened for, so nothing is looked up.
+func openFromAccount(spec AccountSessionSpec) (*AccountSession, error) {
+	from := spec.From
+	tok, err := from.duplicateToken()
+	if err != nil {
+		return nil, fmt.Errorf("invocation's logon: %w", err)
+	}
+	return finishOpen(spec, from.Info, tok, from.Logon, from.SessionID)
+}
+
+// duplicateToken returns a new primary token duplicated from the session's,
+// which it neither closes nor changes. It fails once the session is closed.
+func (s *AccountSession) duplicateToken() (*UserToken, error) {
+	s.plat.mu.Lock()
+	defer s.plat.mu.Unlock()
+	if s.plat.closed {
+		return nil, errors.New("account session is closed")
+	}
+	native, ok := nativeToken(s.plat.token)
+	if !ok {
+		return nil, errors.New("account session has no token")
+	}
+	dup, err := duplicatePrimary(native)
+	if err != nil {
+		return nil, err
+	}
+	return &UserToken{Info: s.Info, native: winToken(dup)}, nil
 }
 
 // finishOpen starts the profile keeper for tok, which it owns from here on,

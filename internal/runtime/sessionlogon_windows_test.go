@@ -46,12 +46,12 @@ func (api sessionLogonAPI) signedInAnywhere(sid string) bool {
 	return false
 }
 
-func startWithSessionLogon(t *testing.T, broker *DaemonJob, account string) *winProc {
+func startWithSessionLogon(t *testing.T, broker *DaemonJob, account, script string) *winProc {
 	t.Helper()
 	cmd := os.Getenv("SystemRoot") + `\System32\cmd.exe`
 	p, err := NewLauncher(broker).Start(context.Background(), StartSpec{
 		Unit:        "session-logon-test",
-		Argv:        []string{cmd, "/d", "/c", "whoami & ping -n 2 127.0.0.1 >NUL"},
+		Argv:        []string{cmd, "/d", "/c", script},
 		Dir:         os.Getenv("SystemRoot"),
 		User:        account,
 		UserSession: true,
@@ -66,7 +66,7 @@ func startWithSessionLogon(t *testing.T, broker *DaemonJob, account string) *win
 
 func TestSYSTEMSessionLogonRunsInSessionZero(t *testing.T) {
 	account, broker, sid := sessionAccountFixture(t)
-	p := startWithSessionLogon(t, broker, account)
+	p := startWithSessionLogon(t, broker, account, "whoami & ping -n 2 127.0.0.1 >NUL")
 	logon, session := p.AccountLogon()
 	if logon != LogonSession || session == 0 {
 		t.Fatalf("logon %q session %d, want a session logon", logon, session)
@@ -101,8 +101,58 @@ func TestSYSTEMSessionLogonLinkedFailureFallsBackToS4U(t *testing.T) {
 		duplicated++
 		return saved.duplicate(c)
 	}
-	p := startWithSessionLogon(t, broker, account)
+	p := startWithSessionLogon(t, broker, account, "whoami & ping -n 2 127.0.0.1 >NUL")
 	if logon, _ := p.AccountLogon(); logon != LogonS4U || duplicated != 0 {
 		t.Fatalf("logon %q after %d session duplicates, want S4U and none", logon, duplicated)
 	}
+}
+
+// An ExecStop helper of a session-logon invocation runs on a copy of the
+// invocation's token, as the account in session 0, in an account session of
+// its own: closing it leaves the invocation running.
+func TestSYSTEMSessionLogonHelperRunsOnTheInvocationsToken(t *testing.T) {
+	account, broker, sid := sessionAccountFixture(t)
+	main := startWithSessionLogon(t, broker, account, "ping -n 120 127.0.0.1 >NUL")
+	if logon, _ := main.AccountLogon(); logon != LogonSession {
+		t.Fatalf("invocation logon %q, want a session logon", logon)
+	}
+	cmd := os.Getenv("SystemRoot") + `\System32\cmd.exe`
+	h, err := NewLauncher(broker).Start(context.Background(), StartSpec{
+		Unit:        "session-logon-test",
+		Argv:        []string{cmd, "/d", "/c", "whoami & ping -n 2 127.0.0.1 >NUL"},
+		Dir:         os.Getenv("SystemRoot"),
+		User:        account,
+		UserLogonOf: main,
+	})
+	if err != nil {
+		t.Fatalf("helper on the invocation's logon: %v", err)
+	}
+	helper := h.(*winProc)
+	defer func() { _ = helper.Stop(5 * time.Second) }()
+	if helper.account == main.accountSession() {
+		t.Fatal("helper shares the invocation's account session")
+	}
+	owner, session, _ := processIdentity(t, helper.PID())
+	if !strings.EqualFold(owner, sid) || session != 0 {
+		t.Fatalf("helper ran as %s in session %d, want %s in session 0", owner, session, sid)
+	}
+	out, _ := io.ReadAll(helper.Stdout())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := helper.Wait(ctx); err != nil {
+		t.Fatalf("helper wait: %v", err)
+	}
+	if err := helper.Stop(5 * time.Second); err != nil {
+		t.Fatalf("helper cleanup: %v", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if !main.Alive() || main.accountSession() == nil {
+		t.Fatal("closing the helper ended the invocation or its account session")
+	}
+	tok, err := main.accountSession().duplicateToken()
+	if err != nil {
+		t.Fatalf("invocation's token after the helper: %v", err)
+	}
+	_ = tok.Close()
+	t.Logf("helper: %s", out)
 }

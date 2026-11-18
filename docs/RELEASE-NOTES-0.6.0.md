@@ -60,12 +60,13 @@ for installation and earlier package upgrades.
   starts, so a unit must not depend on the difference.
 
   When the session whose logon an invocation uses signs out, the manager stops
-  that invocation (with `ExecStop`, by S4U) and records
+  that invocation (with `ExecStop`) and records
   `session <N>, whose logon this invocation used, signed out`. Windows does not
   end these processes itself. The stop counts as a failed exit, so
   `Restart=on-failure` and `always` start the unit again, by S4U or another
-  session. Lock, unlock, disconnect, reconnect and other users' sessions do
-  nothing to the unit. Status shows the logon in use as `Logon: s4u` or
+  session. `ExecStop` of such an invocation runs on the invocation's own logon,
+  also at sign-out and off the domain network. Lock, unlock, disconnect,
+  reconnect and other users' sessions do nothing to the unit. Status shows the logon in use as `Logon: s4u` or
   `Logon: session 2` (`userLogon` and `userSession` in the JSON), the journal
   records each start's logon, and capabilities list `unit-user-session` on the
   system endpoint.
@@ -107,15 +108,13 @@ for installation and earlier package upgrades.
 
 - `UserLogon=`: an invocation keeps the logon it started with, so a unit
   started by S4U is not moved to a session when its account signs in; its next
-  start uses the session. `ExecStop` at sign-out runs by S4U, and off the domain
-  network it fails, quickly in practice, before stopping goes on to end the
-  job. A `User=` written as `DOMAIN\name` is still resolved before every start,
-  which may ask a domain controller; write the SID to avoid that. A sign-out is
-  missed only if its notification is dropped and Windows reuses the session ID
-  within one poll interval; the invocation then keeps its logon until its next
-  restart, as user managers do. At machine shutdown, users sign out before the
-  service stops, so such a unit may get a sign-out stop and one S4U start
-  before the ordered stop.
+  start uses the session. A `User=` written as `DOMAIN\name` is still resolved
+  before every start, which may ask a domain controller; write the SID to avoid
+  that. A sign-out is missed only if its notification is dropped and Windows
+  reuses the session ID within one poll interval; the invocation then keeps its
+  logon until its next restart, as user managers do. At machine shutdown,
+  users sign out before the service stops, so such a unit may get a sign-out
+  stop and one S4U start before the ordered stop.
 - Otherwise support and limitations remain as documented for
   [0.5.0](https://github.com/PLN/winunitd/blob/v0.6.0/docs/RELEASE-NOTES-0.5.0.md#limits).
   Signing remains deferred.
