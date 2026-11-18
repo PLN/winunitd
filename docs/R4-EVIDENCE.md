@@ -779,6 +779,52 @@ those groups, was denied, and `taskkill.exe` refused to run. `TerminateProcess`,
 for example through PowerShell's `Stop-Process`, worked across logons of the
 account.
 
+## System units with UserLogon=
+
+On November 18, 2026 the unsigned draft 0.6.0 MSI from clean tag `v0.6.0`
+(`28c8701`) ran on a disposable Windows 11 Enterprise LTSC domain member.
+A FormatVersion=2 system unit used an account SID, `Type=simple`,
+`UserLogon=session-or-s4u`, `Restart=always`, `RestartSec=2s`, stdout, a child
+process and `ExecStop`. The final run used the default five-second stop budget.
+The table distinguishes the rebuilt MSI from unchanged checks on the original
+0.6.0 candidate (`1d4af81`); it does not claim the whole design ran natively.
+
+| Step | Observed |
+| --- | --- |
+| Cached domain sign-in, controller off | On `28c8701`, status reports session logon; five consecutive restarts succeed. `unit-of-process` attributes the main process with `Main=true` and its invocation, and stdout reaches the journal. |
+| Operator stop, offline session invocation | On `28c8701`, ExecStop writes its timestamp and account identity; main, child and keeper end. |
+| Cold offline sign-out and recovery | On `28c8701`, two full cycles stop the controller just before sign-out and keep it stopped through recovery. The journal names sign-out; ExecStop runs as the account afterwards. Main, child and profile keepers are gone, and the unit waits in auto-restart without pending cleanup. Cached type-11 sign-in automatically returns the unit to session logon, without reboot or unit commands. Sign-in to launch/first stdout: 2.013/2.602 seconds and 13.929/14.493 seconds. |
+| Warm offline sign-out and recovery | On `28c8701`, the same cleanup and automatic recovery pass; 4.952 seconds to launch and 5.541 seconds to first stdout. |
+| Online sign-out | On `28c8701`, account ExecStop and cleanup run; the unit restarts by S4U and status reports `s4u`. |
+| S4U invocation stop | On `28c8701`, nobody signed in and the controller available: the S4U invocation's operator stop runs ExecStop as the account, then becomes inactive without pending cleanup. |
+| LocalSystem tests | All three tagged session-logon runtime tests pass, zero skips: session-0 identity/job placement; injected linked-token failure falling back to S4U; a helper on a duplicate of the invocation token, in its own account session, whose cleanup leaves the invocation alive. |
+| Directive absent | On `1d4af81`, the same cached signed-in account fails offline S4U without the directive. Default S4U behavior is unchanged. |
+| Session preferred online | Observed on both builds. Selection/injection tests cover the fallback boundary. |
+| S4U then sign in | On `1d4af81`, later sign-in preserves the S4U invocation ID. |
+| Both logons fail, then recovery | On `1d4af81`, explicit start returns both missing-session and S4U failure reasons and automatic retries continue. After a reboot with a cached automatic sign-in the unit recovers in 2.570 seconds to launch, 5.375 seconds to stdout. The stable signed-out retry loop followed by offline sign-in without reboot was not achieved in that test. |
+| Automatic cold boot | On `1d4af81`, cached sign-in to automatic launch/first stdout is 13.770/14.584 seconds. |
+| Administrator under UAC | On `1d4af81`, a fresh administrator sign-in with UAC enabled gives enabled Administrators membership and High integrity; standard-account output is Medium. |
+| Session continuity | On `1d4af81`, lock/unlock and disconnect/reconnect preserve the invocation. Second-account switching was not run natively. |
+
+The original candidate's clean-confirmed cold sign-out failure is superseded:
+its S4U stop-helper logon overran the budget and left the unit failed. The rebuilt
+candidate uses the session invocation's own token for ExecStop and passes the
+cases above. These timings are observations, not startup guarantees. Windows'
+cached automatic sign-in itself can take appreciably longer than unit launch.
+
+The journal records sign-out and successful logon choices. In the original
+installed retry-loop run, neither the journal nor daemon file retained both
+logon failure reasons; those were observable in explicit start responses.
+Auto-restart status omits `error`, a pre-existing behavior tracked in #45.
+The separate pre-existing limitation where recovery refused during pending
+cleanup is not retried after late cleanup is not claimed fixed by these results.
+
+Native sign-out during launch, second-account switching, and a completed
+no-process `RemainAfterExit=yes` oneshot's stop-helper branch were not separately
+exercised. Automated manager/runtime tests cover their stated mechanisms;
+they are not substituted for native observations. No additional claims about
+cryptographic keys or other untested identity scenarios are made.
+
 ## Current implementation and remaining identity matrix
 
 | Work package | Delivered behavior and evidence | Remaining qualification |
