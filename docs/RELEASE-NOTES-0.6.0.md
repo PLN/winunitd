@@ -127,4 +127,15 @@ and SID matching over a fake native layer, the full-token rule, the fallback
 and its errors, status, the stop at sign-out with `Restart=`, a sign-out during
 a start, and the logoff hook. The tests that need LocalSystem and a signed-in
 test account do not run in hosted CI.
-<!-- native-run -->
+
+This MSI also ran natively on a Windows 11 domain member with its domain
+controller switched off and the unit's account signed in from cached
+credentials: start and five restarts on the session logon, `ExecStop` as the
+account, a sign-out right after the controller went away (the unit stops,
+waits in auto-restart and starts again at the next sign-in, without a reboot),
+the restart by S4U after a sign-out with the controller on, and the three
+LocalSystem tests. The unchanged default, the both-fail error, a cold boot with
+automatic sign-in, the administrator token under UAC and lock and disconnect
+ran on the first 0.6.0 candidate, which differs only in how `ExecStop` logs on.
+[R4-EVIDENCE.md](https://github.com/PLN/winunitd/blob/main/docs/R4-EVIDENCE.md#system-units-with-userlogon)
+records the run.
